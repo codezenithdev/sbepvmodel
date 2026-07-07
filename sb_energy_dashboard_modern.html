@@ -1,0 +1,1959 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SB Energy Operations Dashboard</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f4f7f6;
+            --surface: #ffffff;
+            --surface-muted: #f8faf9;
+            --surface-strong: #edf5f2;
+            --border: #d9e3df;
+            --border-strong: #bac9c3;
+            --text: #17211d;
+            --muted: #61706a;
+            --muted-strong: #3e4d47;
+            --accent: #0f766e;
+            --accent-strong: #0b5d56;
+            --accent-soft: #dff4ef;
+            --success: #15803d;
+            --success-soft: #e7f6ec;
+            --warning: #b45309;
+            --warning-soft: #fff4df;
+            --danger: #b91c1c;
+            --danger-soft: #fff0f0;
+            --info: #2563eb;
+            --info-soft: #e9f0ff;
+            --shadow: 0 12px 30px rgba(22, 34, 29, 0.08);
+            --chart-empty-height: 360px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            letter-spacing: 0;
+        }
+
+        html {
+            min-width: 320px;
+            background: var(--bg);
+        }
+
+        body {
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        button,
+        input,
+        select {
+            font: inherit;
+        }
+
+        button {
+            border: 0;
+        }
+
+        .app-shell {
+            display: grid;
+            grid-template-columns: 252px minmax(0, 1fr);
+            min-height: 100vh;
+        }
+
+        /* Design refresh: the dashboard is now organized like an operations console with a persistent navigation rail and status-led content. */
+        .side-nav {
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            padding: 22px 18px;
+            background: #fbfcfc;
+            border-right: 1px solid var(--border);
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .brand-mark {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: grid;
+            place-items: center;
+            background: var(--accent);
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .logo {
+            font-size: 17px;
+            font-weight: 800;
+            color: var(--text);
+        }
+
+        .brand-subtitle,
+        .nav-caption,
+        .chart-meta,
+        .panel-note,
+        .stat-context,
+        .status-detail,
+        .source-note {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .nav-menu {
+            display: grid;
+            gap: 6px;
+        }
+
+        .nav-caption {
+            margin: 2px 8px 6px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 38px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            color: var(--muted-strong);
+            text-decoration: none;
+            font-weight: 650;
+        }
+
+        .nav-item.active {
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+        }
+
+        .nav-symbol {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            display: grid;
+            place-items: center;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 800;
+        }
+
+        .nav-footer {
+            margin-top: auto;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .health-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .health-dot,
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.12);
+        }
+
+        .workspace {
+            min-width: 0;
+            padding: 24px;
+        }
+
+        .top-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+
+        .nav-left,
+        .nav-right,
+        .breadcrumb,
+        .status-chip,
+        .user-badge {
+            display: flex;
+            align-items: center;
+        }
+
+        .breadcrumb {
+            gap: 10px;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 650;
+            flex-wrap: wrap;
+        }
+
+        .breadcrumb span {
+            color: var(--border-strong);
+        }
+
+        .nav-right {
+            gap: 10px;
+        }
+
+        .status-chip,
+        .user-badge {
+            gap: 8px;
+            min-height: 34px;
+            padding: 7px 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 750;
+            white-space: nowrap;
+        }
+
+        .header {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 20px;
+            align-items: stretch;
+            margin-bottom: 20px;
+        }
+
+        .header-copy {
+            padding: 24px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+        }
+
+        .eyebrow {
+            color: var(--accent-strong);
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .header-title {
+            max-width: 820px;
+            color: var(--text);
+            font-size: clamp(26px, 3vw, 38px);
+            font-weight: 820;
+            line-height: 1.12;
+            margin-bottom: 12px;
+        }
+
+        .header-subtitle {
+            max-width: 780px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card,
+        .chart-card,
+        .controls-bar,
+        .progress-wrap,
+        .error-banner {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .stat-label,
+        .control-section-title {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .controls-bar {
+            padding: 18px;
+            margin-bottom: 20px;
+            box-shadow: var(--shadow);
+        }
+
+        .controls-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+
+        .section-title {
+            color: var(--text);
+            font-size: 18px;
+            font-weight: 820;
+        }
+
+        .section-subtitle {
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 2px;
+        }
+
+        .control-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .date-controls {
+            display: grid;
+            grid-template-columns: minmax(260px, 0.75fr) minmax(420px, 1.25fr);
+            gap: 14px;
+            align-items: start;
+        }
+
+        .control-section {
+            display: grid;
+            gap: 14px;
+            align-content: start;
+            min-width: 0;
+            height: 100%;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .control-section:first-child {
+            grid-column: 1 / -1;
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(132px, 1fr));
+            gap: 10px;
+        }
+
+        .model-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+            gap: 10px;
+            align-items: start;
+        }
+
+        .model-settings {
+            align-content: start;
+        }
+
+        .model-settings .model-grid {
+            grid-template-columns: repeat(4, minmax(112px, 1fr));
+        }
+
+        .model-settings .control-field {
+            gap: 8px;
+        }
+
+        .model-settings .eff-input {
+            min-height: 44px;
+            padding: 10px 12px;
+            background: #ffffff;
+        }
+
+        .model-settings .toggles-row {
+            margin-top: 2px;
+            grid-template-columns: minmax(220px, 1fr);
+        }
+
+        .model-settings .checkbox-control {
+            min-height: 44px;
+        }
+
+        .model-settings .iam-ar.visible {
+            display: grid;
+            grid-template-columns: 72px minmax(110px, 160px);
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            border: 1px solid rgba(15, 118, 110, 0.36);
+            border-radius: 6px;
+            background: #f3fbf8;
+        }
+
+        .toggles-row,
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .toggles-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 10px;
+        }
+
+        .control-field {
+            display: grid;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .date-label {
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 760;
+        }
+
+        .date-input,
+        .input-field {
+            width: 100%;
+            min-width: 0;
+            min-height: 38px;
+            padding: 8px 10px;
+            border: 1px solid var(--border-strong);
+            border-radius: 6px;
+            background: #ffffff;
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 600;
+            transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+        }
+
+        .date-input:focus,
+        .input-field:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+        }
+
+        .date-input:disabled,
+        .input-field:disabled {
+            cursor: not-allowed;
+            color: #798780;
+            background: #eef3f1;
+        }
+
+        .eff-input {
+            min-width: 0;
+        }
+
+        .interval-row {
+            display: grid;
+            grid-template-columns: 88px minmax(128px, 1fr);
+            gap: 8px;
+        }
+
+        .checkbox-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 42px;
+            padding: 9px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #ffffff;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 700;
+            white-space: normal;
+        }
+
+        .checkbox-control input {
+            width: 16px;
+            height: 16px;
+            flex: 0 0 auto;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .checkbox-control:hover {
+            border-color: var(--border-strong);
+            background: #fbfdfc;
+        }
+
+        .checkbox-control:has(input:checked) {
+            border-color: rgba(15, 118, 110, 0.46);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            box-shadow: inset 3px 0 0 var(--accent);
+        }
+
+        .curtailment-limit,
+        .iam-ar {
+            display: none;
+        }
+
+        .iam-ar.visible {
+            display: grid;
+        }
+
+        .curtailment-limit.visible {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 128px;
+            align-items: center;
+            gap: 12px;
+            margin-top: 2px;
+            padding: 10px;
+            border: 1px solid rgba(15, 118, 110, 0.36);
+            border-radius: 6px;
+            background: #f3fbf8;
+        }
+
+        .curtailment-limit .limit-copy {
+            display: grid;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .curtailment-limit .limit-helper {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .curtailment-limit .date-input {
+            justify-self: end;
+        }
+
+        .run-btn,
+        .download-link,
+        .send-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 38px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 800;
+            text-decoration: none;
+            cursor: pointer;
+            transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+            white-space: nowrap;
+        }
+
+        .run-btn {
+            padding: 9px 16px;
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        .run-btn:hover {
+            background: var(--accent-strong);
+        }
+
+        .run-btn:active,
+        .send-btn:active,
+        .download-link:active {
+            transform: translateY(1px);
+        }
+
+        .run-btn:disabled,
+        .send-btn:disabled {
+            cursor: not-allowed;
+            background: #9db7b1;
+        }
+
+        .download-link {
+            padding: 8px 12px;
+            border: 1px solid var(--border-strong);
+            color: var(--accent-strong);
+            background: #ffffff;
+        }
+
+        .download-link:hover {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .download-link.hidden {
+            display: none;
+        }
+
+        .progress-wrap {
+            display: none;
+            margin-bottom: 16px;
+            padding: 14px 16px;
+        }
+
+        .progress-wrap.visible {
+            display: block;
+        }
+
+        .progress-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--muted-strong);
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 9px;
+        }
+
+        .progress-track {
+            height: 9px;
+            background: #e6eeeb;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            width: 0%;
+            height: 100%;
+            background: var(--accent);
+            border-radius: 999px;
+            transition: width 0.32s ease;
+        }
+
+        .error-banner {
+            display: none;
+            margin-bottom: 16px;
+            padding: 12px 14px;
+            background: var(--danger-soft);
+            color: var(--danger);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .error-banner.visible {
+            display: block;
+        }
+
+        .stat-card {
+            display: grid;
+            gap: 7px;
+            min-height: 118px;
+            padding: 17px;
+            box-shadow: var(--shadow);
+        }
+
+        .stat-value {
+            font-size: 25px;
+            font-weight: 830;
+            line-height: 1.1;
+        }
+
+        .stat-unit {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .positive {
+            color: var(--success);
+        }
+
+        .neutral {
+            color: var(--info);
+        }
+
+        .warning {
+            color: var(--warning);
+        }
+
+        .analysis-layout {
+            display: block;
+            margin-bottom: 20px;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 18px;
+            width: 100%;
+        }
+
+        .chart-card {
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .chart-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 16px 18px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-muted);
+        }
+
+        .chart-title {
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 820;
+            margin-bottom: 4px;
+        }
+
+        .chart-badge {
+            flex: 0 0 auto;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: var(--surface-strong);
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 800;
+        }
+
+        .chart-placeholder {
+            height: var(--chart-empty-height);
+            min-height: var(--chart-empty-height);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            background:
+                linear-gradient(#edf3f0 1px, transparent 1px),
+                linear-gradient(90deg, #edf3f0 1px, transparent 1px),
+                #fbfdfc;
+            background-size: 34px 34px;
+        }
+
+        .chart-icon {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            place-items: center;
+            width: 74px;
+            height: 74px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.86);
+            color: var(--muted);
+            font-size: 14px;
+            font-weight: 830;
+        }
+
+        .chart-image {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .floating-chat-btn {
+            position: fixed;
+            right: 26px;
+            bottom: 26px;
+            width: 58px;
+            height: 58px;
+            border-radius: 50%;
+            background: var(--accent);
+            color: #ffffff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 900;
+            box-shadow: 0 16px 34px rgba(15, 118, 110, 0.32);
+            transition: transform 0.16s ease, background 0.16s ease;
+            z-index: 998;
+        }
+
+        .floating-chat-btn:hover {
+            background: var(--accent-strong);
+            transform: translateY(-2px);
+        }
+
+        .floating-chat-btn.hidden,
+        .sidebar.hidden {
+            display: none;
+        }
+
+        .sidebar {
+            position: fixed;
+            right: 26px;
+            bottom: 26px;
+            width: 398px;
+            max-width: calc(100vw - 32px);
+            max-height: min(680px, calc(100vh - 52px));
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 20px 60px rgba(22, 34, 29, 0.18);
+            z-index: 999;
+        }
+
+        .sidebar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 15px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-muted);
+        }
+
+        .sidebar-title {
+            color: var(--text);
+            font-size: 15px;
+            font-weight: 820;
+        }
+
+        .close-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: 800;
+        }
+
+        .close-btn:hover {
+            background: #e9efed;
+            color: var(--text);
+        }
+
+        .messages-container {
+            flex: 1;
+            min-height: 220px;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .message {
+            display: flex;
+            gap: 8px;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message-content {
+            max-width: 86%;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .message.user .message-content {
+            background: var(--accent);
+            color: #ffffff;
+            font-weight: 650;
+        }
+
+        .message.assistant .message-content {
+            background: #eff4f2;
+            color: var(--text);
+        }
+
+        .message.assistant .message-content p {
+            margin: 0 0 10px;
+        }
+
+        .message.assistant .message-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        .message.assistant .message-content .chat-section-title {
+            display: block;
+            margin: 12px 0 6px;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 850;
+            text-transform: uppercase;
+        }
+
+        .message.assistant .message-content .chat-section-title:first-child {
+            margin-top: 0;
+        }
+
+        .message.assistant .message-content ul {
+            margin: 0 0 10px 16px;
+            padding: 0;
+        }
+
+        .message.assistant .message-content li {
+            margin: 4px 0;
+            padding-left: 2px;
+        }
+
+        .message.assistant .message-content strong {
+            font-weight: 850;
+            color: var(--text);
+        }
+
+        .message.assistant .message-content a {
+            color: var(--info);
+            font-weight: 700;
+            text-decoration: underline;
+            overflow-wrap: anywhere;
+        }
+
+        .input-area {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+            padding: 14px;
+            border-top: 1px solid var(--border);
+            background: #ffffff;
+        }
+
+        .send-btn {
+            min-width: 64px;
+            padding: 8px 12px;
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        .send-btn:hover {
+            background: var(--accent-strong);
+        }
+
+        @media (max-width: 1180px) {
+            .app-shell {
+                grid-template-columns: 1fr;
+            }
+
+            .side-nav {
+                position: static;
+                height: auto;
+                flex-direction: row;
+                align-items: center;
+                padding: 14px 18px;
+                overflow-x: auto;
+            }
+
+            .nav-menu {
+                grid-auto-flow: column;
+                grid-auto-columns: max-content;
+                align-items: center;
+            }
+
+            .nav-caption,
+            .nav-footer {
+                display: none;
+            }
+
+            .header {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 920px) {
+            .workspace {
+                padding: 18px;
+            }
+
+            .header,
+            .stats-bar,
+            .date-controls,
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .controls-header,
+            .top-nav {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .control-actions {
+                justify-content: flex-start;
+            }
+
+            .model-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .model-settings .model-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 560px) {
+            .workspace {
+                padding: 14px;
+            }
+
+            .side-nav {
+                padding: 12px;
+            }
+
+            .brand-subtitle,
+            .nav-item span:last-child {
+                display: none;
+            }
+
+            .header-copy,
+            .controls-bar,
+            .stat-card {
+                padding: 14px;
+            }
+
+            .model-grid,
+            .model-settings .model-grid,
+            .control-grid,
+            .interval-row,
+            .curtailment-limit.visible {
+                grid-template-columns: 1fr;
+            }
+
+            .model-settings .iam-ar.visible {
+                grid-template-columns: 1fr;
+            }
+
+            .curtailment-limit .date-input {
+                justify-self: stretch;
+            }
+
+            .chart-placeholder {
+                height: 280px;
+                min-height: 280px;
+            }
+
+            .sidebar {
+                left: 14px;
+                right: 14px;
+                bottom: 14px;
+                width: auto;
+                max-width: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-shell">
+        <aside class="side-nav" aria-label="Dashboard navigation">
+            <div class="nav-brand">
+                <div class="brand-mark">SB</div>
+                <div>
+                    <div class="logo">SB Energy</div>
+                    <div class="brand-subtitle">Renewable operations</div>
+                </div>
+            </div>
+
+            <nav class="nav-menu" aria-label="Workspace sections">
+                <div class="nav-caption">Monitor</div>
+                <a class="nav-item active" href="#analysisControls">
+                    <span class="nav-symbol">OP</span>
+                    <span>Operations</span>
+                </a>
+                <a class="nav-item" href="#chartGrid">
+                    <span class="nav-symbol">PV</span>
+                    <span>PV model</span>
+                </a>
+            </nav>
+
+            <div class="nav-footer">
+                <div class="health-row">
+                    <span class="health-dot" aria-hidden="true"></span>
+                    <span>Local API session</span>
+                </div>
+                <p class="panel-note">FastAPI serves runs, chart output, Excel exports, and Solar Agent chat.</p>
+            </div>
+        </aside>
+
+        <main class="workspace">
+            <div class="top-nav">
+                <div class="nav-left">
+                    <div class="breadcrumb">
+                        Projects <span>/</span> SolarEdge &amp; Solectria <span>/</span> SBE Innovation Site
+                    </div>
+                </div>
+                <div class="nav-right">
+                    <div class="status-chip"><span class="status-dot" aria-hidden="true"></span> Operations view</div>
+                    <div class="user-badge">AI workflow monitor</div>
+                </div>
+            </div>
+
+            <section class="header" aria-labelledby="dashboardTitle">
+                <div class="header-copy">
+                    <p class="eyebrow">Renewable Energy Operations</p>
+                    <h1 class="header-title" id="dashboardTitle">SolarEdge &amp; Solectria Performance Analysis</h1>
+                    <p class="header-subtitle">
+                        Compare measured power, irradiance, model output, and export-ready run artifacts for the SBE
+                        Innovation Site.
+                    </p>
+                </div>
+            </section>
+
+            <!-- Functional contract: every original form id, chart id, button id, and state class is preserved for the existing JavaScript. -->
+            <section class="controls-bar" id="analysisControls" aria-label="Analysis controls">
+                <div class="controls-header">
+                    <div>
+                        <h2 class="section-title">Run configuration</h2>
+                        <p class="section-subtitle">Set the source window, model interval, and PV loss assumptions.</p>
+                    </div>
+                    <div class="control-actions">
+                        <a class="download-link hidden" id="excelLink" href="#" download>Export workbook</a>
+                        <button class="run-btn" id="runBtn">Run analysis</button>
+                    </div>
+                </div>
+
+                <div class="date-controls">
+                    <div class="control-section">
+                        <div class="control-section-title">Time window</div>
+                        <div class="control-grid">
+                            <label class="control-field">
+                                <span class="date-label">From date (UTC)</span>
+                                <input type="date" class="date-input" id="fromDate" value="2026-06-20">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">From time</span>
+                                <input type="time" class="date-input" id="fromTime" value="00:00">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">To date (UTC)</span>
+                                <input type="date" class="date-input" id="toDate" value="2026-06-27">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">To time</span>
+                                <input type="time" class="date-input" id="toTime" value="00:00">
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="control-section">
+                        <div class="control-section-title">Workflow options</div>
+                        <label class="control-field">
+                            <span class="date-label">Interval</span>
+                            <span class="interval-row">
+                                <input type="number" class="date-input" id="intervalValue" value="1" min="1">
+                                <select class="date-input" id="intervalUnit">
+                                    <option value="minutes">minutes</option>
+                                    <option value="hours" selected>hours</option>
+                                    <option value="days">days</option>
+                                </select>
+                            </span>
+                        </label>
+                        <div class="toggles-row">
+                            <label class="checkbox-control">
+                                <input type="checkbox" id="backtrack" checked>
+                                <span>Backtracking</span>
+                            </label>
+                            <label class="checkbox-control">
+                                <input type="checkbox" id="curtailmentEnabled">
+                                <span>Clipping / Curtailment</span>
+                            </label>
+                        </div>
+                        <label class="control-field curtailment-limit" id="curtailmentLimitGroup">
+                            <span class="limit-copy">
+                                <span class="date-label">Curtailment limit</span>
+                                <span class="limit-helper">Maximum AC output in kW</span>
+                            </span>
+                            <input type="number" class="date-input" id="curtailmentLimitKw" min="0" step="0.1" placeholder="125" disabled>
+                        </label>
+                    </div>
+
+                    <div class="control-section model-settings" aria-label="Model settings">
+                        <div class="control-section-title">Model settings (1.0 = 100%)</div>
+                        <div class="model-grid">
+                            <label class="control-field">
+                                <span class="date-label">SE Inv</span>
+                                <input type="number" class="date-input eff-input" id="solaredgeInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">SE BOS</span>
+                                <input type="number" class="date-input eff-input" id="solaredgeBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">Sol Inv</span>
+                                <input type="number" class="date-input eff-input" id="solectriaInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">Sol BOS</span>
+                                <input type="number" class="date-input eff-input" id="solectriaBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                        </div>
+                        <div class="toggles-row">
+                            <label class="checkbox-control">
+                                <input type="checkbox" id="includeIam">
+                                <span>Martin-Ruiz IAM</span>
+                            </label>
+                            <label class="control-field iam-ar" id="iamArGroup">
+                                <span class="date-label">a_r</span>
+                                <input type="number" class="date-input eff-input" id="iamAr" min="0" step="0.001" value="0.2" disabled>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="progress-wrap" id="progressWrap">
+                <div class="progress-head">
+                    <span id="progressStage">Starting...</span>
+                    <span id="progressPct">0%</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+            <div class="error-banner" id="errorBanner"></div>
+
+            <section class="stats-bar" aria-label="Performance summary">
+                <article class="stat-card">
+                    <div class="stat-label">SolarEdge predicted</div>
+                    <div class="stat-value neutral"><span id="statSePred">--</span> <span class="stat-unit">kWh</span></div>
+                    <p class="stat-context">PV model output for the selected interval.</p>
+                </article>
+                <article class="stat-card">
+                    <div class="stat-label">Solectria predicted</div>
+                    <div class="stat-value neutral"><span id="statSolPred">--</span> <span class="stat-unit">kWh</span></div>
+                    <p class="stat-context">Comparable modeled production for operations review.</p>
+                </article>
+                <article class="stat-card">
+                    <div class="stat-label">Accuracy (SE, pred vs meas)</div>
+                    <div class="stat-value positive" id="statSePct">--</div>
+                    <p class="stat-context">Positive values indicate measured output above prediction.</p>
+                </article>
+                <article class="stat-card">
+                    <div class="stat-label">Accuracy (Sol, pred vs meas)</div>
+                    <div class="stat-value warning" id="statSolPct">--</div>
+                    <p class="stat-context">Model delta for the Solectria comparison path.</p>
+                </article>
+            </section>
+
+            <section class="analysis-layout" aria-label="Performance charts">
+                <div class="charts-grid" id="chartGrid">
+                    <article class="chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">Measured Power Input</div>
+                                <div class="chart-meta">SolarEdge and Solectria measured AC power - kW</div>
+                            </div>
+                            <span class="chart-badge">Input</span>
+                        </div>
+                        <div class="chart-placeholder" id="measuredPowerChartBox">
+                            <div class="chart-icon" id="measuredPowerIcon">kW</div>
+                            <img class="chart-image" id="measuredPowerImg" alt="Measured power input chart" style="display:none;">
+                        </div>
+                    </article>
+
+                    <article class="chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">Irradiance Input</div>
+                                <div class="chart-meta">DNI, GHI, and DHI from Bazefield - W/m2</div>
+                            </div>
+                            <span class="chart-badge">Weather</span>
+                        </div>
+                        <div class="chart-placeholder" id="irradianceChartBox">
+                            <div class="chart-icon" id="irradianceIcon">W/m2</div>
+                            <img class="chart-image" id="irradianceImg" alt="Irradiance input chart" style="display:none;">
+                        </div>
+                    </article>
+
+                    <article class="chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">Cumulative Energy</div>
+                                <div class="chart-meta">Measured vs predicted - kWh over the selected window</div>
+                            </div>
+                            <span class="chart-badge">Energy</span>
+                        </div>
+                        <div class="chart-placeholder" id="energyChartBox">
+                            <div class="chart-icon" id="energyIcon">kWh</div>
+                            <img class="chart-image" id="energyImg" alt="Cumulative energy chart" style="display:none;">
+                        </div>
+                    </article>
+
+                    <article class="chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">AC Power Output</div>
+                                <div class="chart-meta">SolarEdge vs Solectria - predicted and measured AC output</div>
+                            </div>
+                            <span class="chart-badge">Output</span>
+                        </div>
+                        <div class="chart-placeholder" id="acChartBox">
+                            <div class="chart-icon" id="acIcon">AC</div>
+                            <img class="chart-image" id="acImg" alt="AC power chart" style="display:none;">
+                        </div>
+                    </article>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <button class="floating-chat-btn" id="chatToggle">AI</button>
+
+    <div class="sidebar hidden" id="chatSidebar">
+        <div class="sidebar-header">
+            <span class="sidebar-title">Solar Agent</span>
+            <button class="close-btn" id="closeChat">x</button>
+        </div>
+        <div class="messages-container" id="messages">
+            <div class="message assistant">
+                <div class="message-content">Hi! I'm your solar analyst. Ask me anything about the performance data,
+                    model accuracy, or system comparison.</div>
+            </div>
+        </div>
+        <div class="input-area">
+            <input type="text" class="input-field" id="chatInput" placeholder="Ask about the analysis...">
+            <button class="send-btn" id="sendBtn">Send</button>
+        </div>
+    </div>
+    <script>
+        // ---- Run pipeline + progress polling ----
+        const runBtn = document.getElementById('runBtn');
+        const progressWrap = document.getElementById('progressWrap');
+        const progressStage = document.getElementById('progressStage');
+        const progressPct = document.getElementById('progressPct');
+        const progressFill = document.getElementById('progressFill');
+        const errorBanner = document.getElementById('errorBanner');
+        const curtailmentEnabled = document.getElementById('curtailmentEnabled');
+        const curtailmentLimitKw = document.getElementById('curtailmentLimitKw');
+        const curtailmentLimitGroup = document.getElementById('curtailmentLimitGroup');
+        const includeIam = document.getElementById('includeIam');
+        const iamAr = document.getElementById('iamAr');
+        const iamArGroup = document.getElementById('iamArGroup');
+        const excelLink = document.getElementById('excelLink');
+        const STORAGE_KEY = 'sb-energy-dashboard-state-v1';
+        const DEFAULT_ASSISTANT_MESSAGE = "Hi! I'm your solar analyst. Ask me anything about the performance data, model accuracy, or system comparison.";
+        let latestJobId = null;
+        let latestInputPlots = null;
+        let latestResult = null;
+        let currentRunState = null;
+        let pollTimer = null;
+        let chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
+        let serverSessionId = null;
+
+        function setProgress(pct, stage) {
+            progressWrap.classList.add('visible');
+            progressFill.style.width = pct + '%';
+            progressPct.textContent = pct + '%';
+            progressStage.textContent = stage || '';
+        }
+
+        function showError(msg) {
+            errorBanner.textContent = 'Warning: ' + msg;
+            errorBanner.classList.add('visible');
+        }
+        function syncCurtailmentLimit() {
+            const enabled = curtailmentEnabled.checked;
+            curtailmentLimitKw.disabled = !enabled;
+            curtailmentLimitGroup.classList.toggle('visible', enabled);
+            if (!enabled) {
+                curtailmentLimitKw.value = '';
+            }
+        }
+
+        function syncIamAr() {
+            const enabled = includeIam.checked;
+            iamAr.disabled = !enabled;
+            iamArGroup.classList.toggle('visible', enabled);
+            if (!iamAr.value) {
+                iamAr.value = '0.2';
+            }
+        }
+
+        function readEfficiency(id, label) {
+            const input = document.getElementById(id);
+            const value = parseFloat(input.value);
+            if (!Number.isFinite(value) || value < 0 || value > 1) {
+                showError(label + ' must be a decimal between 0 and 1.');
+                input.focus();
+                return null;
+            }
+            return value;
+        }
+
+        function showImage(imgId, iconId, boxId, url, cacheBust = true) {
+            const img = document.getElementById(imgId);
+            img.onload = () => {
+                document.getElementById(iconId).style.display = 'none';
+                img.style.display = 'block';
+                const box = document.getElementById(boxId);
+                box.style.height = 'auto';
+                box.style.background = 'white';
+            };
+            const separator = url.includes('?') ? '&' : '?';
+            img.src = cacheBust ? url + separator + 'v=' + Date.now() : url;
+        }
+
+        function clearImage(imgId, iconId, boxId) {
+            const img = document.getElementById(imgId);
+            const icon = document.getElementById(iconId);
+            const box = document.getElementById(boxId);
+            img.removeAttribute('src');
+            img.style.display = 'none';
+            icon.style.display = 'block';
+            box.style.height = '360px';
+            box.style.background = '';
+        }
+
+        function clearRunImages() {
+            clearImage('measuredPowerImg', 'measuredPowerIcon', 'measuredPowerChartBox');
+            clearImage('irradianceImg', 'irradianceIcon', 'irradianceChartBox');
+            clearImage('energyImg', 'energyIcon', 'energyChartBox');
+            clearImage('acImg', 'acIcon', 'acChartBox');
+        }
+
+        function fmtPct(v) {
+            if (v === null || v === undefined) return 'n/a';
+            return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+        }
+
+        function getFormState() {
+            return {
+                fromDate: document.getElementById('fromDate').value,
+                fromTime: document.getElementById('fromTime').value,
+                toDate: document.getElementById('toDate').value,
+                toTime: document.getElementById('toTime').value,
+                intervalValue: document.getElementById('intervalValue').value,
+                intervalUnit: document.getElementById('intervalUnit').value,
+                backtrack: document.getElementById('backtrack').checked,
+                curtailmentEnabled: curtailmentEnabled.checked,
+                curtailmentLimitKw: curtailmentLimitKw.value,
+                solaredgeInverterEfficiency: document.getElementById('solaredgeInverterEfficiency').value,
+                solaredgeBosEfficiency: document.getElementById('solaredgeBosEfficiency').value,
+                solectriaInverterEfficiency: document.getElementById('solectriaInverterEfficiency').value,
+                solectriaBosEfficiency: document.getElementById('solectriaBosEfficiency').value,
+                includeIam: includeIam.checked,
+                iamAr: iamAr.value,
+            };
+        }
+
+        function applyFormState(form) {
+            if (!form) return;
+            const setValue = (id, value) => {
+                if (value !== undefined && value !== null) {
+                    document.getElementById(id).value = value;
+                }
+            };
+            setValue('fromDate', form.fromDate);
+            setValue('fromTime', form.fromTime);
+            setValue('toDate', form.toDate);
+            setValue('toTime', form.toTime);
+            setValue('intervalValue', form.intervalValue);
+            setValue('intervalUnit', form.intervalUnit);
+            setValue('curtailmentLimitKw', form.curtailmentLimitKw);
+            setValue('solaredgeInverterEfficiency', form.solaredgeInverterEfficiency);
+            setValue('solaredgeBosEfficiency', form.solaredgeBosEfficiency);
+            setValue('solectriaInverterEfficiency', form.solectriaInverterEfficiency);
+            setValue('solectriaBosEfficiency', form.solectriaBosEfficiency);
+            setValue('iamAr', form.iamAr);
+            if (form.backtrack !== undefined) document.getElementById('backtrack').checked = !!form.backtrack;
+            if (form.curtailmentEnabled !== undefined) curtailmentEnabled.checked = !!form.curtailmentEnabled;
+            if (form.includeIam !== undefined) includeIam.checked = !!form.includeIam;
+            syncCurtailmentLimit();
+            syncIamAr();
+        }
+
+        function setExcelLink(url) {
+            if (!url) {
+                excelLink.classList.add('hidden');
+                excelLink.removeAttribute('href');
+                return;
+            }
+            excelLink.href = url;
+            excelLink.classList.remove('hidden');
+        }
+
+        function applyInputPlots(inputPlots, cacheBust = true) {
+            if (!inputPlots) return;
+            if (inputPlots.measured_power_png) {
+                showImage('measuredPowerImg', 'measuredPowerIcon', 'measuredPowerChartBox', inputPlots.measured_power_png, cacheBust);
+            }
+            if (inputPlots.irradiance_png) {
+                showImage('irradianceImg', 'irradianceIcon', 'irradianceChartBox', inputPlots.irradiance_png, cacheBust);
+            }
+        }
+
+        function applyResult(result, cacheBust = true) {
+            if (!result || !result.stats) return;
+            const s = result.stats;
+            const fmtNum = (v) => (v === null || v === undefined) ? 'n/a' : v.toLocaleString();
+            document.getElementById('statSePred').textContent = fmtNum(s.se_predicted_kwh);
+            document.getElementById('statSolPred').textContent = fmtNum(s.sol_predicted_kwh);
+            document.getElementById('statSePct').textContent = fmtPct(s.se_pct);
+            document.getElementById('statSolPct').textContent = fmtPct(s.sol_pct);
+            if (result.input_plots) applyInputPlots(result.input_plots, cacheBust);
+            if (result.ac_png) showImage('acImg', 'acIcon', 'acChartBox', result.ac_png, cacheBust);
+            if (result.energy_png) showImage('energyImg', 'energyIcon', 'energyChartBox', result.energy_png, cacheBust);
+            setExcelLink(result.excel);
+        }
+
+        function readSavedState() {
+            try {
+                return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function clearSavedState() {
+            try {
+                localStorage.removeItem(STORAGE_KEY);
+            } catch (_) {
+                // localStorage may be unavailable in private or restricted contexts.
+            }
+        }
+
+        async function loadServerSessionId() {
+            try {
+                const res = await fetch('/api/session', { cache: 'no-store' });
+                if (!res.ok) return null;
+                const data = await res.json();
+                return data.session_id || null;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function resetClientState() {
+            latestJobId = null;
+            latestInputPlots = null;
+            latestResult = null;
+            currentRunState = null;
+            chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
+            progressWrap.classList.remove('visible');
+            errorBanner.classList.remove('visible');
+            clearRunImages();
+            setExcelLink(null);
+            renderChatMessages();
+            setChatOpen(false);
+        }
+
+        function saveDashboardState() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                    serverSessionId,
+                    latestJobId,
+                    latestInputPlots,
+                    latestResult,
+                    currentRunState,
+                    form: getFormState(),
+                    chatMessages,
+                    chatOpen: !chatSidebar.classList.contains('hidden'),
+                }));
+            } catch (_) {
+                // localStorage may be unavailable in private or restricted contexts.
+            }
+        }
+
+        async function runAnalysis() {
+            errorBanner.classList.remove('visible');
+            const curtailmentOn = curtailmentEnabled.checked;
+            const curtailmentLimit = parseFloat(curtailmentLimitKw.value);
+            if (curtailmentOn && (!Number.isFinite(curtailmentLimit) || curtailmentLimit <= 0)) {
+                showError('Enter a positive curtailment limit in kW.');
+                curtailmentLimitKw.focus();
+                return;
+            }
+            const solaredgeInverterEfficiency = readEfficiency('solaredgeInverterEfficiency', 'SolarEdge inverter efficiency');
+            if (solaredgeInverterEfficiency === null) return;
+            const solaredgeBosEfficiency = readEfficiency('solaredgeBosEfficiency', 'SolarEdge BOS efficiency');
+            if (solaredgeBosEfficiency === null) return;
+            const solectriaInverterEfficiency = readEfficiency('solectriaInverterEfficiency', 'Solectria inverter efficiency');
+            if (solectriaInverterEfficiency === null) return;
+            const solectriaBosEfficiency = readEfficiency('solectriaBosEfficiency', 'Solectria BOS efficiency');
+            if (solectriaBosEfficiency === null) return;
+            const includeIamOn = includeIam.checked;
+            const iamArValue = parseFloat(iamAr.value);
+            if (includeIamOn && (!Number.isFinite(iamArValue) || iamArValue <= 0)) {
+                showError('Martin-Ruiz a_r must be positive.');
+                iamAr.focus();
+                return;
+            }
+
+            runBtn.disabled = true;
+            runBtn.textContent = 'Running...';
+            setProgress(0, 'Starting...');
+            latestInputPlots = null;
+            latestResult = null;
+            currentRunState = { state: 'running', progress: 0, stage: 'Starting...' };
+            clearRunImages();
+            setExcelLink(null);
+            saveDashboardState();
+
+            const body = {
+                from_date: document.getElementById('fromDate').value,
+                from_time: document.getElementById('fromTime').value,
+                to_date: document.getElementById('toDate').value,
+                to_time: document.getElementById('toTime').value,
+                interval_value: parseInt(document.getElementById('intervalValue').value, 10) || 1,
+                interval_unit: document.getElementById('intervalUnit').value,
+                backtrack: document.getElementById('backtrack').checked,
+                solaredge_inverter_efficiency: solaredgeInverterEfficiency,
+                solaredge_bos_efficiency: solaredgeBosEfficiency,
+                solectria_inverter_efficiency: solectriaInverterEfficiency,
+                solectria_bos_efficiency: solectriaBosEfficiency,
+                include_iam: includeIamOn,
+                iam_a_r: includeIamOn ? iamArValue : 0.2,
+                curtailment_enabled: curtailmentOn,
+                curtailment_limit_kw: curtailmentOn ? curtailmentLimit : null,
+            };
+
+            try {
+                const res = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!res.ok) {
+                    let msg = 'Failed to start run (' + res.status + ')';
+                    try {
+                        const err = await res.json();
+                        if (err.detail) {
+                            msg = Array.isArray(err.detail) ? err.detail[0].msg : err.detail;
+                        }
+                    } catch (_) {
+                        // Keep the status-based message if the response body is not JSON.
+                    }
+                    throw new Error(msg);
+                }
+                const { job_id } = await res.json();
+                latestJobId = job_id;
+                currentRunState = { state: 'running', progress: 0, stage: 'Queued...' };
+                saveDashboardState();
+                pollStatus(job_id);
+            } catch (e) {
+                showError(e.message);
+                resetRunBtn();
+            }
+        }
+
+        function resetRunBtn() {
+            runBtn.disabled = false;
+            runBtn.textContent = 'Run analysis';
+        }
+
+        async function pollStatus(jobId) {
+            if (pollTimer) {
+                clearTimeout(pollTimer);
+                pollTimer = null;
+            }
+            try {
+                const res = await fetch('/api/status/' + jobId);
+                if (!res.ok) {
+                    if (res.status === 404 && latestResult) {
+                        currentRunState = { state: 'missing', progress: 0, stage: 'Cached result restored locally' };
+                        progressWrap.classList.remove('visible');
+                        resetRunBtn();
+                        saveDashboardState();
+                        return;
+                    }
+                    throw new Error('Status request failed (' + res.status + ')');
+                }
+                const data = await res.json();
+                setProgress(data.progress, data.stage);
+                latestJobId = jobId;
+                currentRunState = {
+                    state: data.state,
+                    progress: data.progress,
+                    stage: data.stage || '',
+                };
+                if (data.input_plots) {
+                    latestInputPlots = data.input_plots;
+                    applyInputPlots(data.input_plots);
+                }
+                saveDashboardState();
+
+                if (data.state === 'done') {
+                    latestResult = data.result;
+                    if (data.result && data.result.input_plots) {
+                        latestInputPlots = data.result.input_plots;
+                    }
+                    applyResult(data.result);
+                    currentRunState = { state: 'done', progress: 100, stage: 'Done' };
+                    saveDashboardState();
+                    resetRunBtn();
+                    return;
+                }
+                if (data.state === 'error') {
+                    showError(data.error || 'Run failed.');
+                    progressWrap.classList.remove('visible');
+                    saveDashboardState();
+                    resetRunBtn();
+                    return;
+                }
+                pollTimer = setTimeout(() => pollStatus(jobId), 600);
+            } catch (e) {
+                showError(e.message || 'Lost connection to the server.');
+                resetRunBtn();
+            }
+        }
+
+        runBtn.addEventListener('click', runAnalysis);
+        curtailmentEnabled.addEventListener('change', syncCurtailmentLimit);
+        includeIam.addEventListener('change', syncIamAr);
+        syncCurtailmentLimit();
+        syncIamAr();
+
+        // ---- Solar Agent chat ----
+        const chatToggle = document.getElementById('chatToggle');
+        const closeChat = document.getElementById('closeChat');
+        const chatSidebar = document.getElementById('chatSidebar');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const messagesContainer = document.getElementById('messages');
+
+        chatToggle.addEventListener('click', () => {
+            chatSidebar.classList.toggle('hidden');
+            chatToggle.classList.toggle('hidden');
+            if (!chatSidebar.classList.contains('hidden')) {
+                chatInput.focus();
+            }
+        });
+
+        closeChat.addEventListener('click', () => {
+            chatSidebar.classList.add('hidden');
+            chatToggle.classList.remove('hidden');
+        });
+
+        sendBtn.addEventListener('click', sendMessage);
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        function renderSafeMarkdown(text) {
+            const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+            const html = [];
+            let listOpen = false;
+
+            function inlineMarkdown(value) {
+                let out = escapeHtml(value.trim());
+                out = out.replace(
+                    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+                    (_, label, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`
+                );
+                out = out.replace(
+                    /(^|[\s(>])(https?:\/\/[^\s<"]+)/g,
+                    (_, prefix, url) => `${prefix}<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+                );
+                out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+                return out;
+            }
+
+            function closeList() {
+                if (listOpen) {
+                    html.push('</ul>');
+                    listOpen = false;
+                }
+            }
+
+            lines.forEach((line) => {
+                const trimmed = line.trim();
+                if (!trimmed) {
+                    closeList();
+                    return;
+                }
+
+                const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+                if (bullet) {
+                    if (!listOpen) {
+                        html.push('<ul>');
+                        listOpen = true;
+                    }
+                    html.push(`<li>${inlineMarkdown(bullet[1])}</li>`);
+                    return;
+                }
+
+                closeList();
+                const section = trimmed.match(/^\*\*([^*]+)\*\*:?\s*$/);
+                if (section) {
+                    html.push(`<span class="chat-section-title">${escapeHtml(section[1])}</span>`);
+                    return;
+                }
+                html.push(`<p>${inlineMarkdown(trimmed)}</p>`);
+            });
+
+            closeList();
+            return html.join('');
+        }
+
+        function appendMessage(role, content) {
+            const msg = document.createElement('div');
+            msg.className = 'message ' + role;
+            const bubble = document.createElement('div');
+            bubble.className = 'message-content';
+            bubble.innerHTML = renderSafeMarkdown(content);
+            msg.appendChild(bubble);
+            messagesContainer.appendChild(msg);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            return bubble;
+        }
+
+        function renderChatMessages() {
+            messagesContainer.innerHTML = '';
+            const messages = chatMessages.length ? chatMessages : [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
+            messages.forEach((item) => appendMessage(item.role === 'user' ? 'user' : 'assistant', item.content));
+        }
+
+        function setChatOpen(open) {
+            chatSidebar.classList.toggle('hidden', !open);
+            chatToggle.classList.toggle('hidden', open);
+            if (open) {
+                chatInput.focus();
+            }
+            saveDashboardState();
+        }
+
+        function setSending(isSending) {
+            sendBtn.disabled = isSending;
+            chatInput.disabled = isSending;
+            sendBtn.textContent = isSending ? '...' : 'Send';
+        }
+
+        async function sendMessage() {
+            const text = chatInput.value.trim();
+            if (!text || sendBtn.disabled) return;
+
+            chatInput.value = '';
+            appendMessage('user', text);
+            chatMessages.push({ role: 'user', content: text });
+            if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
+            saveDashboardState();
+
+            const loadingBubble = appendMessage('assistant', 'Thinking...');
+            setSending(true);
+            try {
+                const history = chatMessages.slice(-10, -1).map((item) => ({
+                    role: item.role,
+                    content: item.content,
+                }));
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: text,
+                        job_id: latestJobId,
+                        history,
+                    }),
+                });
+                let data = {};
+                try {
+                    data = await res.json();
+                } catch (_) {
+                    // Keep a status-based error below if the body is not JSON.
+                }
+                if (!res.ok) {
+                    const detail = data.detail || 'Chat request failed (' + res.status + ')';
+                    throw new Error(Array.isArray(detail) ? detail[0].msg : detail);
+                }
+                const reply = data.reply || 'I could not generate a response for that question.';
+                loadingBubble.innerHTML = renderSafeMarkdown(reply);
+                chatMessages.push({ role: 'assistant', content: reply });
+                if (data.job_id) {
+                    latestJobId = data.job_id;
+                }
+                if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
+                saveDashboardState();
+            } catch (e) {
+                const msg = e.message || 'The solar agent could not answer right now.';
+                loadingBubble.innerHTML = renderSafeMarkdown(msg);
+                chatMessages.push({ role: 'assistant', content: msg });
+                saveDashboardState();
+            } finally {
+                setSending(false);
+                chatInput.focus();
+            }
+        }
+
+        async function restoreDashboardState() {
+            serverSessionId = await loadServerSessionId();
+            const saved = readSavedState();
+            if (!saved) {
+                renderChatMessages();
+                saveDashboardState();
+                return;
+            }
+
+            if (serverSessionId && saved.serverSessionId !== serverSessionId) {
+                clearSavedState();
+                resetClientState();
+                saveDashboardState();
+                return;
+            }
+
+            latestJobId = saved.latestJobId || null;
+            latestInputPlots = saved.latestInputPlots || null;
+            latestResult = saved.latestResult || null;
+            currentRunState = saved.currentRunState || null;
+            if (Array.isArray(saved.chatMessages) && saved.chatMessages.length) {
+                chatMessages = saved.chatMessages
+                    .filter((item) => item && item.content)
+                    .map((item) => ({
+                        role: item.role === 'user' ? 'user' : 'assistant',
+                        content: String(item.content),
+                    }))
+                    .slice(-50);
+            }
+
+            applyFormState(saved.form);
+            if (latestInputPlots) {
+                applyInputPlots(latestInputPlots, false);
+            }
+            if (latestResult) {
+                applyResult(latestResult, false);
+            }
+            renderChatMessages();
+            setChatOpen(!!saved.chatOpen);
+
+            if (currentRunState && currentRunState.state === 'running' && latestJobId) {
+                runBtn.disabled = true;
+                runBtn.textContent = 'Running...';
+                setProgress(currentRunState.progress || 0, currentRunState.stage || 'Restoring run...');
+                pollStatus(latestJobId);
+            }
+        }
+
+        chatToggle.addEventListener('click', saveDashboardState);
+        closeChat.addEventListener('click', saveDashboardState);
+        document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, #includeIam').forEach((el) => {
+            el.addEventListener('input', saveDashboardState);
+            el.addEventListener('change', saveDashboardState);
+        });
+        restoreDashboardState();
+    </script>
+</body>
+
+</html>
