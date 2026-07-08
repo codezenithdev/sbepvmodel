@@ -20,7 +20,9 @@ import uuid
 import math
 import json
 import os
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -239,11 +241,23 @@ def _validate_run_request(req: RunRequest) -> None:
             )
 
 
+LOCAL_TZ = ZoneInfo("America/Denver")  # matches model.TIMEZONE
+UTC_TZ = ZoneInfo("UTC")
+
+
 def _iso(date_str: str, time_str: str) -> str:
+    """Interpret the input date/time as local Mountain time and return naive UTC ISO.
+
+    The dashboard collects times in local Mountain (America/Denver, DST-aware)
+    time; the Bazefield historian expects UTC. Convert here so the rest of the
+    pipeline continues to work in UTC.
+    """
     t = (time_str or "00:00").strip()
     if len(t) == 5:  # HH:MM -> HH:MM:SS
         t += ":00"
-    return f"{date_str}T{t}"
+    naive = datetime.strptime(f"{date_str}T{t}", "%Y-%m-%dT%H:%M:%S")
+    utc = naive.replace(tzinfo=LOCAL_TZ).astimezone(UTC_TZ)
+    return utc.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _output_url(path: Path) -> str:
@@ -260,6 +274,7 @@ def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str
         raise ValueError("Historian CSV is missing the timestamp column.")
 
     times = pd.to_datetime(df["timestamp"], errors="coerce")
+    times = times.dt.tz_localize("UTC").dt.tz_convert("America/Denver")
     plot_df = df.loc[~times.isna()].copy()
     times = times.loc[~times.isna()]
     if plot_df.empty:
@@ -295,7 +310,7 @@ def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str
         label="Solectria measured",
     )
     ax1.set_title("Measured AC Power Input")
-    ax1.set_xlabel("Time (UTC)")
+    ax1.set_xlabel("Time (Mountain)")
     ax1.set_ylabel("Measured Power (kW)")
     ax1.grid(True, alpha=0.25)
     ax1.legend(loc="best")
@@ -312,7 +327,7 @@ def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str
         if col in plot_df.columns:
             ax2.plot(times, plot_df[col], linewidth=2, color=color, label=label)
     ax2.set_title("Irradiance Input")
-    ax2.set_xlabel("Time (UTC)")
+    ax2.set_xlabel("Time (Mountain)")
     ax2.set_ylabel("Irradiance (W/m2)")
     ax2.grid(True, alpha=0.25)
     ax2.legend(loc="best")

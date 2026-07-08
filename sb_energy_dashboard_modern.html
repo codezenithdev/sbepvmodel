@@ -1116,7 +1116,7 @@
                 <div class="controls-header">
                     <div>
                         <h2 class="section-title">Run configuration</h2>
-                        <p class="section-subtitle">Set the source window, model interval, and PV loss assumptions.</p>
+                        <p class="section-subtitle">Set the time window, time interval, and model parameters</p>
                     </div>
                     <div class="control-actions">
                         <a class="download-link hidden" id="excelLink" href="#" download>Export workbook</a>
@@ -1129,7 +1129,7 @@
                         <div class="control-section-title">Time window</div>
                         <div class="control-grid">
                             <label class="control-field">
-                                <span class="date-label">From date (UTC)</span>
+                                <span class="date-label">From date (Mountain)</span>
                                 <input type="date" class="date-input" id="fromDate" value="2026-06-20">
                             </label>
                             <label class="control-field">
@@ -1137,7 +1137,7 @@
                                 <input type="time" class="date-input" id="fromTime" value="00:00">
                             </label>
                             <label class="control-field">
-                                <span class="date-label">To date (UTC)</span>
+                                <span class="date-label">To date (Mountain)</span>
                                 <input type="date" class="date-input" id="toDate" value="2026-06-27">
                             </label>
                             <label class="control-field">
@@ -1148,9 +1148,9 @@
                     </div>
 
                     <div class="control-section">
-                        <div class="control-section-title">Workflow options</div>
+                        <div class="control-section-title">Model Options</div>
                         <label class="control-field">
-                            <span class="date-label">Interval</span>
+                            <span class="date-label">Time Interval</span>
                             <span class="interval-row">
                                 <input type="number" class="date-input" id="intervalValue" value="1" min="1">
                                 <select class="date-input" id="intervalUnit">
@@ -1179,23 +1179,23 @@
                         </label>
                     </div>
 
-                    <div class="control-section model-settings" aria-label="Model settings">
-                        <div class="control-section-title">Model settings (1.0 = 100%)</div>
+                    <div class="control-section model-settings" aria-label="Efficiencies">
+                        <div class="control-section-title">Efficiencies (1.0 = 100%)</div>
                         <div class="model-grid">
                             <label class="control-field">
-                                <span class="date-label">SE Inv</span>
+                                <span class="date-label">SolarEdge Inverter</span>
                                 <input type="number" class="date-input eff-input" id="solaredgeInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
                             </label>
                             <label class="control-field">
-                                <span class="date-label">SE BOS</span>
+                                <span class="date-label">SolarEdge Balance of System</span>
                                 <input type="number" class="date-input eff-input" id="solaredgeBosEfficiency" min="0" max="1" step="0.001" value="1.0">
                             </label>
                             <label class="control-field">
-                                <span class="date-label">Sol Inv</span>
+                                <span class="date-label">Solectria Inverter</span>
                                 <input type="number" class="date-input eff-input" id="solectriaInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
                             </label>
                             <label class="control-field">
-                                <span class="date-label">Sol BOS</span>
+                                <span class="date-label">Solectria Balance of System</span>
                                 <input type="number" class="date-input eff-input" id="solectriaBosEfficiency" min="0" max="1" step="0.001" value="1.0">
                             </label>
                         </div>
@@ -1205,7 +1205,7 @@
                                 <span>Martin-Ruiz IAM</span>
                             </label>
                             <label class="control-field iam-ar" id="iamArGroup">
-                                <span class="date-label">a_r</span>
+                                <span class="date-label">a<sub>r</sub></span>
                                 <input type="number" class="date-input eff-input" id="iamAr" min="0" step="0.001" value="0.2" disabled>
                             </label>
                         </div>

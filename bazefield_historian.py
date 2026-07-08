@@ -118,8 +118,8 @@ OUTPUT_FILE = "stac1.csv"
 # Wide-output mapping: (objectId, pointName) -> CSV column, in output order.
 # This is the static STAC1 shape the CSV is pivoted into.
 COLUMN_MAP = [
-    ("141A47BC71046000", "ActivePower", "solaredge_measured_power"),
-    ("141A49D30A046000", "ActivePower", "solectria_measured_power"),
+    ("141A49D30A046000", "ActivePower", "solaredge_measured_power"),
+    ("141A47BC71046000", "ActivePower", "solectria_measured_power"),
     ("1418E76F0E846000", "DNI", "dni"),
     ("1418E76F0E846000", "GHI", "ghi"),
     ("1418E76F0E846000", "DHI", "dhi"),
