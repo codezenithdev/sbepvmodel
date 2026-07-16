@@ -50,9 +50,19 @@ TIMEZONE = "America/Denver"  # local tz for display/indexing
 SE_EFF = 1.0
 SOL_EFF = 1.0
 
-# Incidence-angle modifier (Martin-Ruiz). Off by default, matching the reference.
+# Incidence-angle modifier (Martin-Ruiz). The default a_r is always applied.
+# INCLUDE_IAM is retained as the API/UI flag for supplying a custom a_r value.
 INCLUDE_IAM = False
 A_R = 0.2
+
+
+def resolve_iam_a_r(include_iam: bool, iam_a_r: float = A_R) -> float:
+    """Return the custom IAM coefficient when enabled, otherwise the default."""
+    value = float(iam_a_r) if include_iam else A_R
+    if not np.isfinite(value) or value <= 0:
+        raise ValueError("Martin-Ruiz a_r must be a positive finite value.")
+    return value
+
 
 # -----------------------------------------------------------------------------
 # SITE / GEOMETRY / LAYOUT (copied verbatim from pvmismatch_Ho_v8.py)
@@ -326,6 +336,9 @@ def run_modelchain_for_axis_tilt(
     iam_a_r: float = A_R,
 ) -> dict:
     """Run pvlib ModelChain for a single tracker axis tilt -> Ee (suns), Tk, p_mp (W)."""
+    effective_iam_a_r = resolve_iam_a_r(include_iam, iam_a_r)
+    module_parameters = MODULE_PARAMETERS.copy()
+    module_parameters["a_r"] = effective_iam_a_r
     array = pvl.pvsystem.Array(
         mount=pvl.pvsystem.SingleAxisTrackerMount(
             axis_tilt=axis_tilt,
@@ -334,7 +347,7 @@ def run_modelchain_for_axis_tilt(
             backtrack=bool(backtrack),
             gcr=GCR,
         ),
-        module_parameters=MODULE_PARAMETERS,
+        module_parameters=module_parameters,
         temperature_model_parameters=TEMPERATURE_MODEL_PARAMETERS,
         modules_per_string=1,
         strings=1,
@@ -343,19 +356,12 @@ def run_modelchain_for_axis_tilt(
         arrays=[array], inverter_parameters=INVERTER_PARAMETERS
     )
 
-    # When applying Martin-Ruiz IAM manually, use no_loss AOI to avoid double counting.
-    aoi_model = "no_loss" if include_iam else "physical"
     mc = pvl.modelchain.ModelChain(
-        system, location, aoi_model=aoi_model, spectral_model="no_loss"
+        system, location, aoi_model="martin_ruiz", spectral_model="no_loss"
     )
     mc.run_model(weather)
 
     effective = mc.results.effective_irradiance
-    if include_iam:
-        aoi = getattr(mc.results, "aoi", None)
-        if aoi is None:
-            raise AttributeError("ModelChain results did not include AOI needed for IAM.")
-        effective = effective * pvl.iam.martin_ruiz(aoi, a_r=iam_a_r)
 
     return {
         "Ee_suns": (effective / 1000.0).to_numpy(),
@@ -762,6 +768,7 @@ def run_model(
     sol_bos_eff = float(solectria_bos_efficiency)
     se_eff = se_inv_eff * se_bos_eff
     sol_eff = sol_inv_eff * sol_bos_eff
+    effective_iam_a_r = resolve_iam_a_r(include_iam, iam_a_r)
 
     data_quality_warnings: list[str] = []
     if input_kind == "midc":
@@ -817,9 +824,10 @@ def run_model(
         "Solectria_inverter_eff": float(sol_inv_eff),
         "Solectria_BOS_eff": float(sol_bos_eff),
         "Solectria_total_eff": float(sol_eff),
-        "IAM_enabled": bool(include_iam),
-        "IAM_model": "martin_ruiz" if include_iam else "physical",
-        "IAM_a_r": float(iam_a_r) if include_iam else "N/A",
+        "IAM_enabled": True,
+        "IAM_customized": bool(include_iam),
+        "IAM_model": "martin_ruiz",
+        "IAM_a_r": float(effective_iam_a_r),
         "LAT": LAT,
         "LON": LON,
         "AXIS_AZIMUTH": AXIS_AZIMUTH,
@@ -890,9 +898,10 @@ def run_model(
         "solectria_inverter_efficiency": _safe(sol_inv_eff, 4),
         "solectria_bos_efficiency": _safe(sol_bos_eff, 4),
         "solectria_total_efficiency": _safe(sol_eff, 4),
-        "include_iam": bool(include_iam),
-        "iam_model": "martin_ruiz" if include_iam else "physical",
-        "iam_a_r": _safe(iam_a_r, 4) if include_iam else None,
+        "include_iam": True,
+        "iam_customized": bool(include_iam),
+        "iam_model": "martin_ruiz",
+        "iam_a_r": _safe(effective_iam_a_r, 4),
         "curtailment_enabled": bool(active_curtailment_limit_kw is not None),
         "curtailment_limit_kw": (
             _safe(active_curtailment_limit_kw, 3)

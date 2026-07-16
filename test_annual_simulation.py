@@ -103,6 +103,10 @@ class MidcReferenceHourTests(unittest.TestCase):
 
 
 class MidcModelInputTests(unittest.TestCase):
+    def test_default_martin_ruiz_coefficient_is_applied_when_custom_iam_is_off(self):
+        self.assertEqual(model.resolve_iam_a_r(False, 0.9), 0.2)
+        self.assertEqual(model.resolve_iam_a_r(True, 0.15), 0.15)
+
     def test_missing_weather_uses_documented_fallbacks_and_warning(self):
         frame = pd.DataFrame(
             {
@@ -211,7 +215,7 @@ class AnnualApiTests(unittest.TestCase):
         self.assertEqual(app.JOBS[job_id]["mode"], "annual")
         thread.return_value.start.assert_called_once_with()
 
-    def test_unchecked_iam_defaults_to_point_two_in_both_run_modes(self):
+    def test_unchecked_iam_applies_point_two_in_both_run_modes(self):
         validation = app.RunRequest(
             from_date="2026-06-20",
             to_date="2026-06-21",
@@ -222,6 +226,8 @@ class AnnualApiTests(unittest.TestCase):
         )
 
         for request in (validation, annual):
+            request.iam_a_r = 0.9
+            app._validate_run_request(request)
             self.assertFalse(request.include_iam)
             self.assertEqual(request.iam_a_r, 0.2)
 

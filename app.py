@@ -251,7 +251,9 @@ def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
         req.solectria_bos_efficiency, "Solectria BOS efficiency"
     )
 
-    if req.include_iam:
+    if not req.include_iam:
+        req.iam_a_r = model.A_R
+    else:
         req.iam_a_r = _finite_float(req.iam_a_r, "Martin-Ruiz a_r")
         if req.iam_a_r <= 0:
             raise HTTPException(
@@ -653,9 +655,12 @@ def _run_job(job_id: str, req: RunRequest) -> None:
                 "solectria_total_efficiency": (
                     req.solectria_inverter_efficiency * req.solectria_bos_efficiency
                 ),
-                "include_iam": req.include_iam,
-                "iam_model": "martin_ruiz" if req.include_iam else "physical",
-                "iam_a_r": float(req.iam_a_r),
+                "include_iam": True,
+                "iam_customized": req.include_iam,
+                "iam_model": "martin_ruiz",
+                "iam_a_r": float(
+                    model.resolve_iam_a_r(req.include_iam, req.iam_a_r)
+                ),
                 "curtailment_enabled": req.curtailment_enabled,
                 "curtailment_limit_kw": (
                     float(req.curtailment_limit_kw)
@@ -758,9 +763,12 @@ def _run_annual_job(job_id: str, req: AnnualRunRequest) -> None:
                 "solectria_total_efficiency": (
                     req.solectria_inverter_efficiency * req.solectria_bos_efficiency
                 ),
-                "include_iam": req.include_iam,
-                "iam_model": "martin_ruiz" if req.include_iam else "physical",
-                "iam_a_r": float(req.iam_a_r),
+                "include_iam": True,
+                "iam_customized": req.include_iam,
+                "iam_model": "martin_ruiz",
+                "iam_a_r": float(
+                    model.resolve_iam_a_r(req.include_iam, req.iam_a_r)
+                ),
                 "curtailment_enabled": req.curtailment_enabled,
                 "curtailment_limit_kw": (
                     float(req.curtailment_limit_kw)
