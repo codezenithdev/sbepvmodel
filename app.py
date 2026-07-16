@@ -20,7 +20,7 @@ import uuid
 import math
 import json
 import os
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import bazefield_historian as historian
+import midc_stac_hourly as midc
 import sbe_pv_model as model
 
 HERE = Path(__file__).parent
@@ -141,6 +142,20 @@ class RunRequest(BaseModel):
     curtailment_limit_kw: float | None = None
 
 
+class AnnualRunRequest(BaseModel):
+    from_date: str  # YYYY-MM-DD, inclusive fixed MST date
+    to_date: str
+    backtrack: bool = model.BACKTRACK
+    solaredge_inverter_efficiency: float = 1.0
+    solaredge_bos_efficiency: float = 1.0
+    solectria_inverter_efficiency: float = 1.0
+    solectria_bos_efficiency: float = 1.0
+    include_iam: bool = model.INCLUDE_IAM
+    iam_a_r: float = model.A_R
+    curtailment_enabled: bool = False
+    curtailment_limit_kw: float | None = None
+
+
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -196,8 +211,11 @@ SOLAR_MODEL_KNOWLEDGE = {
         "solectria_bays_per_string": model.SOLECTRIA_BAYS_PER_STRING,
     },
     "outputs": (
-        "Each run returns summary stats, an AC power chart, a cumulative energy chart, "
-        "and an Excel workbook with time_series, tilts_and_strings, and run_info sheets."
+        "Validation runs return measured-versus-predicted summary stats, AC power and "
+        "cumulative energy charts, and an Excel workbook. Annual MIDC runs return "
+        "predicted-only AC power, cumulative energy, and monthly energy charts, the "
+        "exact hourly source CSV, an Excel workbook with a monthly_energy sheet, and "
+        "visible data-quality warnings describing any weather fallbacks."
     ),
 }
 
@@ -219,7 +237,7 @@ def _efficiency(value: float, label: str) -> float:
     return out
 
 
-def _validate_run_request(req: RunRequest) -> None:
+def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
     req.solaredge_inverter_efficiency = _efficiency(
         req.solaredge_inverter_efficiency, "SolarEdge inverter efficiency"
     )
@@ -239,6 +257,32 @@ def _validate_run_request(req: RunRequest) -> None:
             raise HTTPException(
                 status_code=422, detail="Martin-Ruiz a_r must be positive."
             )
+
+
+def _validate_curtailment(req: RunRequest | AnnualRunRequest) -> None:
+    if not req.curtailment_enabled:
+        return
+    limit_kw = req.curtailment_limit_kw
+    if limit_kw is None or not math.isfinite(float(limit_kw)) or limit_kw <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="Curtailment limit must be a positive kW value.",
+        )
+
+
+def _annual_dates(req: AnnualRunRequest) -> tuple[date, date]:
+    try:
+        start_date = date.fromisoformat(req.from_date)
+        end_date = date.fromisoformat(req.to_date)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422, detail="Annual dates must use YYYY-MM-DD."
+        ) from exc
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=422, detail="Annual start date must be on or before end date."
+        )
+    return start_date, end_date
 
 
 LOCAL_TZ = ZoneInfo("America/Denver")  # matches model.TIMEZONE
@@ -341,6 +385,43 @@ def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str
     }
 
 
+def _render_midc_input_data_plots(
+    csv_path: Path, output_base: Path
+) -> dict[str, str]:
+    """Render annual irradiance as soon as the MIDC source is available."""
+    import matplotlib.pyplot as plt
+
+    frame, _ = model.parse_midc_csv(str(csv_path))
+    irradiance_path = output_base.with_name(f"{output_base.name}_irradiance.png")
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+    for column, label, color, linestyle in (
+        ("dni_wm2", "DNI", "#f97316", "-"),
+        ("ghi_wm2", "GHI", "#16a34a", "--"),
+        ("dhi_wm2", "DHI", "#7c3aed", ":"),
+    ):
+        ax.plot(
+            frame.index,
+            frame[column],
+            linewidth=1.5,
+            linestyle=linestyle,
+            color=color,
+            label=label,
+        )
+    ax.set_title("Annual Irradiance Input")
+    ax.set_xlabel("Time (America/Denver)")
+    ax.set_ylabel("Irradiance (W/m2)")
+    ax.set_ylim(bottom=0)
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best", ncols=3)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    fig.savefig(irradiance_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+    return {"irradiance_png": _output_url(irradiance_path)}
+
+
 def _model_dump(obj: BaseModel) -> dict:
     if hasattr(obj, "model_dump"):
         return obj.model_dump()
@@ -387,6 +468,7 @@ def _chat_run_context(job_id: str | None) -> tuple[str | None, dict]:
 
     context = {
         "job_id": resolved_job_id,
+        "mode": job.get("mode", "validation"),
         "state": job.get("state"),
         "progress": job.get("progress", 0),
         "stage": job.get("stage", ""),
@@ -550,6 +632,7 @@ def _run_job(job_id: str, req: RunRequest) -> None:
         set_progress(95, "Rendering charts…")
 
         job["result"] = {
+            "mode": "validation",
             "stats": stats,
             "ac_png": f"/outputs/{Path(stats['ac_png']).name}",
             "energy_png": f"/outputs/{Path(stats['energy_png']).name}",
@@ -572,7 +655,7 @@ def _run_job(job_id: str, req: RunRequest) -> None:
                 ),
                 "include_iam": req.include_iam,
                 "iam_model": "martin_ruiz" if req.include_iam else "physical",
-                "iam_a_r": float(req.iam_a_r) if req.include_iam else None,
+                "iam_a_r": float(req.iam_a_r),
                 "curtailment_enabled": req.curtailment_enabled,
                 "curtailment_limit_kw": (
                     float(req.curtailment_limit_kw)
@@ -584,6 +667,111 @@ def _run_job(job_id: str, req: RunRequest) -> None:
         set_progress(100, "Done")
         job["state"] = "done"
     except Exception as exc:  # surface a friendly message to the UI
+        job["state"] = "error"
+        job["error"] = str(exc) or exc.__class__.__name__
+        job["traceback"] = traceback.format_exc()
+
+
+def _run_annual_job(job_id: str, req: AnnualRunRequest) -> None:
+    job = JOBS[job_id]
+
+    def set_progress(pct: int, stage: str) -> None:
+        job["progress"] = int(pct)
+        job["stage"] = stage
+
+    try:
+        start_date, end_date = _annual_dates(req)
+        source_path = OUTPUT_DIR / f"{job_id}_midc_hourly.csv"
+        base_path = OUTPUT_DIR / job_id
+
+        def download_progress(frac: float, msg: str) -> None:
+            set_progress(5 + int(frac * 20), msg)
+
+        set_progress(5, "Downloading MIDC minute data")
+        source = midc.fetch_hourly_data(
+            start_date,
+            end_date,
+            progress_cb=download_progress,
+        )
+        set_progress(27, "Saving exact MIDC hourly source")
+        midc.write_csv_atomically(source.hourly, source_path)
+        set_progress(28, "Rendering annual irradiance inputs")
+        job["input_plots"] = _render_midc_input_data_plots(source_path, base_path)
+
+        def model_progress(frac: float, msg: str) -> None:
+            set_progress(30 + int(frac * 60), msg)
+
+        set_progress(30, "Running annual PV model")
+        stats = model.run_model(
+            input_csv=str(source_path),
+            output_base=str(base_path),
+            progress_cb=model_progress,
+            backtrack=req.backtrack,
+            solaredge_inverter_efficiency=req.solaredge_inverter_efficiency,
+            solaredge_bos_efficiency=req.solaredge_bos_efficiency,
+            solectria_inverter_efficiency=req.solectria_inverter_efficiency,
+            solectria_bos_efficiency=req.solectria_bos_efficiency,
+            include_iam=req.include_iam,
+            iam_a_r=req.iam_a_r,
+            curtailment_enabled=req.curtailment_enabled,
+            curtailment_limit_kw=req.curtailment_limit_kw,
+            input_kind="midc",
+            annual_mode=True,
+        )
+
+        warnings = list(dict.fromkeys(
+            [*source.warnings, *stats.get("data_quality_warnings", [])]
+        ))
+        stats["data_quality_warnings"] = warnings
+        set_progress(96, "Finalizing annual results")
+
+        job["result"] = {
+            "mode": "annual",
+            "stats": stats,
+            "ac_png": f"/outputs/{Path(stats['ac_png']).name}",
+            "energy_png": f"/outputs/{Path(stats['energy_png']).name}",
+            "monthly_png": f"/outputs/{Path(stats['monthly_png']).name}",
+            "excel": f"/outputs/{Path(stats['excel']).name}",
+            "input_plots": job.get("input_plots"),
+            "source_csv": f"/outputs/{source_path.name}",
+            "warnings": warnings,
+            "source_quality": {
+                "raw_rows": source.raw_rows,
+                "hourly_rows": int(len(source.hourly)),
+                "chunk_count": source.chunk_count,
+                "missing_value_count": source.missing_value_count,
+                "affected_hour_count": source.affected_hour_count,
+            },
+            "window": {
+                "from": req.from_date,
+                "to": req.to_date,
+                "timezone": "MST (UTC-7)",
+                "hour_convention": "right-closed, right-labeled",
+                "backtrack": req.backtrack,
+                "solaredge_inverter_efficiency": req.solaredge_inverter_efficiency,
+                "solaredge_bos_efficiency": req.solaredge_bos_efficiency,
+                "solectria_inverter_efficiency": req.solectria_inverter_efficiency,
+                "solectria_bos_efficiency": req.solectria_bos_efficiency,
+                "solaredge_total_efficiency": (
+                    req.solaredge_inverter_efficiency * req.solaredge_bos_efficiency
+                ),
+                "solectria_total_efficiency": (
+                    req.solectria_inverter_efficiency * req.solectria_bos_efficiency
+                ),
+                "include_iam": req.include_iam,
+                "iam_model": "martin_ruiz" if req.include_iam else "physical",
+                "iam_a_r": float(req.iam_a_r),
+                "curtailment_enabled": req.curtailment_enabled,
+                "curtailment_limit_kw": (
+                    float(req.curtailment_limit_kw)
+                    if req.curtailment_enabled
+                    else None
+                ),
+            },
+        }
+        set_progress(100, "Done")
+        job["state"] = "done"
+    except Exception as exc:
         job["state"] = "error"
         job["error"] = str(exc) or exc.__class__.__name__
         job["traceback"] = traceback.format_exc()
@@ -607,23 +795,35 @@ def session() -> JSONResponse:
 @app.post("/api/run")
 def start_run(req: RunRequest) -> JSONResponse:
     _validate_run_request(req)
-
-    if req.curtailment_enabled:
-        limit_kw = req.curtailment_limit_kw
-        if limit_kw is None or not math.isfinite(float(limit_kw)) or limit_kw <= 0:
-            raise HTTPException(
-                status_code=422,
-                detail="Curtailment limit must be a positive kW value.",
-            )
+    _validate_curtailment(req)
 
     job_id = uuid.uuid4().hex[:12]
     JOBS[job_id] = {
+        "mode": "validation",
         "state": "running",
         "progress": 0,
         "stage": "Queued…",
         "request": _model_dump(req),
     }
     threading.Thread(target=_run_job, args=(job_id, req), daemon=True).start()
+    return JSONResponse({"job_id": job_id})
+
+
+@app.post("/api/annual-run")
+def start_annual_run(req: AnnualRunRequest) -> JSONResponse:
+    _validate_run_request(req)
+    _validate_curtailment(req)
+    _annual_dates(req)
+
+    job_id = uuid.uuid4().hex[:12]
+    JOBS[job_id] = {
+        "mode": "annual",
+        "state": "running",
+        "progress": 0,
+        "stage": "Queued",
+        "request": _model_dump(req),
+    }
+    threading.Thread(target=_run_annual_job, args=(job_id, req), daemon=True).start()
     return JSONResponse({"job_id": job_id})
 
 

@@ -144,6 +144,16 @@ COLUMN_RENAME = {
     "wind_speed": "wind_speed_ms",
 }
 
+MIDC_COLUMNS = {
+    "DATE (MM/DD/YYYY)": "date",
+    "HOUR-MST": "hour_mst",
+    "Avg Global Horizontal [W/m^2]": "ghi_wm2",
+    "Avg Direct Normal [W/m^2]": "dni_wm2",
+    "Avg Diffuse Horizontal [W/m^2]": "dhi_wm2",
+    "Avg Air Temperature [deg C]": "temp_air_c",
+    "Avg Avg Wind Speed @ 10m [m/s]": "wind_speed_ms",
+}
+
 
 # -----------------------------------------------------------------------------
 # I/O + PRE-PROCESSING
@@ -196,6 +206,75 @@ def parse_input_csv(path: str) -> pd.DataFrame:
     return df
 
 
+def parse_midc_csv(path: str) -> tuple[pd.DataFrame, list[str]]:
+    """Read dashboard-generated MIDC hourly data using fixed MST timestamps."""
+    raw = pd.read_csv(path)
+    missing_columns = sorted(set(MIDC_COLUMNS).difference(raw.columns))
+    if missing_columns:
+        raise ValueError(
+            "MIDC file is missing required columns: " + ", ".join(missing_columns)
+        )
+
+    raw = raw.rename(columns=MIDC_COLUMNS)
+    parsed_dates = pd.to_datetime(raw["date"], format="%m/%d/%Y", errors="coerce")
+    hours = pd.to_numeric(raw["hour_mst"], errors="coerce")
+    valid_time = parsed_dates.notna() & hours.between(0, 23) & hours.mod(1).eq(0)
+    warnings: list[str] = []
+    invalid_time_count = int((~valid_time).sum())
+    if invalid_time_count:
+        warnings.append(
+            f"Dropped {invalid_time_count} MIDC row(s) with invalid date/hour values."
+        )
+    raw = raw.loc[valid_time].copy()
+    parsed_dates = parsed_dates.loc[valid_time]
+    hours = hours.loc[valid_time].astype(int)
+    if raw.empty:
+        raise ValueError("MIDC file contains no valid date/hour rows.")
+
+    timestamp_mst = (
+        parsed_dates + pd.to_timedelta(hours, unit="h")
+    ).dt.tz_localize("Etc/GMT+7")
+    timestamp_local = timestamp_mst.dt.tz_convert(TIMEZONE)
+
+    data = pd.DataFrame(index=timestamp_local)
+    for column in ("ghi_wm2", "dni_wm2", "dhi_wm2", "temp_air_c", "wind_speed_ms"):
+        data[column] = pd.to_numeric(raw[column], errors="coerce").to_numpy()
+
+    missing_counts = data[
+        ["ghi_wm2", "dni_wm2", "dhi_wm2", "temp_air_c", "wind_speed_ms"]
+    ].isna().sum()
+    if int(missing_counts.sum()):
+        detail = ", ".join(
+            f"{column}={int(count)}"
+            for column, count in missing_counts.items()
+            if count
+        )
+        warnings.append(
+            "Hourly MIDC gaps were filled for modeling "
+            f"({detail}): GHI/DNI use zero, temperature/wind interpolate, "
+            "and DHI uses a solar-position-derived fallback."
+        )
+
+    for column in ("ghi_wm2", "dni_wm2", "dhi_wm2"):
+        data[column] = data[column].clip(lower=0.0)
+    data["ghi_wm2"] = data["ghi_wm2"].fillna(0.0)
+    data["dni_wm2"] = data["dni_wm2"].fillna(0.0)
+    data["temp_air_c"] = data["temp_air_c"].interpolate(limit_direction="both")
+    data["wind_speed_ms"] = (
+        data["wind_speed_ms"].interpolate(limit_direction="both").fillna(0.0)
+    )
+    if data["temp_air_c"].isna().any():
+        raise ValueError("MIDC air temperature is missing for the entire date range.")
+
+    data["se_measured_power_w"] = 0.0
+    data["sol_measured_power_w"] = 0.0
+    data["timestamp_utc"] = data.index.tz_convert("UTC")
+    data.index.name = "timestamp_local"
+    if data.index.has_duplicates:
+        raise ValueError("MIDC date/hour keys contain duplicate timestamps.")
+    return data.sort_index(), warnings
+
+
 # -----------------------------------------------------------------------------
 # PVLIB WEATHER + MODELCHAIN
 # -----------------------------------------------------------------------------
@@ -216,7 +295,11 @@ def build_weather(
         missing = np.isnan(dhi)
         dhi = np.where(missing, derived, dhi)
         dhi = np.clip(dhi, 0.0, None)
-        dhi_source = "measured" if not missing.all() else "derived (GHI-DNI*cos z)"
+        dhi_source = (
+            "measured with derived fallback"
+            if missing.any()
+            else "measured"
+        )
     else:
         dhi = derived
         dhi_source = "derived (GHI-DNI*cos z)"
@@ -453,15 +536,20 @@ def tilt_summary() -> pd.DataFrame:
     return pd.DataFrame.from_records(recs)
 
 
-def plot_results(df: pd.DataFrame, out_prefix: str) -> None:
-    """AC power (kW) and cumulative energy (kWh): predicted vs measured. Save PNGs."""
+def plot_results(
+    df: pd.DataFrame, out_prefix: str, annual_mode: bool = False
+) -> None:
+    """Save AC-power and cumulative-energy charts for the selected run mode."""
     # AC power
     fig1, ax1 = plt.subplots(figsize=(14, 6))
     ax1.plot(df.index, df["se_predicted_power_w"] / 1000.0, "r-", label="SolarEdge predicted")
     ax1.plot(df.index, df["sol_predicted_power_w"] / 1000.0, "b-", label="Solectria predicted")
-    ax1.plot(df.index, df["se_measured_power_w"] / 1000.0, "r--", label="SolarEdge measured")
-    ax1.plot(df.index, df["sol_measured_power_w"] / 1000.0, "b--", label="Solectria measured")
+    if not annual_mode:
+        ax1.plot(df.index, df["se_measured_power_w"] / 1000.0, "r--", label="SolarEdge measured")
+        ax1.plot(df.index, df["sol_measured_power_w"] / 1000.0, "b--", label="Solectria measured")
     ax1.set_title(f"AC Power (kW) — sbe_pv_model v{__version__}")
+    if annual_mode:
+        ax1.set_title("Predicted AC Power (kW) - Annual Simulation")
     ax1.set_xlabel(f"Time ({df.index.tz})")
     ax1.set_ylabel("AC Power (kW)")
     ax1.grid(True, alpha=0.25)
@@ -480,6 +568,14 @@ def plot_results(df: pd.DataFrame, out_prefix: str) -> None:
         f"SolarEdge: meas={se_meas:,.1f} kWh, pred={se_pred:,.1f} kWh, Δ={pct(se_pred, se_meas):+.2f}%\n"
         f"Solectria: meas={sol_meas:,.1f} kWh, pred={sol_pred:,.1f} kWh, Δ={pct(sol_pred, sol_meas):+.2f}%"
     )
+    if annual_mode:
+        pred_diff = se_pred - sol_pred
+        pred_pct = pred_diff / sol_pred * 100.0 if sol_pred != 0 else np.nan
+        ac_txt = (
+            f"Period energy (kWh)\nSolarEdge: {se_pred:,.0f}\n"
+            f"Solectria: {sol_pred:,.0f}\n"
+            f"Difference: {pred_diff:,.0f} ({pred_pct:+.2f}%)"
+        )
     ax1.text(
         0.01, 0.99, ac_txt, transform=ax1.transAxes, va="top", ha="left", fontsize=11,
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.85, edgecolor="gray"),
@@ -490,9 +586,12 @@ def plot_results(df: pd.DataFrame, out_prefix: str) -> None:
     fig2, ax2 = plt.subplots(figsize=(14, 6))
     ax2.plot(df.index, df["se_predicted_energy_kwh"], "r-", label="SolarEdge predicted")
     ax2.plot(df.index, df["sol_predicted_energy_kwh"], "b-", label="Solectria predicted")
-    ax2.plot(df.index, df["se_measured_energy_kwh"], "r--", label="SolarEdge measured")
-    ax2.plot(df.index, df["sol_measured_energy_kwh"], "b--", label="Solectria measured")
+    if not annual_mode:
+        ax2.plot(df.index, df["se_measured_energy_kwh"], "r--", label="SolarEdge measured")
+        ax2.plot(df.index, df["sol_measured_energy_kwh"], "b--", label="Solectria measured")
     ax2.set_title(f"Cumulative Energy (kWh) — sbe_pv_model v{__version__}")
+    if annual_mode:
+        ax2.set_title("Cumulative Predicted Energy (kWh) - Annual Simulation")
     ax2.set_xlabel(f"Time ({df.index.tz})")
     ax2.set_ylabel("Cumulative Energy (kWh)")
     ax2.grid(True, alpha=0.25)
@@ -506,6 +605,8 @@ def plot_results(df: pd.DataFrame, out_prefix: str) -> None:
         f"Solectria\n measured : {sol_meas:,.1f} kWh\n predicted: {sol_pred:,.1f} kWh\n Δ: {pct(sol_pred, sol_meas):+.2f}%\n\n"
         f"SE vs Sol\n measured Δ : {meas_sys_pct:+.2f}%\n predicted Δ: {pred_sys_pct:+.2f}%"
     )
+    if annual_mode:
+        ce_txt = ac_txt
     ax2.text(
         0.01, 0.99, ce_txt, transform=ax2.transAxes, va="top", ha="left", fontsize=11,
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.85, edgecolor="gray"),
@@ -514,8 +615,87 @@ def plot_results(df: pd.DataFrame, out_prefix: str) -> None:
     plt.close("all")
 
 
-def write_excel(df: pd.DataFrame, excel_path: str, meta: dict) -> None:
-    """Write time_series, tilts_and_strings, run_info tabs."""
+def monthly_energy_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Return one predicted-energy summary row per local calendar month."""
+    se_monthly = df["se_predicted_energy_step_kwh"].resample("MS").sum()
+    sol_monthly = df["sol_predicted_energy_step_kwh"].resample("MS").sum()
+    sol_monthly = sol_monthly.reindex(se_monthly.index)
+    result = pd.DataFrame(
+        {
+            "month": se_monthly.index.strftime("%b %Y"),
+            "month_start": se_monthly.index.tz_localize(None),
+            "SolarEdge_predicted_kWh": se_monthly.to_numpy(),
+            "Solectria_predicted_kWh": sol_monthly.to_numpy(),
+        }
+    )
+    result["difference_kWh"] = (
+        result["SolarEdge_predicted_kWh"] - result["Solectria_predicted_kWh"]
+    )
+    result["difference_pct"] = np.where(
+        result["Solectria_predicted_kWh"] != 0,
+        result["difference_kWh"] / result["Solectria_predicted_kWh"] * 100.0,
+        np.nan,
+    )
+    return result
+
+
+def plot_monthly_energy(df: pd.DataFrame, out_prefix: str) -> None:
+    """Save the annual-result monthly predicted-energy comparison chart."""
+    monthly = monthly_energy_table(df)
+    x = np.arange(len(monthly))
+    width = 0.38
+    fig, ax = plt.subplots(figsize=(14, 6))
+    se_values = monthly["SolarEdge_predicted_kWh"].to_numpy(dtype=float)
+    sol_values = monthly["Solectria_predicted_kWh"].to_numpy(dtype=float)
+    ax.bar(x - width / 2, se_values, width=width, color="red", label="SolarEdge (kWh)")
+    ax.bar(x + width / 2, sol_values, width=width, color="blue", label="Solectria (kWh)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(monthly["month"], rotation=35, ha="right")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Predicted Energy (kWh)")
+    ax.set_title("Monthly Predicted Energy - Annual Simulation")
+    ax.grid(True, axis="y", alpha=0.25)
+    ax.legend(loc="best")
+
+    ymax = float(np.nanmax([se_values.max(), sol_values.max()])) if len(monthly) else 0.0
+    pad = ymax * 0.02 if ymax > 0 else 0.0
+    for index, row in monthly.iterrows():
+        pct_value = float(row["difference_pct"])
+        label = "n/a" if not np.isfinite(pct_value) else f"{pct_value:+.1f}%"
+        ax.text(
+            x[index],
+            max(row["SolarEdge_predicted_kWh"], row["Solectria_predicted_kWh"]) + pad,
+            label,
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85, edgecolor="gray"),
+        )
+
+    se_total = float(df["se_predicted_energy_kwh"].iloc[-1])
+    sol_total = float(df["sol_predicted_energy_kwh"].iloc[-1])
+    total_diff = se_total - sol_total
+    total_pct = total_diff / sol_total * 100.0 if sol_total else np.nan
+    ax.text(
+        0.01,
+        0.99,
+        f"Period energy (kWh)\nSolarEdge: {se_total:,.0f}\n"
+        f"Solectria: {sol_total:,.0f}\nDifference: {total_diff:,.0f} ({total_pct:+.2f}%)",
+        transform=ax.transAxes,
+        va="top",
+        ha="left",
+        fontsize=10,
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.85, edgecolor="gray"),
+    )
+    fig.tight_layout()
+    fig.savefig(f"{out_prefix}_monthly_energy.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def write_excel(
+    df: pd.DataFrame, excel_path: str, meta: dict, annual_mode: bool = False
+) -> None:
+    """Write time series, layout, run metadata, and optional monthly energy."""
     out = df.copy()
     out["timestamp_local_naive"] = out.index.tz_localize(None)
     out["timestamp_utc_naive"] = out["timestamp_utc"].dt.tz_localize(None)
@@ -543,6 +723,10 @@ def write_excel(df: pd.DataFrame, excel_path: str, meta: dict) -> None:
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         out[cols].to_excel(writer, sheet_name="time_series", index=False)
         tilt_summary().to_excel(writer, sheet_name="tilts_and_strings", index=False)
+        if annual_mode:
+            monthly_energy_table(df).to_excel(
+                writer, sheet_name="monthly_energy", index=False
+            )
         pd.DataFrame(list(meta.items()), columns=["parameter", "value"]).to_excel(
             writer, sheet_name="run_info", index=False
         )
@@ -564,6 +748,8 @@ def run_model(
     iam_a_r: float = A_R,
     curtailment_enabled: bool = False,
     curtailment_limit_kw: float | None = None,
+    input_kind: str = "historian",
+    annual_mode: bool = False,
 ) -> dict:
     """Run the full model on input_csv, write PNGs + Excel, return a stats dict.
 
@@ -577,10 +763,20 @@ def run_model(
     se_eff = se_inv_eff * se_bos_eff
     sol_eff = sol_inv_eff * sol_bos_eff
 
-    df = parse_input_csv(input_csv)
+    data_quality_warnings: list[str] = []
+    if input_kind == "midc":
+        df, data_quality_warnings = parse_midc_csv(input_csv)
+    elif input_kind == "historian":
+        df = parse_input_csv(input_csv)
+    else:
+        raise ValueError(f"Unsupported model input kind: {input_kind}")
+    def prediction_progress(frac: float, msg: str) -> None:
+        if progress_cb:
+            progress_cb(max(0.0, min(1.0, frac)) * 0.84, msg)
+
     df, dhi_source = predict_ac_power(
         df,
-        progress_cb=progress_cb,
+        progress_cb=prediction_progress,
         backtrack=backtrack,
         se_eff=se_eff,
         sol_eff=sol_eff,
@@ -589,19 +785,29 @@ def run_model(
     )
     if curtailment_enabled and curtailment_limit_kw is None:
         raise ValueError("Curtailment limit must be a positive kW value.")
+    if progress_cb:
+        progress_cb(0.86, "Applying curtailment and integrating energy")
     active_curtailment_limit_kw = (
         float(curtailment_limit_kw) if curtailment_enabled else None
     )
     df = apply_curtailment(df, active_curtailment_limit_kw)
     df = add_energy(df)
 
-    plot_results(df, out_prefix=output_base)
+    if progress_cb:
+        progress_cb(0.89, "Rendering power and energy charts")
+    plot_results(df, out_prefix=output_base, annual_mode=annual_mode)
+    if annual_mode:
+        if progress_cb:
+            progress_cb(0.93, "Rendering monthly energy chart")
+        plot_monthly_energy(df, out_prefix=output_base)
 
     meta = {
         "script": "sbe_pv_model.py",
         "version": __version__,
         "run_timestamp_utc": pd.Timestamp.now(tz="UTC").isoformat(),
         "input_csv": input_csv,
+        "input_kind": input_kind,
+        "annual_mode": bool(annual_mode),
         "input_is_utc": bool(INPUT_IS_UTC),
         "local_timezone": str(df.index.tz),
         "dhi_source": dhi_source,
@@ -632,8 +838,13 @@ def run_model(
         "SOLAREDGE_STRINGS": SOLAREDGE_STRINGS,
         "SOLAREDGE_BAYS_PER_STRING": SOLAREDGE_BAYS_PER_STRING,
         "module_name": MODULE_NAME,
+        "data_quality_warnings": " | ".join(data_quality_warnings) or "None",
     }
-    write_excel(df, f"{output_base}.xlsx", meta)
+    if progress_cb:
+        progress_cb(0.97, "Creating Excel workbook")
+    write_excel(df, f"{output_base}.xlsx", meta, annual_mode=annual_mode)
+    if progress_cb:
+        progress_cb(1.0, "Model outputs ready")
 
     se_meas = float(df["se_measured_energy_kwh"].iloc[-1])
     se_pred = float(df["se_predicted_energy_kwh"].iloc[-1])
@@ -655,14 +866,23 @@ def run_model(
             return None
         return _safe((pred - meas) / meas * 100.0, 2)
 
+    predicted_difference = se_pred - sol_pred
+    predicted_difference_pct = (
+        predicted_difference / sol_pred * 100.0 if sol_pred else np.nan
+    )
+
     return {
-        "se_measured_kwh": _safe(se_meas),
+        "mode": "annual" if annual_mode else "validation",
+        "se_measured_kwh": None if annual_mode else _safe(se_meas),
         "se_predicted_kwh": _safe(se_pred),
-        "sol_measured_kwh": _safe(sol_meas),
+        "sol_measured_kwh": None if annual_mode else _safe(sol_meas),
         "sol_predicted_kwh": _safe(sol_pred),
-        "se_pct": _pct(se_pred, se_meas),
-        "sol_pct": _pct(sol_pred, sol_meas),
+        "se_pct": None if annual_mode else _pct(se_pred, se_meas),
+        "sol_pct": None if annual_mode else _pct(sol_pred, sol_meas),
+        "predicted_difference_kwh": _safe(predicted_difference),
+        "predicted_difference_pct": _safe(predicted_difference_pct, 2),
         "dhi_source": dhi_source,
+        "data_quality_warnings": data_quality_warnings,
         "backtrack": bool(backtrack),
         "solaredge_inverter_efficiency": _safe(se_inv_eff, 4),
         "solaredge_bos_efficiency": _safe(se_bos_eff, 4),
@@ -682,6 +902,9 @@ def run_model(
         "n_rows": int(len(df)),
         "ac_png": f"{output_base}_ac_power.png",
         "energy_png": f"{output_base}_cumulative_energy.png",
+        "monthly_png": (
+            f"{output_base}_monthly_energy.png" if annual_mode else None
+        ),
         "excel": f"{output_base}.xlsx",
     }
 

@@ -146,6 +146,13 @@
             color: var(--accent-strong);
         }
 
+        .nav-item:hover,
+        .nav-item:focus-visible {
+            background: var(--surface-strong);
+            color: var(--accent-strong);
+            outline: none;
+        }
+
         .nav-symbol {
             width: 24px;
             height: 24px;
@@ -276,11 +283,641 @@
             font-size: 14px;
         }
 
+        .mode-tabs {
+            display: inline-flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface-muted);
+        }
+
+        .mode-tab {
+            padding: 10px 18px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--muted);
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .mode-tab.active {
+            background: var(--accent);
+            color: #ffffff;
+            box-shadow: 0 2px 7px rgba(0, 87, 80, 0.18);
+        }
+
+        .annual-only {
+            display: none;
+        }
+
+        body.dashboard-mode-annual .annual-only {
+            display: block;
+        }
+
+        body.dashboard-mode-annual .validation-only {
+            display: none;
+        }
+
         .stats-bar {
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 14px;
             margin-bottom: 20px;
+        }
+
+        .annual-stats {
+            grid-template-columns: repeat(12, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .annual-stat-primary {
+            grid-column: span 6;
+            min-height: 132px;
+            border-top: 3px solid var(--accent);
+        }
+
+        .annual-stat-secondary {
+            grid-column: span 3;
+            min-height: 112px;
+        }
+
+        .annual-results-meta {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin: 0 0 20px;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .annual-results-meta strong {
+            display: block;
+            margin-top: 3px;
+            color: var(--text);
+            font-size: 14px;
+        }
+
+        .quality-panel,
+        .runtime-warning {
+            margin-bottom: 20px;
+            padding: 13px 16px;
+            border: 1px solid #e6c466;
+            border-radius: 8px;
+            background: #fff9e8;
+            color: #694f0a;
+            font-size: 13px;
+        }
+
+        .quality-panel.ok {
+            border-color: #9bc8b6;
+            background: #edf8f3;
+            color: #245b46;
+        }
+
+        .quality-panel ul {
+            margin: 8px 0 0 18px;
+        }
+
+        .runtime-warning {
+            display: none;
+            margin-top: 14px;
+            margin-bottom: 0;
+        }
+
+        .runtime-warning.visible {
+            display: block;
+        }
+
+        #annualControls,
+        #analysisControls {
+            padding: 0;
+            overflow: hidden;
+            border-top: 3px solid var(--accent);
+        }
+
+        #annualControls .controls-header,
+        #analysisControls .controls-header {
+            align-items: center;
+            margin: 0;
+            padding: 20px 22px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .annual-heading-copy,
+        .validation-heading-copy {
+            display: grid;
+            gap: 5px;
+            max-width: 700px;
+        }
+
+        .annual-kicker,
+        .validation-kicker {
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 850;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+        }
+
+        #annualControls .section-title,
+        #analysisControls .section-title {
+            font-size: 21px;
+        }
+
+        #annualControls .section-subtitle,
+        #analysisControls .section-subtitle {
+            font-size: 13px;
+        }
+
+        #annualRunBtn {
+            min-height: 42px;
+            padding: 10px 17px;
+            box-shadow: 0 7px 18px rgba(15, 118, 110, 0.18);
+        }
+
+        .annual-config-grid {
+            display: grid;
+            grid-template-columns: minmax(310px, 0.88fr) minmax(460px, 1.12fr);
+            gap: 16px;
+            padding: 20px;
+            background: var(--surface-muted);
+        }
+
+        #analysisControls .date-controls {
+            padding: 20px;
+            background: var(--surface-muted);
+        }
+
+        #analysisControls .control-section {
+            padding: 18px;
+            border-radius: 10px;
+            background: var(--surface);
+        }
+
+        .annual-duration-caution {
+            display: flex;
+            align-items: flex-start;
+            gap: 11px;
+            padding: 13px 20px;
+            border-bottom: 1px solid #e7c36a;
+            background: var(--warning-soft);
+            color: #674b08;
+        }
+
+        .annual-duration-caution strong {
+            display: block;
+            margin-bottom: 2px;
+            color: #5b4207;
+            font-size: 13px;
+        }
+
+        .annual-duration-caution p {
+            font-size: 12px;
+        }
+
+        .caution-mark {
+            width: 24px;
+            height: 24px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border: 1px solid #d8a936;
+            border-radius: 50%;
+            background: #fff9e8;
+            color: #7a5707;
+            font-size: 12px;
+            font-weight: 900;
+        }
+
+        .annual-config-card {
+            min-width: 0;
+            padding: 18px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+        }
+
+        .annual-card-heading {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .annual-card-heading h3 {
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 830;
+            line-height: 1.25;
+        }
+
+        .annual-card-heading p,
+        .annual-iam-row p,
+        .annual-system-heading p {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .annual-step {
+            width: 28px;
+            height: 28px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border-radius: 7px;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            font-size: 12px;
+            font-weight: 900;
+        }
+
+        .annual-date-grid,
+        .annual-option-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .validation-window-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .validation-options-block {
+            display: grid;
+            gap: 10px;
+        }
+
+        .annual-time-note {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 650;
+        }
+
+        .annual-time-dot {
+            width: 7px;
+            height: 7px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: var(--info);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .annual-card-divider {
+            height: 1px;
+            margin: 17px 0;
+            background: var(--border);
+        }
+
+        .annual-subheading {
+            margin-bottom: 9px;
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 830;
+            text-transform: uppercase;
+        }
+
+        .annual-limit.visible {
+            margin-top: 10px;
+        }
+
+        .annual-system-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .annual-system-card {
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .annual-system-card.solaredge {
+            border-top: 3px solid var(--accent);
+        }
+
+        .annual-system-card.solectria {
+            border-top: 3px solid var(--info);
+        }
+
+        .annual-system-heading {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+        }
+
+        .annual-system-heading h4 {
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 830;
+        }
+
+        .system-dot {
+            width: 9px;
+            height: 9px;
+            flex: 0 0 auto;
+            margin-top: 5px;
+            border-radius: 50%;
+        }
+
+        .solaredge-dot {
+            background: var(--accent);
+        }
+
+        .solectria-dot {
+            background: var(--info);
+        }
+
+        .annual-efficiency-field .date-input {
+            background: var(--surface);
+        }
+
+        .annual-iam-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 12px;
+            margin-top: 14px;
+            padding: 13px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .annual-iam-row .annual-subheading {
+            margin-bottom: 0;
+            text-transform: none;
+            font-size: 13px;
+        }
+
+        .annual-iam-toggle {
+            min-width: 122px;
+        }
+
+        .annual-iam-value.visible {
+            grid-column: 1 / -1;
+            grid-template-columns: minmax(0, 1fr) 128px;
+            align-items: center;
+            gap: 12px;
+            padding: 10px;
+            border: 1px solid rgba(15, 118, 110, 0.36);
+            border-radius: 6px;
+            background: #f3fbf8;
+        }
+
+        .annual-results-shell {
+            margin-top: 24px;
+        }
+
+        .validation-results-shell {
+            margin-top: 24px;
+        }
+
+        .validation-system-summaries {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+
+        .validation-system-summary {
+            min-width: 0;
+            padding: 18px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            box-shadow: var(--shadow);
+        }
+
+        .validation-system-summary.solaredge-summary {
+            border-top: 3px solid var(--accent);
+        }
+
+        .validation-system-summary.solectria-summary {
+            border-top: 3px solid var(--info);
+        }
+
+        .validation-system-summary-heading {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .validation-system-summary-heading h3 {
+            color: var(--text);
+            font-size: 17px;
+            font-weight: 840;
+            line-height: 1.2;
+        }
+
+        .validation-system-summary-heading p {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .validation-system-metrics {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .validation-system-metric {
+            min-width: 0;
+            padding: 13px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .validation-metric-label,
+        .validation-comparison-label {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 820;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .validation-metric-value {
+            margin-top: 6px;
+            color: var(--text);
+            font-size: 26px;
+            font-weight: 850;
+            line-height: 1.08;
+        }
+
+        .solaredge-summary .validation-metric-value {
+            color: var(--accent-strong);
+        }
+
+        .solectria-summary .validation-metric-value {
+            color: var(--info);
+        }
+
+        .validation-delta-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-top: 10px;
+            padding: 11px 14px;
+            border-radius: 8px;
+            background: var(--surface-strong);
+        }
+
+        .validation-delta-copy {
+            display: grid;
+            gap: 2px;
+        }
+
+        .validation-delta-copy strong {
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 820;
+            text-transform: uppercase;
+        }
+
+        .validation-delta-copy span {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .validation-delta-value {
+            flex: 0 0 auto;
+            color: var(--text);
+            font-size: 23px;
+            font-weight: 850;
+            line-height: 1;
+        }
+
+        .validation-comparison-strip {
+            display: grid;
+            grid-template-columns: minmax(260px, 1.35fr) repeat(2, minmax(180px, 0.65fr));
+            align-items: center;
+            gap: 18px;
+            margin-bottom: 20px;
+            padding: 15px 18px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: linear-gradient(120deg, var(--surface) 0%, var(--surface-muted) 100%);
+            box-shadow: var(--shadow);
+        }
+
+        .validation-comparison-intro {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            min-width: 0;
+        }
+
+        .validation-comparison-symbol {
+            width: 34px;
+            height: 34px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border-radius: 9px;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            font-size: 17px;
+            font-weight: 900;
+        }
+
+        .validation-comparison-intro h3 {
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 830;
+        }
+
+        .validation-comparison-intro p,
+        .validation-comparison-helper {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .validation-comparison-metric {
+            min-width: 0;
+            padding-left: 18px;
+            border-left: 1px solid var(--border);
+        }
+
+        .validation-comparison-value {
+            margin-top: 5px;
+            color: var(--info);
+            font-size: 24px;
+            font-weight: 850;
+            line-height: 1.08;
+        }
+
+        .annual-results-heading {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 14px;
+        }
+
+        .annual-results-heading h2 {
+            color: var(--text);
+            font-size: 19px;
+            font-weight: 830;
+        }
+
+        .annual-results-heading p {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .annual-results-note {
+            flex: 0 0 auto;
+            padding: 6px 9px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 780;
+        }
+
+        .annual-charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .annual-charts-grid .chart-placeholder {
+            height: 320px;
+            min-height: 320px;
+        }
+
+        .annual-charts-grid .chart-image {
+            height: 100%;
+            object-fit: contain;
+            background: #ffffff;
         }
 
         .stat-card,
@@ -333,6 +970,47 @@
             gap: 10px;
             flex-wrap: wrap;
             justify-content: flex-end;
+        }
+
+        .configuration-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-top: 18px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .configuration-actions-copy {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .configuration-actions-copy strong {
+            display: block;
+            margin-bottom: 2px;
+            color: var(--muted-strong);
+            font-size: 13px;
+        }
+
+        #annualControls .configuration-actions {
+            margin: 0;
+            padding: 16px 20px;
+            background: var(--surface);
+        }
+
+        #analysisControls .configuration-actions {
+            margin: 0;
+            padding: 16px 20px;
+            background: var(--surface);
+        }
+
+        #annualControls,
+        #analysisControls,
+        #annualChartGrid,
+        #chartGrid {
+            scroll-margin-top: 18px;
         }
 
         .date-controls {
@@ -398,17 +1076,6 @@
             min-height: 44px;
         }
 
-        .model-settings .iam-ar.visible {
-            display: grid;
-            grid-template-columns: 72px minmax(110px, 160px);
-            align-items: center;
-            gap: 10px;
-            padding: 10px;
-            border: 1px solid rgba(15, 118, 110, 0.36);
-            border-radius: 6px;
-            background: #f3fbf8;
-        }
-
         .toggles-row,
         .control-group {
             display: flex;
@@ -462,6 +1129,11 @@
             cursor: not-allowed;
             color: #798780;
             background: #eef3f1;
+        }
+
+        .time-24-input {
+            font-variant-numeric: tabular-nums;
+            letter-spacing: 0.04em;
         }
 
         .eff-input {
@@ -779,12 +1451,26 @@
             font-weight: 900;
             box-shadow: 0 16px 34px rgba(15, 118, 110, 0.32);
             transition: transform 0.16s ease, background 0.16s ease;
+            touch-action: none;
+            user-select: none;
             z-index: 998;
         }
 
         .floating-chat-btn:hover {
             background: var(--accent-strong);
             transform: translateY(-2px);
+        }
+
+        .floating-chat-btn.dragging,
+        .floating-chat-btn.dragging:hover {
+            cursor: grabbing;
+            transform: none;
+            transition: none;
+        }
+
+        .floating-chat-btn:focus-visible {
+            outline: 3px solid rgba(37, 99, 235, 0.32);
+            outline-offset: 3px;
         }
 
         .floating-chat-btn.hidden,
@@ -979,6 +1665,7 @@
 
             .header,
             .stats-bar,
+            .annual-results-meta,
             .date-controls,
             .charts-grid {
                 grid-template-columns: 1fr;
@@ -994,12 +1681,42 @@
                 justify-content: flex-start;
             }
 
+            .configuration-actions .control-actions {
+                justify-content: flex-end;
+            }
+
             .model-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
             .model-settings .model-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .annual-config-grid,
+            .annual-charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .annual-stats {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .annual-stat-primary,
+            .annual-stat-secondary {
+                grid-column: span 1;
+            }
+
+            .validation-system-summaries {
+                grid-template-columns: 1fr;
+            }
+
+            .validation-comparison-strip {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .validation-comparison-intro {
+                grid-column: 1 / -1;
             }
         }
 
@@ -1031,12 +1748,74 @@
                 grid-template-columns: 1fr;
             }
 
-            .model-settings .iam-ar.visible {
+            .curtailment-limit .date-input {
+                justify-self: stretch;
+            }
+
+            #annualControls .controls-header,
+            #analysisControls .controls-header,
+            #analysisControls .date-controls,
+            .annual-config-grid,
+            .annual-duration-caution {
+                padding: 16px;
+            }
+
+            .annual-date-grid,
+            .annual-option-grid,
+            .validation-window-grid,
+            .annual-system-grid,
+            .annual-stats {
                 grid-template-columns: 1fr;
             }
 
-            .curtailment-limit .date-input {
-                justify-self: stretch;
+            .annual-iam-row {
+                grid-template-columns: 1fr;
+                align-items: stretch;
+            }
+
+            .annual-iam-toggle {
+                min-width: 0;
+            }
+
+            .annual-iam-value.visible {
+                grid-template-columns: 1fr;
+            }
+
+            .annual-results-heading {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .validation-system-metrics,
+            .validation-comparison-strip {
+                grid-template-columns: 1fr;
+            }
+
+            .validation-comparison-intro {
+                grid-column: auto;
+            }
+
+            .validation-comparison-metric {
+                padding-top: 12px;
+                padding-left: 0;
+                border-top: 1px solid var(--border);
+                border-left: 0;
+            }
+
+            .configuration-actions {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .configuration-actions .control-actions {
+                display: grid;
+                grid-template-columns: 1fr;
+                width: 100%;
+            }
+
+            .configuration-actions .run-btn,
+            .configuration-actions .download-link {
+                width: 100%;
             }
 
             .chart-placeholder {
@@ -1055,7 +1834,7 @@
     </style>
 </head>
 
-<body>
+<body class="dashboard-mode-validation">
     <div class="app-shell">
         <aside class="side-nav" aria-label="Dashboard navigation">
             <div class="nav-brand">
@@ -1068,11 +1847,11 @@
 
             <nav class="nav-menu" aria-label="Workspace sections">
                 <div class="nav-caption">Monitor</div>
-                <a class="nav-item active" href="#analysisControls">
+                <a class="nav-item active" id="operationsNavLink" href="#analysisControls">
                     <span class="nav-symbol">OP</span>
                     <span>Operations</span>
                 </a>
-                <a class="nav-item" href="#chartGrid">
+                <a class="nav-item" id="pvModelNavLink" href="#chartGrid">
                     <span class="nav-symbol">PV</span>
                     <span>PV model</span>
                 </a>
@@ -1111,109 +1890,384 @@
                 </div>
             </section>
 
-            <!-- Functional contract: every original form id, chart id, button id, and state class is preserved for the existing JavaScript. -->
-            <section class="controls-bar" id="analysisControls" aria-label="Analysis controls">
-                <div class="controls-header">
-                    <div>
-                        <h2 class="section-title">Run configuration</h2>
-                        <p class="section-subtitle">Set the time window, time interval, and model parameters</p>
+            <nav class="mode-tabs" aria-label="Analysis mode">
+                <button class="mode-tab active" id="validationTab" type="button" aria-selected="true">Model Validation</button>
+                <button class="mode-tab" id="annualTab" type="button" aria-selected="false">Annual Simulation</button>
+            </nav>
+
+            <div class="annual-only" id="annualPanel">
+                <section class="controls-bar" id="annualControls" aria-label="Annual simulation controls">
+                    <div class="controls-header">
+                        <div class="annual-heading-copy">
+                            <p class="annual-kicker">Long-range forecast</p>
+                            <h2 class="section-title">Annual simulation</h2>
+                            <p class="section-subtitle">Configure the time window and both PV model paths, then compare annual production from the same MIDC weather source.</p>
+                        </div>
                     </div>
+
+                    <div class="annual-duration-caution" role="note" aria-label="Annual simulation duration caution">
+                        <span class="caution-mark" aria-hidden="true">!</span>
+                        <div>
+                            <strong>Allow approximately 5–6 hours for a full-year simulation.</strong>
+                            <p>Completion time depends on the requested date range and source-data availability; longer ranges may take more time.</p>
+                        </div>
+                    </div>
+
+                    <div class="annual-config-grid">
+                        <section class="annual-config-card" aria-labelledby="annualWindowHeading">
+                            <div class="annual-card-heading">
+                                <span class="annual-step" aria-hidden="true">1</span>
+                                <div>
+                                    <h3 id="annualWindowHeading">Simulation window</h3>
+                                    <p>Select inclusive dates in MIDC fixed MST.</p>
+                                </div>
+                            </div>
+
+                            <div class="annual-date-grid">
+                                <label class="control-field">
+                                    <span class="date-label">Start date</span>
+                                    <input type="date" class="date-input annual-input" id="annualFromDate" value="2025-01-01">
+                                </label>
+                                <label class="control-field">
+                                    <span class="date-label">End date</span>
+                                    <input type="date" class="date-input annual-input" id="annualToDate" value="2025-12-31">
+                                </label>
+                            </div>
+                            <div class="annual-time-note">
+                                <span class="annual-time-dot" aria-hidden="true"></span>
+                                Fixed UTC-7 · hour 1 represents 00:01-01:00
+                            </div>
+                            <div class="runtime-warning" id="annualRuntimeWarning">
+                                This range is longer than 366 days. Downloading minute data and running the model may take a long time, but the range is allowed.
+                            </div>
+
+                            <div class="annual-card-divider"></div>
+                            <div class="annual-subheading">Tracking and output limits</div>
+                            <div class="annual-option-grid">
+                                <label class="checkbox-control">
+                                    <input type="checkbox" class="annual-input" id="annualBacktrack" checked>
+                                    <span>Backtracking</span>
+                                </label>
+                                <label class="checkbox-control">
+                                    <input type="checkbox" class="annual-input" id="annualCurtailmentEnabled">
+                                    <span>Clipping / Curtailment</span>
+                                </label>
+                            </div>
+                            <label class="control-field curtailment-limit annual-limit" id="annualCurtailmentLimitGroup">
+                                <span class="limit-copy">
+                                    <span class="date-label">Curtailment limit</span>
+                                    <span class="limit-helper">Maximum AC output in kW</span>
+                                </span>
+                                <input type="number" class="date-input annual-input" id="annualCurtailmentLimitKw" min="0" step="0.1" placeholder="125" disabled>
+                            </label>
+                        </section>
+
+                        <section class="annual-config-card" aria-labelledby="annualEfficiencyHeading">
+                            <div class="annual-card-heading">
+                                <span class="annual-step" aria-hidden="true">2</span>
+                                <div>
+                                    <h3 id="annualEfficiencyHeading">System efficiencies</h3>
+                                    <p>Use decimal values where 1.0 equals 100%.</p>
+                                </div>
+                            </div>
+
+                            <div class="annual-system-grid" aria-label="Annual efficiencies">
+                                <section class="annual-system-card solaredge" aria-labelledby="annualSolarEdgeHeading">
+                                    <div class="annual-system-heading">
+                                        <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                                        <div>
+                                            <h4 id="annualSolarEdgeHeading">SolarEdge</h4>
+                                            <p>Module-level inverter model</p>
+                                        </div>
+                                    </div>
+                                    <label class="control-field annual-efficiency-field">
+                                        <span class="date-label">Inverter efficiency</span>
+                                        <input type="number" class="date-input eff-input annual-input" id="annualSolaredgeInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                    </label>
+                                    <label class="control-field annual-efficiency-field">
+                                        <span class="date-label">Balance of system</span>
+                                        <input type="number" class="date-input eff-input annual-input" id="annualSolaredgeBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                    </label>
+                                </section>
+
+                                <section class="annual-system-card solectria" aria-labelledby="annualSolectriaHeading">
+                                    <div class="annual-system-heading">
+                                        <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                                        <div>
+                                            <h4 id="annualSolectriaHeading">Solectria</h4>
+                                            <p>String-level model</p>
+                                        </div>
+                                    </div>
+                                    <label class="control-field annual-efficiency-field">
+                                        <span class="date-label">Inverter efficiency</span>
+                                        <input type="number" class="date-input eff-input annual-input" id="annualSolectriaInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                    </label>
+                                    <label class="control-field annual-efficiency-field">
+                                        <span class="date-label">Balance of system</span>
+                                        <input type="number" class="date-input eff-input annual-input" id="annualSolectriaBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                    </label>
+                                </section>
+                            </div>
+
+                            <div class="annual-iam-row">
+                                <div>
+                                    <div class="annual-subheading">Incidence angle modifier</div>
+                                    <p>Optional Martin-Ruiz correction; unchecked keeps a<sub>r</sub> at 0.2.</p>
+                                </div>
+                                <label class="checkbox-control annual-iam-toggle">
+                                    <input type="checkbox" class="annual-input" id="annualIncludeIam">
+                                    <span>Enable IAM</span>
+                                </label>
+                                <label class="control-field iam-ar annual-iam-value" id="annualIamArGroup">
+                                    <span class="date-label">a<sub>r</sub></span>
+                                    <input type="number" class="date-input eff-input annual-input" id="annualIamAr" min="0" step="0.001" value="0.2" disabled>
+                                </label>
+                            </div>
+                        </section>
+                    </div>
+                    <div class="configuration-actions">
+                        <p class="configuration-actions-copy">
+                            <strong>Ready to simulate?</strong>
+                            The irradiance chart appears as soon as the MIDC download is prepared.
+                        </p>
+                        <div class="control-actions">
+                            <a class="download-link hidden" id="annualExcelLink" href="#" download>Export workbook</a>
+                            <button class="run-btn" id="annualRunBtn" type="button">Run annual simulation</button>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="progress-wrap" id="annualProgressWrap">
+                    <div class="progress-head">
+                        <span id="annualProgressStage">Starting...</span>
+                        <span id="annualProgressPct">0%</span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill" id="annualProgressFill"></div></div>
+                </div>
+                <div class="error-banner" id="annualErrorBanner"></div>
+
+                <section class="annual-results-shell" aria-labelledby="annualResultsHeading">
+                    <div class="annual-results-heading">
+                        <div>
+                            <h2 id="annualResultsHeading">Simulation results</h2>
+                            <p>Headline production first, then model differences, coverage, and time-series detail.</p>
+                        </div>
+                        <span class="annual-results-note">Weather inputs render before model outputs</span>
+                    </div>
+
+                <section class="stats-bar annual-stats" aria-label="Annual simulation summary">
+                    <article class="stat-card annual-stat-primary">
+                        <div class="stat-label">Predicted SolarEdge energy</div>
+                        <div class="stat-value neutral"><span id="annualStatSePred">--</span> <span class="stat-unit">kWh</span></div>
+                        <p class="stat-context">Modeled energy over the selected MIDC range.</p>
+                    </article>
+                    <article class="stat-card annual-stat-primary">
+                        <div class="stat-label">Predicted Solectria energy</div>
+                        <div class="stat-value neutral"><span id="annualStatSolPred">--</span> <span class="stat-unit">kWh</span></div>
+                        <p class="stat-context">Modeled energy for the string-level path.</p>
+                    </article>
+                    <article class="stat-card annual-stat-secondary">
+                        <div class="stat-label">Absolute difference</div>
+                        <div class="stat-value neutral"><span id="annualStatDiff">--</span> <span class="stat-unit">kWh</span></div>
+                        <p class="stat-context">SolarEdge prediction minus Solectria prediction.</p>
+                    </article>
+                    <article class="stat-card annual-stat-secondary">
+                        <div class="stat-label">Percentage difference</div>
+                        <div class="stat-value neutral" id="annualStatDiffPct">--</div>
+                        <p class="stat-context">Difference relative to predicted Solectria energy.</p>
+                    </article>
+                    <article class="stat-card annual-stat-secondary">
+                        <div class="stat-label">Hourly rows</div>
+                        <div class="stat-value neutral" id="annualStatRows">--</div>
+                        <p class="stat-context">All 24 right-labeled hours for each requested date.</p>
+                    </article>
+                    <article class="stat-card annual-stat-secondary">
+                        <div class="stat-label">Data quality</div>
+                        <div class="stat-value positive" id="annualStatQuality">Not run</div>
+                        <p class="stat-context">Missing inputs use the documented visible fallback.</p>
+                    </article>
+                </section>
+
+                <div class="annual-results-meta" id="annualResultsMeta">
+                    <div>Fixed MIDC range<strong id="annualResultRange">--</strong></div>
+                    <div>Hour convention<strong>hour 1 = 00:01-01:00</strong></div>
+                    <div>Plot timezone<strong>America/Denver</strong></div>
+                </div>
+                <div class="quality-panel ok" id="annualQualityPanel">Data-quality details will appear after a run.</div>
+
+                <section class="analysis-layout" aria-label="Annual simulation charts">
+                    <div class="annual-charts-grid" id="annualChartGrid">
+                        <article class="chart-card">
+                            <div class="chart-header"><div><div class="chart-title">Irradiance Input</div><div class="chart-meta">DNI, GHI, and DHI from the hourly MIDC source - W/m2</div></div><span class="chart-badge">Weather</span></div>
+                            <div class="chart-placeholder" id="annualIrradianceChartBox"><div class="chart-icon" id="annualIrradianceIcon">W/m2</div><img class="chart-image" id="annualIrradianceImg" alt="Annual DNI, GHI, and DHI irradiance input chart" style="display:none;"></div>
+                        </article>
+                        <article class="chart-card">
+                            <div class="chart-header"><div><div class="chart-title">Predicted AC Power</div><div class="chart-meta">SolarEdge and Solectria predicted AC output</div></div><span class="chart-badge">Power</span></div>
+                            <div class="chart-placeholder" id="annualAcChartBox"><div class="chart-icon" id="annualAcIcon">AC</div><img class="chart-image" id="annualAcImg" alt="Annual predicted AC power chart" style="display:none;"></div>
+                        </article>
+                        <article class="chart-card">
+                            <div class="chart-header"><div><div class="chart-title">Cumulative Predicted Energy</div><div class="chart-meta">Predicted energy growth over the requested range</div></div><span class="chart-badge">Energy</span></div>
+                            <div class="chart-placeholder" id="annualEnergyChartBox"><div class="chart-icon" id="annualEnergyIcon">kWh</div><img class="chart-image" id="annualEnergyImg" alt="Annual cumulative predicted energy chart" style="display:none;"></div>
+                        </article>
+                        <article class="chart-card">
+                            <div class="chart-header"><div><div class="chart-title">Monthly Predicted Energy</div><div class="chart-meta">SolarEdge and Solectria monthly bars with percentage labels</div></div><span class="chart-badge">Monthly</span></div>
+                            <div class="chart-placeholder" id="annualMonthlyChartBox"><div class="chart-icon" id="annualMonthlyIcon">Mon</div><img class="chart-image" id="annualMonthlyImg" alt="Monthly predicted energy chart" style="display:none;"></div>
+                        </article>
+                    </div>
+                </section>
+                </section>
+            </div>
+
+            <!-- Functional contract: every original form id, chart id, button id, and state class is preserved for the existing JavaScript. -->
+            <section class="controls-bar validation-only" id="analysisControls" aria-label="Analysis controls">
+                <div class="controls-header">
+                    <div class="validation-heading-copy">
+                        <p class="validation-kicker">Measured vs modeled</p>
+                        <h2 class="section-title">Run configuration</h2>
+                        <p class="section-subtitle">Configure the validation window and both PV model paths, then compare predictions against measured site performance.</p>
+                    </div>
+                </div>
+
+                <div class="annual-config-grid validation-config-grid">
+                    <section class="annual-config-card" aria-labelledby="validationWindowHeading">
+                        <div class="annual-card-heading">
+                            <span class="annual-step" aria-hidden="true">1</span>
+                            <div>
+                                <h3 id="validationWindowHeading">Validation window</h3>
+                                <p>Select the measured-data period in Mountain time.</p>
+                            </div>
+                        </div>
+                        <div class="validation-window-grid">
+                            <label class="control-field">
+                                <span class="date-label">Start date</span>
+                                <input type="date" class="date-input" id="fromDate" value="2026-06-20">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">Start time (24-hour)</span>
+                                <input type="text" class="date-input time-24-input" id="fromTime" value="00:00" placeholder="HH:MM" pattern="(?:[01]\d|2[0-3]):[0-5]\d" maxlength="5" autocomplete="off" aria-describedby="validationTimeFormat">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">End date</span>
+                                <input type="date" class="date-input" id="toDate" value="2026-06-27">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">End time (24-hour)</span>
+                                <input type="text" class="date-input time-24-input" id="toTime" value="00:00" placeholder="HH:MM" pattern="(?:[01]\d|2[0-3]):[0-5]\d" maxlength="5" autocomplete="off" aria-describedby="validationTimeFormat">
+                            </label>
+                        </div>
+                        <div class="annual-time-note" id="validationTimeFormat">
+                            <span class="annual-time-dot" aria-hidden="true"></span>
+                            24-hour HH:MM &middot; America/Denver
+                        </div>
+
+                        <div class="annual-card-divider"></div>
+                        <div class="annual-subheading" id="validationOptionsHeading">Model options</div>
+                        <div class="validation-options-block" aria-labelledby="validationOptionsHeading">
+                            <label class="control-field">
+                                <span class="date-label">Time interval</span>
+                                <span class="interval-row">
+                                    <input type="number" class="date-input" id="intervalValue" value="1" min="1">
+                                    <select class="date-input" id="intervalUnit">
+                                        <option value="minutes">minutes</option>
+                                        <option value="hours" selected>hours</option>
+                                        <option value="days">days</option>
+                                    </select>
+                                </span>
+                            </label>
+                            <div class="annual-option-grid">
+                                <label class="checkbox-control">
+                                    <input type="checkbox" id="backtrack" checked>
+                                    <span>Backtracking</span>
+                                </label>
+                                <label class="checkbox-control">
+                                    <input type="checkbox" id="curtailmentEnabled">
+                                    <span>Clipping / Curtailment</span>
+                                </label>
+                            </div>
+                            <label class="control-field curtailment-limit annual-limit" id="curtailmentLimitGroup">
+                                <span class="limit-copy">
+                                    <span class="date-label">Curtailment limit</span>
+                                    <span class="limit-helper">Maximum AC output in kW</span>
+                                </span>
+                                <input type="number" class="date-input" id="curtailmentLimitKw" min="0" step="0.1" placeholder="125" disabled>
+                            </label>
+                        </div>
+                    </section>
+
+                    <section class="annual-config-card model-settings" aria-labelledby="validationEfficiencyHeading">
+                        <div class="annual-card-heading">
+                            <span class="annual-step" aria-hidden="true">2</span>
+                            <div>
+                                <h3 id="validationEfficiencyHeading">System efficiencies</h3>
+                                <p>Use decimal values where 1.0 equals 100%.</p>
+                            </div>
+                        </div>
+                        <div class="annual-system-grid" aria-label="Validation efficiencies">
+                            <section class="annual-system-card solaredge" aria-labelledby="validationSolarEdgeHeading">
+                                <div class="annual-system-heading">
+                                    <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                                    <div>
+                                        <h4 id="validationSolarEdgeHeading">SolarEdge</h4>
+                                        <p>Module-level inverter model</p>
+                                    </div>
+                                </div>
+                            <label class="control-field annual-efficiency-field">
+                                <span class="date-label">Inverter efficiency</span>
+                                <input type="number" class="date-input eff-input" id="solaredgeInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            <label class="control-field annual-efficiency-field">
+                                <span class="date-label">Balance of system</span>
+                                <input type="number" class="date-input eff-input" id="solaredgeBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            </section>
+
+                            <section class="annual-system-card solectria" aria-labelledby="validationSolectriaHeading">
+                                <div class="annual-system-heading">
+                                    <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                                    <div>
+                                        <h4 id="validationSolectriaHeading">Solectria</h4>
+                                        <p>String-level model</p>
+                                    </div>
+                                </div>
+                            <label class="control-field annual-efficiency-field">
+                                <span class="date-label">Inverter efficiency</span>
+                                <input type="number" class="date-input eff-input" id="solectriaInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            <label class="control-field annual-efficiency-field">
+                                <span class="date-label">Balance of system</span>
+                                <input type="number" class="date-input eff-input" id="solectriaBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            </section>
+                        </div>
+                        <div class="annual-iam-row">
+                            <div>
+                                <div class="annual-subheading">Incidence angle modifier</div>
+                                <p>Optional Martin-Ruiz correction; unchecked keeps a<sub>r</sub> at 0.2.</p>
+                            </div>
+                            <label class="checkbox-control annual-iam-toggle">
+                                <input type="checkbox" id="includeIam">
+                                <span>Enable IAM</span>
+                            </label>
+                            <label class="control-field iam-ar annual-iam-value" id="iamArGroup">
+                                <span class="date-label">a<sub>r</sub></span>
+                                <input type="number" class="date-input eff-input" id="iamAr" min="0" step="0.001" value="0.2" disabled>
+                            </label>
+                        </div>
+                    </section>
+                </div>
+                <div class="configuration-actions">
+                    <p class="configuration-actions-copy">
+                        <strong>Ready to validate?</strong>
+                        Run the configured window; workbook export appears when processing completes.
+                    </p>
                     <div class="control-actions">
                         <a class="download-link hidden" id="excelLink" href="#" download>Export workbook</a>
                         <button class="run-btn" id="runBtn">Run analysis</button>
                     </div>
                 </div>
-
-                <div class="date-controls">
-                    <div class="control-section">
-                        <div class="control-section-title">Time window</div>
-                        <div class="control-grid">
-                            <label class="control-field">
-                                <span class="date-label">From date (Mountain)</span>
-                                <input type="date" class="date-input" id="fromDate" value="2026-06-20">
-                            </label>
-                            <label class="control-field">
-                                <span class="date-label">From time</span>
-                                <input type="time" class="date-input" id="fromTime" value="00:00">
-                            </label>
-                            <label class="control-field">
-                                <span class="date-label">To date (Mountain)</span>
-                                <input type="date" class="date-input" id="toDate" value="2026-06-27">
-                            </label>
-                            <label class="control-field">
-                                <span class="date-label">To time</span>
-                                <input type="time" class="date-input" id="toTime" value="00:00">
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="control-section">
-                        <div class="control-section-title">Model Options</div>
-                        <label class="control-field">
-                            <span class="date-label">Time Interval</span>
-                            <span class="interval-row">
-                                <input type="number" class="date-input" id="intervalValue" value="1" min="1">
-                                <select class="date-input" id="intervalUnit">
-                                    <option value="minutes">minutes</option>
-                                    <option value="hours" selected>hours</option>
-                                    <option value="days">days</option>
-                                </select>
-                            </span>
-                        </label>
-                        <div class="toggles-row">
-                            <label class="checkbox-control">
-                                <input type="checkbox" id="backtrack" checked>
-                                <span>Backtracking</span>
-                            </label>
-                            <label class="checkbox-control">
-                                <input type="checkbox" id="curtailmentEnabled">
-                                <span>Clipping / Curtailment</span>
-                            </label>
-                        </div>
-                        <label class="control-field curtailment-limit" id="curtailmentLimitGroup">
-                            <span class="limit-copy">
-                                <span class="date-label">Curtailment limit</span>
-                                <span class="limit-helper">Maximum AC output in kW</span>
-                            </span>
-                            <input type="number" class="date-input" id="curtailmentLimitKw" min="0" step="0.1" placeholder="125" disabled>
-                        </label>
-                    </div>
-
-                    <div class="control-section model-settings" aria-label="Efficiencies">
-                        <div class="control-section-title">Efficiencies (1.0 = 100%)</div>
-                        <div class="model-grid">
-                            <label class="control-field">
-                                <span class="date-label">SolarEdge Inverter</span>
-                                <input type="number" class="date-input eff-input" id="solaredgeInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
-                            </label>
-                            <label class="control-field">
-                                <span class="date-label">SolarEdge Balance of System</span>
-                                <input type="number" class="date-input eff-input" id="solaredgeBosEfficiency" min="0" max="1" step="0.001" value="1.0">
-                            </label>
-                            <label class="control-field">
-                                <span class="date-label">Solectria Inverter</span>
-                                <input type="number" class="date-input eff-input" id="solectriaInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
-                            </label>
-                            <label class="control-field">
-                                <span class="date-label">Solectria Balance of System</span>
-                                <input type="number" class="date-input eff-input" id="solectriaBosEfficiency" min="0" max="1" step="0.001" value="1.0">
-                            </label>
-                        </div>
-                        <div class="toggles-row">
-                            <label class="checkbox-control">
-                                <input type="checkbox" id="includeIam">
-                                <span>Martin-Ruiz IAM</span>
-                            </label>
-                            <label class="control-field iam-ar" id="iamArGroup">
-                                <span class="date-label">a<sub>r</sub></span>
-                                <input type="number" class="date-input eff-input" id="iamAr" min="0" step="0.001" value="0.2" disabled>
-                            </label>
-                        </div>
-                    </div>
-                </div>
             </section>
 
-            <div class="progress-wrap" id="progressWrap">
+            <div class="progress-wrap validation-only" id="progressWrap">
                 <div class="progress-head">
                     <span id="progressStage">Starting...</span>
                     <span id="progressPct">0%</span>
@@ -1222,30 +2276,91 @@
                     <div class="progress-fill" id="progressFill"></div>
                 </div>
             </div>
-            <div class="error-banner" id="errorBanner"></div>
+            <div class="error-banner validation-only" id="errorBanner"></div>
 
-            <section class="stats-bar" aria-label="Performance summary">
-                <article class="stat-card">
-                    <div class="stat-label">SolarEdge predicted</div>
-                    <div class="stat-value neutral"><span id="statSePred">--</span> <span class="stat-unit">kWh</span></div>
-                    <p class="stat-context">PV model output for the selected interval.</p>
-                </article>
-                <article class="stat-card">
-                    <div class="stat-label">Solectria predicted</div>
-                    <div class="stat-value neutral"><span id="statSolPred">--</span> <span class="stat-unit">kWh</span></div>
-                    <p class="stat-context">Comparable modeled production for operations review.</p>
-                </article>
-                <article class="stat-card">
-                    <div class="stat-label">Accuracy (SE, pred vs meas)</div>
-                    <div class="stat-value positive" id="statSePct">--</div>
-                    <p class="stat-context">Positive values indicate measured output above prediction.</p>
-                </article>
-                <article class="stat-card">
-                    <div class="stat-label">Accuracy (Sol, pred vs meas)</div>
-                    <div class="stat-value warning" id="statSolPct">--</div>
-                    <p class="stat-context">Model delta for the Solectria comparison path.</p>
-                </article>
-            </section>
+            <section class="validation-results-shell validation-only" aria-labelledby="validationResultsHeading">
+                <div class="annual-results-heading">
+                    <div>
+                        <h2 id="validationResultsHeading">Validation results</h2>
+                        <p>Measured energy, predicted performance, and model deltas over the selected window.</p>
+                    </div>
+                    <span class="annual-results-note">Measured vs predicted</span>
+                </div>
+
+                <section class="validation-system-summaries" aria-label="System validation summary">
+                    <article class="validation-system-summary solaredge-summary" aria-labelledby="validationSolarEdgeSummaryHeading">
+                        <div class="validation-system-summary-heading">
+                            <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                            <div>
+                                <h3 id="validationSolarEdgeSummaryHeading">SolarEdge</h3>
+                                <p>Module-level inverter model</p>
+                            </div>
+                        </div>
+                        <div class="validation-system-metrics">
+                            <div class="validation-system-metric">
+                                <span class="validation-metric-label">Measured energy</span>
+                                <div class="validation-metric-value"><span id="statSeMeasured">--</span> <span class="stat-unit">kWh</span></div>
+                            </div>
+                            <div class="validation-system-metric">
+                                <span class="validation-metric-label">Predicted energy</span>
+                                <div class="validation-metric-value"><span id="statSePred">--</span> <span class="stat-unit">kWh</span></div>
+                            </div>
+                        </div>
+                        <div class="validation-delta-row">
+                            <div class="validation-delta-copy">
+                                <strong>Model delta</strong>
+                                <span>Predicted minus measured, relative to measured energy</span>
+                            </div>
+                            <div class="validation-delta-value" id="statSePct">--</div>
+                        </div>
+                    </article>
+
+                    <article class="validation-system-summary solectria-summary" aria-labelledby="validationSolectriaSummaryHeading">
+                        <div class="validation-system-summary-heading">
+                            <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                            <div>
+                                <h3 id="validationSolectriaSummaryHeading">Solectria</h3>
+                                <p>String-level model</p>
+                            </div>
+                        </div>
+                        <div class="validation-system-metrics">
+                            <div class="validation-system-metric">
+                                <span class="validation-metric-label">Measured energy</span>
+                                <div class="validation-metric-value"><span id="statSolMeasured">--</span> <span class="stat-unit">kWh</span></div>
+                            </div>
+                            <div class="validation-system-metric">
+                                <span class="validation-metric-label">Predicted energy</span>
+                                <div class="validation-metric-value"><span id="statSolPred">--</span> <span class="stat-unit">kWh</span></div>
+                            </div>
+                        </div>
+                        <div class="validation-delta-row">
+                            <div class="validation-delta-copy">
+                                <strong>Model delta</strong>
+                                <span>Predicted minus measured, relative to measured energy</span>
+                            </div>
+                            <div class="validation-delta-value" id="statSolPct">--</div>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="validation-comparison-strip" aria-label="Measured system comparison">
+                    <div class="validation-comparison-intro">
+                        <span class="validation-comparison-symbol" aria-hidden="true">&Delta;</span>
+                        <div>
+                            <h3>Measured system comparison</h3>
+                            <p>SolarEdge measured energy minus Solectria measured energy.</p>
+                        </div>
+                    </div>
+                    <div class="validation-comparison-metric">
+                        <span class="validation-comparison-label">Energy difference</span>
+                        <div class="validation-comparison-value"><span id="statMeasuredDiff">--</span> <span class="stat-unit">kWh</span></div>
+                    </div>
+                    <div class="validation-comparison-metric">
+                        <span class="validation-comparison-label">Percentage difference</span>
+                        <div class="validation-comparison-value" id="statMeasuredDiffPct">--</div>
+                        <div class="validation-comparison-helper">Relative to Solectria measured energy</div>
+                    </div>
+                </section>
 
             <section class="analysis-layout" aria-label="Performance charts">
                 <div class="charts-grid" id="chartGrid">
@@ -1306,10 +2421,13 @@
                     </article>
                 </div>
             </section>
+            </section>
         </main>
     </div>
 
-    <button class="floating-chat-btn" id="chatToggle">AI</button>
+    <button class="floating-chat-btn" id="chatToggle" type="button"
+        aria-label="Open Solar Agent. Drag to move." aria-expanded="false"
+        title="Drag to move - click to open Solar Agent">AI</button>
 
     <div class="sidebar hidden" id="chatSidebar">
         <div class="sidebar-header">
@@ -1342,6 +2460,23 @@
         const iamAr = document.getElementById('iamAr');
         const iamArGroup = document.getElementById('iamArGroup');
         const excelLink = document.getElementById('excelLink');
+        const validationTab = document.getElementById('validationTab');
+        const annualTab = document.getElementById('annualTab');
+        const annualRunBtn = document.getElementById('annualRunBtn');
+        const annualProgressWrap = document.getElementById('annualProgressWrap');
+        const annualProgressStage = document.getElementById('annualProgressStage');
+        const annualProgressPct = document.getElementById('annualProgressPct');
+        const annualProgressFill = document.getElementById('annualProgressFill');
+        const annualErrorBanner = document.getElementById('annualErrorBanner');
+        const annualCurtailmentEnabled = document.getElementById('annualCurtailmentEnabled');
+        const annualCurtailmentLimitKw = document.getElementById('annualCurtailmentLimitKw');
+        const annualCurtailmentLimitGroup = document.getElementById('annualCurtailmentLimitGroup');
+        const annualIncludeIam = document.getElementById('annualIncludeIam');
+        const annualIamAr = document.getElementById('annualIamAr');
+        const annualIamArGroup = document.getElementById('annualIamArGroup');
+        const annualExcelLink = document.getElementById('annualExcelLink');
+        const operationsNavLink = document.getElementById('operationsNavLink');
+        const pvModelNavLink = document.getElementById('pvModelNavLink');
         const STORAGE_KEY = 'sb-energy-dashboard-state-v1';
         const DEFAULT_ASSISTANT_MESSAGE = "Hi! I'm your solar analyst. Ask me anything about the performance data, model accuracy, or system comparison.";
         let latestJobId = null;
@@ -1349,6 +2484,11 @@
         let latestResult = null;
         let currentRunState = null;
         let pollTimer = null;
+        let activeMode = 'validation';
+        let annualLatestJobId = null;
+        let annualLatestResult = null;
+        let annualRunState = null;
+        let annualPollTimer = null;
         let chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
         let serverSessionId = null;
 
@@ -1359,9 +2499,48 @@
             progressStage.textContent = stage || '';
         }
 
+        function setAnnualProgress(pct, stage) {
+            annualProgressWrap.classList.add('visible');
+            annualProgressFill.style.width = pct + '%';
+            annualProgressPct.textContent = pct + '%';
+            annualProgressStage.textContent = stage || '';
+        }
+
         function showError(msg) {
             errorBanner.textContent = 'Warning: ' + msg;
             errorBanner.classList.add('visible');
+        }
+
+        function showAnnualError(msg) {
+            annualErrorBanner.textContent = 'Warning: ' + msg;
+            annualErrorBanner.classList.add('visible');
+        }
+
+        function switchMode(mode, persist = true) {
+            activeMode = mode === 'annual' ? 'annual' : 'validation';
+            const annual = activeMode === 'annual';
+            document.body.classList.toggle('dashboard-mode-annual', annual);
+            document.body.classList.toggle('dashboard-mode-validation', !annual);
+            validationTab.classList.toggle('active', !annual);
+            annualTab.classList.toggle('active', annual);
+            validationTab.setAttribute('aria-selected', String(!annual));
+            annualTab.setAttribute('aria-selected', String(annual));
+            operationsNavLink.href = annual ? '#annualControls' : '#analysisControls';
+            pvModelNavLink.href = annual ? '#annualChartGrid' : '#chartGrid';
+            setActiveNav(operationsNavLink);
+            if (persist) saveDashboardState();
+        }
+
+        function setActiveNav(activeLink) {
+            [operationsNavLink, pvModelNavLink].forEach((link) => {
+                const active = link === activeLink;
+                link.classList.toggle('active', active);
+                if (active) {
+                    link.setAttribute('aria-current', 'location');
+                } else {
+                    link.removeAttribute('aria-current');
+                }
+            });
         }
         function syncCurtailmentLimit() {
             const enabled = curtailmentEnabled.checked;
@@ -1376,9 +2555,33 @@
             const enabled = includeIam.checked;
             iamAr.disabled = !enabled;
             iamArGroup.classList.toggle('visible', enabled);
-            if (!iamAr.value) {
-                iamAr.value = '0.2';
+            if (!enabled || !iamAr.value) iamAr.value = '0.2';
+        }
+
+        function syncAnnualCurtailmentLimit() {
+            const enabled = annualCurtailmentEnabled.checked;
+            annualCurtailmentLimitKw.disabled = !enabled;
+            annualCurtailmentLimitGroup.classList.toggle('visible', enabled);
+            if (!enabled) annualCurtailmentLimitKw.value = '';
+        }
+
+        function syncAnnualIamAr() {
+            const enabled = annualIncludeIam.checked;
+            annualIamAr.disabled = !enabled;
+            annualIamArGroup.classList.toggle('visible', enabled);
+            if (!enabled || !annualIamAr.value) annualIamAr.value = '0.2';
+        }
+
+        function updateAnnualRuntimeWarning() {
+            const from = document.getElementById('annualFromDate').value;
+            const to = document.getElementById('annualToDate').value;
+            const warning = document.getElementById('annualRuntimeWarning');
+            if (!from || !to) {
+                warning.classList.remove('visible');
+                return;
             }
+            const days = Math.floor((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000) + 1;
+            warning.classList.toggle('visible', Number.isFinite(days) && days > 366);
         }
 
         function readEfficiency(id, label) {
@@ -1386,6 +2589,17 @@
             const value = parseFloat(input.value);
             if (!Number.isFinite(value) || value < 0 || value > 1) {
                 showError(label + ' must be a decimal between 0 and 1.');
+                input.focus();
+                return null;
+            }
+            return value;
+        }
+
+        function read24HourTime(id, label) {
+            const input = document.getElementById(id);
+            const value = input.value.trim();
+            if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+                showError(label + ' must use 24-hour HH:MM format (for example, 18:30).');
                 input.focus();
                 return null;
             }
@@ -1410,6 +2624,7 @@
             const icon = document.getElementById(iconId);
             const box = document.getElementById(boxId);
             img.removeAttribute('src');
+            delete img.dataset.sourceUrl;
             img.style.display = 'none';
             icon.style.display = 'block';
             box.style.height = '360px';
@@ -1421,6 +2636,13 @@
             clearImage('irradianceImg', 'irradianceIcon', 'irradianceChartBox');
             clearImage('energyImg', 'energyIcon', 'energyChartBox');
             clearImage('acImg', 'acIcon', 'acChartBox');
+        }
+
+        function clearAnnualImages() {
+            clearImage('annualIrradianceImg', 'annualIrradianceIcon', 'annualIrradianceChartBox');
+            clearImage('annualAcImg', 'annualAcIcon', 'annualAcChartBox');
+            clearImage('annualEnergyImg', 'annualEnergyIcon', 'annualEnergyChartBox');
+            clearImage('annualMonthlyImg', 'annualMonthlyIcon', 'annualMonthlyChartBox');
         }
 
         function fmtPct(v) {
@@ -1474,6 +2696,43 @@
             syncIamAr();
         }
 
+        function getAnnualFormState() {
+            return {
+                fromDate: document.getElementById('annualFromDate').value,
+                toDate: document.getElementById('annualToDate').value,
+                backtrack: document.getElementById('annualBacktrack').checked,
+                curtailmentEnabled: annualCurtailmentEnabled.checked,
+                curtailmentLimitKw: annualCurtailmentLimitKw.value,
+                solaredgeInverterEfficiency: document.getElementById('annualSolaredgeInverterEfficiency').value,
+                solaredgeBosEfficiency: document.getElementById('annualSolaredgeBosEfficiency').value,
+                solectriaInverterEfficiency: document.getElementById('annualSolectriaInverterEfficiency').value,
+                solectriaBosEfficiency: document.getElementById('annualSolectriaBosEfficiency').value,
+                includeIam: annualIncludeIam.checked,
+                iamAr: annualIamAr.value,
+            };
+        }
+
+        function applyAnnualFormState(form) {
+            if (!form) return;
+            const setValue = (id, value) => {
+                if (value !== undefined && value !== null) document.getElementById(id).value = value;
+            };
+            setValue('annualFromDate', form.fromDate);
+            setValue('annualToDate', form.toDate);
+            setValue('annualCurtailmentLimitKw', form.curtailmentLimitKw);
+            setValue('annualSolaredgeInverterEfficiency', form.solaredgeInverterEfficiency);
+            setValue('annualSolaredgeBosEfficiency', form.solaredgeBosEfficiency);
+            setValue('annualSolectriaInverterEfficiency', form.solectriaInverterEfficiency);
+            setValue('annualSolectriaBosEfficiency', form.solectriaBosEfficiency);
+            setValue('annualIamAr', form.iamAr);
+            if (form.backtrack !== undefined) document.getElementById('annualBacktrack').checked = !!form.backtrack;
+            if (form.curtailmentEnabled !== undefined) annualCurtailmentEnabled.checked = !!form.curtailmentEnabled;
+            if (form.includeIam !== undefined) annualIncludeIam.checked = !!form.includeIam;
+            syncAnnualCurtailmentLimit();
+            syncAnnualIamAr();
+            updateAnnualRuntimeWarning();
+        }
+
         function setExcelLink(url) {
             if (!url) {
                 excelLink.classList.add('hidden');
@@ -1482,6 +2741,16 @@
             }
             excelLink.href = url;
             excelLink.classList.remove('hidden');
+        }
+
+        function setAnnualExcelLink(url) {
+            if (!url) {
+                annualExcelLink.classList.add('hidden');
+                annualExcelLink.removeAttribute('href');
+                return;
+            }
+            annualExcelLink.href = url;
+            annualExcelLink.classList.remove('hidden');
         }
 
         function applyInputPlots(inputPlots, cacheBust = true) {
@@ -1494,10 +2763,42 @@
             }
         }
 
+        function applyAnnualInputPlots(inputPlots, cacheBust = true) {
+            if (inputPlots && inputPlots.irradiance_png) {
+                const image = document.getElementById('annualIrradianceImg');
+                if (image.dataset.sourceUrl === inputPlots.irradiance_png) return;
+                image.dataset.sourceUrl = inputPlots.irradiance_png;
+                showImage(
+                    'annualIrradianceImg',
+                    'annualIrradianceIcon',
+                    'annualIrradianceChartBox',
+                    inputPlots.irradiance_png,
+                    cacheBust
+                );
+            }
+        }
+
         function applyResult(result, cacheBust = true) {
             if (!result || !result.stats) return;
             const s = result.stats;
             const fmtNum = (v) => (v === null || v === undefined) ? 'n/a' : v.toLocaleString();
+            const finiteNumber = (v) => {
+                if (v === null || v === undefined || v === '') return null;
+                const number = Number(v);
+                return Number.isFinite(number) ? number : null;
+            };
+            const seMeasured = finiteNumber(s.se_measured_kwh);
+            const solMeasured = finiteNumber(s.sol_measured_kwh);
+            const measuredDifference = seMeasured === null || solMeasured === null
+                ? null
+                : seMeasured - solMeasured;
+            const measuredDifferencePct = measuredDifference === null || !solMeasured
+                ? null
+                : measuredDifference / solMeasured * 100;
+            document.getElementById('statSeMeasured').textContent = fmtNum(seMeasured);
+            document.getElementById('statSolMeasured').textContent = fmtNum(solMeasured);
+            document.getElementById('statMeasuredDiff').textContent = fmtNum(measuredDifference);
+            document.getElementById('statMeasuredDiffPct').textContent = fmtPct(measuredDifferencePct);
             document.getElementById('statSePred').textContent = fmtNum(s.se_predicted_kwh);
             document.getElementById('statSolPred').textContent = fmtNum(s.sol_predicted_kwh);
             document.getElementById('statSePct').textContent = fmtPct(s.se_pct);
@@ -1506,6 +2807,45 @@
             if (result.ac_png) showImage('acImg', 'acIcon', 'acChartBox', result.ac_png, cacheBust);
             if (result.energy_png) showImage('energyImg', 'energyIcon', 'energyChartBox', result.energy_png, cacheBust);
             setExcelLink(result.excel);
+        }
+
+        function renderAnnualQuality(warnings) {
+            const panel = document.getElementById('annualQualityPanel');
+            const quality = document.getElementById('annualStatQuality');
+            const items = Array.isArray(warnings) ? warnings.filter(Boolean) : [];
+            panel.classList.toggle('ok', items.length === 0);
+            quality.classList.toggle('positive', items.length === 0);
+            quality.classList.toggle('warning', items.length > 0);
+            quality.textContent = items.length ? items.length + ' warning' + (items.length === 1 ? '' : 's') : 'Complete';
+            if (!items.length) {
+                panel.textContent = 'Complete hourly weather coverage; no fallback warnings were reported.';
+                return;
+            }
+            panel.innerHTML = '<strong>Run completed with documented fallbacks:</strong><ul>' +
+                items.map((item) => '<li>' + escapeHtml(String(item)) + '</li>').join('') + '</ul>';
+        }
+
+        function applyAnnualResult(result, cacheBust = true) {
+            if (!result || !result.stats) return;
+            const s = result.stats;
+            const fmtNum = (v, digits = 1) => (v === null || v === undefined)
+                ? 'n/a'
+                : Number(v).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+            document.getElementById('annualStatSePred').textContent = fmtNum(s.se_predicted_kwh);
+            document.getElementById('annualStatSolPred').textContent = fmtNum(s.sol_predicted_kwh);
+            document.getElementById('annualStatDiff').textContent = fmtNum(s.predicted_difference_kwh);
+            document.getElementById('annualStatDiffPct').textContent = fmtPct(s.predicted_difference_pct);
+            document.getElementById('annualStatRows').textContent = Number(s.n_rows || 0).toLocaleString();
+            const windowData = result.window || {};
+            document.getElementById('annualResultRange').textContent = windowData.from && windowData.to
+                ? windowData.from + ' to ' + windowData.to
+                : '--';
+            renderAnnualQuality(result.warnings || s.data_quality_warnings || []);
+            if (result.input_plots) applyAnnualInputPlots(result.input_plots, cacheBust);
+            if (result.ac_png) showImage('annualAcImg', 'annualAcIcon', 'annualAcChartBox', result.ac_png, cacheBust);
+            if (result.energy_png) showImage('annualEnergyImg', 'annualEnergyIcon', 'annualEnergyChartBox', result.energy_png, cacheBust);
+            if (result.monthly_png) showImage('annualMonthlyImg', 'annualMonthlyIcon', 'annualMonthlyChartBox', result.monthly_png, cacheBust);
+            setAnnualExcelLink(result.excel);
         }
 
         function readSavedState() {
@@ -1540,11 +2880,17 @@
             latestInputPlots = null;
             latestResult = null;
             currentRunState = null;
+            annualLatestJobId = null;
+            annualLatestResult = null;
+            annualRunState = null;
             chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
             progressWrap.classList.remove('visible');
             errorBanner.classList.remove('visible');
             clearRunImages();
+            clearAnnualImages();
             setExcelLink(null);
+            setAnnualExcelLink(null);
+            renderAnnualQuality([]);
             renderChatMessages();
             setChatOpen(false);
         }
@@ -1553,11 +2899,16 @@
             try {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify({
                     serverSessionId,
+                    activeMode,
                     latestJobId,
                     latestInputPlots,
                     latestResult,
                     currentRunState,
                     form: getFormState(),
+                    annualLatestJobId,
+                    annualLatestResult,
+                    annualRunState,
+                    annualForm: getAnnualFormState(),
                     chatMessages,
                     chatOpen: !chatSidebar.classList.contains('hidden'),
                 }));
@@ -1568,6 +2919,10 @@
 
         async function runAnalysis() {
             errorBanner.classList.remove('visible');
+            const fromTime = read24HourTime('fromTime', 'Start time');
+            if (fromTime === null) return;
+            const toTime = read24HourTime('toTime', 'End time');
+            if (toTime === null) return;
             const curtailmentOn = curtailmentEnabled.checked;
             const curtailmentLimit = parseFloat(curtailmentLimitKw.value);
             if (curtailmentOn && (!Number.isFinite(curtailmentLimit) || curtailmentLimit <= 0)) {
@@ -1603,9 +2958,9 @@
 
             const body = {
                 from_date: document.getElementById('fromDate').value,
-                from_time: document.getElementById('fromTime').value,
+                from_time: fromTime,
                 to_date: document.getElementById('toDate').value,
-                to_time: document.getElementById('toTime').value,
+                to_time: toTime,
                 interval_value: parseInt(document.getElementById('intervalValue').value, 10) || 1,
                 interval_unit: document.getElementById('intervalUnit').value,
                 backtrack: document.getElementById('backtrack').checked,
@@ -1709,11 +3064,167 @@
             }
         }
 
+        function resetAnnualRunBtn() {
+            annualRunBtn.disabled = false;
+            annualRunBtn.textContent = 'Run annual simulation';
+        }
+
+        function readAnnualEfficiency(id, label) {
+            const input = document.getElementById(id);
+            const value = parseFloat(input.value);
+            if (!Number.isFinite(value) || value < 0 || value > 1) {
+                showAnnualError(label + ' must be a decimal between 0 and 1.');
+                input.focus();
+                return null;
+            }
+            return value;
+        }
+
+        async function runAnnualAnalysis() {
+            annualErrorBanner.classList.remove('visible');
+            const fromDate = document.getElementById('annualFromDate').value;
+            const toDate = document.getElementById('annualToDate').value;
+            if (!fromDate || !toDate) {
+                showAnnualError('Choose both a start date and an end date.');
+                return;
+            }
+            if (fromDate > toDate) {
+                showAnnualError('Start date must be on or before end date.');
+                return;
+            }
+            const curtailmentOn = annualCurtailmentEnabled.checked;
+            const curtailmentLimit = parseFloat(annualCurtailmentLimitKw.value);
+            if (curtailmentOn && (!Number.isFinite(curtailmentLimit) || curtailmentLimit <= 0)) {
+                showAnnualError('Enter a positive curtailment limit in kW.');
+                annualCurtailmentLimitKw.focus();
+                return;
+            }
+            const solaredgeInverterEfficiency = readAnnualEfficiency('annualSolaredgeInverterEfficiency', 'SolarEdge inverter efficiency');
+            if (solaredgeInverterEfficiency === null) return;
+            const solaredgeBosEfficiency = readAnnualEfficiency('annualSolaredgeBosEfficiency', 'SolarEdge BOS efficiency');
+            if (solaredgeBosEfficiency === null) return;
+            const solectriaInverterEfficiency = readAnnualEfficiency('annualSolectriaInverterEfficiency', 'Solectria inverter efficiency');
+            if (solectriaInverterEfficiency === null) return;
+            const solectriaBosEfficiency = readAnnualEfficiency('annualSolectriaBosEfficiency', 'Solectria BOS efficiency');
+            if (solectriaBosEfficiency === null) return;
+            const includeIamOn = annualIncludeIam.checked;
+            const iamArValue = parseFloat(annualIamAr.value);
+            if (includeIamOn && (!Number.isFinite(iamArValue) || iamArValue <= 0)) {
+                showAnnualError('Martin-Ruiz a_r must be positive.');
+                annualIamAr.focus();
+                return;
+            }
+
+            annualRunBtn.disabled = true;
+            annualRunBtn.textContent = 'Running...';
+            setAnnualProgress(0, 'Starting...');
+            annualLatestResult = null;
+            annualRunState = { state: 'running', progress: 0, stage: 'Starting...' };
+            clearAnnualImages();
+            setAnnualExcelLink(null);
+            saveDashboardState();
+
+            const body = {
+                from_date: fromDate,
+                to_date: toDate,
+                backtrack: document.getElementById('annualBacktrack').checked,
+                solaredge_inverter_efficiency: solaredgeInverterEfficiency,
+                solaredge_bos_efficiency: solaredgeBosEfficiency,
+                solectria_inverter_efficiency: solectriaInverterEfficiency,
+                solectria_bos_efficiency: solectriaBosEfficiency,
+                include_iam: includeIamOn,
+                iam_a_r: includeIamOn ? iamArValue : 0.2,
+                curtailment_enabled: curtailmentOn,
+                curtailment_limit_kw: curtailmentOn ? curtailmentLimit : null,
+            };
+
+            try {
+                const res = await fetch('/api/annual-run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!res.ok) {
+                    let msg = 'Failed to start annual simulation (' + res.status + ')';
+                    try {
+                        const err = await res.json();
+                        if (err.detail) msg = Array.isArray(err.detail) ? err.detail[0].msg : err.detail;
+                    } catch (_) {}
+                    throw new Error(msg);
+                }
+                const { job_id } = await res.json();
+                annualLatestJobId = job_id;
+                annualRunState = { state: 'running', progress: 0, stage: 'Queued...' };
+                saveDashboardState();
+                pollAnnualStatus(job_id);
+            } catch (e) {
+                showAnnualError(e.message || 'Could not start annual simulation.');
+                resetAnnualRunBtn();
+            }
+        }
+
+        async function pollAnnualStatus(jobId) {
+            if (annualPollTimer) {
+                clearTimeout(annualPollTimer);
+                annualPollTimer = null;
+            }
+            try {
+                const res = await fetch('/api/status/' + jobId);
+                if (!res.ok) {
+                    if (res.status === 404 && annualLatestResult) {
+                        annualRunState = { state: 'missing', progress: 0, stage: 'Cached result restored locally' };
+                        annualProgressWrap.classList.remove('visible');
+                        resetAnnualRunBtn();
+                        saveDashboardState();
+                        return;
+                    }
+                    throw new Error('Annual status request failed (' + res.status + ')');
+                }
+                const data = await res.json();
+                setAnnualProgress(data.progress, data.stage);
+                annualLatestJobId = jobId;
+                annualRunState = { state: data.state, progress: data.progress, stage: data.stage || '' };
+                if (data.input_plots) applyAnnualInputPlots(data.input_plots);
+                saveDashboardState();
+                if (data.state === 'done') {
+                    annualLatestResult = data.result;
+                    applyAnnualResult(data.result);
+                    annualRunState = { state: 'done', progress: 100, stage: 'Done' };
+                    saveDashboardState();
+                    resetAnnualRunBtn();
+                    return;
+                }
+                if (data.state === 'error') {
+                    showAnnualError(data.error || 'Annual simulation failed.');
+                    annualProgressWrap.classList.remove('visible');
+                    saveDashboardState();
+                    resetAnnualRunBtn();
+                    return;
+                }
+                annualPollTimer = setTimeout(() => pollAnnualStatus(jobId), 600);
+            } catch (e) {
+                showAnnualError(e.message || 'Lost connection to the server.');
+                resetAnnualRunBtn();
+            }
+        }
+
         runBtn.addEventListener('click', runAnalysis);
         curtailmentEnabled.addEventListener('change', syncCurtailmentLimit);
         includeIam.addEventListener('change', syncIamAr);
+        annualRunBtn.addEventListener('click', runAnnualAnalysis);
+        validationTab.addEventListener('click', () => switchMode('validation'));
+        annualTab.addEventListener('click', () => switchMode('annual'));
+        operationsNavLink.addEventListener('click', () => setActiveNav(operationsNavLink));
+        pvModelNavLink.addEventListener('click', () => setActiveNav(pvModelNavLink));
+        annualCurtailmentEnabled.addEventListener('change', syncAnnualCurtailmentLimit);
+        annualIncludeIam.addEventListener('change', syncAnnualIamAr);
+        document.getElementById('annualFromDate').addEventListener('change', updateAnnualRuntimeWarning);
+        document.getElementById('annualToDate').addEventListener('change', updateAnnualRuntimeWarning);
         syncCurtailmentLimit();
         syncIamAr();
+        syncAnnualCurtailmentLimit();
+        syncAnnualIamAr();
+        updateAnnualRuntimeWarning();
 
         // ---- Solar Agent chat ----
         const chatToggle = document.getElementById('chatToggle');
@@ -1722,19 +3233,103 @@
         const chatInput = document.getElementById('chatInput');
         const sendBtn = document.getElementById('sendBtn');
         const messagesContainer = document.getElementById('messages');
+        const CHAT_POSITION_KEY = 'sb-energy-chat-position-v1';
+        let chatDragState = null;
+        let suppressChatClick = false;
 
-        chatToggle.addEventListener('click', () => {
-            chatSidebar.classList.toggle('hidden');
-            chatToggle.classList.toggle('hidden');
-            if (!chatSidebar.classList.contains('hidden')) {
-                chatInput.focus();
+        function clampChatPosition(left, top) {
+            const margin = 10;
+            const width = chatToggle.offsetWidth || 58;
+            const height = chatToggle.offsetHeight || 58;
+            return {
+                left: Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin)),
+                top: Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - margin)),
+            };
+        }
+
+        function setChatTogglePosition(left, top, persist = false) {
+            const position = clampChatPosition(left, top);
+            chatToggle.style.left = position.left + 'px';
+            chatToggle.style.top = position.top + 'px';
+            chatToggle.style.right = 'auto';
+            chatToggle.style.bottom = 'auto';
+            if (persist) {
+                try {
+                    localStorage.setItem(CHAT_POSITION_KEY, JSON.stringify(position));
+                } catch (_) {
+                    // Position persistence is optional when browser storage is unavailable.
+                }
+            }
+        }
+
+        function restoreChatTogglePosition() {
+            try {
+                const position = JSON.parse(localStorage.getItem(CHAT_POSITION_KEY) || 'null');
+                if (position && Number.isFinite(position.left) && Number.isFinite(position.top)) {
+                    setChatTogglePosition(position.left, position.top);
+                }
+            } catch (_) {
+                // Keep the default lower-right position when saved state is unavailable.
+            }
+        }
+
+        function finishChatDrag(event, persist) {
+            if (!chatDragState || event.pointerId !== chatDragState.pointerId) return;
+            const moved = chatDragState.moved;
+            if (moved && persist) {
+                const rect = chatToggle.getBoundingClientRect();
+                setChatTogglePosition(rect.left, rect.top, true);
+                suppressChatClick = true;
+            }
+            if (chatToggle.hasPointerCapture?.(event.pointerId)) {
+                chatToggle.releasePointerCapture(event.pointerId);
+            }
+            chatToggle.classList.remove('dragging');
+            chatDragState = null;
+        }
+
+        chatToggle.addEventListener('pointerdown', (event) => {
+            if (event.button !== undefined && event.button !== 0) return;
+            const rect = chatToggle.getBoundingClientRect();
+            chatDragState = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                left: rect.left,
+                top: rect.top,
+                moved: false,
+            };
+            chatToggle.setPointerCapture?.(event.pointerId);
+            chatToggle.classList.add('dragging');
+        });
+
+        chatToggle.addEventListener('pointermove', (event) => {
+            if (!chatDragState || event.pointerId !== chatDragState.pointerId) return;
+            const dx = event.clientX - chatDragState.startX;
+            const dy = event.clientY - chatDragState.startY;
+            if (Math.hypot(dx, dy) > 4) chatDragState.moved = true;
+            if (chatDragState.moved) {
+                event.preventDefault();
+                setChatTogglePosition(chatDragState.left + dx, chatDragState.top + dy);
             }
         });
 
-        closeChat.addEventListener('click', () => {
-            chatSidebar.classList.add('hidden');
-            chatToggle.classList.remove('hidden');
+        chatToggle.addEventListener('pointerup', (event) => finishChatDrag(event, true));
+        chatToggle.addEventListener('pointercancel', (event) => finishChatDrag(event, false));
+        chatToggle.addEventListener('click', () => {
+            if (suppressChatClick) {
+                suppressChatClick = false;
+                return;
+            }
+            setChatOpen(chatSidebar.classList.contains('hidden'));
         });
+        closeChat.addEventListener('click', () => setChatOpen(false));
+        window.addEventListener('resize', () => {
+            if (!chatToggle.style.left) return;
+            const rect = chatToggle.getBoundingClientRect();
+            setChatTogglePosition(rect.left, rect.top);
+        });
+        restoreChatTogglePosition();
 
         sendBtn.addEventListener('click', sendMessage);
         chatInput.addEventListener('keypress', (e) => {
@@ -1831,6 +3426,7 @@
         function setChatOpen(open) {
             chatSidebar.classList.toggle('hidden', !open);
             chatToggle.classList.toggle('hidden', open);
+            chatToggle.setAttribute('aria-expanded', String(open));
             if (open) {
                 chatInput.focus();
             }
@@ -1865,7 +3461,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         message: text,
-                        job_id: latestJobId,
+                        job_id: activeMode === 'annual' ? annualLatestJobId : latestJobId,
                         history,
                     }),
                 });
@@ -1883,7 +3479,11 @@
                 loadingBubble.innerHTML = renderSafeMarkdown(reply);
                 chatMessages.push({ role: 'assistant', content: reply });
                 if (data.job_id) {
-                    latestJobId = data.job_id;
+                    if (activeMode === 'annual') {
+                        annualLatestJobId = data.job_id;
+                    } else {
+                        latestJobId = data.job_id;
+                    }
                 }
                 if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
                 saveDashboardState();
@@ -1918,6 +3518,9 @@
             latestInputPlots = saved.latestInputPlots || null;
             latestResult = saved.latestResult || null;
             currentRunState = saved.currentRunState || null;
+            annualLatestJobId = saved.annualLatestJobId || null;
+            annualLatestResult = saved.annualLatestResult || null;
+            annualRunState = saved.annualRunState || null;
             if (Array.isArray(saved.chatMessages) && saved.chatMessages.length) {
                 chatMessages = saved.chatMessages
                     .filter((item) => item && item.content)
@@ -1929,11 +3532,16 @@
             }
 
             applyFormState(saved.form);
+            applyAnnualFormState(saved.annualForm);
+            switchMode(saved.activeMode || 'validation', false);
             if (latestInputPlots) {
                 applyInputPlots(latestInputPlots, false);
             }
             if (latestResult) {
                 applyResult(latestResult, false);
+            }
+            if (annualLatestResult) {
+                applyAnnualResult(annualLatestResult, false);
             }
             renderChatMessages();
             setChatOpen(!!saved.chatOpen);
@@ -1944,11 +3552,15 @@
                 setProgress(currentRunState.progress || 0, currentRunState.stage || 'Restoring run...');
                 pollStatus(latestJobId);
             }
+            if (annualRunState && annualRunState.state === 'running' && annualLatestJobId) {
+                annualRunBtn.disabled = true;
+                annualRunBtn.textContent = 'Running...';
+                setAnnualProgress(annualRunState.progress || 0, annualRunState.stage || 'Restoring annual run...');
+                pollAnnualStatus(annualLatestJobId);
+            }
         }
 
-        chatToggle.addEventListener('click', saveDashboardState);
-        closeChat.addEventListener('click', saveDashboardState);
-        document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, #includeIam').forEach((el) => {
+        document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, #includeIam, .annual-input').forEach((el) => {
             el.addEventListener('input', saveDashboardState);
             el.addEventListener('change', saveDashboardState);
         });
