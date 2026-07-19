@@ -63,6 +63,18 @@
             border: 0;
         }
 
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
         .app-shell {
             display: grid;
             grid-template-columns: 252px minmax(0, 1fr);
@@ -653,9 +665,7 @@
 
         .annual-iam-row {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            align-items: center;
-            gap: 12px;
+            gap: 14px;
             margin-top: 14px;
             padding: 13px 14px;
             border: 1px solid var(--border);
@@ -669,12 +679,112 @@
             font-size: 13px;
         }
 
-        .annual-iam-toggle {
-            min-width: 122px;
+        .iam-model-fieldset {
+            min-width: 0;
+            margin: 0;
+            padding: 0;
+            border: 0;
+        }
+
+        .iam-model-options {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .iam-model-card {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            align-content: start;
+            gap: 3px 9px;
+            min-width: 0;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+        }
+
+        .iam-model-card:hover {
+            border-color: var(--border-strong);
+        }
+
+        .iam-model-card:has(input:checked) {
+            border-color: rgba(15, 118, 110, 0.5);
+            background: var(--accent-soft);
+            box-shadow: inset 3px 0 0 var(--accent);
+        }
+
+        .iam-model-card:focus-within {
+            outline: 2px solid rgba(37, 99, 235, 0.55);
+            outline-offset: 2px;
+        }
+
+        .iam-model-card input[type="radio"] {
+            width: 17px;
+            height: 17px;
+            margin-top: 2px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .iam-model-label {
+            display: grid;
+            gap: 3px;
+            min-width: 0;
+            cursor: pointer;
+        }
+
+        .iam-model-name {
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .iam-model-description {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+
+        .iam-reference-link {
+            grid-column: 2;
+            justify-self: start;
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 750;
+            text-underline-offset: 2px;
+        }
+
+        .iam-reference-link:hover {
+            color: var(--accent);
+        }
+
+        .iam-parity-note {
+            padding: 10px 11px;
+            border-left: 3px solid var(--info);
+            border-radius: 0 6px 6px 0;
+            background: var(--info-soft);
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 650;
+            line-height: 1.45;
+        }
+
+        .iam-ar > span:first-child {
+            display: grid;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .iam-ar .limit-helper {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 600;
         }
 
         .annual-iam-value.visible {
-            grid-column: 1 / -1;
             grid-template-columns: minmax(0, 1fr) 128px;
             align-items: center;
             gap: 12px;
@@ -1503,6 +1613,13 @@
             padding: 15px 16px;
             border-bottom: 1px solid var(--border);
             background: var(--surface-muted);
+            cursor: grab;
+            touch-action: none;
+            user-select: none;
+        }
+
+        .sidebar.dragging .sidebar-header {
+            cursor: grabbing;
         }
 
         .sidebar-title {
@@ -1773,8 +1890,8 @@
                 align-items: stretch;
             }
 
-            .annual-iam-toggle {
-                min-width: 0;
+            .iam-model-options {
+                grid-template-columns: 1fr;
             }
 
             .annual-iam-value.visible {
@@ -1829,6 +1946,13 @@
                 bottom: 14px;
                 width: auto;
                 max-width: none;
+            }
+
+            .sidebar-header,
+            .sidebar.dragging .sidebar-header {
+                cursor: default;
+                touch-action: auto;
+                user-select: auto;
             }
         }
     </style>
@@ -1958,7 +2082,7 @@
                                     <span class="date-label">Curtailment limit</span>
                                     <span class="limit-helper">Maximum AC output in kW</span>
                                 </span>
-                                <input type="number" class="date-input annual-input" id="annualCurtailmentLimitKw" min="0" step="0.1" placeholder="125" disabled>
+                                <input type="number" class="date-input annual-input" id="annualCurtailmentLimitKw" min="0.1" step="0.1" value="125" placeholder="125" disabled>
                             </label>
                         </section>
 
@@ -2011,17 +2135,38 @@
 
                             <div class="annual-iam-row">
                                 <div>
-                                    <div class="annual-subheading">Incidence angle modifier</div>
-                                    <p>Martin-Ruiz IAM always uses a<sub>r</sub> = 0.2 by default; customize it here if needed.</p>
+                                    <div class="annual-subheading" id="annualIamHeading">Incidence angle modifier</div>
+                                    <p>Choose how incidence-angle optical losses are modeled.</p>
                                 </div>
-                                <label class="checkbox-control annual-iam-toggle">
-                                    <input type="checkbox" class="annual-input" id="annualIncludeIam">
-                                    <span>Customize a<sub>r</sub></span>
-                                </label>
+                                <fieldset class="iam-model-fieldset" aria-labelledby="annualIamHeading">
+                                    <legend class="sr-only">Annual simulation IAM model</legend>
+                                    <div class="iam-model-options">
+                                        <div class="iam-model-card">
+                                            <input type="radio" class="annual-input iam-model-input" id="annualIamModelPhysical" name="annualIamModel" value="physical" aria-describedby="annualIamPhysicalDescription annualIamPhysicalReference" checked>
+                                            <label class="iam-model-label" for="annualIamModelPhysical">
+                                                <span class="iam-model-name">Physical</span>
+                                                <span class="iam-model-description" id="annualIamPhysicalDescription">Uses the physical optics model for glass transmission losses.</span>
+                                            </label>
+                                            <a class="iam-reference-link" id="annualIamPhysicalReference" href="https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.iam.physical.html" target="_blank" rel="noopener noreferrer">Physical IAM reference</a>
+                                        </div>
+                                        <div class="iam-model-card">
+                                            <input type="radio" class="annual-input iam-model-input" id="annualIamModelMartinRuiz" name="annualIamModel" value="martin_ruiz" aria-describedby="annualIamMartinRuizDescription annualIamMartinRuizReference">
+                                            <label class="iam-model-label" for="annualIamModelMartinRuiz">
+                                                <span class="iam-model-name">Martin–Ruiz</span>
+                                                <span class="iam-model-description" id="annualIamMartinRuizDescription">Uses the angular-loss coefficient a<sub>r</sub>, defaulting to 0.2.</span>
+                                            </label>
+                                            <a class="iam-reference-link" id="annualIamMartinRuizReference" href="https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.iam.martin_ruiz.html" target="_blank" rel="noopener noreferrer">Martin–Ruiz IAM reference</a>
+                                        </div>
+                                    </div>
+                                </fieldset>
                                 <label class="control-field iam-ar annual-iam-value" id="annualIamArGroup">
-                                    <span class="date-label">a<sub>r</sub></span>
-                                    <input type="number" class="date-input eff-input annual-input" id="annualIamAr" min="0" step="0.001" value="0.2" disabled>
+                                    <span>
+                                        <span class="date-label">Martin–Ruiz a<sub>r</sub></span>
+                                        <span class="limit-helper">Enter any positive finite value.</span>
+                                    </span>
+                                    <input type="number" class="date-input eff-input annual-input" id="annualIamAr" min="0" step="any" value="0.2" disabled>
                                 </label>
+                                <p class="iam-parity-note" role="note">Reference parity: Martin–Ruiz is applied after ModelChain to total effective irradiance for Solectria; SolarEdge uses the no-loss ModelChain result.</p>
                             </div>
                         </section>
                     </div>
@@ -2189,7 +2334,7 @@
                                     <span class="date-label">Curtailment limit</span>
                                     <span class="limit-helper">Maximum AC output in kW</span>
                                 </span>
-                                <input type="number" class="date-input" id="curtailmentLimitKw" min="0" step="0.1" placeholder="125" disabled>
+                                <input type="number" class="date-input" id="curtailmentLimitKw" min="0.1" step="0.1" value="125" placeholder="125" disabled>
                             </label>
                         </div>
                     </section>
@@ -2241,23 +2386,44 @@
                         </div>
                         <div class="annual-iam-row">
                             <div>
-                                <div class="annual-subheading">Incidence angle modifier</div>
-                                <p>Martin-Ruiz IAM always uses a<sub>r</sub> = 0.2 by default; customize it here if needed.</p>
+                                <div class="annual-subheading" id="validationIamHeading">Incidence angle modifier</div>
+                                <p>Choose how incidence-angle optical losses are modeled.</p>
                             </div>
-                            <label class="checkbox-control annual-iam-toggle">
-                                <input type="checkbox" id="includeIam">
-                                <span>Customize a<sub>r</sub></span>
-                            </label>
+                            <fieldset class="iam-model-fieldset" aria-labelledby="validationIamHeading">
+                                <legend class="sr-only">Validation IAM model</legend>
+                                <div class="iam-model-options">
+                                    <div class="iam-model-card">
+                                        <input type="radio" class="iam-model-input" id="iamModelPhysical" name="iamModel" value="physical" aria-describedby="iamPhysicalDescription iamPhysicalReference" checked>
+                                        <label class="iam-model-label" for="iamModelPhysical">
+                                            <span class="iam-model-name">Physical</span>
+                                            <span class="iam-model-description" id="iamPhysicalDescription">Uses the physical optics model for glass transmission losses.</span>
+                                        </label>
+                                        <a class="iam-reference-link" id="iamPhysicalReference" href="https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.iam.physical.html" target="_blank" rel="noopener noreferrer">Physical IAM reference</a>
+                                    </div>
+                                    <div class="iam-model-card">
+                                        <input type="radio" class="iam-model-input" id="iamModelMartinRuiz" name="iamModel" value="martin_ruiz" aria-describedby="iamMartinRuizDescription iamMartinRuizReference">
+                                        <label class="iam-model-label" for="iamModelMartinRuiz">
+                                            <span class="iam-model-name">Martin–Ruiz</span>
+                                            <span class="iam-model-description" id="iamMartinRuizDescription">Uses the angular-loss coefficient a<sub>r</sub>, defaulting to 0.2.</span>
+                                        </label>
+                                        <a class="iam-reference-link" id="iamMartinRuizReference" href="https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.iam.martin_ruiz.html" target="_blank" rel="noopener noreferrer">Martin–Ruiz IAM reference</a>
+                                    </div>
+                                </div>
+                            </fieldset>
                             <label class="control-field iam-ar annual-iam-value" id="iamArGroup">
-                                <span class="date-label">a<sub>r</sub></span>
-                                <input type="number" class="date-input eff-input" id="iamAr" min="0" step="0.001" value="0.2" disabled>
+                                <span>
+                                    <span class="date-label">Martin–Ruiz a<sub>r</sub></span>
+                                    <span class="limit-helper">Enter any positive finite value.</span>
+                                </span>
+                                <input type="number" class="date-input eff-input" id="iamAr" min="0" step="any" value="0.2" disabled>
                             </label>
+                            <p class="iam-parity-note" role="note">Reference parity: Martin–Ruiz is applied after ModelChain to total effective irradiance for Solectria; SolarEdge uses the no-loss ModelChain result.</p>
                         </div>
                     </section>
                 </div>
                 <div class="configuration-actions">
                     <p class="configuration-actions-copy">
-                        <strong>Ready to validate?</strong>
+                        <strong>Ready to run configuration?</strong>
                         Run the configured window; workbook export appears when processing completes.
                     </p>
                     <div class="control-actions">
@@ -2430,9 +2596,9 @@
         title="Drag to move - click to open Solar Agent">AI</button>
 
     <div class="sidebar hidden" id="chatSidebar">
-        <div class="sidebar-header">
+        <div class="sidebar-header" id="chatDragHandle" title="Drag to move the Solar Agent window">
             <span class="sidebar-title">Solar Agent</span>
-            <button class="close-btn" id="closeChat">x</button>
+            <button class="close-btn" id="closeChat" type="button" aria-label="Close Solar Agent">x</button>
         </div>
         <div class="messages-container" id="messages">
             <div class="message assistant">
@@ -2456,7 +2622,7 @@
         const curtailmentEnabled = document.getElementById('curtailmentEnabled');
         const curtailmentLimitKw = document.getElementById('curtailmentLimitKw');
         const curtailmentLimitGroup = document.getElementById('curtailmentLimitGroup');
-        const includeIam = document.getElementById('includeIam');
+        const iamModelRadios = document.querySelectorAll('input[name="iamModel"]');
         const iamAr = document.getElementById('iamAr');
         const iamArGroup = document.getElementById('iamArGroup');
         const excelLink = document.getElementById('excelLink');
@@ -2471,7 +2637,7 @@
         const annualCurtailmentEnabled = document.getElementById('annualCurtailmentEnabled');
         const annualCurtailmentLimitKw = document.getElementById('annualCurtailmentLimitKw');
         const annualCurtailmentLimitGroup = document.getElementById('annualCurtailmentLimitGroup');
-        const annualIncludeIam = document.getElementById('annualIncludeIam');
+        const annualIamModelRadios = document.querySelectorAll('input[name="annualIamModel"]');
         const annualIamAr = document.getElementById('annualIamAr');
         const annualIamArGroup = document.getElementById('annualIamArGroup');
         const annualExcelLink = document.getElementById('annualExcelLink');
@@ -2546,30 +2712,51 @@
             const enabled = curtailmentEnabled.checked;
             curtailmentLimitKw.disabled = !enabled;
             curtailmentLimitGroup.classList.toggle('visible', enabled);
-            if (!enabled) {
-                curtailmentLimitKw.value = '';
+            if (enabled && !curtailmentLimitKw.value.trim()) curtailmentLimitKw.value = '125';
+        }
+
+        function getSelectedIamModel(radios) {
+            const selected = Array.from(radios).find((radio) => radio.checked);
+            return selected && selected.value === 'martin_ruiz' ? 'martin_ruiz' : 'physical';
+        }
+
+        function setSelectedIamModel(radios, model) {
+            const normalized = model === 'martin_ruiz' ? 'martin_ruiz' : 'physical';
+            radios.forEach((radio) => {
+                radio.checked = radio.value === normalized;
+            });
+        }
+
+        function resolveSavedIamModel(form) {
+            if (form.iamModel === 'physical' || form.iamModel === 'martin_ruiz') {
+                return form.iamModel;
             }
+            // Legacy dashboards always used Martin–Ruiz; includeIam only controlled whether a_r was customized.
+            if (Object.prototype.hasOwnProperty.call(form, 'includeIam')) {
+                return 'martin_ruiz';
+            }
+            return 'physical';
         }
 
         function syncIamAr() {
-            const enabled = includeIam.checked;
+            const enabled = getSelectedIamModel(iamModelRadios) === 'martin_ruiz';
             iamAr.disabled = !enabled;
             iamArGroup.classList.toggle('visible', enabled);
-            if (!enabled || !iamAr.value) iamAr.value = '0.2';
+            if (!iamAr.value) iamAr.value = '0.2';
         }
 
         function syncAnnualCurtailmentLimit() {
             const enabled = annualCurtailmentEnabled.checked;
             annualCurtailmentLimitKw.disabled = !enabled;
             annualCurtailmentLimitGroup.classList.toggle('visible', enabled);
-            if (!enabled) annualCurtailmentLimitKw.value = '';
+            if (enabled && !annualCurtailmentLimitKw.value.trim()) annualCurtailmentLimitKw.value = '125';
         }
 
         function syncAnnualIamAr() {
-            const enabled = annualIncludeIam.checked;
+            const enabled = getSelectedIamModel(annualIamModelRadios) === 'martin_ruiz';
             annualIamAr.disabled = !enabled;
             annualIamArGroup.classList.toggle('visible', enabled);
-            if (!enabled || !annualIamAr.value) annualIamAr.value = '0.2';
+            if (!annualIamAr.value) annualIamAr.value = '0.2';
         }
 
         function updateAnnualRuntimeWarning() {
@@ -2665,7 +2852,7 @@
                 solaredgeBosEfficiency: document.getElementById('solaredgeBosEfficiency').value,
                 solectriaInverterEfficiency: document.getElementById('solectriaInverterEfficiency').value,
                 solectriaBosEfficiency: document.getElementById('solectriaBosEfficiency').value,
-                includeIam: includeIam.checked,
+                iamModel: getSelectedIamModel(iamModelRadios),
                 iamAr: iamAr.value,
             };
         }
@@ -2691,7 +2878,7 @@
             setValue('iamAr', form.iamAr);
             if (form.backtrack !== undefined) document.getElementById('backtrack').checked = !!form.backtrack;
             if (form.curtailmentEnabled !== undefined) curtailmentEnabled.checked = !!form.curtailmentEnabled;
-            if (form.includeIam !== undefined) includeIam.checked = !!form.includeIam;
+            setSelectedIamModel(iamModelRadios, resolveSavedIamModel(form));
             syncCurtailmentLimit();
             syncIamAr();
         }
@@ -2707,7 +2894,7 @@
                 solaredgeBosEfficiency: document.getElementById('annualSolaredgeBosEfficiency').value,
                 solectriaInverterEfficiency: document.getElementById('annualSolectriaInverterEfficiency').value,
                 solectriaBosEfficiency: document.getElementById('annualSolectriaBosEfficiency').value,
-                includeIam: annualIncludeIam.checked,
+                iamModel: getSelectedIamModel(annualIamModelRadios),
                 iamAr: annualIamAr.value,
             };
         }
@@ -2727,7 +2914,7 @@
             setValue('annualIamAr', form.iamAr);
             if (form.backtrack !== undefined) document.getElementById('annualBacktrack').checked = !!form.backtrack;
             if (form.curtailmentEnabled !== undefined) annualCurtailmentEnabled.checked = !!form.curtailmentEnabled;
-            if (form.includeIam !== undefined) annualIncludeIam.checked = !!form.includeIam;
+            setSelectedIamModel(annualIamModelRadios, resolveSavedIamModel(form));
             syncAnnualCurtailmentLimit();
             syncAnnualIamAr();
             updateAnnualRuntimeWarning();
@@ -2938,10 +3125,10 @@
             if (solectriaInverterEfficiency === null) return;
             const solectriaBosEfficiency = readEfficiency('solectriaBosEfficiency', 'Solectria BOS efficiency');
             if (solectriaBosEfficiency === null) return;
-            const includeIamOn = includeIam.checked;
+            const iamModel = getSelectedIamModel(iamModelRadios);
             const iamArValue = parseFloat(iamAr.value);
-            if (includeIamOn && (!Number.isFinite(iamArValue) || iamArValue <= 0)) {
-                showError('Martin-Ruiz a_r must be positive.');
+            if (iamModel === 'martin_ruiz' && (!Number.isFinite(iamArValue) || iamArValue <= 0)) {
+                showError('Martin–Ruiz a_r must be positive.');
                 iamAr.focus();
                 return;
             }
@@ -2968,11 +3155,11 @@
                 solaredge_bos_efficiency: solaredgeBosEfficiency,
                 solectria_inverter_efficiency: solectriaInverterEfficiency,
                 solectria_bos_efficiency: solectriaBosEfficiency,
-                include_iam: includeIamOn,
-                iam_a_r: includeIamOn ? iamArValue : 0.2,
+                iam_model: iamModel,
                 curtailment_enabled: curtailmentOn,
                 curtailment_limit_kw: curtailmentOn ? curtailmentLimit : null,
             };
+            if (iamModel === 'martin_ruiz') body.iam_a_r = iamArValue;
 
             try {
                 const res = await fetch('/api/run', {
@@ -3107,10 +3294,10 @@
             if (solectriaInverterEfficiency === null) return;
             const solectriaBosEfficiency = readAnnualEfficiency('annualSolectriaBosEfficiency', 'Solectria BOS efficiency');
             if (solectriaBosEfficiency === null) return;
-            const includeIamOn = annualIncludeIam.checked;
+            const iamModel = getSelectedIamModel(annualIamModelRadios);
             const iamArValue = parseFloat(annualIamAr.value);
-            if (includeIamOn && (!Number.isFinite(iamArValue) || iamArValue <= 0)) {
-                showAnnualError('Martin-Ruiz a_r must be positive.');
+            if (iamModel === 'martin_ruiz' && (!Number.isFinite(iamArValue) || iamArValue <= 0)) {
+                showAnnualError('Martin–Ruiz a_r must be positive.');
                 annualIamAr.focus();
                 return;
             }
@@ -3132,11 +3319,11 @@
                 solaredge_bos_efficiency: solaredgeBosEfficiency,
                 solectria_inverter_efficiency: solectriaInverterEfficiency,
                 solectria_bos_efficiency: solectriaBosEfficiency,
-                include_iam: includeIamOn,
-                iam_a_r: includeIamOn ? iamArValue : 0.2,
+                iam_model: iamModel,
                 curtailment_enabled: curtailmentOn,
                 curtailment_limit_kw: curtailmentOn ? curtailmentLimit : null,
             };
+            if (iamModel === 'martin_ruiz') body.iam_a_r = iamArValue;
 
             try {
                 const res = await fetch('/api/annual-run', {
@@ -3210,14 +3397,14 @@
 
         runBtn.addEventListener('click', runAnalysis);
         curtailmentEnabled.addEventListener('change', syncCurtailmentLimit);
-        includeIam.addEventListener('change', syncIamAr);
+        iamModelRadios.forEach((radio) => radio.addEventListener('change', syncIamAr));
         annualRunBtn.addEventListener('click', runAnnualAnalysis);
         validationTab.addEventListener('click', () => switchMode('validation'));
         annualTab.addEventListener('click', () => switchMode('annual'));
         operationsNavLink.addEventListener('click', () => setActiveNav(operationsNavLink));
         pvModelNavLink.addEventListener('click', () => setActiveNav(pvModelNavLink));
         annualCurtailmentEnabled.addEventListener('change', syncAnnualCurtailmentLimit);
-        annualIncludeIam.addEventListener('change', syncAnnualIamAr);
+        annualIamModelRadios.forEach((radio) => radio.addEventListener('change', syncAnnualIamAr));
         document.getElementById('annualFromDate').addEventListener('change', updateAnnualRuntimeWarning);
         document.getElementById('annualToDate').addEventListener('change', updateAnnualRuntimeWarning);
         syncCurtailmentLimit();
@@ -3230,11 +3417,16 @@
         const chatToggle = document.getElementById('chatToggle');
         const closeChat = document.getElementById('closeChat');
         const chatSidebar = document.getElementById('chatSidebar');
+        const chatDragHandle = document.getElementById('chatDragHandle');
         const chatInput = document.getElementById('chatInput');
         const sendBtn = document.getElementById('sendBtn');
         const messagesContainer = document.getElementById('messages');
         const CHAT_POSITION_KEY = 'sb-energy-chat-position-v1';
+        const CHAT_WINDOW_POSITION_KEY = 'sb-energy-chat-window-position-v1';
+        const CHAT_MOBILE_BREAKPOINT = 560;
         let chatDragState = null;
+        let chatWindowDragState = null;
+        let savedChatWindowPosition = null;
         let suppressChatClick = false;
 
         function clampChatPosition(left, top) {
@@ -3270,6 +3462,65 @@
                 }
             } catch (_) {
                 // Keep the default lower-right position when saved state is unavailable.
+            }
+        }
+
+        function clampChatWindowPosition(left, top) {
+            const margin = 10;
+            const width = chatSidebar.offsetWidth;
+            const height = chatSidebar.offsetHeight;
+            return {
+                left: Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin)),
+                top: Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - margin)),
+            };
+        }
+
+        function clearChatWindowInlinePosition() {
+            chatSidebar.style.left = '';
+            chatSidebar.style.top = '';
+            chatSidebar.style.right = '';
+            chatSidebar.style.bottom = '';
+        }
+
+        function setChatWindowPosition(left, top, persist = false) {
+            if (window.innerWidth <= CHAT_MOBILE_BREAKPOINT || chatSidebar.classList.contains('hidden')) return;
+            const position = clampChatWindowPosition(left, top);
+            chatSidebar.style.left = position.left + 'px';
+            chatSidebar.style.top = position.top + 'px';
+            chatSidebar.style.right = 'auto';
+            chatSidebar.style.bottom = 'auto';
+            if (persist) {
+                savedChatWindowPosition = position;
+                try {
+                    localStorage.setItem(CHAT_WINDOW_POSITION_KEY, JSON.stringify(position));
+                } catch (_) {
+                    // Window position persistence is optional when browser storage is unavailable.
+                }
+            }
+        }
+
+        function restoreChatWindowPosition() {
+            try {
+                const position = JSON.parse(localStorage.getItem(CHAT_WINDOW_POSITION_KEY) || 'null');
+                if (position && Number.isFinite(position.left) && Number.isFinite(position.top)) {
+                    savedChatWindowPosition = position;
+                }
+            } catch (_) {
+                // Keep the default lower-right position when saved state is unavailable.
+            }
+        }
+
+        function syncChatWindowPosition() {
+            if (window.innerWidth <= CHAT_MOBILE_BREAKPOINT) {
+                clearChatWindowInlinePosition();
+                return;
+            }
+            if (chatSidebar.classList.contains('hidden')) return;
+            if (savedChatWindowPosition) {
+                setChatWindowPosition(savedChatWindowPosition.left, savedChatWindowPosition.top);
+            } else if (chatSidebar.style.left) {
+                const rect = chatSidebar.getBoundingClientRect();
+                setChatWindowPosition(rect.left, rect.top);
             }
         }
 
@@ -3323,13 +3574,60 @@
             }
             setChatOpen(chatSidebar.classList.contains('hidden'));
         });
+
+        function finishChatWindowDrag(event, persist) {
+            if (!chatWindowDragState || event.pointerId !== chatWindowDragState.pointerId) return;
+            if (chatWindowDragState.moved && persist) {
+                const rect = chatSidebar.getBoundingClientRect();
+                setChatWindowPosition(rect.left, rect.top, true);
+            }
+            if (chatDragHandle.hasPointerCapture?.(event.pointerId)) {
+                chatDragHandle.releasePointerCapture(event.pointerId);
+            }
+            chatSidebar.classList.remove('dragging');
+            chatWindowDragState = null;
+        }
+
+        chatDragHandle.addEventListener('pointerdown', (event) => {
+            if (window.innerWidth <= CHAT_MOBILE_BREAKPOINT) return;
+            if (event.button !== undefined && event.button !== 0) return;
+            if (event.target.closest('button')) return;
+            const rect = chatSidebar.getBoundingClientRect();
+            chatWindowDragState = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                left: rect.left,
+                top: rect.top,
+                moved: false,
+            };
+            chatDragHandle.setPointerCapture?.(event.pointerId);
+            chatSidebar.classList.add('dragging');
+        });
+
+        chatDragHandle.addEventListener('pointermove', (event) => {
+            if (!chatWindowDragState || event.pointerId !== chatWindowDragState.pointerId) return;
+            const dx = event.clientX - chatWindowDragState.startX;
+            const dy = event.clientY - chatWindowDragState.startY;
+            if (Math.hypot(dx, dy) > 4) chatWindowDragState.moved = true;
+            if (chatWindowDragState.moved) {
+                event.preventDefault();
+                setChatWindowPosition(chatWindowDragState.left + dx, chatWindowDragState.top + dy);
+            }
+        });
+
+        chatDragHandle.addEventListener('pointerup', (event) => finishChatWindowDrag(event, true));
+        chatDragHandle.addEventListener('pointercancel', (event) => finishChatWindowDrag(event, false));
         closeChat.addEventListener('click', () => setChatOpen(false));
         window.addEventListener('resize', () => {
-            if (!chatToggle.style.left) return;
-            const rect = chatToggle.getBoundingClientRect();
-            setChatTogglePosition(rect.left, rect.top);
+            if (chatToggle.style.left) {
+                const rect = chatToggle.getBoundingClientRect();
+                setChatTogglePosition(rect.left, rect.top);
+            }
+            syncChatWindowPosition();
         });
         restoreChatTogglePosition();
+        restoreChatWindowPosition();
 
         sendBtn.addEventListener('click', sendMessage);
         chatInput.addEventListener('keypress', (e) => {
@@ -3428,6 +3726,7 @@
             chatToggle.classList.toggle('hidden', open);
             chatToggle.setAttribute('aria-expanded', String(open));
             if (open) {
+                syncChatWindowPosition();
                 chatInput.focus();
             }
             saveDashboardState();
@@ -3560,7 +3859,7 @@
             }
         }
 
-        document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, #includeIam, .annual-input').forEach((el) => {
+        document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, .iam-model-input, .annual-input').forEach((el) => {
             el.addEventListener('input', saveDashboardState);
             el.addEventListener('change', saveDashboardState);
         });

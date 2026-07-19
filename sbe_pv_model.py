@@ -49,19 +49,78 @@ TIMEZONE = "America/Denver"  # local tz for display/indexing
 # AC conversion efficiencies (predicted DC * eff). 1.0 = no derate.
 SE_EFF = 1.0
 SOL_EFF = 1.0
+DEFAULT_CURTAILMENT_LIMIT_KW = 125.0
 
-# Incidence-angle modifier (Martin-Ruiz). The default a_r is always applied.
-# INCLUDE_IAM is retained as the API/UI flag for supplying a custom a_r value.
-INCLUDE_IAM = False
+# Incidence-angle modifier. Physical is the canonical default; INCLUDE_IAM is
+# retained for callers that still use the deployed dashboard's legacy flag.
+IAM_MODEL_PHYSICAL = "physical"
+IAM_MODEL_MARTIN_RUIZ = "martin_ruiz"
+IAM_MODELS = frozenset({IAM_MODEL_PHYSICAL, IAM_MODEL_MARTIN_RUIZ})
+INCLUDE_IAM = None
 A_R = 0.2
 
 
-def resolve_iam_a_r(include_iam: bool, iam_a_r: float = A_R) -> float:
-    """Return the custom IAM coefficient when enabled, otherwise the default."""
-    value = float(iam_a_r) if include_iam else A_R
+def resolve_iam_model(
+    iam_model: str | None = None,
+    include_iam: bool | None = None,
+) -> str:
+    """Return a canonical IAM model, honoring an explicit selection first.
+
+    ``include_iam`` is the deployed dashboard's legacy customization flag.
+    Either boolean value implies Martin-Ruiz; an omitted legacy flag and an
+    omitted explicit model select Physical.
+    """
+    if iam_model is None:
+        return (
+            IAM_MODEL_PHYSICAL
+            if include_iam is None
+            else IAM_MODEL_MARTIN_RUIZ
+        )
+
+    selected = str(iam_model).strip().lower()
+    if selected not in IAM_MODELS:
+        choices = ", ".join(sorted(IAM_MODELS))
+        raise ValueError(f"IAM model must be one of: {choices}.")
+    return selected
+
+
+def resolve_iam_settings(
+    iam_model: str | None = None,
+    iam_a_r: float | None = A_R,
+    include_iam: bool | None = None,
+) -> tuple[str, float | None]:
+    """Resolve model selection and validate ``a_r`` only for Martin-Ruiz."""
+    selected = resolve_iam_model(iam_model, include_iam)
+    if selected == IAM_MODEL_PHYSICAL:
+        return selected, None
+
+    # Legacy ``include_iam=False`` meant "use Martin-Ruiz's default a_r" and
+    # ignored the submitted coefficient. Canonical explicit selection always
+    # uses the supplied coefficient.
+    candidate = A_R if iam_model is None and include_iam is False else iam_a_r
+    try:
+        value = float(candidate)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Martin-Ruiz a_r must be a positive finite value."
+        ) from exc
     if not np.isfinite(value) or value <= 0:
         raise ValueError("Martin-Ruiz a_r must be a positive finite value.")
-    return value
+    return selected, value
+
+
+def resolve_iam_a_r(include_iam: bool, iam_a_r: float | None = A_R) -> float:
+    """Return the legacy selector's effective coefficient.
+
+    Kept for API compatibility. A false customization flag returns the default
+    without validating the unused submitted value.
+    """
+    _, value = resolve_iam_settings(
+        iam_model=None,
+        iam_a_r=iam_a_r,
+        include_iam=include_iam,
+    )
+    return A_R if value is None else value
 
 
 # -----------------------------------------------------------------------------
@@ -332,13 +391,16 @@ def run_modelchain_for_axis_tilt(
     weather: pd.DataFrame,
     location: pvl.location.Location,
     backtrack: bool = BACKTRACK,
-    include_iam: bool = INCLUDE_IAM,
-    iam_a_r: float = A_R,
+    include_iam: bool | None = INCLUDE_IAM,
+    iam_a_r: float | None = A_R,
+    iam_model: str | None = None,
 ) -> dict:
     """Run pvlib ModelChain for a single tracker axis tilt -> Ee (suns), Tk, p_mp (W)."""
-    effective_iam_a_r = resolve_iam_a_r(include_iam, iam_a_r)
-    module_parameters = MODULE_PARAMETERS.copy()
-    module_parameters["a_r"] = effective_iam_a_r
+    selected_iam_model, effective_iam_a_r = resolve_iam_settings(
+        iam_model=iam_model,
+        iam_a_r=iam_a_r,
+        include_iam=include_iam,
+    )
     array = pvl.pvsystem.Array(
         mount=pvl.pvsystem.SingleAxisTrackerMount(
             axis_tilt=axis_tilt,
@@ -347,7 +409,7 @@ def run_modelchain_for_axis_tilt(
             backtrack=bool(backtrack),
             gcr=GCR,
         ),
-        module_parameters=module_parameters,
+        module_parameters=MODULE_PARAMETERS,
         temperature_model_parameters=TEMPERATURE_MODEL_PARAMETERS,
         modules_per_string=1,
         strings=1,
@@ -356,12 +418,28 @@ def run_modelchain_for_axis_tilt(
         arrays=[array], inverter_parameters=INVERTER_PARAMETERS
     )
 
+    # Match pvmismatch_Ho_v8.py exactly: Physical is handled inside ModelChain;
+    # Martin-Ruiz runs ModelChain with no AOI loss and is applied afterward to
+    # total effective irradiance. The already-computed dc.p_mp is not rerun.
+    aoi_model = (
+        "no_loss"
+        if selected_iam_model == IAM_MODEL_MARTIN_RUIZ
+        else IAM_MODEL_PHYSICAL
+    )
     mc = pvl.modelchain.ModelChain(
-        system, location, aoi_model="martin_ruiz", spectral_model="no_loss"
+        system, location, aoi_model=aoi_model, spectral_model="no_loss"
     )
     mc.run_model(weather)
 
     effective = mc.results.effective_irradiance
+    if selected_iam_model == IAM_MODEL_MARTIN_RUIZ:
+        aoi = getattr(mc.results, "aoi", None)
+        if aoi is None:
+            raise AttributeError(
+                "ModelChain results did not include AOI needed for IAM."
+            )
+        iam = pvl.iam.martin_ruiz(aoi, a_r=effective_iam_a_r)
+        effective = effective * iam
 
     return {
         "Ee_suns": (effective / 1000.0).to_numpy(),
@@ -410,14 +488,20 @@ def predict_ac_power(
     backtrack: bool = BACKTRACK,
     se_eff: float = SE_EFF,
     sol_eff: float = SOL_EFF,
-    include_iam: bool = INCLUDE_IAM,
-    iam_a_r: float = A_R,
+    include_iam: bool | None = INCLUDE_IAM,
+    iam_a_r: float | None = A_R,
+    iam_model: str | None = None,
 ) -> tuple[pd.DataFrame, str]:
     """Add predicted AC power columns for SolarEdge and Solectria.
 
     progress_cb(frac, msg): optional callback (frac in 0..1) for the Solectria
     time loop, so a UI can show a moving progress bar.
     """
+    selected_iam_model, effective_iam_a_r = resolve_iam_settings(
+        iam_model=iam_model,
+        iam_a_r=iam_a_r,
+        include_iam=include_iam,
+    )
     location = pvl.location.Location(LAT, LON, tz=str(df.index.tz))
     weather, dhi_source = build_weather(df, location)
 
@@ -434,8 +518,9 @@ def predict_ac_power(
             weather,
             location,
             backtrack=backtrack,
-            include_iam=include_iam,
-            iam_a_r=iam_a_r,
+            include_iam=False,
+            iam_a_r=effective_iam_a_r,
+            iam_model=selected_iam_model,
         )
         for t in unique_tilts
     }
@@ -547,7 +632,10 @@ def plot_results(
 ) -> None:
     """Save AC-power and cumulative-energy charts for the selected run mode."""
     # AC power
-    fig1, ax1 = plt.subplots(figsize=(14, 6))
+    # Reserve a header band for the energy summary and series legend so neither
+    # obscures the power curves. The extra figure height keeps the data axes at
+    # approximately the same height as the previous 14 x 6 rendering.
+    fig1, ax1 = plt.subplots(figsize=(14, 7.25))
     ax1.plot(df.index, df["se_predicted_power_w"] / 1000.0, "r-", label="SolarEdge predicted")
     ax1.plot(df.index, df["sol_predicted_power_w"] / 1000.0, "b-", label="Solectria predicted")
     if not annual_mode:
@@ -559,8 +647,8 @@ def plot_results(
     ax1.set_xlabel(f"Time ({df.index.tz})")
     ax1.set_ylabel("AC Power (kW)")
     ax1.grid(True, alpha=0.25)
-    ax1.legend(loc="best")
     fig1.autofmt_xdate()
+    fig1.subplots_adjust(top=0.78)
 
     se_meas = float(df["se_measured_energy_kwh"].iloc[-1])
     se_pred = float(df["se_predicted_energy_kwh"].iloc[-1])
@@ -582,9 +670,18 @@ def plot_results(
             f"Solectria: {sol_pred:,.0f}\n"
             f"Difference: {pred_diff:,.0f} ({pred_pct:+.2f}%)"
         )
-    ax1.text(
-        0.01, 0.99, ac_txt, transform=ax1.transAxes, va="top", ha="left", fontsize=11,
+    fig1.text(
+        0.08, 0.96, ac_txt, va="top", ha="left", fontsize=11,
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.85, edgecolor="gray"),
+    )
+    handles, labels = ax1.get_legend_handles_labels()
+    fig1.legend(
+        handles,
+        labels,
+        loc="upper right",
+        bbox_to_anchor=(0.97, 0.96),
+        ncol=2,
+        borderaxespad=0.0,
     )
     fig1.savefig(f"{out_prefix}_ac_power.png", dpi=200, bbox_inches="tight")
 
@@ -750,12 +847,13 @@ def run_model(
     solaredge_bos_efficiency: float = 1.0,
     solectria_inverter_efficiency: float = 1.0,
     solectria_bos_efficiency: float = 1.0,
-    include_iam: bool = INCLUDE_IAM,
-    iam_a_r: float = A_R,
+    include_iam: bool | None = INCLUDE_IAM,
+    iam_a_r: float | None = A_R,
     curtailment_enabled: bool = False,
     curtailment_limit_kw: float | None = None,
     input_kind: str = "historian",
     annual_mode: bool = False,
+    iam_model: str | None = None,
 ) -> dict:
     """Run the full model on input_csv, write PNGs + Excel, return a stats dict.
 
@@ -768,7 +866,17 @@ def run_model(
     sol_bos_eff = float(solectria_bos_efficiency)
     se_eff = se_inv_eff * se_bos_eff
     sol_eff = sol_inv_eff * sol_bos_eff
-    effective_iam_a_r = resolve_iam_a_r(include_iam, iam_a_r)
+    selected_iam_model, effective_iam_a_r = resolve_iam_settings(
+        iam_model=iam_model,
+        iam_a_r=iam_a_r,
+        include_iam=include_iam,
+    )
+    martin_ruiz_selected = selected_iam_model == IAM_MODEL_MARTIN_RUIZ
+    iam_customized = bool(
+        martin_ruiz_selected
+        and effective_iam_a_r is not None
+        and not np.isclose(effective_iam_a_r, A_R)
+    )
 
     data_quality_warnings: list[str] = []
     if input_kind == "midc":
@@ -787,11 +895,12 @@ def run_model(
         backtrack=backtrack,
         se_eff=se_eff,
         sol_eff=sol_eff,
-        include_iam=include_iam,
-        iam_a_r=iam_a_r,
+        include_iam=False,
+        iam_a_r=effective_iam_a_r,
+        iam_model=selected_iam_model,
     )
     if curtailment_enabled and curtailment_limit_kw is None:
-        raise ValueError("Curtailment limit must be a positive kW value.")
+        curtailment_limit_kw = DEFAULT_CURTAILMENT_LIMIT_KW
     if progress_cb:
         progress_cb(0.86, "Applying curtailment and integrating energy")
     active_curtailment_limit_kw = (
@@ -825,9 +934,12 @@ def run_model(
         "Solectria_BOS_eff": float(sol_bos_eff),
         "Solectria_total_eff": float(sol_eff),
         "IAM_enabled": True,
-        "IAM_customized": bool(include_iam),
-        "IAM_model": "martin_ruiz",
-        "IAM_a_r": float(effective_iam_a_r),
+        "IAM_customized": iam_customized,
+        "IAM_model": selected_iam_model,
+        "IAM_a_r": (
+            float(effective_iam_a_r) if martin_ruiz_selected else "N/A"
+        ),
+        "IAM_reference_parity": True,
         "LAT": LAT,
         "LON": LON,
         "AXIS_AZIMUTH": AXIS_AZIMUTH,
@@ -898,10 +1010,13 @@ def run_model(
         "solectria_inverter_efficiency": _safe(sol_inv_eff, 4),
         "solectria_bos_efficiency": _safe(sol_bos_eff, 4),
         "solectria_total_efficiency": _safe(sol_eff, 4),
-        "include_iam": True,
-        "iam_customized": bool(include_iam),
-        "iam_model": "martin_ruiz",
-        "iam_a_r": _safe(effective_iam_a_r, 4),
+        "include_iam": martin_ruiz_selected,
+        "iam_customized": iam_customized,
+        "iam_model": selected_iam_model,
+        "iam_a_r": (
+            _safe(effective_iam_a_r, 4) if martin_ruiz_selected else None
+        ),
+        "iam_reference_parity": True,
         "curtailment_enabled": bool(active_curtailment_limit_kw is not None),
         "curtailment_limit_kw": (
             _safe(active_curtailment_limit_kw, 3)

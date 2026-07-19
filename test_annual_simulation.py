@@ -191,6 +191,8 @@ class MidcModelInputTests(unittest.TestCase):
                 )
 
             self.assertEqual(stats["mode"], "annual")
+            self.assertEqual(stats["iam_model"], model.IAM_MODEL_PHYSICAL)
+            self.assertIsNone(stats["iam_a_r"])
             self.assertTrue(all(path.is_file() for path in paths))
             with pd.ExcelFile(paths[-1]) as workbook:
                 self.assertIn("monthly_energy", workbook.sheet_names)
@@ -215,7 +217,7 @@ class AnnualApiTests(unittest.TestCase):
         self.assertEqual(app.JOBS[job_id]["mode"], "annual")
         thread.return_value.start.assert_called_once_with()
 
-    def test_unchecked_iam_applies_point_two_in_both_run_modes(self):
+    def test_new_requests_default_to_physical_in_both_run_modes(self):
         validation = app.RunRequest(
             from_date="2026-06-20",
             to_date="2026-06-21",
@@ -228,8 +230,11 @@ class AnnualApiTests(unittest.TestCase):
         for request in (validation, annual):
             request.iam_a_r = 0.9
             app._validate_run_request(request)
-            self.assertFalse(request.include_iam)
-            self.assertEqual(request.iam_a_r, 0.2)
+            self.assertEqual(request.iam_model, model.IAM_MODEL_PHYSICAL)
+            self.assertEqual(
+                app._iam_metadata(request),
+                {"iam_model": model.IAM_MODEL_PHYSICAL, "iam_a_r": None},
+            )
 
     def test_annual_endpoint_rejects_reversed_dates_without_creating_job(self):
         response = TestClient(app.app).post(
@@ -281,7 +286,12 @@ class AnnualApiTests(unittest.TestCase):
             }
         )
         source = midc.MidcFetchResult(hourly, 1, 1, 0, 1, 1)
-        req = app.AnnualRunRequest(from_date="2025-01-01", to_date="2025-01-01")
+        req = app.AnnualRunRequest(
+            from_date="2025-01-01",
+            to_date="2025-01-01",
+            iam_model=model.IAM_MODEL_MARTIN_RUIZ,
+            iam_a_r=0.18,
+        )
 
         job_id = "_test_annualjob"
         base = app.OUTPUT_DIR / job_id
@@ -303,6 +313,8 @@ class AnnualApiTests(unittest.TestCase):
         def fake_run_model(**kwargs):
             self.assertIn("input_plots", app.JOBS[job_id])
             self.assertTrue(irradiance_path.is_file())
+            self.assertEqual(kwargs["iam_model"], model.IAM_MODEL_MARTIN_RUIZ)
+            self.assertEqual(kwargs["iam_a_r"], 0.18)
             return stats
 
         app.JOBS[job_id] = {"mode": "annual", "state": "running"}
@@ -323,7 +335,10 @@ class AnnualApiTests(unittest.TestCase):
             self.assertIn("source_csv", result)
             self.assertIn("model fallback", result["warnings"])
             self.assertEqual(result["window"]["hour_convention"], "right-closed, right-labeled")
-            self.assertEqual(result["window"]["iam_a_r"], 0.2)
+            self.assertEqual(
+                result["window"]["iam_model"], model.IAM_MODEL_MARTIN_RUIZ
+            )
+            self.assertEqual(result["window"]["iam_a_r"], 0.18)
         finally:
             source_path.unlink(missing_ok=True)
             irradiance_path.unlink(missing_ok=True)

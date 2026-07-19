@@ -22,6 +22,7 @@ import json
 import os
 from datetime import date, datetime
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
@@ -136,8 +137,13 @@ class RunRequest(BaseModel):
     solaredge_bos_efficiency: float = 1.0
     solectria_inverter_efficiency: float = 1.0
     solectria_bos_efficiency: float = 1.0
-    include_iam: bool = model.INCLUDE_IAM
-    iam_a_r: float = model.A_R
+    iam_model: Literal["physical", "martin_ruiz"] = "physical"
+    include_iam: bool | None = Field(
+        default=model.INCLUDE_IAM,
+        exclude=True,
+        deprecated="Use iam_model and iam_a_r instead.",
+    )
+    iam_a_r: float | None = model.A_R
     curtailment_enabled: bool = False
     curtailment_limit_kw: float | None = None
 
@@ -150,8 +156,13 @@ class AnnualRunRequest(BaseModel):
     solaredge_bos_efficiency: float = 1.0
     solectria_inverter_efficiency: float = 1.0
     solectria_bos_efficiency: float = 1.0
-    include_iam: bool = model.INCLUDE_IAM
-    iam_a_r: float = model.A_R
+    iam_model: Literal["physical", "martin_ruiz"] = "physical"
+    include_iam: bool | None = Field(
+        default=model.INCLUDE_IAM,
+        exclude=True,
+        deprecated="Use iam_model and iam_a_r instead.",
+    )
+    iam_a_r: float | None = model.A_R
     curtailment_enabled: bool = False
     curtailment_limit_kw: float | None = None
 
@@ -237,6 +248,14 @@ def _efficiency(value: float, label: str) -> float:
     return out
 
 
+def _request_fields_set(req: BaseModel) -> set[str]:
+    """Return explicitly supplied request fields on Pydantic v1 or v2."""
+    fields_set = getattr(req, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(req, "__fields_set__", set())
+    return set(fields_set)
+
+
 def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
     req.solaredge_inverter_efficiency = _efficiency(
         req.solaredge_inverter_efficiency, "SolarEdge inverter efficiency"
@@ -251,9 +270,15 @@ def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
         req.solectria_bos_efficiency, "Solectria BOS efficiency"
     )
 
-    if not req.include_iam:
-        req.iam_a_r = model.A_R
-    else:
+    fields_set = _request_fields_set(req)
+    if "iam_model" not in fields_set and "include_iam" in fields_set:
+        # Compatibility for payloads created before the explicit model selector:
+        # include_iam chose a default or custom Martin-Ruiz coefficient.
+        req.iam_model = "martin_ruiz"
+        if not req.__dict__.get("include_iam", model.INCLUDE_IAM):
+            req.iam_a_r = model.A_R
+
+    if req.iam_model == "martin_ruiz":
         req.iam_a_r = _finite_float(req.iam_a_r, "Martin-Ruiz a_r")
         if req.iam_a_r <= 0:
             raise HTTPException(
@@ -263,13 +288,18 @@ def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
 
 def _validate_curtailment(req: RunRequest | AnnualRunRequest) -> None:
     if not req.curtailment_enabled:
+        req.curtailment_limit_kw = None
         return
     limit_kw = req.curtailment_limit_kw
-    if limit_kw is None or not math.isfinite(float(limit_kw)) or limit_kw <= 0:
+    if limit_kw is None:
+        req.curtailment_limit_kw = model.DEFAULT_CURTAILMENT_LIMIT_KW
+        return
+    if not math.isfinite(float(limit_kw)) or limit_kw <= 0:
         raise HTTPException(
             status_code=422,
             detail="Curtailment limit must be a positive kW value.",
         )
+    req.curtailment_limit_kw = float(limit_kw)
 
 
 def _annual_dates(req: AnnualRunRequest) -> tuple[date, date]:
@@ -428,6 +458,22 @@ def _model_dump(obj: BaseModel) -> dict:
     if hasattr(obj, "model_dump"):
         return obj.model_dump()
     return obj.dict()
+
+
+def _iam_metadata(req: RunRequest | AnnualRunRequest) -> dict[str, str | float | None]:
+    return {
+        "iam_model": req.iam_model,
+        "iam_a_r": (
+            float(req.iam_a_r) if req.iam_model == "martin_ruiz" else None
+        ),
+    }
+
+
+def _run_request_context(req: RunRequest | AnnualRunRequest) -> dict:
+    """Serialize the canonical IAM selection without the legacy input flag."""
+    context = _model_dump(req)
+    context.update(_iam_metadata(req))
+    return context
 
 
 def _latest_completed_job_id() -> str | None:
@@ -626,8 +672,8 @@ def _run_job(job_id: str, req: RunRequest) -> None:
             solaredge_bos_efficiency=req.solaredge_bos_efficiency,
             solectria_inverter_efficiency=req.solectria_inverter_efficiency,
             solectria_bos_efficiency=req.solectria_bos_efficiency,
-            include_iam=req.include_iam,
-            iam_a_r=req.iam_a_r,
+            iam_model=req.iam_model,
+            iam_a_r=(req.iam_a_r if req.iam_model == "martin_ruiz" else None),
             curtailment_enabled=req.curtailment_enabled,
             curtailment_limit_kw=req.curtailment_limit_kw,
         )
@@ -655,12 +701,7 @@ def _run_job(job_id: str, req: RunRequest) -> None:
                 "solectria_total_efficiency": (
                     req.solectria_inverter_efficiency * req.solectria_bos_efficiency
                 ),
-                "include_iam": True,
-                "iam_customized": req.include_iam,
-                "iam_model": "martin_ruiz",
-                "iam_a_r": float(
-                    model.resolve_iam_a_r(req.include_iam, req.iam_a_r)
-                ),
+                **_iam_metadata(req),
                 "curtailment_enabled": req.curtailment_enabled,
                 "curtailment_limit_kw": (
                     float(req.curtailment_limit_kw)
@@ -716,8 +757,8 @@ def _run_annual_job(job_id: str, req: AnnualRunRequest) -> None:
             solaredge_bos_efficiency=req.solaredge_bos_efficiency,
             solectria_inverter_efficiency=req.solectria_inverter_efficiency,
             solectria_bos_efficiency=req.solectria_bos_efficiency,
-            include_iam=req.include_iam,
-            iam_a_r=req.iam_a_r,
+            iam_model=req.iam_model,
+            iam_a_r=(req.iam_a_r if req.iam_model == "martin_ruiz" else None),
             curtailment_enabled=req.curtailment_enabled,
             curtailment_limit_kw=req.curtailment_limit_kw,
             input_kind="midc",
@@ -763,12 +804,7 @@ def _run_annual_job(job_id: str, req: AnnualRunRequest) -> None:
                 "solectria_total_efficiency": (
                     req.solectria_inverter_efficiency * req.solectria_bos_efficiency
                 ),
-                "include_iam": True,
-                "iam_customized": req.include_iam,
-                "iam_model": "martin_ruiz",
-                "iam_a_r": float(
-                    model.resolve_iam_a_r(req.include_iam, req.iam_a_r)
-                ),
+                **_iam_metadata(req),
                 "curtailment_enabled": req.curtailment_enabled,
                 "curtailment_limit_kw": (
                     float(req.curtailment_limit_kw)
@@ -811,7 +847,7 @@ def start_run(req: RunRequest) -> JSONResponse:
         "state": "running",
         "progress": 0,
         "stage": "Queued…",
-        "request": _model_dump(req),
+        "request": _run_request_context(req),
     }
     threading.Thread(target=_run_job, args=(job_id, req), daemon=True).start()
     return JSONResponse({"job_id": job_id})
@@ -829,7 +865,7 @@ def start_annual_run(req: AnnualRunRequest) -> JSONResponse:
         "state": "running",
         "progress": 0,
         "stage": "Queued",
-        "request": _model_dump(req),
+        "request": _run_request_context(req),
     }
     threading.Thread(target=_run_annual_job, args=(job_id, req), daemon=True).start()
     return JSONResponse({"job_id": job_id})
