@@ -55,7 +55,8 @@
 
         button,
         input,
-        select {
+        select,
+        textarea {
             font: inherit;
         }
 
@@ -1592,7 +1593,7 @@
             position: fixed;
             right: 26px;
             bottom: 26px;
-            width: 398px;
+            width: 460px;
             max-width: calc(100vw - 32px);
             max-height: min(680px, calc(100vh - 52px));
             display: flex;
@@ -1628,6 +1629,315 @@
             font-weight: 820;
         }
 
+        .sidebar-heading {
+            min-width: 0;
+            display: grid;
+            gap: 2px;
+        }
+
+        .sidebar-subtitle {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 620;
+        }
+
+        .agent-context {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            background: #ffffff;
+        }
+
+        .agent-context-badge {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 7px 9px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 750;
+            line-height: 1.35;
+        }
+
+        .agent-context-dot {
+            width: 7px;
+            height: 7px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: var(--border-strong);
+        }
+
+        .agent-context-badge.ready .agent-context-dot {
+            background: var(--success);
+        }
+
+        .agent-context-text {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .agent-activity {
+            max-height: 310px;
+            overflow-y: auto;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+            background: #fbfcfc;
+        }
+
+        .agent-activity.hidden {
+            display: none;
+        }
+
+        .agent-activity-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 850;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .agent-activity-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .agent-card {
+            display: grid;
+            gap: 9px;
+            padding: 11px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: #ffffff;
+            box-shadow: 0 3px 10px rgba(22, 34, 29, 0.04);
+        }
+
+        .agent-card.clarification-card,
+        .system-notice {
+            border-color: #e8c98f;
+            background: var(--warning-soft);
+        }
+
+        .system-notice.error {
+            border-color: #efb7b7;
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .system-notice.success {
+            border-color: #b7ddc3;
+            background: var(--success-soft);
+            color: #166534;
+        }
+
+        .agent-card-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .agent-card-title {
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 850;
+        }
+
+        .agent-card-meta,
+        .agent-card-note {
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .agent-card-note.cross-run {
+            padding: 7px 8px;
+            border-radius: 5px;
+            background: var(--warning-soft);
+            color: #92400e;
+            font-weight: 720;
+        }
+
+        .agent-state-pill {
+            flex: 0 0 auto;
+            padding: 3px 7px;
+            border-radius: 999px;
+            background: var(--info-soft);
+            color: #1d4ed8;
+            font-size: 9px;
+            font-weight: 850;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .agent-state-pill.done,
+        .agent-state-pill.confirmed {
+            background: var(--success-soft);
+            color: #166534;
+        }
+
+        .agent-state-pill.error,
+        .agent-state-pill.cancelled,
+        .agent-state-pill.interrupted {
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .agent-change-table,
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+        }
+
+        .agent-change-table th,
+        .agent-change-table td,
+        .comparison-table th,
+        .comparison-table td {
+            padding: 5px 4px;
+            border-bottom: 1px solid #e8eeeb;
+            text-align: left;
+            vertical-align: top;
+            overflow-wrap: anywhere;
+        }
+
+        .agent-change-table th,
+        .comparison-table th {
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 820;
+            text-transform: uppercase;
+        }
+
+        .comparison-table td:not(:first-child) {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .agent-details summary {
+            cursor: pointer;
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 760;
+        }
+
+        .agent-details-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 4px 8px;
+            margin-top: 7px;
+            color: var(--muted);
+            font-size: 9px;
+        }
+
+        .agent-details-grid strong {
+            display: block;
+            color: var(--muted-strong);
+        }
+
+        .agent-card-actions,
+        .agent-artifact-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .agent-action-btn,
+        .agent-artifact-link,
+        .agent-refresh-btn {
+            min-height: 28px;
+            padding: 5px 8px;
+            border: 1px solid var(--border-strong);
+            border-radius: 5px;
+            background: #ffffff;
+            color: var(--muted-strong);
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: 780;
+            text-decoration: none;
+        }
+
+        .agent-action-btn.primary {
+            border-color: var(--accent);
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        .agent-action-btn.danger {
+            border-color: #e5a7a7;
+            color: var(--danger);
+        }
+
+        .agent-action-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+
+        .agent-progress-track {
+            height: 7px;
+            overflow: hidden;
+            border-radius: 99px;
+            background: #e6ece9;
+        }
+
+        .agent-progress-fill {
+            height: 100%;
+            width: 0;
+            border-radius: inherit;
+            background: var(--accent);
+            transition: width 0.2s ease;
+        }
+
+        .agent-progress-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 10px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .agent-edit-form {
+            display: grid;
+            gap: 7px;
+            padding: 8px;
+            border-radius: 6px;
+            background: var(--surface-muted);
+        }
+
+        .agent-edit-form.hidden {
+            display: none;
+        }
+
+        .agent-edit-field {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(110px, 0.8fr);
+            align-items: center;
+            gap: 8px;
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 720;
+        }
+
+        .agent-edit-input {
+            width: 100%;
+            min-width: 0;
+            padding: 5px 6px;
+            border: 1px solid var(--border-strong);
+            border-radius: 4px;
+            background: #ffffff;
+            color: var(--text);
+            font-size: 10px;
+        }
+
         .close-btn {
             width: 32px;
             height: 32px;
@@ -1652,6 +1962,49 @@
             display: flex;
             flex-direction: column;
             gap: 10px;
+        }
+
+        .message.system {
+            display: block;
+        }
+
+        .message.system .message-content {
+            max-width: 100%;
+            border: 1px solid #e8c98f;
+            background: var(--warning-soft);
+            color: #78350f;
+            font-size: 11px;
+        }
+
+        .message.system.error .message-content {
+            border-color: #efb7b7;
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .message.assistant.clarification .message-content {
+            border: 1px solid #e8c98f;
+            background: var(--warning-soft);
+        }
+
+        .message-evidence {
+            max-width: 86%;
+            margin-top: -4px;
+            padding: 7px 10px;
+            border-left: 3px solid var(--info);
+            background: var(--info-soft);
+            color: #1e3a8a;
+            font-size: 10px;
+        }
+
+        .message-evidence strong {
+            display: block;
+            margin-bottom: 3px;
+        }
+
+        .message-evidence a {
+            color: #1d4ed8;
+            overflow-wrap: anywhere;
         }
 
         .message {
@@ -1732,6 +2085,19 @@
             padding: 14px;
             border-top: 1px solid var(--border);
             background: #ffffff;
+        }
+
+        .chat-input {
+            min-height: 40px;
+            max-height: 112px;
+            resize: vertical;
+            line-height: 1.35;
+        }
+
+        .chat-input-hint {
+            grid-column: 1 / -1;
+            color: var(--muted);
+            font-size: 9px;
         }
 
         .send-btn {
@@ -1955,6 +2321,1392 @@
                 user-select: auto;
             }
         }
+
+        /* Solar Agent redesign: a customer-facing, conversation-first analyst drawer. */
+        .floating-chat-btn {
+            right: 22px;
+            bottom: 22px;
+            width: auto;
+            min-width: 58px;
+            height: 58px;
+            padding: 7px 16px 7px 8px;
+            gap: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            border-radius: 999px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+            font-size: 13px;
+            font-weight: 800;
+            box-shadow: 0 16px 38px rgba(15, 118, 110, 0.34);
+            transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+        }
+
+        .floating-chat-btn:hover {
+            background: linear-gradient(135deg, #12877e, var(--accent-strong));
+            box-shadow: 0 20px 44px rgba(15, 118, 110, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .chat-launch-icon {
+            width: 42px;
+            height: 42px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.16);
+            color: #ffffff;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+        }
+
+        .chat-launch-icon svg,
+        .agent-brand-mark svg,
+        .header-icon-btn svg,
+        .close-btn svg,
+        .agent-activity-toggle svg,
+        .agent-refresh-btn svg,
+        .agent-trust-line svg,
+        .send-btn svg {
+            width: 18px;
+            height: 18px;
+            display: block;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .chat-launch-copy {
+            min-width: 0;
+            display: grid;
+            gap: 1px;
+            text-align: left;
+            line-height: 1.15;
+        }
+
+        .chat-launch-label {
+            white-space: nowrap;
+        }
+
+        .chat-launch-hint {
+            color: rgba(255, 255, 255, 0.76);
+            font-size: 10px;
+            font-weight: 650;
+            white-space: nowrap;
+        }
+
+        .chat-launch-status {
+            width: 8px;
+            height: 8px;
+            flex: 0 0 auto;
+            border: 2px solid rgba(255, 255, 255, 0.82);
+            border-radius: 50%;
+            background: #fbbf24;
+        }
+
+        .sidebar {
+            top: 20px;
+            right: 20px;
+            bottom: auto;
+            width: min(480px, calc(100vw - 40px));
+            height: min(720px, calc(100dvh - 40px));
+            max-width: none;
+            max-height: none;
+            border-color: rgba(186, 201, 195, 0.84);
+            border-radius: 18px;
+            background: var(--surface);
+            box-shadow: 0 28px 80px rgba(22, 34, 29, 0.22), 0 8px 24px rgba(22, 34, 29, 0.1);
+            transform-origin: bottom right;
+            transition: width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .sidebar:not(.hidden) {
+            animation: solar-agent-enter 0.22s ease-out both;
+        }
+
+        @keyframes solar-agent-enter {
+            from {
+                opacity: 0;
+                transform: translateX(14px) scale(0.985);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0) scale(1);
+            }
+        }
+
+        .sidebar-header {
+            min-height: 76px;
+            padding: 14px 14px 14px 16px;
+            gap: 12px;
+            background: linear-gradient(135deg, #f0faf7 0%, #ffffff 72%);
+            cursor: grab;
+        }
+
+        .sidebar-identity {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .agent-brand-mark {
+            width: 42px;
+            height: 42px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            background: var(--accent);
+            color: #ffffff;
+            box-shadow: 0 0 0 5px rgba(15, 118, 110, 0.09);
+        }
+
+        .sidebar-heading {
+            gap: 3px;
+        }
+
+        .sidebar-title {
+            font-size: 16px;
+            font-weight: 800;
+        }
+
+        .sidebar-subtitle {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 650;
+        }
+
+        .sidebar-header-actions {
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .header-icon-btn,
+        .close-btn {
+            width: 42px;
+            height: 42px;
+            display: grid;
+            place-items: center;
+            border-radius: 10px;
+            background: transparent;
+            color: var(--muted-strong);
+            cursor: pointer;
+            transition: background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+        }
+
+        .header-icon-btn:hover,
+        .close-btn:hover {
+            background: var(--surface-strong);
+            color: var(--accent-strong);
+        }
+
+        .header-icon-btn:active,
+        .close-btn:active {
+            transform: translateY(1px);
+        }
+
+        .header-icon-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+        }
+
+        .header-icon-btn:focus-visible,
+        .close-btn:focus-visible,
+        .agent-activity-toggle:focus-visible,
+        .agent-activity-back:focus-visible,
+        .agent-activity-filter:focus-visible,
+        .agent-run-summary:focus-visible,
+        .agent-refresh-btn:focus-visible,
+        .agent-action-btn:focus-visible,
+        .agent-artifact-link:focus-visible,
+        .chat-prompt-btn:focus-visible,
+        .send-btn:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.24);
+            outline-offset: 2px;
+        }
+
+        .agent-context {
+            display: grid;
+            gap: 8px;
+            padding: 10px 14px 11px;
+            background: #ffffff;
+        }
+
+        .agent-context-row {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .agent-context-badge {
+            min-height: 34px;
+            flex: 1 1 auto;
+            padding: 7px 10px;
+            border-color: transparent;
+            border-radius: 999px;
+            background: var(--surface-strong);
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 750;
+        }
+
+        .agent-context-badge.ready {
+            background: var(--success-soft);
+            color: #166534;
+        }
+
+        .agent-context-text {
+            overflow: visible;
+            text-overflow: clip;
+            white-space: normal;
+        }
+
+        .agent-activity-toggle {
+            min-height: 34px;
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: #ffffff;
+            color: var(--muted-strong);
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 760;
+        }
+
+        .agent-activity-toggle:hover,
+        .agent-activity-toggle[aria-expanded="true"] {
+            border-color: rgba(15, 118, 110, 0.42);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+        }
+
+        .agent-activity-toggle.hidden {
+            display: none;
+        }
+
+        .agent-activity-count {
+            min-width: 20px;
+            height: 20px;
+            display: inline-grid;
+            place-items: center;
+            padding: 0 5px;
+            border-radius: 999px;
+            background: var(--accent);
+            color: #ffffff;
+            font-size: 10px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .agent-activity-toggle-chevron {
+            transition: transform 0.16s ease;
+        }
+
+        .agent-activity-toggle[aria-expanded="true"] .agent-activity-toggle-chevron {
+            transform: rotate(180deg);
+        }
+
+        .agent-trust-line {
+            display: flex;
+            align-items: flex-start;
+            gap: 7px;
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 650;
+            line-height: 1.4;
+        }
+
+        .agent-trust-line svg {
+            width: 14px;
+            height: 14px;
+            flex: 0 0 auto;
+            margin-top: 1px;
+            color: var(--accent);
+        }
+
+        .agent-workspace {
+            flex: 1 1 auto;
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            overflow: hidden;
+        }
+
+        .agent-chat-pane {
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .agent-activity {
+            min-width: 0;
+            min-height: 0;
+            max-height: none;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            padding: 0;
+            border-top: 0;
+            border-right: 0;
+            border-bottom: 0;
+            border-left: 1px solid var(--border);
+            background: #f7faf9;
+        }
+
+        .agent-activity.collapsed {
+            display: none;
+        }
+
+        .agent-activity-heading {
+            position: static;
+            z-index: auto;
+            flex: 0 0 auto;
+            margin: 0;
+            padding: 14px 14px 11px;
+            border-bottom: 1px solid var(--border);
+            background: #ffffff;
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 780;
+            letter-spacing: 0;
+            text-transform: none;
+        }
+
+        .agent-activity-heading-copy {
+            min-width: 0;
+            display: grid;
+            gap: 2px;
+        }
+
+        .agent-activity-eyebrow {
+            color: var(--accent);
+            font-size: 9px;
+            font-weight: 850;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        #agentActivityHeading {
+            color: var(--text);
+            font-size: 15px;
+            font-weight: 820;
+        }
+
+        .agent-activity-summary {
+            overflow: hidden;
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 620;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .agent-activity-heading-actions {
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .agent-activity-back,
+        .agent-refresh-btn {
+            min-height: 38px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: #ffffff;
+            color: var(--muted-strong);
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: 760;
+        }
+
+        .agent-activity-back {
+            padding: 7px 10px;
+        }
+
+        .agent-refresh-btn {
+            width: 38px;
+            padding: 0;
+            display: grid;
+            place-items: center;
+        }
+
+        .agent-activity-back:hover,
+        .agent-refresh-btn:hover {
+            border-color: rgba(15, 118, 110, 0.4);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+        }
+
+        .agent-activity-filters {
+            flex: 0 0 auto;
+            display: flex;
+            gap: 6px;
+            padding: 10px 12px;
+            overflow-x: auto;
+            border-bottom: 1px solid var(--border);
+            background: #ffffff;
+            scrollbar-width: none;
+        }
+
+        .agent-activity-filters::-webkit-scrollbar {
+            display: none;
+        }
+
+        .agent-activity-filter {
+            min-height: 34px;
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 9px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: #ffffff;
+            color: var(--muted-strong);
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: 720;
+        }
+
+        .agent-activity-filter span {
+            min-width: 18px;
+            height: 18px;
+            display: inline-grid;
+            place-items: center;
+            padding: 0 4px;
+            border-radius: 999px;
+            background: var(--surface-strong);
+            color: var(--muted);
+            font-size: 9px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .agent-activity-filter:hover,
+        .agent-activity-filter.selected {
+            border-color: rgba(15, 118, 110, 0.38);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+        }
+
+        .agent-activity-filter.selected span {
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        .agent-activity-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 12px;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+        }
+
+        .agent-activity-list {
+            display: grid;
+            gap: 9px;
+        }
+
+        .agent-run-record {
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 13px;
+            background: #ffffff;
+            box-shadow: 0 4px 14px rgba(22, 34, 29, 0.04);
+        }
+
+        .agent-run-record.selected {
+            border-color: rgba(15, 118, 110, 0.46);
+            box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.08), 0 7px 18px rgba(22, 34, 29, 0.06);
+        }
+
+        .agent-run-summary {
+            width: 100%;
+            min-height: 76px;
+            display: grid;
+            gap: 7px;
+            padding: 11px 12px;
+            border: 0;
+            background: #ffffff;
+            color: var(--text);
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .agent-run-summary:hover {
+            background: #fbfdfc;
+        }
+
+        .agent-run-summary-head,
+        .agent-run-summary-foot {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .agent-run-type {
+            min-width: 0;
+            overflow: hidden;
+            font-size: 12px;
+            font-weight: 800;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .agent-run-window {
+            overflow: hidden;
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 720;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .agent-run-meta {
+            min-width: 0;
+            overflow: hidden;
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 650;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .agent-run-expand {
+            flex: 0 0 auto;
+            color: var(--accent-strong);
+            font-size: 9px;
+            font-weight: 800;
+        }
+
+        .agent-run-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+
+        .agent-run-chip {
+            max-width: 100%;
+            overflow: hidden;
+            padding: 4px 6px;
+            border-radius: 6px;
+            background: var(--surface-strong);
+            color: var(--muted-strong);
+            font-size: 9px;
+            font-weight: 680;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .agent-run-mini-progress {
+            height: 4px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: #dce7e3;
+        }
+
+        .agent-run-mini-progress span {
+            height: 100%;
+            display: block;
+            border-radius: inherit;
+            background: var(--accent);
+        }
+
+        .agent-run-detail {
+            border-top: 1px solid var(--border);
+            background: #fbfdfc;
+        }
+
+        .agent-run-detail > .agent-card {
+            border: 0;
+            border-radius: 0;
+            box-shadow: none;
+        }
+
+        .agent-activity-empty {
+            padding: 28px 18px;
+            border: 1px dashed var(--border-strong);
+            border-radius: 12px;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.55;
+            text-align: center;
+        }
+
+        .agent-run-configuration {
+            display: grid;
+            gap: 7px;
+            padding: 9px 10px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: #ffffff;
+        }
+
+        .agent-run-configuration-title {
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 820;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .agent-run-configuration-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+
+        .agent-downloads {
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .agent-downloads summary {
+            min-height: 40px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 780;
+        }
+
+        .agent-downloads .agent-artifact-links {
+            padding: 0 0 10px;
+        }
+
+        .agent-state-pill.needs-review {
+            background: var(--warning-soft);
+            color: #92400e;
+        }
+
+        @media (min-width: 761px) {
+            .sidebar.activity-view {
+                width: min(900px, calc(100vw - 40px));
+            }
+
+            .sidebar.activity-view .agent-workspace {
+                grid-template-columns: minmax(360px, 1fr) minmax(360px, 400px);
+            }
+        }
+
+        .agent-card {
+            gap: 12px;
+            padding: 14px;
+            border-radius: 14px;
+            box-shadow: 0 6px 18px rgba(22, 34, 29, 0.05);
+        }
+
+        .agent-card-title {
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .agent-card-meta,
+        .agent-card-note {
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        .agent-card-note.cross-run {
+            padding: 9px 10px;
+            border-left: 3px solid var(--warning);
+            border-radius: 8px;
+        }
+
+        .agent-state-pill {
+            min-height: 24px;
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 8px;
+            font-size: 9px;
+        }
+
+        .agent-change-table,
+        .comparison-table {
+            font-size: 11px;
+        }
+
+        .agent-change-table th,
+        .agent-change-table td,
+        .comparison-table th,
+        .comparison-table td {
+            padding: 7px 5px;
+        }
+
+        .agent-details summary {
+            min-height: 32px;
+            display: flex;
+            align-items: center;
+            font-size: 11px;
+        }
+
+        .agent-details-grid {
+            gap: 7px 10px;
+            font-size: 10px;
+            line-height: 1.45;
+        }
+
+        .agent-action-btn,
+        .agent-artifact-link,
+        .agent-refresh-btn {
+            min-height: 40px;
+            padding: 8px 11px;
+            border-radius: 9px;
+            font-size: 11px;
+        }
+
+        .agent-action-btn.primary {
+            box-shadow: 0 5px 14px rgba(15, 118, 110, 0.18);
+        }
+
+        .agent-progress-track {
+            height: 8px;
+        }
+
+        .agent-progress-meta {
+            font-size: 11px;
+        }
+
+        .agent-edit-form {
+            gap: 9px;
+            padding: 10px;
+            border-radius: 10px;
+        }
+
+        .agent-edit-field {
+            font-size: 11px;
+        }
+
+        .agent-edit-input {
+            min-height: 38px;
+            padding: 7px 8px;
+            border-radius: 7px;
+            font-size: 11px;
+        }
+
+        .messages-container {
+            min-height: 0;
+            padding: 20px 18px 22px;
+            gap: 16px;
+            background:
+                radial-gradient(circle at top right, rgba(15, 118, 110, 0.055), transparent 34%),
+                #ffffff;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+        }
+
+        .chat-welcome {
+            width: 100%;
+            min-height: 100%;
+            display: grid;
+            align-content: center;
+            gap: 16px;
+            padding: 8px 2px;
+            text-align: center;
+        }
+
+        .chat-welcome-mark {
+            width: 58px;
+            height: 58px;
+            margin: 0 auto;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            background: var(--accent-soft);
+            color: var(--accent);
+            box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.05);
+        }
+
+        .chat-welcome-mark::before {
+            content: '\2600';
+            font-size: 25px;
+            line-height: 1;
+        }
+
+        .chat-welcome-copy {
+            display: grid;
+            gap: 7px;
+        }
+
+        .chat-welcome-title {
+            color: var(--text);
+            font-size: 18px;
+            font-weight: 800;
+            line-height: 1.25;
+        }
+
+        .chat-welcome-description {
+            max-width: 390px;
+            margin: 0 auto;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .chat-prompt-grid,
+        .chat-followups {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .chat-prompt-btn {
+            min-height: 46px;
+            padding: 9px 11px;
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            background: #ffffff;
+            color: var(--muted-strong);
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 720;
+            line-height: 1.35;
+            text-align: left;
+            transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+        }
+
+        .chat-prompt-btn:hover {
+            border-color: rgba(15, 118, 110, 0.42);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            transform: translateY(-1px);
+        }
+
+        .chat-welcome-note {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 650;
+        }
+
+        .message {
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .message.assistant::before {
+            content: '\2600';
+            width: 32px;
+            height: 32px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            background: var(--accent);
+            color: #ffffff;
+            font-size: 15px;
+            box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.07);
+        }
+
+        .message.system::before,
+        .message.user::before {
+            content: none;
+        }
+
+        .message-content {
+            max-width: calc(100% - 42px);
+            padding: 11px 13px;
+            border-radius: 14px;
+            font-size: 13px;
+            line-height: 1.58;
+        }
+
+        .message.assistant .message-content {
+            border: 1px solid var(--border);
+            border-radius: 5px 15px 15px 15px;
+            background: #ffffff;
+            box-shadow: 0 5px 16px rgba(22, 34, 29, 0.045);
+        }
+
+        .message.assistant .message-content::before {
+            content: 'Solar Agent';
+            display: block;
+            margin-bottom: 5px;
+            color: var(--accent-strong);
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+        }
+
+        .message.user .message-content {
+            max-width: 84%;
+            padding: 10px 13px;
+            border-radius: 15px 15px 4px 15px;
+            font-weight: 650;
+            box-shadow: 0 6px 16px rgba(15, 118, 110, 0.14);
+        }
+
+        .message.system .message-content {
+            max-width: 100%;
+            border-radius: 10px;
+            font-size: 11px;
+            box-shadow: none;
+        }
+
+        .message.assistant.clarification .message-content {
+            border-color: #e8c98f;
+        }
+
+        .message-evidence {
+            max-width: calc(100% - 42px);
+            margin: -8px 0 0 42px;
+            padding: 9px 11px;
+            border-left-width: 3px;
+            border-radius: 0 9px 9px 0;
+            font-size: 10px;
+            line-height: 1.5;
+        }
+
+        .chat-followups {
+            margin-left: 42px;
+        }
+
+        .chat-followups .chat-prompt-btn {
+            min-height: 40px;
+            background: var(--surface-muted);
+        }
+
+        .message.is-loading .message-content {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted);
+        }
+
+        .message.is-loading .message-content::before {
+            margin: 0 auto 0 0;
+        }
+
+        .chat-typing-dots {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .chat-typing-dots span {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: chat-typing-dot 0.9s infinite ease-in-out;
+        }
+
+        .chat-typing-dots span:nth-child(2) {
+            animation-delay: 0.14s;
+        }
+
+        .chat-typing-dots span:nth-child(3) {
+            animation-delay: 0.28s;
+        }
+
+        @keyframes chat-typing-dot {
+            0%, 60%, 100% {
+                opacity: 0.35;
+                transform: translateY(0);
+            }
+
+            30% {
+                opacity: 1;
+                transform: translateY(-2px);
+            }
+        }
+
+        .input-area {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            padding: 12px 14px 13px;
+            background: #ffffff;
+        }
+
+        .chat-composer-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: end;
+            gap: 8px;
+        }
+
+        .chat-input {
+            min-height: 46px;
+            max-height: 126px;
+            padding: 11px 13px;
+            border-radius: 13px;
+            resize: none;
+            overflow-y: auto;
+            line-height: 1.45;
+            font-weight: 560;
+        }
+
+        .chat-input::placeholder {
+            color: #7b8983;
+            font-weight: 560;
+        }
+
+        .send-btn {
+            min-width: 82px;
+            min-height: 46px;
+            gap: 7px;
+            padding: 0 14px;
+            border-radius: 12px;
+            box-shadow: 0 7px 16px rgba(15, 118, 110, 0.2);
+        }
+
+        .send-btn svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .send-btn:disabled {
+            box-shadow: none;
+            opacity: 0.74;
+        }
+
+        .chat-input-hint {
+            grid-column: auto;
+        }
+
+        .chat-input-meta {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            color: var(--muted);
+            font-size: 9px;
+            line-height: 1.4;
+        }
+
+        .chat-composer-status {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .chat-trust-note {
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            color: var(--accent-strong);
+            font-weight: 720;
+        }
+
+        .chat-trust-note::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+
+        @media (min-width: 561px) and (max-width: 760px) {
+            .sidebar {
+                top: auto;
+                right: 14px;
+                bottom: 14px;
+                left: 14px;
+                width: auto;
+                height: min(88dvh, 720px);
+                border-radius: 18px;
+            }
+        }
+
+        @media (max-width: 760px) {
+            .sidebar.activity-view .agent-workspace {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .sidebar.activity-view .agent-chat-pane {
+                display: none;
+            }
+
+            .agent-activity {
+                border-left: 0;
+            }
+        }
+
+        @media (max-width: 560px) {
+            body.chat-open {
+                overflow: hidden;
+            }
+
+            .floating-chat-btn {
+                right: 14px;
+                bottom: max(14px, env(safe-area-inset-bottom));
+                width: 58px;
+                min-width: 58px;
+                padding: 8px;
+                border-radius: 50%;
+            }
+
+            .chat-launch-copy,
+            .chat-launch-status {
+                display: none;
+            }
+
+            .sidebar {
+                inset: 0;
+                width: 100%;
+                height: 100dvh;
+                max-width: none;
+                max-height: none;
+                border: 0;
+                border-radius: 0;
+                box-shadow: none;
+                animation: none;
+            }
+
+            .sidebar-header {
+                min-height: 70px;
+                padding: max(10px, env(safe-area-inset-top)) 8px 10px 13px;
+                cursor: default;
+                touch-action: auto;
+                user-select: auto;
+            }
+
+            .agent-brand-mark {
+                width: 38px;
+                height: 38px;
+            }
+
+            .sidebar-subtitle {
+                max-width: 190px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .header-icon-btn,
+            .close-btn {
+                width: 44px;
+                height: 44px;
+            }
+
+            .agent-context {
+                padding: 9px 12px 10px;
+            }
+
+            .agent-context-row {
+                align-items: stretch;
+            }
+
+            .agent-context-badge {
+                min-width: 0;
+                border-radius: 11px;
+            }
+
+            .agent-context-text {
+                display: -webkit-box;
+                overflow: hidden;
+                -webkit-box-orient: vertical;
+                -webkit-line-clamp: 2;
+            }
+
+            .agent-activity-toggle {
+                min-width: 44px;
+                min-height: 44px;
+                padding: 7px 9px;
+                border-radius: 11px;
+            }
+
+            .agent-activity-toggle-label {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                padding: 0;
+                margin: -1px;
+                overflow: hidden;
+                clip: rect(0, 0, 0, 0);
+                white-space: nowrap;
+                border: 0;
+            }
+
+            .agent-activity-toggle-chevron {
+                display: none;
+            }
+
+            .agent-activity {
+                max-height: none;
+                padding: 0;
+            }
+
+            .agent-activity-heading {
+                padding: 12px;
+            }
+
+            .agent-activity-back,
+            .agent-refresh-btn,
+            .agent-activity-filter,
+            .agent-run-summary {
+                min-height: 44px;
+            }
+
+            .agent-activity-body {
+                padding: 10px 12px max(12px, env(safe-area-inset-bottom));
+            }
+
+            .agent-card {
+                padding: 13px;
+            }
+
+            .agent-card-head {
+                align-items: flex-start;
+            }
+
+            .agent-details-grid,
+            .agent-edit-field {
+                grid-template-columns: 1fr;
+            }
+
+            .agent-action-btn,
+            .agent-artifact-link,
+            .agent-refresh-btn,
+            .agent-edit-input {
+                min-height: 44px;
+            }
+
+            .agent-card-actions .agent-action-btn {
+                flex: 1 1 130px;
+            }
+
+            .agent-change-table thead,
+            .comparison-table thead {
+                display: none;
+            }
+
+            .agent-change-table,
+            .agent-change-table tbody,
+            .agent-change-table tr,
+            .agent-change-table td,
+            .comparison-table,
+            .comparison-table tbody,
+            .comparison-table tr,
+            .comparison-table td {
+                display: block;
+                width: 100%;
+            }
+
+            .agent-change-table tr,
+            .comparison-table tr {
+                padding: 8px 0;
+                border-top: 1px solid var(--border);
+            }
+
+            .agent-change-table td,
+            .comparison-table td {
+                display: grid;
+                grid-template-columns: minmax(96px, 0.8fr) minmax(0, 1fr);
+                gap: 9px;
+                padding: 5px 0;
+                border: 0;
+            }
+
+            .agent-change-table td::before,
+            .comparison-table td::before {
+                content: attr(data-label);
+                color: var(--muted);
+                font-size: 9px;
+                font-weight: 800;
+                text-transform: uppercase;
+            }
+
+            .messages-container {
+                padding: 17px 13px 20px;
+            }
+
+            .chat-welcome {
+                align-content: start;
+                padding-top: 10px;
+            }
+
+            .chat-prompt-grid,
+            .chat-followups {
+                grid-template-columns: 1fr;
+            }
+
+            .chat-prompt-btn {
+                min-height: 44px;
+            }
+
+            .message-content,
+            .message.user .message-content {
+                max-width: 90%;
+            }
+
+            .message.assistant .message-content {
+                max-width: calc(100% - 42px);
+            }
+
+            .chat-followups {
+                margin-left: 42px;
+            }
+
+            .input-area {
+                padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+            }
+
+            .chat-input {
+                font-size: 16px;
+            }
+
+            .send-btn {
+                width: 48px;
+                min-width: 48px;
+                height: 48px;
+                min-height: 48px;
+                padding: 0;
+                border-radius: 13px;
+            }
+
+            .send-label,
+            .chat-input-hint {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                padding: 0;
+                margin: -1px;
+                overflow: hidden;
+                clip: rect(0, 0, 0, 0);
+                white-space: nowrap;
+                border: 0;
+            }
+
+            .chat-input-meta {
+                justify-content: flex-end;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .sidebar:not(.hidden),
+            .chat-typing-dots span {
+                animation: none;
+            }
+
+            .floating-chat-btn,
+            .chat-prompt-btn,
+            .agent-progress-fill,
+            .agent-activity-toggle-chevron,
+            .sidebar {
+                transition: none;
+            }
+        }
     </style>
 </head>
 
@@ -2166,7 +3918,7 @@
                                     </span>
                                     <input type="number" class="date-input eff-input annual-input" id="annualIamAr" min="0" step="any" value="0.2" disabled>
                                 </label>
-                                <p class="iam-parity-note" role="note">Reference parity: Martin–Ruiz is applied after ModelChain to total effective irradiance for Solectria; SolarEdge uses the no-loss ModelChain result.</p>
+                                <p class="iam-parity-note" role="note">Reference parity: If Martin-Ruiz is selected, no IAM loss will be applied to the Physical model in ModelChain to avoid double-counting.</p>
                             </div>
                         </section>
                     </div>
@@ -2417,7 +4169,7 @@
                                 </span>
                                 <input type="number" class="date-input eff-input" id="iamAr" min="0" step="any" value="0.2" disabled>
                             </label>
-                            <p class="iam-parity-note" role="note">Reference parity: Martin–Ruiz is applied after ModelChain to total effective irradiance for Solectria; SolarEdge uses the no-loss ModelChain result.</p>
+                            <p class="iam-parity-note" role="note">Reference parity: If Martin-Ruiz is selected, no IAM loss will be applied to the Physical model in ModelChain to avoid double-counting.</p>
                         </div>
                     </section>
                 </div>
@@ -2592,23 +4344,118 @@
     </div>
 
     <button class="floating-chat-btn" id="chatToggle" type="button"
-        aria-label="Open Solar Agent. Drag to move." aria-expanded="false"
-        title="Drag to move - click to open Solar Agent">AI</button>
+        aria-label="Open Solar Agent. Drag to move." aria-controls="chatSidebar" aria-haspopup="dialog"
+        aria-expanded="false" title="Ask about this dashboard. Drag to move.">
+        <span class="chat-launch-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"></path></svg>
+        </span>
+        <span class="chat-launch-copy">
+            <span class="chat-launch-label">Ask Solar Agent</span>
+            <span class="chat-launch-hint">Insights &amp; scenarios</span>
+        </span>
+        <span class="chat-launch-status" aria-hidden="true"></span>
+    </button>
 
-    <div class="sidebar hidden" id="chatSidebar">
+    <div class="sidebar hidden" id="chatSidebar" role="dialog" aria-labelledby="solarAgentTitle" aria-describedby="solarAgentDescription">
         <div class="sidebar-header" id="chatDragHandle" title="Drag to move the Solar Agent window">
-            <span class="sidebar-title">Solar Agent</span>
-            <button class="close-btn" id="closeChat" type="button" aria-label="Close Solar Agent">x</button>
-        </div>
-        <div class="messages-container" id="messages">
-            <div class="message assistant">
-                <div class="message-content">Hi! I'm your solar analyst. Ask me anything about the performance data,
-                    model accuracy, or system comparison.</div>
+            <div class="sidebar-identity">
+                <span class="agent-brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"></path></svg>
+                </span>
+                <div class="sidebar-heading">
+                    <span class="sidebar-title" id="solarAgentTitle">Solar Agent</span>
+                    <span class="sidebar-subtitle" id="solarAgentDescription">Performance insights &amp; guided scenarios</span>
+                </div>
+            </div>
+            <div class="sidebar-header-actions">
+                <button class="header-icon-btn" id="newChatBtn" type="button" aria-label="Start a new Solar Agent conversation" title="New conversation">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>
+                </button>
+                <button class="header-icon-btn" id="minimizeChat" type="button" aria-label="Minimize Solar Agent to view dashboard charts" title="Minimize Solar Agent">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path></svg>
+                </button>
+                <button class="close-btn" id="closeChat" type="button" aria-label="Close Solar Agent" title="Close Solar Agent">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+                </button>
             </div>
         </div>
-        <div class="input-area">
-            <input type="text" class="input-field" id="chatInput" placeholder="Ask about the analysis...">
-            <button class="send-btn" id="sendBtn">Send</button>
+        <div class="agent-context">
+            <div class="agent-context-row">
+                <div class="agent-context-badge" id="agentContextBadge" title="Current Solar Agent context">
+                    <span class="agent-context-dot" aria-hidden="true"></span>
+                    <span class="agent-context-text" id="agentContextText">Validation &middot; No baseline yet</span>
+                </div>
+                <button class="agent-activity-toggle hidden" id="agentActivityToggle" type="button"
+                    aria-controls="agentActivity" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"></path><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"></path></svg>
+                    <span class="agent-activity-toggle-label" id="agentActivityToggleLabel">Runs</span>
+                    <span class="agent-activity-count" id="agentActivityCount">0</span>
+                    <svg class="agent-activity-toggle-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"></path></svg>
+                </button>
+            </div>
+            <div class="agent-trust-line">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                <span>Uses the active dashboard. Scenario results stay separate until you promote them.</span>
+            </div>
+        </div>
+        <div class="agent-workspace">
+            <div class="agent-chat-pane" aria-label="Solar Agent conversation">
+                <div class="messages-container" id="messages" role="log" aria-live="polite" aria-relevant="additions text">
+                    <div class="chat-welcome">
+                        <div class="chat-welcome-mark" aria-hidden="true"></div>
+                        <div class="chat-welcome-copy">
+                            <div class="chat-welcome-title">Turn solar data into clear decisions</div>
+                            <p class="chat-welcome-description">Ask about performance, model accuracy, or explore a what-if scenario using the active dashboard context.</p>
+                        </div>
+                        <div class="chat-prompt-grid" aria-label="Suggested Solar Agent questions">
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Summarize this validation window">Summarize this view</button>
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Why do measured and modeled values differ?">Explain modeled vs measured</button>
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Compare SolarEdge and Solectria">Compare both systems</button>
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Test what changes with backtracking off">Test backtracking off</button>
+                        </div>
+                        <div class="chat-welcome-note">Agent scenarios cannot replace the active baseline without your action.</div>
+                    </div>
+                </div>
+                <div class="input-area">
+                    <label class="sr-only" for="chatInput">Message Solar Agent</label>
+                    <div class="chat-composer-row">
+                        <textarea class="input-field chat-input" id="chatInput" rows="1" maxlength="4000"
+                            aria-describedby="chatComposerStatus" placeholder="Ask about this dashboard..."></textarea>
+                        <button class="send-btn" id="sendBtn" type="button" aria-label="Send message">
+                            <span class="send-label">Send</span>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19 0-14M6.5 10.5 12 5l5.5 5.5"></path></svg>
+                        </button>
+                    </div>
+                    <div class="chat-input-meta">
+                        <span class="chat-composer-status" id="chatComposerStatus" role="status" aria-live="polite">Enter to send &middot; Shift+Enter for a new line</span>
+                        <span class="chat-trust-note">Results stay separate until promoted</span>
+                    </div>
+                </div>
+            </div>
+            <section class="agent-activity hidden collapsed" id="agentActivity" aria-labelledby="agentActivityHeading">
+                <div class="agent-activity-heading">
+                    <div class="agent-activity-heading-copy">
+                        <span class="agent-activity-eyebrow">Run workspace</span>
+                        <span id="agentActivityHeading">Scenario runs</span>
+                        <span class="agent-activity-summary" id="agentActivitySummary">Compare time windows and model settings</span>
+                    </div>
+                    <div class="agent-activity-heading-actions">
+                        <button class="agent-activity-back" id="agentActivityBack" type="button">Back to chat</button>
+                        <button class="agent-refresh-btn" id="agentRefreshBtn" type="button" aria-label="Refresh scenario runs" title="Refresh scenario runs">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="agent-activity-filters" role="toolbar" aria-label="Filter scenario runs">
+                    <button class="agent-activity-filter selected" type="button" data-agent-activity-filter="all" aria-pressed="true">All <span data-agent-filter-count="all">0</span></button>
+                    <button class="agent-activity-filter" type="button" data-agent-activity-filter="review" aria-pressed="false">Review <span data-agent-filter-count="review">0</span></button>
+                    <button class="agent-activity-filter" type="button" data-agent-activity-filter="active" aria-pressed="false">Active <span data-agent-filter-count="active">0</span></button>
+                    <button class="agent-activity-filter" type="button" data-agent-activity-filter="complete" aria-pressed="false">Complete <span data-agent-filter-count="complete">0</span></button>
+                </div>
+                <div class="agent-activity-body" id="agentActivityBody">
+                    <div class="agent-activity-list" id="agentActivityList"></div>
+                </div>
+            </section>
         </div>
     </div>
     <script>
@@ -2644,7 +4491,7 @@
         const operationsNavLink = document.getElementById('operationsNavLink');
         const pvModelNavLink = document.getElementById('pvModelNavLink');
         const STORAGE_KEY = 'sb-energy-dashboard-state-v1';
-        const DEFAULT_ASSISTANT_MESSAGE = "Hi! I'm your solar analyst. Ask me anything about the performance data, model accuracy, or system comparison.";
+        const DEFAULT_ASSISTANT_MESSAGE = "Ask about performance, model accuracy, or explore a what-if scenario using the active dashboard context.";
         let latestJobId = null;
         let latestInputPlots = null;
         let latestResult = null;
@@ -2657,6 +4504,18 @@
         let annualPollTimer = null;
         let chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
         let serverSessionId = null;
+        let agentServerState = { proposals: [], jobs: [], promoted_baselines: { validation: null, annual: null } };
+        const agentJobPollTimers = new Map();
+        const agentJobStartedAt = new Map();
+        const agentJobSnapshots = new Map();
+        const agentProposalSnapshots = new Map();
+        const agentExplainedJobs = new Set();
+        let chatDraft = '';
+        let chatIsSending = false;
+        let chatDraftSaveTimer = null;
+        let agentActivityExpanded = false;
+        let agentActivityFilter = 'all';
+        let agentActivitySelection = null;
 
         function setProgress(pct, stage) {
             progressWrap.classList.add('visible');
@@ -2694,6 +4553,10 @@
             operationsNavLink.href = annual ? '#annualControls' : '#analysisControls';
             pvModelNavLink.href = annual ? '#annualChartGrid' : '#chartGrid';
             setActiveNav(operationsNavLink);
+            updateAgentContext();
+            if (isInitialChatState()) renderChatWelcome();
+            else renderChatFollowups();
+            syncChatComposerState();
             if (persist) saveDashboardState();
         }
 
@@ -2920,6 +4783,71 @@
             updateAnnualRuntimeWarning();
         }
 
+        function finiteOrNull(value) {
+            if (value === null || value === undefined || String(value).trim() === '') return null;
+            const number = Number(value);
+            return Number.isFinite(number) ? number : null;
+        }
+
+        function getCanonicalCurrentConfig(mode = activeMode) {
+            const annual = mode === 'annual';
+            const form = annual ? getAnnualFormState() : getFormState();
+            const iamModel = form.iamModel === 'martin_ruiz' ? 'martin_ruiz' : 'physical';
+            const config = {
+                from_date: form.fromDate,
+                to_date: form.toDate,
+                backtrack: !!form.backtrack,
+                curtailment_enabled: !!form.curtailmentEnabled,
+                curtailment_limit_kw: form.curtailmentEnabled ? finiteOrNull(form.curtailmentLimitKw) : null,
+                solaredge_inverter_efficiency: finiteOrNull(form.solaredgeInverterEfficiency),
+                solaredge_bos_efficiency: finiteOrNull(form.solaredgeBosEfficiency),
+                solectria_inverter_efficiency: finiteOrNull(form.solectriaInverterEfficiency),
+                solectria_bos_efficiency: finiteOrNull(form.solectriaBosEfficiency),
+                iam_model: iamModel,
+                iam_a_r: iamModel === 'martin_ruiz' ? finiteOrNull(form.iamAr) : null,
+            };
+            if (!annual) {
+                config.from_time = form.fromTime;
+                config.to_time = form.toTime;
+                config.interval_value = finiteOrNull(form.intervalValue);
+                config.interval_unit = form.intervalUnit;
+            }
+            return config;
+        }
+
+        function requestValue(request, snakeName, camelName) {
+            if (!request) return undefined;
+            if (Object.prototype.hasOwnProperty.call(request, snakeName)) return request[snakeName];
+            return request[camelName];
+        }
+
+        function applyPromotedRequest(mode, request) {
+            if (!request) return;
+            const iamModel = requestValue(request, 'iam_model', 'iamModel');
+            const mapped = {
+                fromDate: requestValue(request, 'from_date', 'fromDate'),
+                toDate: requestValue(request, 'to_date', 'toDate'),
+                backtrack: requestValue(request, 'backtrack', 'backtrack'),
+                curtailmentEnabled: requestValue(request, 'curtailment_enabled', 'curtailmentEnabled'),
+                curtailmentLimitKw: requestValue(request, 'curtailment_limit_kw', 'curtailmentLimitKw'),
+                solaredgeInverterEfficiency: requestValue(request, 'solaredge_inverter_efficiency', 'solaredgeInverterEfficiency'),
+                solaredgeBosEfficiency: requestValue(request, 'solaredge_bos_efficiency', 'solaredgeBosEfficiency'),
+                solectriaInverterEfficiency: requestValue(request, 'solectria_inverter_efficiency', 'solectriaInverterEfficiency'),
+                solectriaBosEfficiency: requestValue(request, 'solectria_bos_efficiency', 'solectriaBosEfficiency'),
+                iamModel,
+                iamAr: requestValue(request, 'iam_a_r', 'iamAr'),
+            };
+            if (mode === 'annual') {
+                applyAnnualFormState(mapped);
+                return;
+            }
+            mapped.fromTime = requestValue(request, 'from_time', 'fromTime');
+            mapped.toTime = requestValue(request, 'to_time', 'toTime');
+            mapped.intervalValue = requestValue(request, 'interval_value', 'intervalValue');
+            mapped.intervalUnit = requestValue(request, 'interval_unit', 'intervalUnit');
+            applyFormState(mapped);
+        }
+
         function setExcelLink(url) {
             if (!url) {
                 excelLink.classList.add('hidden');
@@ -3071,6 +4999,19 @@
             annualLatestResult = null;
             annualRunState = null;
             chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
+            chatDraft = '';
+            chatInput.value = '';
+            autoResizeChatInput();
+            syncChatComposerState();
+            agentActivityExpanded = false;
+            agentActivityFilter = 'all';
+            agentActivitySelection = null;
+            agentServerState = { proposals: [], jobs: [], promoted_baselines: { validation: null, annual: null } };
+            agentProposalSnapshots.clear();
+            agentJobSnapshots.clear();
+            agentExplainedJobs.clear();
+            agentJobPollTimers.forEach((timer) => clearTimeout(timer));
+            agentJobPollTimers.clear();
             progressWrap.classList.remove('visible');
             errorBanner.classList.remove('visible');
             clearRunImages();
@@ -3078,6 +5019,7 @@
             setExcelLink(null);
             setAnnualExcelLink(null);
             renderAnnualQuality([]);
+            renderAgentActivity();
             renderChatMessages();
             setChatOpen(false);
         }
@@ -3097,6 +5039,11 @@
                     annualRunState,
                     annualForm: getAnnualFormState(),
                     chatMessages,
+                    chatDraft,
+                    agentActivityExpanded,
+                    agentActivityFilter,
+                    agentActivitySelection,
+                    agentExplainedJobs: Array.from(agentExplainedJobs).slice(-50),
                     chatOpen: !chatSidebar.classList.contains('hidden'),
                 }));
             } catch (_) {
@@ -3235,10 +5182,18 @@
                     currentRunState = { state: 'done', progress: 100, stage: 'Done' };
                     saveDashboardState();
                     resetRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
                 if (data.state === 'error') {
                     showError(data.error || 'Run failed.');
+                    progressWrap.classList.remove('visible');
+                    saveDashboardState();
+                    resetRunBtn();
+                    return;
+                }
+                if (data.state === 'cancelled' || data.state === 'interrupted') {
+                    showError(data.state === 'interrupted' ? 'Run was interrupted and can be started again.' : 'Run was cancelled.');
                     progressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetRunBtn();
@@ -3379,10 +5334,18 @@
                     annualRunState = { state: 'done', progress: 100, stage: 'Done' };
                     saveDashboardState();
                     resetAnnualRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
                 if (data.state === 'error') {
                     showAnnualError(data.error || 'Annual simulation failed.');
+                    annualProgressWrap.classList.remove('visible');
+                    saveDashboardState();
+                    resetAnnualRunBtn();
+                    return;
+                }
+                if (data.state === 'cancelled' || data.state === 'interrupted') {
+                    showAnnualError(data.state === 'interrupted' ? 'Annual run was interrupted and can be started again.' : 'Annual run was cancelled.');
                     annualProgressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetAnnualRunBtn();
@@ -3415,12 +5378,27 @@
 
         // ---- Solar Agent chat ----
         const chatToggle = document.getElementById('chatToggle');
+        const minimizeChat = document.getElementById('minimizeChat');
         const closeChat = document.getElementById('closeChat');
+        const newChatBtn = document.getElementById('newChatBtn');
         const chatSidebar = document.getElementById('chatSidebar');
         const chatDragHandle = document.getElementById('chatDragHandle');
         const chatInput = document.getElementById('chatInput');
         const sendBtn = document.getElementById('sendBtn');
         const messagesContainer = document.getElementById('messages');
+        const chatComposerStatus = document.getElementById('chatComposerStatus');
+        const agentContextBadge = document.getElementById('agentContextBadge');
+        const agentContextText = document.getElementById('agentContextText');
+        const agentActivity = document.getElementById('agentActivity');
+        const agentActivityList = document.getElementById('agentActivityList');
+        const agentActivityBody = document.getElementById('agentActivityBody');
+        const agentActivitySummary = document.getElementById('agentActivitySummary');
+        const agentActivityBack = document.getElementById('agentActivityBack');
+        const agentRefreshBtn = document.getElementById('agentRefreshBtn');
+        const agentActivityToggle = document.getElementById('agentActivityToggle');
+        const agentActivityToggleLabel = document.getElementById('agentActivityToggleLabel');
+        const agentActivityCount = document.getElementById('agentActivityCount');
+        const dashboardShell = document.querySelector('.app-shell');
         const CHAT_POSITION_KEY = 'sb-energy-chat-position-v1';
         const CHAT_WINDOW_POSITION_KEY = 'sb-energy-chat-window-position-v1';
         const CHAT_MOBILE_BREAKPOINT = 560;
@@ -3428,6 +5406,87 @@
         let chatWindowDragState = null;
         let savedChatWindowPosition = null;
         let suppressChatClick = false;
+        let lastChatTrigger = null;
+
+        function isChatMobile() {
+            return window.innerWidth <= CHAT_MOBILE_BREAKPOINT;
+        }
+
+        function autoResizeChatInput() {
+            chatInput.style.height = 'auto';
+            const maxHeight = parseFloat(window.getComputedStyle(chatInput).maxHeight) || 126;
+            const nextHeight = Math.min(chatInput.scrollHeight, maxHeight);
+            chatInput.style.height = nextHeight + 'px';
+            chatInput.style.overflowY = chatInput.scrollHeight > maxHeight ? 'auto' : 'hidden';
+        }
+
+        function syncChatComposerState() {
+            sendBtn.disabled = chatIsSending || !chatInput.value.trim();
+            newChatBtn.disabled = chatIsSending;
+            messagesContainer.setAttribute('aria-busy', String(chatIsSending));
+            sendBtn.setAttribute('aria-label', chatIsSending ? 'Solar Agent is responding' : 'Send message');
+            chatComposerStatus.textContent = chatIsSending
+                ? 'Reviewing the active ' + (activeMode === 'annual' ? 'annual simulation' : 'validation run') + '...'
+                : isChatMobile()
+                    ? 'Tap Send · Enter adds a new line'
+                    : 'Enter to send · Shift+Enter for a new line';
+        }
+
+        function queueChatDraftSave() {
+            chatDraft = chatInput.value;
+            if (chatDraftSaveTimer) clearTimeout(chatDraftSaveTimer);
+            chatDraftSaveTimer = window.setTimeout(() => {
+                chatDraftSaveTimer = null;
+                saveDashboardState();
+            }, 150);
+        }
+
+        function setAgentActivityOpen(open, persist = true) {
+            const hasActivity = !agentActivity.classList.contains('hidden');
+            agentActivityExpanded = !!open && hasActivity;
+            agentActivity.classList.toggle('collapsed', !agentActivityExpanded);
+            chatSidebar.classList.toggle('activity-view', agentActivityExpanded);
+            agentActivityToggle.setAttribute('aria-expanded', String(agentActivityExpanded));
+            agentActivityToggle.setAttribute('aria-label', agentActivityExpanded ? 'Close scenario runs' : 'Open scenario runs');
+            agentActivityToggle.title = agentActivityExpanded ? 'Return to chat-only view' : 'Open scenario runs';
+            window.requestAnimationFrame(syncChatWindowPosition);
+            if (persist) saveDashboardState();
+        }
+
+        function syncChatModalState(open) {
+            const modal = !!open && isChatMobile();
+            if (modal) chatSidebar.setAttribute('aria-modal', 'true');
+            else chatSidebar.removeAttribute('aria-modal');
+            document.body.classList.toggle('chat-open', modal);
+            if (dashboardShell) {
+                dashboardShell.toggleAttribute('inert', modal);
+                dashboardShell.inert = modal;
+                if (modal) dashboardShell.setAttribute('aria-hidden', 'true');
+                else dashboardShell.removeAttribute('aria-hidden');
+            }
+        }
+
+        function startNewChat() {
+            if (chatIsSending) return;
+            chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
+            chatDraft = '';
+            chatInput.value = '';
+            autoResizeChatInput();
+            syncChatComposerState();
+            renderChatMessages();
+            saveDashboardState();
+            chatInput.focus();
+        }
+
+        function prefillChatPrompt(prompt) {
+            chatInput.value = String(prompt || '');
+            chatDraft = chatInput.value;
+            autoResizeChatInput();
+            syncChatComposerState();
+            saveDashboardState();
+            chatInput.focus();
+            chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+        }
 
         function clampChatPosition(left, top) {
             const margin = 10;
@@ -3618,6 +5677,7 @@
 
         chatDragHandle.addEventListener('pointerup', (event) => finishChatWindowDrag(event, true));
         chatDragHandle.addEventListener('pointercancel', (event) => finishChatWindowDrag(event, false));
+        minimizeChat.addEventListener('click', () => setChatOpen(false));
         closeChat.addEventListener('click', () => setChatOpen(false));
         window.addEventListener('resize', () => {
             if (chatToggle.style.left) {
@@ -3625,15 +5685,86 @@
                 setChatTogglePosition(rect.left, rect.top);
             }
             syncChatWindowPosition();
+            syncChatModalState(!chatSidebar.classList.contains('hidden'));
+            autoResizeChatInput();
         });
         restoreChatTogglePosition();
         restoreChatWindowPosition();
 
         sendBtn.addEventListener('click', sendMessage);
-        chatInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+        newChatBtn.addEventListener('click', startNewChat);
+        agentRefreshBtn.addEventListener('click', () => refreshAgentState(true));
+        agentActivityToggle.addEventListener('click', () => {
+            const opening = !agentActivityExpanded;
+            setAgentActivityOpen(opening);
+            window.setTimeout(() => {
+                if (opening) agentActivityList.querySelector('.agent-run-summary')?.focus();
+                else chatInput.focus();
+            }, 0);
+        });
+        agentActivityBack.addEventListener('click', () => {
+            setAgentActivityOpen(false);
+            chatInput.focus();
+        });
+        agentActivity.addEventListener('click', (event) => {
+            const filterButton = event.target.closest('[data-agent-activity-filter]');
+            if (!filterButton) return;
+            setAgentActivityFilter(filterButton.dataset.agentActivityFilter);
+        });
+        chatSidebar.addEventListener('click', (event) => {
+            const promptButton = event.target.closest('[data-chat-prompt]');
+            if (!promptButton) return;
+            prefillChatPrompt(promptButton.dataset.chatPrompt || promptButton.textContent);
+        });
+        chatInput.addEventListener('input', () => {
+            autoResizeChatInput();
+            syncChatComposerState();
+            queueChatDraftSave();
+        });
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.isComposing) return;
+            if (e.key === 'Enter' && !e.shiftKey && !isChatMobile()) {
                 e.preventDefault();
                 sendMessage();
+            }
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && !chatSidebar.classList.contains('hidden')) {
+                event.preventDefault();
+                if (agentActivityExpanded) {
+                    if (agentActivitySelection) {
+                        const selectedKey = agentActivitySelection;
+                        agentActivitySelection = null;
+                        renderAgentActivity();
+                        saveDashboardState();
+                        window.setTimeout(() => {
+                            Array.from(agentActivityList.querySelectorAll('[data-agent-run-row]'))
+                                .find((element) => element.dataset.agentRunRow === selectedKey)
+                                ?.focus();
+                        }, 0);
+                        return;
+                    }
+                    setAgentActivityOpen(false);
+                    agentActivityToggle.focus();
+                    return;
+                }
+                setChatOpen(false);
+                return;
+            }
+            if (event.key === 'Tab' && isChatMobile() && !chatSidebar.classList.contains('hidden')) {
+                const focusable = Array.from(chatSidebar.querySelectorAll(
+                    'button:not([disabled]):not(.hidden), a[href], textarea:not([disabled]), input:not([disabled]), select:not([disabled]), details > summary'
+                )).filter((element) => element.getClientRects().length > 0);
+                if (!focusable.length) return;
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
             }
         });
         function escapeHtml(text) {
@@ -3703,52 +5834,1602 @@
             return html.join('');
         }
 
-        function appendMessage(role, content) {
+        function isInitialChatState() {
+            return chatMessages.length === 1
+                && chatMessages[0].role === 'assistant'
+                && chatMessages[0].content === DEFAULT_ASSISTANT_MESSAGE;
+        }
+
+        function createChatPromptButton(label, prompt) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'chat-prompt-btn';
+            button.dataset.chatPrompt = prompt;
+            button.textContent = label;
+            return button;
+        }
+
+        function activeChatPrompts() {
+            if (activeMode === 'annual') {
+                return [
+                    ['Summarize annual energy', 'Summarize annual energy by system'],
+                    ['Explain the main yield drivers', 'Which assumptions influence annual yield most?'],
+                    ['Compare both systems', 'Compare SolarEdge and Solectria annual performance'],
+                    ['Explore an efficiency scenario', 'Prepare a 2% efficiency improvement scenario'],
+                ];
+            }
+            return [
+                ['Summarize this view', 'Summarize this validation window'],
+                ['Explain modeled vs measured', 'Why do measured and modeled values differ?'],
+                ['Compare both systems', 'Compare SolarEdge and Solectria'],
+                ['Test backtracking off', 'Test what changes with backtracking off'],
+            ];
+        }
+
+        function renderChatWelcome() {
+            messagesContainer.innerHTML = '';
+            const welcome = document.createElement('div');
+            welcome.className = 'chat-welcome';
+            const mark = document.createElement('div');
+            mark.className = 'chat-welcome-mark';
+            mark.setAttribute('aria-hidden', 'true');
+            const copy = document.createElement('div');
+            copy.className = 'chat-welcome-copy';
+            const title = document.createElement('div');
+            title.className = 'chat-welcome-title';
+            title.textContent = 'Turn solar data into clear decisions';
+            const description = document.createElement('p');
+            description.className = 'chat-welcome-description';
+            description.textContent = DEFAULT_ASSISTANT_MESSAGE;
+            copy.append(title, description);
+            const prompts = document.createElement('div');
+            prompts.className = 'chat-prompt-grid';
+            prompts.setAttribute('aria-label', 'Suggested Solar Agent questions');
+            activeChatPrompts().forEach(([label, prompt]) => prompts.appendChild(createChatPromptButton(label, prompt)));
+            const note = document.createElement('div');
+            note.className = 'chat-welcome-note';
+            note.textContent = 'Agent scenarios cannot replace the active baseline without your action.';
+            welcome.append(mark, copy, prompts, note);
+            messagesContainer.appendChild(welcome);
+        }
+
+        function renderChatFollowups() {
+            messagesContainer.querySelector('.chat-followups')?.remove();
+            if (isInitialChatState() || chatIsSending || chatMessages.at(-1)?.role !== 'assistant') return;
+            const followups = document.createElement('div');
+            followups.className = 'chat-followups';
+            followups.setAttribute('aria-label', 'Suggested follow-up questions');
+            const prompts = activeMode === 'annual'
+                ? [
+                    ['Explain yield drivers', 'Explain the most important annual yield drivers'],
+                    ['Explore efficiency', 'Prepare an annual efficiency improvement scenario'],
+                ]
+                : [
+                    ['Show the largest gaps', 'Show the largest measured versus modeled gaps'],
+                    ['Explore backtracking', 'Prepare a backtracking-off comparison scenario'],
+                ];
+            prompts.forEach(([label, prompt]) => followups.appendChild(createChatPromptButton(label, prompt)));
+            messagesContainer.appendChild(followups);
+        }
+
+        function shouldStickChatToBottom() {
+            return messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 90;
+        }
+
+        function scrollChatToBottom(force = false) {
+            if (!force && !shouldStickChatToBottom()) return;
+            window.requestAnimationFrame(() => {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            });
+        }
+
+        function appendMessage(role, content, options = {}) {
+            const shouldStick = role === 'user' || shouldStickChatToBottom();
+            messagesContainer.querySelector('.chat-welcome')?.remove();
+            messagesContainer.querySelector('.chat-followups')?.remove();
             const msg = document.createElement('div');
             msg.className = 'message ' + role;
+            if (options.clarification) msg.classList.add('clarification');
+            if (options.error) msg.classList.add('error');
             const bubble = document.createElement('div');
             bubble.className = 'message-content';
-            bubble.innerHTML = renderSafeMarkdown(content);
+            if (options.loading) {
+                msg.classList.add('is-loading');
+                msg.setAttribute('role', 'status');
+                bubble.innerHTML = '<span class="chat-loading-label">Reviewing dashboard</span><span class="chat-typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>';
+            } else {
+                bubble.innerHTML = renderSafeMarkdown(content);
+            }
             msg.appendChild(bubble);
             messagesContainer.appendChild(msg);
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            if (shouldStick) scrollChatToBottom(true);
             return bubble;
         }
 
-        function renderChatMessages() {
-            messagesContainer.innerHTML = '';
-            const messages = chatMessages.length ? chatMessages : [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
-            messages.forEach((item) => appendMessage(item.role === 'user' ? 'user' : 'assistant', item.content));
+        function appendSystemNotice(content, kind = 'info') {
+            const bubble = appendMessage('system', content, { error: kind === 'error' });
+            bubble.parentElement.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+            return bubble;
         }
 
-        function setChatOpen(open) {
-            chatSidebar.classList.toggle('hidden', !open);
-            chatToggle.classList.toggle('hidden', open);
-            chatToggle.setAttribute('aria-expanded', String(open));
-            if (open) {
-                syncChatWindowPosition();
-                chatInput.focus();
+        function isClarificationReply(reply, data) {
+            if (data && (data.clarification === true || data.action?.type === 'clarification')) return true;
+            const text = String(reply || '');
+            return /\?/.test(text) && /\b(iam|a_r|coefficient|interval|unit|clarif|do you mean|which)\b/i.test(text);
+        }
+
+        function renderExternalEvidence(reply, data) {
+            if (!data || !data.web_search_enabled) return;
+            const candidates = [];
+            const supplied = data.web_sources || data.citations || [];
+            if (Array.isArray(supplied)) {
+                supplied.forEach((item) => {
+                    if (typeof item === 'string') candidates.push({ label: item, url: item });
+                    else if (item && item.url) candidates.push({ label: item.title || item.label || item.url, url: item.url });
+                });
             }
+            const markdownLink = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+            let match;
+            while ((match = markdownLink.exec(String(reply || ''))) !== null) {
+                candidates.push({ label: match[1], url: match[2] });
+            }
+            const unique = [];
+            const seen = new Set();
+            candidates.forEach((item) => {
+                if (!/^https?:\/\//i.test(String(item.url || '')) || seen.has(item.url)) return;
+                seen.add(item.url);
+                unique.push(item);
+            });
+            if (!unique.length) return;
+            const evidence = document.createElement('div');
+            evidence.className = 'message-evidence';
+            const title = document.createElement('strong');
+            title.textContent = 'External research';
+            evidence.appendChild(title);
+            unique.forEach((item, index) => {
+                if (index) evidence.appendChild(document.createTextNode(' · '));
+                const link = document.createElement('a');
+                link.href = item.url;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = item.label;
+                evidence.appendChild(link);
+            });
+            messagesContainer.appendChild(evidence);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function shortAgentId(value) {
+            const text = String(value || '');
+            return text.length > 12 ? text.slice(0, 8) + '…' : text || 'None';
+        }
+
+        function humanizeAgentField(value) {
+            return String(value || '')
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, (letter) => letter.toUpperCase());
+        }
+
+        function formatAgentValue(value, unit) {
+            if (value === null || value === undefined || value === '') return '—';
+            if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled';
+            if (typeof value === 'number') {
+                const formatted = value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+                return unit ? formatted + ' ' + unit : formatted;
+            }
+            const text = String(value);
+            return unit ? text + ' ' + unit : text;
+        }
+
+        function isAgentJobActive(job) {
+            return !!job && ['queued', 'running'].includes(job.state) && !job.cancel_requested;
+        }
+
+        function isAgentJobTerminal(job) {
+            return !!job && ['done', 'error', 'cancelled', 'interrupted'].includes(job.state);
+        }
+
+        async function readAgentResponse(response, fallbackMessage) {
+            let data = {};
+            try {
+                data = await response.json();
+            } catch (_) {
+                // A status-based message is safer than exposing an upstream body.
+            }
+            if (!response.ok) {
+                const detail = data.detail;
+                const message = Array.isArray(detail) ? detail[0]?.msg : detail;
+                throw new Error(message || fallbackMessage || ('Request failed (' + response.status + ')'));
+            }
+            return data;
+        }
+
+        async function postAgentAction(path, body) {
+            const response = await fetch(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: body === undefined ? undefined : JSON.stringify(body),
+            });
+            return readAgentResponse(response, 'The scenario action could not be completed.');
+        }
+
+        function normalizeAgentState(data) {
+            const promoted = data && data.promoted_baselines && typeof data.promoted_baselines === 'object'
+                ? data.promoted_baselines
+                : {};
+            return {
+                proposals: Array.isArray(data?.proposals) ? data.proposals.filter(Boolean) : [],
+                jobs: Array.isArray(data?.jobs) ? data.jobs.filter(Boolean) : [],
+                promoted_baselines: {
+                    validation: promoted.validation || null,
+                    annual: promoted.annual || null,
+                },
+            };
+        }
+
+        function activeContextWindow(request) {
+            const config = request || getCanonicalCurrentConfig(activeMode);
+            if (!config.from_date || !config.to_date) return 'Window not set';
+            const from = config.from_date;
+            const to = config.to_date;
+            const times = activeMode === 'validation' && config.from_time && config.to_time
+                ? ' ' + config.from_time + '–' + config.to_time
+                : '';
+            return from + ' to ' + to + times;
+        }
+
+        function compactAgentContextWindow(request) {
+            const config = request || getCanonicalCurrentConfig(activeMode);
+            if (!config.from_date || !config.to_date) return 'Window not set';
+            try {
+                const from = new Date(config.from_date + 'T00:00:00Z');
+                const to = new Date(config.to_date + 'T00:00:00Z');
+                const month = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' });
+                const sameMonth = from.getUTCFullYear() === to.getUTCFullYear() && from.getUTCMonth() === to.getUTCMonth();
+                return sameMonth
+                    ? month.format(from) + ' ' + from.getUTCDate() + '–' + to.getUTCDate()
+                    : month.format(from) + ' ' + from.getUTCDate() + ' – ' + month.format(to) + ' ' + to.getUTCDate();
+            } catch (_) {
+                return activeContextWindow(request);
+            }
+        }
+
+        function compactAgentRunWindow(request, mode) {
+            const config = request || {};
+            if (!config.from_date || !config.to_date) return 'Window unavailable';
+            let dates;
+            try {
+                const from = new Date(config.from_date + 'T00:00:00Z');
+                const to = new Date(config.to_date + 'T00:00:00Z');
+                const month = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' });
+                const sameMonth = from.getUTCFullYear() === to.getUTCFullYear() && from.getUTCMonth() === to.getUTCMonth();
+                dates = sameMonth
+                    ? month.format(from) + ' ' + from.getUTCDate() + '–' + to.getUTCDate()
+                    : month.format(from) + ' ' + from.getUTCDate() + ' – ' + month.format(to) + ' ' + to.getUTCDate();
+            } catch (_) {
+                dates = config.from_date + ' to ' + config.to_date;
+            }
+            const timeRange = mode === 'validation' && config.from_time && config.to_time
+                ? ' · ' + config.from_time + '–' + config.to_time
+                : '';
+            return dates + timeRange;
+        }
+
+        function agentActivityTimestamp(item) {
+            const value = item?.created_at || item?.started_at || item?.completed_at;
+            const parsed = value ? Date.parse(value) : NaN;
+            return Number.isFinite(parsed) ? parsed : 0;
+        }
+
+        function agentActivityPriority(entry) {
+            if (entry.type === 'proposal') return 0;
+            if (entry.item?.state === 'running') return 1;
+            if (entry.item?.state === 'queued') return 2;
+            if (['error', 'cancelled', 'interrupted'].includes(entry.item?.state)) return 3;
+            return 4;
+        }
+
+        function sortAgentActivityItems(items) {
+            return [...items].sort((left, right) => {
+                const priorityDifference = agentActivityPriority(left) - agentActivityPriority(right);
+                if (priorityDifference) return priorityDifference;
+                const leftTime = agentActivityTimestamp(left.item);
+                const rightTime = agentActivityTimestamp(right.item);
+                if ([1, 2].includes(agentActivityPriority(left))) return leftTime - rightTime;
+                return rightTime - leftTime;
+            });
+        }
+
+        function getAgentActivityItems() {
+            const proposals = Array.from(agentProposalSnapshots.values())
+                .filter((proposal) => !proposal.status || proposal.status === 'pending')
+                .map((proposal) => ({
+                    type: 'proposal',
+                    key: 'proposal:' + proposal.proposal_id,
+                    item: proposal,
+                }));
+            const jobs = Array.from(agentJobSnapshots.values()).map((job) => ({
+                type: 'job',
+                key: 'job:' + job.job_id,
+                item: job,
+            }));
+            return sortAgentActivityItems([...proposals, ...jobs]);
+        }
+
+        function agentActivityCategory(entry) {
+            if (entry.type === 'proposal') return 'review';
+            return isAgentJobActive(entry.item) ? 'active' : 'complete';
+        }
+
+        function agentActivityMatchesFilter(entry, filter = agentActivityFilter) {
+            return filter === 'all' || agentActivityCategory(entry) === filter;
+        }
+
+        function formatAgentRunHighlight(field, value, request = {}) {
+            if (field === 'backtrack') return 'Backtracking ' + (value ? 'on' : 'off');
+            if (field === 'curtailment_enabled') return value ? 'Curtailment on' : 'Curtailment off';
+            if (field === 'curtailment_limit_kw') return 'Curtailment ' + formatAgentValue(value, 'kW');
+            if (field === 'iam_model') return 'IAM ' + (value === 'martin_ruiz' ? 'Martin–Ruiz' : humanizeAgentField(value));
+            if (field === 'iam_a_r') return 'IAM a_r ' + formatAgentValue(value);
+            if (field === 'interval_value' || field === 'interval_unit') {
+                return 'Interval ' + formatAgentValue(request.interval_value) + ' ' + String(request.interval_unit || '').trim();
+            }
+            return humanizeAgentField(field) + ' ' + formatAgentValue(value);
+        }
+
+        function agentRunChangedValues(entry, request) {
+            if (entry.type === 'proposal') {
+                const changes = Array.isArray(entry.item.changes) ? entry.item.changes : [];
+                const windowChanged = changes.some((change) => ['from_date', 'to_date', 'from_time', 'to_time'].includes(change.field));
+                const highlights = changes
+                    .filter((change) => !['from_date', 'to_date', 'from_time', 'to_time'].includes(change.field))
+                    .map((change) => formatAgentRunHighlight(change.field, change.to, request));
+                if (windowChanged) highlights.unshift('Window changed');
+                return [...new Set(highlights)];
+            }
+
+            const baseline = entry.item.baseline_job_id
+                ? agentJobSnapshots.get(entry.item.baseline_job_id)
+                : null;
+            const baselineRequest = baseline?.request;
+            if (!baselineRequest || !request) return [];
+            const fields = [
+                'backtrack',
+                'curtailment_enabled',
+                'curtailment_limit_kw',
+                'iam_model',
+                'iam_a_r',
+                'interval_value',
+                'interval_unit',
+                'solaredge_inverter_efficiency',
+                'solaredge_bos_efficiency',
+                'solectria_inverter_efficiency',
+                'solectria_bos_efficiency',
+            ];
+            return [...new Set(fields
+                .filter((field) => String(request[field] ?? '') !== String(baselineRequest[field] ?? ''))
+                .map((field) => formatAgentRunHighlight(field, request[field], request)))];
+        }
+
+        function summarizeAgentRequest(entry) {
+            const request = entry.type === 'proposal' ? entry.item.effective_request : entry.item.request;
+            const mode = entry.item.mode === 'annual' ? 'annual' : 'validation';
+            let highlights = agentRunChangedValues(entry, request || {});
+            if (!highlights.length && request) {
+                highlights = [];
+                if (request.interval_value !== undefined || request.interval_unit) {
+                    highlights.push(formatAgentRunHighlight('interval_value', request.interval_value, request));
+                }
+                if (Object.prototype.hasOwnProperty.call(request, 'backtrack')) {
+                    highlights.push(formatAgentRunHighlight('backtrack', !!request.backtrack, request));
+                }
+                if (request.iam_model) highlights.push(formatAgentRunHighlight('iam_model', request.iam_model, request));
+            }
+            return {
+                mode,
+                window: compactAgentRunWindow(request, mode),
+                highlights: highlights.filter((value) => value && !value.includes('—')),
+                request: request || null,
+            };
+        }
+
+        function agentRunConfigurationRows(request, mode) {
+            if (!request || typeof request !== 'object') return [];
+            const rows = [
+                ['Window', compactAgentRunWindow(request, mode)],
+                ['Interval', formatAgentValue(request.interval_value) + ' ' + String(request.interval_unit || '').trim()],
+                ['Backtracking', request.backtrack ? 'On' : 'Off'],
+                ['IAM', request.iam_model === 'martin_ruiz' ? 'Martin–Ruiz' : humanizeAgentField(request.iam_model || 'physical')],
+            ];
+            if (request.curtailment_enabled) rows.push(['Curtailment', formatAgentValue(request.curtailment_limit_kw, 'kW')]);
+            else rows.push(['Curtailment', 'Off']);
+            if (request.iam_model === 'martin_ruiz' && request.iam_a_r !== null && request.iam_a_r !== undefined) {
+                rows.push(['IAM a_r', formatAgentValue(request.iam_a_r)]);
+            }
+            [
+                ['SolarEdge inverter', request.solaredge_inverter_efficiency],
+                ['SolarEdge BOS', request.solaredge_bos_efficiency],
+                ['Solectria inverter', request.solectria_inverter_efficiency],
+                ['Solectria BOS', request.solectria_bos_efficiency],
+            ].forEach(([label, value]) => {
+                if (value !== null && value !== undefined && value !== '') rows.push([label, formatAgentValue(value)]);
+            });
+            return rows.filter(([, value]) => value && value !== '— ');
+        }
+
+        function buildAgentRunConfiguration(request, mode) {
+            const rows = agentRunConfigurationRows(request, mode);
+            if (!rows.length) return null;
+            const section = document.createElement('section');
+            section.className = 'agent-run-configuration';
+            const title = document.createElement('div');
+            title.className = 'agent-run-configuration-title';
+            title.textContent = 'Run configuration';
+            const chips = document.createElement('div');
+            chips.className = 'agent-run-configuration-chips';
+            rows.slice(0, 5).forEach(([label, value]) => {
+                const chip = document.createElement('span');
+                chip.className = 'agent-run-chip';
+                chip.textContent = label + ': ' + value;
+                chips.appendChild(chip);
+            });
+            section.append(title, chips);
+            if (rows.length > 5) {
+                const details = document.createElement('details');
+                details.className = 'agent-details';
+                const summary = document.createElement('summary');
+                summary.textContent = 'All model inputs (' + rows.length + ')';
+                const grid = document.createElement('div');
+                grid.className = 'agent-details-grid';
+                rows.forEach(([labelText, value]) => {
+                    const item = document.createElement('div');
+                    const label = document.createElement('strong');
+                    label.textContent = labelText;
+                    item.append(label, document.createTextNode(value));
+                    grid.appendChild(item);
+                });
+                details.append(summary, grid);
+                section.appendChild(details);
+            }
+            return section;
+        }
+
+        function updateAgentContext() {
+            if (!agentContextText || !agentContextBadge) return;
+            const modeLabel = activeMode === 'annual' ? 'Annual' : 'Validation';
+            const visibleIamModel = getCanonicalCurrentConfig(activeMode).iam_model;
+            const iamLabel = visibleIamModel === 'martin_ruiz' ? 'Martin–Ruiz IAM' : 'Physical IAM';
+            const baselineId = agentServerState.promoted_baselines?.[activeMode] || null;
+            const baselineJob = baselineId ? agentJobSnapshots.get(baselineId) : null;
+            const state = baselineJob?.state || (baselineId ? 'done' : 'not run');
+            const stateLabel = state === 'done' ? 'ready' : humanizeAgentField(state);
+            const baselineRequest = baselineJob?.request || baselineJob?.provenance?.request || baselineJob?.provenance?.request_snapshot || baselineJob?.provenance?.candidate_request || null;
+            agentContextBadge.classList.toggle('ready', !!baselineId);
+            agentContextText.textContent = baselineId
+                ? modeLabel + ' · ' + iamLabel + ' · ' + compactAgentContextWindow(baselineRequest) + ' · Baseline ' + shortAgentId(baselineId) + ' ' + stateLabel
+                : modeLabel + ' · ' + iamLabel + ' · ' + compactAgentContextWindow() + ' · No baseline yet';
+            agentContextBadge.title = baselineId
+                ? modeLabel + ' with ' + iamLabel + '; baseline job ' + baselineId + ' (' + state + ')'
+                : modeLabel + ' with ' + iamLabel + ' has no promoted baseline';
+        }
+
+        function putAgentProposal(proposal) {
+            if (!proposal || !proposal.proposal_id) return;
+            agentProposalSnapshots.set(proposal.proposal_id, proposal);
+        }
+
+        function putAgentJob(job) {
+            if (!job || !job.job_id) return;
+            const previous = agentJobSnapshots.get(job.job_id) || {};
+            const merged = { ...previous, ...job };
+            agentJobSnapshots.set(job.job_id, merged);
+            const startValue = merged.started_at || merged.created_at;
+            const parsed = startValue ? Date.parse(startValue) : NaN;
+            if (!agentJobStartedAt.has(job.job_id)) {
+                agentJobStartedAt.set(job.job_id, Number.isFinite(parsed) ? parsed : Date.now());
+            }
+        }
+
+        function normalizeAgentAction(data) {
+            if (!data) return null;
+            if (data.action) return data.action;
+            if (data.type === 'proposal' || data.type === 'job_started') return data;
+            if (data.job) return { type: 'job_started', job: data.job };
+            if (data.proposal) return { type: 'proposal', proposal: data.proposal };
+            if (data.proposal_id) return { type: 'proposal', proposal: data };
+            if (data.job_id) return { type: 'job_started', job: data };
+            return null;
+        }
+
+        function makeAgentButton(label, className, onClick) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'agent-action-btn' + (className ? ' ' + className : '');
+            button.textContent = label;
+            button.addEventListener('click', onClick);
+            return button;
+        }
+
+        function makeStatePill(state) {
+            const pill = document.createElement('span');
+            const normalized = String(state || 'pending').toLowerCase().replace(/\s+/g, '-');
+            pill.className = 'agent-state-pill ' + normalized;
+            pill.textContent = humanizeAgentField(state || 'pending');
+            return pill;
+        }
+
+        function labelAgentTable(table) {
+            if (!table) return;
+            const headers = Array.from(table.querySelectorAll('thead th')).map((header) => header.textContent.trim());
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                Array.from(row.children).forEach((cell, index) => {
+                    cell.dataset.label = headers[index] || headers.at(-1) || 'Value';
+                });
+            });
+        }
+
+        function makeAgentEditInput(change) {
+            const field = String(change.field || '');
+            const current = change.to;
+            let input;
+            if (typeof current === 'boolean' || /(?:backtrack|enabled)$/.test(field)) {
+                input = document.createElement('select');
+                [{ value: 'true', label: 'Enabled' }, { value: 'false', label: 'Disabled' }].forEach((optionData) => {
+                    const option = document.createElement('option');
+                    option.value = optionData.value;
+                    option.textContent = optionData.label;
+                    input.appendChild(option);
+                });
+                input.value = String(current === true || current === 'true');
+                input.dataset.valueType = 'boolean';
+            } else if (field === 'iam_model' || field === 'iam_method') {
+                input = document.createElement('select');
+                [{ value: 'physical', label: 'Physical' }, { value: 'martin_ruiz', label: 'Martin–Ruiz' }].forEach((optionData) => {
+                    const option = document.createElement('option');
+                    option.value = optionData.value;
+                    option.textContent = optionData.label;
+                    input.appendChild(option);
+                });
+                input.value = String(current || 'physical');
+                input.dataset.valueType = 'string';
+            } else if (field === 'interval_unit') {
+                input = document.createElement('select');
+                ['minutes', 'hours', 'days'].forEach((value) => {
+                    const option = document.createElement('option');
+                    option.value = value;
+                    option.textContent = value;
+                    input.appendChild(option);
+                });
+                input.value = String(current || 'hours');
+                input.dataset.valueType = 'string';
+            } else {
+                input = document.createElement('input');
+                if (/_date$/.test(field)) input.type = 'date';
+                else if (/_time$/.test(field)) input.type = 'time';
+                else if (typeof current === 'number' || /(?:efficiency|limit_kw|iam_a_r|interval_value)$/.test(field)) {
+                    input.type = 'number';
+                    input.step = 'any';
+                    input.dataset.valueType = 'number';
+                } else {
+                    input.type = 'text';
+                    input.dataset.valueType = 'string';
+                }
+                input.value = current === null || current === undefined ? '' : String(current);
+            }
+            input.className = 'agent-edit-input';
+            input.dataset.overrideField = field;
+            input.setAttribute('aria-label', change.label || humanizeAgentField(field));
+            return input;
+        }
+
+        function readAgentEditOverrides(form) {
+            const overrides = {};
+            form.querySelectorAll('[data-override-field]').forEach((input) => {
+                const field = input.dataset.overrideField;
+                if (input.dataset.valueType === 'boolean') overrides[field] = input.value === 'true';
+                else if (input.dataset.valueType === 'number') overrides[field] = Number(input.value);
+                else overrides[field] = input.value;
+            });
+            return overrides;
+        }
+
+        function buildProposalCard(proposal) {
+            const card = document.createElement('article');
+            card.className = 'agent-card proposal-card';
+            card.dataset.proposalId = proposal.proposal_id;
+            const head = document.createElement('div');
+            head.className = 'agent-card-head';
+            const heading = document.createElement('div');
+            const title = document.createElement('div');
+            title.className = 'agent-card-title';
+            title.textContent = proposal.kind === 'baseline' ? 'Baseline run proposal' : 'Scenario proposal';
+            const meta = document.createElement('div');
+            meta.className = 'agent-card-meta';
+            const runSummary = summarizeAgentRequest({ type: 'proposal', item: proposal });
+            meta.textContent = (proposal.mode === 'annual' ? 'Annual' : 'Validation') + ' · ' + runSummary.window +
+                (proposal.baseline_job_id ? ' · Baseline ' + shortAgentId(proposal.baseline_job_id) : '');
+            heading.append(title, meta);
+            const expiresAt = proposal.expires_at ? Date.parse(proposal.expires_at) : NaN;
+            const isExpired = Number.isFinite(expiresAt) && expiresAt <= Date.now();
+            head.append(heading, makeStatePill(isExpired ? 'expired' : proposal.status));
+            card.appendChild(head);
+
+            const configuration = buildAgentRunConfiguration(proposal.effective_request, proposal.mode);
+            if (configuration) card.appendChild(configuration);
+
+            const changes = Array.isArray(proposal.changes) ? proposal.changes : [];
+            if (changes.length) {
+                const table = document.createElement('table');
+                table.className = 'agent-change-table';
+                table.innerHTML = '<thead><tr><th>Parameter</th><th>Baseline</th><th>Scenario</th></tr></thead>';
+                const body = document.createElement('tbody');
+                changes.forEach((change) => {
+                    const row = document.createElement('tr');
+                    [change.label || humanizeAgentField(change.field), formatAgentValue(change.from, change.unit), formatAgentValue(change.to, change.unit)].forEach((value) => {
+                        const cell = document.createElement('td');
+                        cell.textContent = value;
+                        row.appendChild(cell);
+                    });
+                    body.appendChild(row);
+                });
+                table.appendChild(body);
+                labelAgentTable(table);
+                card.appendChild(table);
+            }
+
+            const comparisonKind = proposal.comparison_kind || 'same_input';
+            const reason = document.createElement('div');
+            reason.className = 'agent-card-note' + (comparisonKind === 'cross_run' ? ' cross-run' : '');
+            reason.textContent = comparisonKind === 'cross_run'
+                ? 'Non-like-for-like comparison: ' + (proposal.confirmation_reason || 'the source window or interval changes, so aggregate differences are not causal attribution.')
+                : (proposal.confirmation_reason || (proposal.confirmation_required ? 'Confirmation is required before this run starts.' : 'This same-input validation scenario can reuse the baseline source data.'));
+            card.appendChild(reason);
+
+            const effective = proposal.effective_request;
+            if (effective && typeof effective === 'object') {
+                const changedFields = new Set(changes.map((change) => change.field));
+                const unchanged = Object.entries(effective).filter(([field]) => !changedFields.has(field));
+                if (unchanged.length) {
+                    const details = document.createElement('details');
+                    details.className = 'agent-details';
+                    const summary = document.createElement('summary');
+                    summary.textContent = 'Unchanged configuration (' + unchanged.length + ')';
+                    const grid = document.createElement('div');
+                    grid.className = 'agent-details-grid';
+                    unchanged.forEach(([field, value]) => {
+                        const item = document.createElement('div');
+                        const label = document.createElement('strong');
+                        label.textContent = humanizeAgentField(field);
+                        item.append(label, document.createTextNode(formatAgentValue(value)));
+                        grid.appendChild(item);
+                    });
+                    details.append(summary, grid);
+                    card.appendChild(details);
+                }
+            }
+
+            const editForm = document.createElement('form');
+            editForm.className = 'agent-edit-form hidden';
+            editForm.id = 'agent-edit-' + proposal.proposal_id;
+            editForm.setAttribute('aria-label', 'Edit scenario overrides');
+            changes.forEach((change) => {
+                const label = document.createElement('label');
+                label.className = 'agent-edit-field';
+                const text = document.createElement('span');
+                text.textContent = change.label || humanizeAgentField(change.field);
+                label.append(text, makeAgentEditInput(change));
+                editForm.appendChild(label);
+            });
+            let editButton = null;
+            const saveEditButton = makeAgentButton('Save changes', 'primary', async () => {
+                const overrides = readAgentEditOverrides(editForm);
+                if (Object.prototype.hasOwnProperty.call(overrides, 'interval_value') && !overrides.interval_unit) {
+                    overrides.interval_unit = proposal.effective_request?.interval_unit;
+                }
+                await editAgentProposal(proposal.proposal_id, overrides);
+            });
+            const cancelEditButton = makeAgentButton('Cancel edit', '', () => {
+                editForm.classList.add('hidden');
+                editButton?.setAttribute('aria-expanded', 'false');
+                editButton?.focus();
+            });
+            const editActions = document.createElement('div');
+            editActions.className = 'agent-card-actions';
+            editActions.append(saveEditButton, cancelEditButton);
+            editForm.appendChild(editActions);
+            editForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                saveEditButton.click();
+            });
+            card.appendChild(editForm);
+
+            if (!isExpired && (proposal.status === 'pending' || !proposal.status)) {
+                const actions = document.createElement('div');
+                actions.className = 'agent-card-actions';
+                editButton = makeAgentButton('Edit changes', '', () => {
+                    const opening = editForm.classList.contains('hidden');
+                    editForm.classList.toggle('hidden', !opening);
+                    editButton.setAttribute('aria-expanded', String(opening));
+                    if (opening) editForm.querySelector('[data-override-field]')?.focus();
+                });
+                editButton.setAttribute('aria-controls', editForm.id);
+                editButton.setAttribute('aria-expanded', 'false');
+                actions.append(
+                    makeAgentButton(proposal.kind === 'baseline' ? 'Approve & run baseline' : 'Approve & run', 'primary', () => confirmAgentProposal(proposal.proposal_id)),
+                    editButton,
+                    makeAgentButton('Dismiss', 'danger', () => dismissAgentProposal(proposal.proposal_id))
+                );
+                card.appendChild(actions);
+            }
+            if (proposal.expires_at) {
+                const expiry = document.createElement('div');
+                expiry.className = 'agent-card-meta';
+                const date = new Date(proposal.expires_at);
+                expiry.textContent = Number.isNaN(date.getTime()) ? '' : 'Expires ' + date.toLocaleString();
+                if (expiry.textContent) card.appendChild(expiry);
+            }
+            return card;
+        }
+
+        function firstDefined(object, names) {
+            for (const name of names) {
+                if (object && object[name] !== undefined && object[name] !== null) return object[name];
+            }
+            return null;
+        }
+
+        function comparisonPercent(value) {
+            if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+            const number = Number(value);
+            return (number >= 0 ? '+' : '') + number.toFixed(2) + '%';
+        }
+
+        function buildComparisonCard(comparison) {
+            if (!comparison || typeof comparison !== 'object') return null;
+            const section = document.createElement('section');
+            section.className = 'agent-card';
+            section.setAttribute('aria-label', 'Deterministic scenario comparison');
+            const head = document.createElement('div');
+            head.className = 'agent-card-head';
+            const title = document.createElement('div');
+            title.className = 'agent-card-title';
+            title.textContent = 'Deterministic comparison';
+            const classification = comparison.comparison_type || comparison.comparison_kind || comparison.classification || 'same_input';
+            head.append(title, makeStatePill(classification));
+            section.appendChild(head);
+            if (classification === 'cross_run') {
+                const warning = document.createElement('div');
+                warning.className = 'agent-card-note cross-run';
+                warning.textContent = comparison.caveat || 'Non-like-for-like aggregate comparison. The input window or source changed, so these deltas must not be interpreted as a single-parameter causal effect.';
+                section.appendChild(warning);
+            }
+
+            const systems = comparison.systems || comparison.per_system || comparison.predicted_energy || {};
+            const systemEntries = Array.isArray(systems)
+                ? systems.map((item) => [item.system || item.name || 'System', item])
+                : Object.entries(systems || {});
+            const rows = [];
+            systemEntries.forEach(([name, values]) => {
+                if (!values || typeof values !== 'object') return;
+                rows.push({
+                    label: humanizeAgentField(name),
+                    baseline: firstDefined(values, ['baseline_predicted_kwh', 'baseline_kwh', 'baseline']),
+                    candidate: firstDefined(values, ['candidate_predicted_kwh', 'scenario_predicted_kwh', 'candidate_kwh', 'candidate', 'scenario']),
+                    delta: firstDefined(values, ['delta_kwh', 'change_kwh', 'delta']),
+                    pct: firstDefined(values, ['delta_pct', 'change_pct', 'percent_change']),
+                    validation: values.validation,
+                });
+            });
+            if (rows.length) {
+                const table = document.createElement('table');
+                table.className = 'comparison-table';
+                table.innerHTML = '<thead><tr><th>System</th><th>Baseline kWh</th><th>Scenario kWh</th><th>Delta</th></tr></thead>';
+                const body = document.createElement('tbody');
+                rows.forEach((item) => {
+                    const row = document.createElement('tr');
+                    const delta = formatAgentValue(item.delta, 'kWh') + (item.pct === null ? '' : ' (' + comparisonPercent(item.pct) + ')');
+                    [item.label, formatAgentValue(item.baseline), formatAgentValue(item.candidate), delta].forEach((value) => {
+                        const cell = document.createElement('td');
+                        cell.textContent = value;
+                        row.appendChild(cell);
+                    });
+                    body.appendChild(row);
+                });
+                table.appendChild(body);
+                section.appendChild(table);
+            }
+
+            const fitEntries = rows.filter((item) => item.validation).map((item) => [item.label, item.validation]);
+            const topLevelFit = comparison.validation || comparison.fit || comparison.model_fit;
+            if (topLevelFit && typeof topLevelFit === 'object') fitEntries.push(['Combined', topLevelFit]);
+            fitEntries.forEach(([systemLabel, fit]) => {
+                const note = document.createElement('div');
+                note.className = 'agent-card-note';
+                const baselineResidual = firstDefined(fit, ['baseline_residual_pct', 'baseline_error_pct', 'baseline_pct']);
+                const candidateResidual = firstDefined(fit, ['candidate_residual_pct', 'candidate_error_pct', 'scenario_pct']);
+                const improvement = firstDefined(fit, ['absolute_error_improvement_pp', 'fit_improvement_pp', 'improvement_pp']);
+                note.textContent = systemLabel + ' model fit · baseline residual ' + comparisonPercent(baselineResidual) +
+                    ' · scenario residual ' + comparisonPercent(candidateResidual) +
+                    ' · improvement ' + formatAgentValue(improvement, 'pp') + ' (positive is better)';
+                section.appendChild(note);
+            });
+
+            const gap = comparison.cross_system_gap || comparison.predicted_gap || comparison.gap || comparison.system_gap;
+            if (gap && typeof gap === 'object') {
+                const note = document.createElement('div');
+                note.className = 'agent-card-note';
+                note.textContent = 'SolarEdge–Solectria predicted gap · before ' + formatAgentValue(firstDefined(gap, ['baseline_kwh', 'before_kwh', 'baseline']), 'kWh') +
+                    ' · after ' + formatAgentValue(firstDefined(gap, ['candidate_kwh', 'after_kwh', 'candidate']), 'kWh') +
+                    ' · change ' + formatAgentValue(firstDefined(gap, ['change_kwh', 'delta_kwh', 'change']), 'kWh');
+                section.appendChild(note);
+            }
+
+            const attribution = comparison.attribution;
+            if (attribution && attribution.scope === 'combined_configuration') {
+                const note = document.createElement('div');
+                note.className = 'agent-card-note cross-run';
+                note.textContent = 'Combined configuration result: this run changed multiple fields, so no individual parameter is credited with the total delta.';
+                section.appendChild(note);
+            }
+
+            if (comparison.invariants && typeof comparison.invariants === 'object') {
+                const details = document.createElement('details');
+                details.className = 'agent-details';
+                const summary = document.createElement('summary');
+                summary.textContent = 'Comparison integrity checks';
+                const grid = document.createElement('div');
+                grid.className = 'agent-details-grid';
+                Object.entries(comparison.invariants).forEach(([field, value]) => {
+                    const item = document.createElement('div');
+                    const label = document.createElement('strong');
+                    label.textContent = humanizeAgentField(field);
+                    item.append(label, document.createTextNode(value === true ? 'Confirmed' : value === false ? 'Not confirmed' : formatAgentValue(value)));
+                    grid.appendChild(item);
+                });
+                details.append(summary, grid);
+                section.appendChild(details);
+            }
+
+            if (!rows.length && !fitEntries.length && !gap) {
+                const scalars = [];
+                Object.entries(comparison).forEach(([field, value]) => {
+                    if (['comparison_kind', 'classification', 'warnings'].includes(field)) return;
+                    if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) {
+                        scalars.push([humanizeAgentField(field), formatAgentValue(value)]);
+                    }
+                });
+                if (scalars.length) {
+                    const table = document.createElement('table');
+                    table.className = 'comparison-table';
+                    table.innerHTML = '<thead><tr><th>Metric</th><th>Value</th></tr></thead>';
+                    const body = document.createElement('tbody');
+                    scalars.forEach(([label, value]) => {
+                        const row = document.createElement('tr');
+                        [label, value].forEach((text) => {
+                            const cell = document.createElement('td');
+                            cell.textContent = text;
+                            row.appendChild(cell);
+                        });
+                        body.appendChild(row);
+                    });
+                    table.appendChild(body);
+                    section.appendChild(table);
+                }
+            }
+
+            const warnings = Array.isArray(comparison.warnings) ? comparison.warnings : [];
+            warnings.filter(Boolean).forEach((text) => {
+                const warning = document.createElement('div');
+                warning.className = 'agent-card-note cross-run';
+                warning.textContent = String(text);
+                section.appendChild(warning);
+            });
+            section.querySelectorAll('table').forEach(labelAgentTable);
+            return section;
+        }
+
+        function collectArtifactLinks(value, prefix = '') {
+            const links = [];
+            if (!value) return links;
+            if (typeof value === 'string') {
+                if (/^(?:https?:\/\/|\/)/i.test(value)) links.push({ label: prefix || 'Report', url: value });
+                return links;
+            }
+            if (Array.isArray(value)) {
+                value.forEach((item, index) => links.push(...collectArtifactLinks(item, prefix || ('Report ' + (index + 1)))));
+                return links;
+            }
+            if (typeof value === 'object') {
+                if (typeof value.url === 'string') {
+                    links.push(...collectArtifactLinks(value.url, prefix || 'Report'));
+                    return links;
+                }
+                Object.entries(value).forEach(([name, item]) => links.push(...collectArtifactLinks(item, humanizeAgentField(name))));
+            }
+            return links;
+        }
+
+        function buildProvenanceDetails(provenance) {
+            if (!provenance || typeof provenance !== 'object') return null;
+            const details = document.createElement('details');
+            details.className = 'agent-details';
+            const summary = document.createElement('summary');
+            summary.textContent = 'Evidence and provenance';
+            const grid = document.createElement('div');
+            grid.className = 'agent-details-grid';
+            const baseline = provenance.baseline || {};
+            const candidate = provenance.candidate || {};
+            const fields = [
+                ['Comparison', provenance.comparison_type],
+                ['Generated', provenance.generated_at_utc],
+                ['Baseline source SHA-256', baseline.source_sha256 ? shortAgentId(baseline.source_sha256) : null],
+                ['Scenario source SHA-256', candidate.source_sha256 ? shortAgentId(candidate.source_sha256) : null],
+                ['Baseline model', baseline.model_version],
+                ['Scenario model', candidate.model_version],
+                ['Baseline DHI', baseline.dhi_source],
+                ['Scenario DHI', candidate.dhi_source],
+            ];
+            fields.forEach(([labelText, value]) => {
+                if (value === null || value === undefined || value === '') return;
+                const item = document.createElement('div');
+                const label = document.createElement('strong');
+                label.textContent = labelText;
+                item.append(label, document.createTextNode(formatAgentValue(value)));
+                grid.appendChild(item);
+            });
+            details.append(summary, grid);
+            const warnings = Array.isArray(provenance.warnings) ? provenance.warnings.filter(Boolean) : [];
+            warnings.forEach((warningText) => {
+                const warning = document.createElement('div');
+                warning.className = 'agent-card-note cross-run';
+                warning.textContent = String(warningText);
+                details.appendChild(warning);
+            });
+            return details;
+        }
+
+        function safeArtifactHref(url) {
+            try {
+                const parsed = new URL(String(url), window.location.origin);
+                if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+                return parsed.href;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function buildJobCard(job) {
+            const card = document.createElement('article');
+            card.className = 'agent-card job-card';
+            card.dataset.jobId = job.job_id;
+            const head = document.createElement('div');
+            head.className = 'agent-card-head';
+            const heading = document.createElement('div');
+            const title = document.createElement('div');
+            title.className = 'agent-card-title';
+            title.textContent = ['baseline', 'manual'].includes(job.kind) ? 'Baseline model run' : 'Scenario model run';
+            const meta = document.createElement('div');
+            meta.className = 'agent-card-meta';
+            const runSummary = summarizeAgentRequest({ type: 'job', item: job });
+            meta.textContent = (job.mode === 'annual' ? 'Annual' : 'Validation') + ' · ' + runSummary.window +
+                ' · Job ' + shortAgentId(job.job_id) + (job.baseline_job_id ? ' · Baseline ' + shortAgentId(job.baseline_job_id) : '');
+            heading.append(title, meta);
+            head.append(heading, makeStatePill(job.cancel_requested ? 'cancel requested' : job.state));
+            card.appendChild(head);
+
+            const configuration = buildAgentRunConfiguration(job.request, job.mode);
+            if (configuration) card.appendChild(configuration);
+
+            const progress = Math.min(100, Math.max(0, Number(job.progress) || 0));
+            const progressMeta = document.createElement('div');
+            progressMeta.className = 'agent-progress-meta';
+            const stage = document.createElement('span');
+            stage.textContent = job.stage || humanizeAgentField(job.state || 'queued');
+            const elapsed = document.createElement('span');
+            elapsed.className = 'agent-elapsed';
+            elapsed.dataset.startedAt = String(agentJobStartedAt.get(job.job_id) || Date.now());
+            const completedAt = job.completed_at ? Date.parse(job.completed_at) : NaN;
+            if (Number.isFinite(completedAt)) elapsed.dataset.endedAt = String(completedAt);
+            elapsed.textContent = Math.round(progress) + '% · 0s elapsed';
+            progressMeta.append(stage, elapsed);
+            const track = document.createElement('div');
+            track.className = 'agent-progress-track';
+            track.setAttribute('role', 'progressbar');
+            track.setAttribute('aria-label', title.textContent + ' ' + runSummary.window + ' progress');
+            track.setAttribute('aria-valuemin', '0');
+            track.setAttribute('aria-valuemax', '100');
+            track.setAttribute('aria-valuenow', String(progress));
+            const fill = document.createElement('div');
+            fill.className = 'agent-progress-fill';
+            fill.style.width = progress + '%';
+            track.appendChild(fill);
+            card.append(progressMeta, track);
+
+            if (job.error) {
+                const error = document.createElement('div');
+                error.className = 'agent-card-note cross-run';
+                error.textContent = String(job.error);
+                card.appendChild(error);
+            }
+            if (job.state === 'done' && job.comparison) {
+                const comparisonCard = buildComparisonCard(job.comparison);
+                if (comparisonCard) card.appendChild(comparisonCard);
+            }
+            const provenanceDetails = buildProvenanceDetails(job.provenance);
+            if (provenanceDetails) card.appendChild(provenanceDetails);
+
+            const links = collectArtifactLinks(job.artifacts);
+            if (links.length) {
+                const downloads = document.createElement('details');
+                downloads.className = 'agent-downloads';
+                const downloadsSummary = document.createElement('summary');
+                downloadsSummary.textContent = 'Downloads (' + links.length + ')';
+                const linkWrap = document.createElement('div');
+                linkWrap.className = 'agent-artifact-links';
+                links.forEach((item) => {
+                    const href = safeArtifactHref(item.url);
+                    if (!href) return;
+                    const link = document.createElement('a');
+                    link.className = 'agent-artifact-link';
+                    link.href = href;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.textContent = item.label;
+                    linkWrap.appendChild(link);
+                });
+                if (linkWrap.childElementCount) {
+                    downloads.append(downloadsSummary, linkWrap);
+                    card.appendChild(downloads);
+                }
+            }
+
+            const actions = document.createElement('div');
+            actions.className = 'agent-card-actions';
+            if (isAgentJobActive(job)) {
+                actions.appendChild(makeAgentButton('Cancel run', 'danger', () => cancelAgentJob(job.job_id)));
+            }
+            if (['error', 'cancelled', 'interrupted'].includes(job.state)) {
+                actions.appendChild(makeAgentButton('Retry', '', () => retryAgentJob(job)));
+            }
+            const isPromoted = agentServerState.promoted_baselines?.[job.mode] === job.job_id;
+            if (job.state === 'done' && job.comparison) {
+                actions.appendChild(makeAgentButton('Explain results', '', () => requestAgentCompletionExplanation(job, true)));
+            }
+            if (job.state === 'done' && !isPromoted) {
+                actions.appendChild(makeAgentButton('Promote to baseline', 'primary', () => promoteAgentJob(job.job_id)));
+            }
+            if (isPromoted) {
+                const promoted = document.createElement('span');
+                promoted.className = 'agent-state-pill done';
+                promoted.textContent = 'Current baseline';
+                actions.appendChild(promoted);
+            }
+            if (actions.childElementCount) card.appendChild(actions);
+            return card;
+        }
+
+        function captureAgentEditorState() {
+            const active = document.activeElement;
+            const editors = [];
+            agentActivityList.querySelectorAll('[data-proposal-id]').forEach((card) => {
+                const form = card.querySelector('.agent-edit-form:not(.hidden)');
+                if (!form) return;
+                const values = {};
+                form.querySelectorAll('[data-override-field]').forEach((input) => {
+                    values[input.dataset.overrideField] = input.value;
+                });
+                const focusedField = form.contains(active) ? active.dataset?.overrideField || null : null;
+                editors.push({
+                    proposalId: card.dataset.proposalId,
+                    values,
+                    focusedField,
+                    selectionStart: focusedField && typeof active.selectionStart === 'number' ? active.selectionStart : null,
+                    selectionEnd: focusedField && typeof active.selectionEnd === 'number' ? active.selectionEnd : null,
+                });
+            });
+            return editors;
+        }
+
+        function restoreAgentEditorState(editors) {
+            editors.forEach((editor) => {
+                const card = Array.from(agentActivityList.querySelectorAll('[data-proposal-id]'))
+                    .find((element) => element.dataset.proposalId === editor.proposalId);
+                const form = card?.querySelector('.agent-edit-form');
+                if (!form) return;
+                form.classList.remove('hidden');
+                card.querySelector('[aria-controls="' + form.id + '"]')?.setAttribute('aria-expanded', 'true');
+                Object.entries(editor.values).forEach(([field, value]) => {
+                    const input = Array.from(form.querySelectorAll('[data-override-field]'))
+                        .find((element) => element.dataset.overrideField === field);
+                    if (input) input.value = value;
+                });
+                if (editor.focusedField) {
+                    const focusTarget = Array.from(form.querySelectorAll('[data-override-field]'))
+                        .find((element) => element.dataset.overrideField === editor.focusedField);
+                    focusTarget?.focus({ preventScroll: true });
+                    if (focusTarget && editor.selectionStart !== null && typeof focusTarget.setSelectionRange === 'function') {
+                        focusTarget.setSelectionRange(editor.selectionStart, editor.selectionEnd);
+                    }
+                }
+            });
+        }
+
+        function buildAgentRunSummary(entry) {
+            const selected = agentActivitySelection === entry.key;
+            const summaryData = summarizeAgentRequest(entry);
+            const record = document.createElement('article');
+            record.className = 'agent-run-record' + (selected ? ' selected' : '');
+            record.dataset.agentActivityKey = entry.key;
+            const detailId = 'agent-run-detail-' + entry.key.replace(/[^a-z0-9_-]/gi, '-');
+
+            const summary = document.createElement('button');
+            summary.type = 'button';
+            summary.className = 'agent-run-summary';
+            summary.dataset.agentRunRow = entry.key;
+            summary.setAttribute('aria-expanded', String(selected));
+            summary.setAttribute('aria-controls', detailId);
+            const head = document.createElement('span');
+            head.className = 'agent-run-summary-head';
+            const type = document.createElement('span');
+            type.className = 'agent-run-type';
+            type.textContent = entry.type === 'proposal'
+                ? (entry.item.kind === 'baseline' ? 'Baseline proposal' : 'Scenario proposal')
+                : (['baseline', 'manual'].includes(entry.item.kind) ? 'Baseline run' : 'Scenario run');
+            const state = entry.type === 'proposal'
+                ? 'Needs review'
+                : (entry.item.cancel_requested ? 'Cancel requested' : entry.item.state);
+            head.append(type, makeStatePill(state));
+
+            const windowLabel = document.createElement('span');
+            windowLabel.className = 'agent-run-window';
+            windowLabel.textContent = summaryData.window;
+            const chips = document.createElement('span');
+            chips.className = 'agent-run-chips';
+            const isPromoted = entry.type === 'job' && agentServerState.promoted_baselines?.[entry.item.mode] === entry.item.job_id;
+            const highlights = [...summaryData.highlights];
+            if (isPromoted) highlights.unshift('Current baseline');
+            highlights.slice(0, 2).forEach((value) => {
+                const chip = document.createElement('span');
+                chip.className = 'agent-run-chip';
+                chip.textContent = value;
+                chips.appendChild(chip);
+            });
+            if (highlights.length > 2) {
+                const more = document.createElement('span');
+                more.className = 'agent-run-chip';
+                more.textContent = '+' + (highlights.length - 2) + ' more';
+                chips.appendChild(more);
+            }
+
+            const foot = document.createElement('span');
+            foot.className = 'agent-run-summary-foot';
+            const meta = document.createElement('span');
+            meta.className = 'agent-run-meta';
+            meta.textContent = (summaryData.mode === 'annual' ? 'Annual' : 'Validation') + ' · ' +
+                (entry.type === 'proposal' ? 'Proposal ' + shortAgentId(entry.item.proposal_id) : 'Job ' + shortAgentId(entry.item.job_id));
+            const expand = document.createElement('span');
+            expand.className = 'agent-run-expand';
+            expand.textContent = selected ? 'Hide details' : 'View details';
+            foot.append(meta, expand);
+            summary.append(head, windowLabel);
+            if (chips.childElementCount) summary.appendChild(chips);
+            summary.appendChild(foot);
+
+            if (entry.type === 'job' && isAgentJobActive(entry.item)) {
+                const progress = Math.min(100, Math.max(0, Number(entry.item.progress) || 0));
+                const track = document.createElement('span');
+                track.className = 'agent-run-mini-progress';
+                track.setAttribute('role', 'progressbar');
+                track.setAttribute('aria-label', type.textContent + ' ' + summaryData.window + ' progress');
+                track.setAttribute('aria-valuemin', '0');
+                track.setAttribute('aria-valuemax', '100');
+                track.setAttribute('aria-valuenow', String(progress));
+                const fill = document.createElement('span');
+                fill.style.width = progress + '%';
+                track.appendChild(fill);
+                summary.appendChild(track);
+            }
+
+            summary.addEventListener('click', () => {
+                agentActivitySelection = selected ? null : entry.key;
+                renderAgentActivity();
+                saveDashboardState();
+            });
+            record.appendChild(summary);
+
+            const detail = document.createElement('div');
+            detail.className = 'agent-run-detail';
+            detail.id = detailId;
+            detail.hidden = !selected;
+            if (selected) {
+                detail.appendChild(entry.type === 'proposal' ? buildProposalCard(entry.item) : buildJobCard(entry.item));
+            }
+            record.appendChild(detail);
+            return record;
+        }
+
+        function setAgentActivityFilter(filter) {
+            agentActivityFilter = ['all', 'review', 'active', 'complete'].includes(filter) ? filter : 'all';
+            const selectedEntry = getAgentActivityItems().find((entry) => entry.key === agentActivitySelection);
+            if (selectedEntry && !agentActivityMatchesFilter(selectedEntry)) agentActivitySelection = null;
+            renderAgentActivity();
             saveDashboardState();
         }
 
+        function syncAgentActivityControls(items = getAgentActivityItems()) {
+            const pendingCount = items.filter((entry) => entry.type === 'proposal').length;
+            const runningCount = items.filter((entry) => entry.type === 'job' && entry.item.state === 'running' && !entry.item.cancel_requested).length;
+            const queuedCount = items.filter((entry) => entry.type === 'job' && entry.item.state === 'queued' && !entry.item.cancel_requested).length;
+            const activeCount = runningCount + queuedCount;
+            const completeCount = items.filter((entry) => entry.type === 'job' && !isAgentJobActive(entry.item)).length;
+            const totalCount = items.length;
+            const hasActivity = totalCount > 0;
+            const summaryParts = [];
+            if (pendingCount) summaryParts.push(pendingCount + (pendingCount === 1 ? ' awaiting review' : ' awaiting review'));
+            if (runningCount) summaryParts.push(runningCount + ' running');
+            if (queuedCount) summaryParts.push(queuedCount + ' queued');
+            summaryParts.push(items.filter((entry) => entry.type === 'job').length + ' recent runs');
+            agentActivitySummary.textContent = summaryParts.join(' · ');
+            agentActivity.classList.toggle('hidden', !hasActivity);
+            agentActivityToggle.classList.toggle('hidden', !hasActivity);
+            agentActivityCount.textContent = String(totalCount);
+            agentActivityToggleLabel.textContent = 'Runs';
+            const filterCounts = { all: totalCount, review: pendingCount, active: activeCount, complete: completeCount };
+            agentActivity.querySelectorAll('[data-agent-activity-filter]').forEach((button) => {
+                const filter = button.dataset.agentActivityFilter;
+                const selected = filter === agentActivityFilter;
+                button.classList.toggle('selected', selected);
+                button.setAttribute('aria-pressed', String(selected));
+                const count = button.querySelector('[data-agent-filter-count]');
+                if (count) count.textContent = String(filterCounts[filter] || 0);
+            });
+            if (!hasActivity) {
+                agentActivityExpanded = false;
+                agentActivitySelection = null;
+            }
+            setAgentActivityOpen(agentActivityExpanded, false);
+            const actionable = summaryParts.slice(0, -1).join(', ') || totalCount + ' completed runs';
+            agentActivityToggle.setAttribute('aria-label', (agentActivityExpanded ? 'Close' : 'Open') + ' scenario runs, ' + actionable);
+        }
+
+        function renderAgentActivity() {
+            const editorState = captureAgentEditorState();
+            const activityScrollTop = agentActivityBody.scrollTop;
+            const focusedKey = document.activeElement?.closest?.('[data-agent-run-row]')?.dataset.agentRunRow || null;
+            const items = getAgentActivityItems();
+            if (agentActivitySelection && !items.some((entry) => entry.key === agentActivitySelection)) {
+                agentActivitySelection = null;
+            }
+            const visibleItems = items.filter((entry) => agentActivityMatchesFilter(entry));
+            agentActivityList.innerHTML = '';
+            if (!visibleItems.length) {
+                const empty = document.createElement('div');
+                empty.className = 'agent-activity-empty';
+                empty.textContent = agentActivityFilter === 'all'
+                    ? 'Ask Solar Agent to run a scenario. Each time window and model configuration will appear here.'
+                    : 'No runs match this filter.';
+                agentActivityList.appendChild(empty);
+            } else {
+                visibleItems.forEach((entry) => agentActivityList.appendChild(buildAgentRunSummary(entry)));
+            }
+            restoreAgentEditorState(editorState);
+            agentActivityBody.scrollTop = activityScrollTop;
+            if (!editorState.some((editor) => editor.focusedField) && focusedKey) {
+                Array.from(agentActivityList.querySelectorAll('[data-agent-run-row]'))
+                    .find((element) => element.dataset.agentRunRow === focusedKey)
+                    ?.focus({ preventScroll: true });
+            }
+            syncAgentActivityControls(items);
+            updateAgentElapsedLabels();
+            updateAgentContext();
+        }
+
+        function renderAgentJobUpdate(job) {
+            if (!job || !job.job_id) return;
+            renderAgentActivity();
+        }
+
+        function formatElapsed(milliseconds) {
+            const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+            if (seconds < 60) return seconds + 's';
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return minutes + 'm ' + (seconds % 60) + 's';
+            return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
+        }
+
+        function updateAgentElapsedLabels() {
+            document.querySelectorAll('.agent-elapsed[data-started-at]').forEach((element) => {
+                const card = element.closest('[data-job-id]');
+                const job = card ? agentJobSnapshots.get(card.dataset.jobId) : null;
+                const start = Number(element.dataset.startedAt) || Date.now();
+                const end = Number(element.dataset.endedAt) || Date.now();
+                const progress = Math.min(100, Math.max(0, Number(job?.progress) || 0));
+                element.textContent = Math.round(progress) + '% · ' + formatElapsed(end - start) + ' elapsed';
+            });
+        }
+
+        function scheduleAgentJobPoll(jobId, delay = 800) {
+            const current = agentJobSnapshots.get(jobId);
+            if (!jobId || isAgentJobTerminal(current)) return;
+            const existing = agentJobPollTimers.get(jobId);
+            if (existing) clearTimeout(existing);
+            agentJobPollTimers.set(jobId, setTimeout(() => pollAgentJob(jobId), delay));
+        }
+
+        async function pollAgentJob(jobId) {
+            agentJobPollTimers.delete(jobId);
+            try {
+                const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                const data = await readAgentResponse(response, 'Scenario status is temporarily unavailable.');
+                const previous = agentJobSnapshots.get(jobId);
+                putAgentJob(data);
+                renderAgentJobUpdate(data);
+                if (data.state === 'done' && previous?.state !== 'done' && data.kind === 'candidate' && data.comparison) {
+                    requestAgentCompletionExplanation(data, false);
+                }
+                if (isAgentJobTerminal(data)) await refreshAgentState(false);
+                else scheduleAgentJobPoll(jobId);
+            } catch (_) {
+                const current = agentJobSnapshots.get(jobId) || { job_id: jobId };
+                putAgentJob({ ...current, stage: 'Reconnecting to model worker…' });
+                renderAgentJobUpdate(agentJobSnapshots.get(jobId));
+                scheduleAgentJobPoll(jobId, 1800);
+            }
+        }
+
+        async function refreshAgentState(showFeedback = false) {
+            agentRefreshBtn.disabled = true;
+            try {
+                const response = await fetch('/api/agent/state', { cache: 'no-store' });
+                const data = await readAgentResponse(response, 'Could not restore scenario activity.');
+                agentServerState = normalizeAgentState(data);
+                agentProposalSnapshots.clear();
+                agentJobSnapshots.clear();
+                agentServerState.proposals.forEach(putAgentProposal);
+                agentServerState.jobs.forEach(putAgentJob);
+                const missingBaselineIds = Object.values(agentServerState.promoted_baselines)
+                    .filter((jobId) => jobId && !agentJobSnapshots.has(jobId));
+                await Promise.all(missingBaselineIds.map(async (jobId) => {
+                    try {
+                        const baselineResponse = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                        if (baselineResponse.ok) putAgentJob(await baselineResponse.json());
+                    } catch (_) {
+                        // The context badge falls back gracefully if an old baseline is unavailable.
+                    }
+                }));
+                renderAgentActivity();
+                agentServerState.jobs.forEach((job) => {
+                    if (!isAgentJobTerminal(job)) scheduleAgentJobPoll(job.job_id, 250);
+                });
+                if (showFeedback) appendSystemNotice('Scenario runs refreshed.');
+            } catch (error) {
+                if (showFeedback) appendSystemNotice(error.message || 'Could not refresh scenario runs.', 'error');
+                updateAgentContext();
+            } finally {
+                agentRefreshBtn.disabled = false;
+            }
+        }
+
+        function handleAgentAction(data) {
+            const action = normalizeAgentAction(data);
+            if (!action) return;
+            if (action.type === 'proposal' && action.proposal) {
+                putAgentProposal(action.proposal);
+                agentActivityFilter = 'review';
+                agentActivitySelection = 'proposal:' + action.proposal.proposal_id;
+                renderAgentActivity();
+                setAgentActivityOpen(true);
+                return;
+            }
+            if (action.type === 'job_started' && action.job) {
+                putAgentJob(action.job);
+                if (action.job.proposal_id) agentProposalSnapshots.delete(action.job.proposal_id);
+                if (agentActivityExpanded) {
+                    agentActivityFilter = 'active';
+                    agentActivitySelection = 'job:' + action.job.job_id;
+                }
+                renderAgentActivity();
+                scheduleAgentJobPoll(action.job.job_id, 150);
+            }
+        }
+
+        async function confirmAgentProposal(proposalId) {
+            try {
+                const data = await postAgentAction('/api/agent/proposals/' + encodeURIComponent(proposalId) + '/confirm');
+                agentProposalSnapshots.delete(proposalId);
+                handleAgentAction(data);
+                await refreshAgentState(false);
+            } catch (error) {
+                appendSystemNotice(error.message || 'Could not start the proposed run.', 'error');
+                await refreshAgentState(false);
+            }
+        }
+
+        async function editAgentProposal(proposalId, overrides) {
+            try {
+                const data = await postAgentAction('/api/agent/proposals/' + encodeURIComponent(proposalId) + '/edit', { overrides });
+                agentProposalSnapshots.delete(proposalId);
+                handleAgentAction(data);
+                await refreshAgentState(false);
+                appendSystemNotice('A new immutable proposal was created from your edits.');
+            } catch (error) {
+                appendSystemNotice(error.message || 'Could not edit this proposal.', 'error');
+            }
+        }
+
+        async function dismissAgentProposal(proposalId) {
+            try {
+                await postAgentAction('/api/agent/proposals/' + encodeURIComponent(proposalId) + '/dismiss');
+                agentProposalSnapshots.delete(proposalId);
+                renderAgentActivity();
+                appendSystemNotice('Scenario proposal dismissed.');
+            } catch (error) {
+                appendSystemNotice(error.message || 'Could not dismiss this proposal.', 'error');
+            }
+        }
+
+        async function cancelAgentJob(jobId) {
+            try {
+                const data = await postAgentAction('/api/jobs/' + encodeURIComponent(jobId) + '/cancel');
+                const current = agentJobSnapshots.get(jobId) || { job_id: jobId };
+                const returned = data.job || data;
+                const cancelRequested = returned.cancel_requested !== undefined
+                    ? !!returned.cancel_requested
+                    : !isAgentJobTerminal(returned);
+                putAgentJob({
+                    ...current,
+                    ...returned,
+                    cancel_requested: cancelRequested,
+                    stage: returned.stage || (cancelRequested ? 'Cancellation requested…' : current.stage),
+                });
+                renderAgentJobUpdate(agentJobSnapshots.get(jobId));
+                scheduleAgentJobPoll(jobId, 150);
+            } catch (error) {
+                appendSystemNotice(error.message || 'Could not cancel this run.', 'error');
+            }
+        }
+
+        async function retryAgentJob(job) {
+            try {
+                const data = await postAgentAction('/api/jobs/' + encodeURIComponent(job.job_id) + '/retry');
+                const action = normalizeAgentAction(data);
+                const retried = action?.job || data.job || data;
+                putAgentJob(retried);
+                renderAgentJobUpdate(agentJobSnapshots.get(retried.job_id));
+                scheduleAgentJobPoll(retried.job_id, 150);
+                appendSystemNotice('Retry queued with the same immutable request snapshot.');
+            } catch (error) {
+                appendSystemNotice(error.message || 'Could not retry this run.', 'error');
+            }
+        }
+
+        async function requestAgentCompletionExplanation(job, force = false) {
+            if (!job || job.state !== 'done' || !job.comparison) return;
+            if (!force && agentExplainedJobs.has(job.job_id)) return;
+            agentExplainedJobs.add(job.job_id);
+            saveDashboardState();
+            if (!force) appendSystemNotice('Scenario complete. Preparing an engineering explanation from the trusted comparison…');
+            try {
+                const history = chatMessages.slice(-8).map((item) => ({ role: item.role, content: item.content }));
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: 'Explain the completed deterministic comparison for this job. Do not call any tools or create a proposal. Highlight the engineering meaning, the comparability caveat, and suggest one or two useful follow-up experiments without running them.',
+                        job_id: job.job_id,
+                        history,
+                        active_mode: job.mode === 'annual' ? 'annual' : 'validation',
+                        current_config: job.request || getCanonicalCurrentConfig(job.mode),
+                        allow_scenario_actions: false,
+                    }),
+                });
+                const data = await readAgentResponse(response, 'The engineering explanation is temporarily unavailable.');
+                const reply = data.reply || 'The comparison is complete, but no engineering explanation was returned.';
+                appendMessage('assistant', reply);
+                chatMessages.push({ role: 'assistant', content: reply });
+                if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
+                renderExternalEvidence(reply, data);
+                renderChatFollowups();
+                saveDashboardState();
+            } catch (error) {
+                appendSystemNotice(error.message || 'The comparison completed, but its explanation could not be generated.', 'error');
+            }
+        }
+
+        async function promoteAgentJob(jobId) {
+            try {
+                const data = await postAgentAction('/api/jobs/' + encodeURIComponent(jobId) + '/promote');
+                const previous = agentJobSnapshots.get(jobId) || {};
+                const mode = data.mode === 'annual' ? 'annual' : (previous.mode === 'annual' ? 'annual' : 'validation');
+                const promoted = { ...previous, ...data, job_id: jobId, mode, state: 'done', progress: 100 };
+                putAgentJob(promoted);
+                agentServerState.promoted_baselines[mode] = jobId;
+                applyPromotedRequest(mode, data.request || promoted.request || promoted.provenance?.request);
+                if (mode === 'annual') {
+                    annualLatestJobId = jobId;
+                    annualLatestResult = data.result || promoted.result || null;
+                    annualRunState = { state: 'done', progress: 100, stage: 'Promoted baseline' };
+                    if (annualLatestResult) applyAnnualResult(annualLatestResult);
+                } else {
+                    latestJobId = jobId;
+                    latestResult = data.result || promoted.result || null;
+                    currentRunState = { state: 'done', progress: 100, stage: 'Promoted baseline' };
+                    if (latestResult) applyResult(latestResult);
+                }
+                saveDashboardState();
+                renderAgentActivity();
+                appendSystemNotice('Scenario promoted to the ' + (mode === 'annual' ? 'annual' : 'validation') + ' baseline. Dashboard controls and results now reflect it.');
+                await refreshAgentState(false);
+            } catch (error) {
+                appendSystemNotice(error.message || 'Could not promote this scenario.', 'error');
+            }
+        }
+
+        setInterval(updateAgentElapsedLabels, 1000);
+        setInterval(() => {
+            const hasExpired = Array.from(agentProposalSnapshots.values()).some((proposal) => {
+                const expiresAt = proposal.expires_at ? Date.parse(proposal.expires_at) : NaN;
+                return (!proposal.status || proposal.status === 'pending') && Number.isFinite(expiresAt) && expiresAt <= Date.now();
+            });
+            if (hasExpired) refreshAgentState(false);
+        }, 60000);
+
+        function renderChatMessages() {
+            messagesContainer.innerHTML = '';
+            if (isInitialChatState()) {
+                renderChatWelcome();
+                return;
+            }
+            const messages = chatMessages.length ? chatMessages : [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
+            messages.forEach((item) => appendMessage(item.role === 'user' ? 'user' : 'assistant', item.content));
+            renderChatFollowups();
+            scrollChatToBottom(true);
+        }
+
+        function setChatOpen(open, options = {}) {
+            const focus = options.focus !== false;
+            const persist = options.persist !== false;
+            if (open && focus) lastChatTrigger = document.activeElement;
+            chatSidebar.classList.toggle('hidden', !open);
+            chatToggle.classList.toggle('hidden', open);
+            chatToggle.setAttribute('aria-expanded', String(open));
+            syncChatModalState(open);
+            if (open) {
+                syncChatWindowPosition();
+                if (focus) {
+                    window.setTimeout(() => {
+                        if (isChatMobile()) closeChat.focus();
+                        else chatInput.focus();
+                    }, 0);
+                }
+            } else if (focus) {
+                const focusTarget = lastChatTrigger && document.contains(lastChatTrigger) ? lastChatTrigger : chatToggle;
+                window.setTimeout(() => focusTarget.focus?.(), 0);
+            }
+            if (persist) saveDashboardState();
+        }
+
         function setSending(isSending) {
-            sendBtn.disabled = isSending;
-            chatInput.disabled = isSending;
-            sendBtn.textContent = isSending ? '...' : 'Send';
+            chatIsSending = !!isSending;
+            sendBtn.classList.toggle('is-sending', chatIsSending);
+            sendBtn.querySelector('.send-label').textContent = chatIsSending ? 'Working' : 'Send';
+            syncChatComposerState();
         }
 
         async function sendMessage() {
             const text = chatInput.value.trim();
-            if (!text || sendBtn.disabled) return;
+            if (!text || chatIsSending) return;
 
             chatInput.value = '';
+            chatDraft = '';
+            autoResizeChatInput();
+            syncChatComposerState();
             appendMessage('user', text);
             chatMessages.push({ role: 'user', content: text });
             if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
             saveDashboardState();
 
-            const loadingBubble = appendMessage('assistant', 'Thinking...');
+            const loadingBubble = appendMessage('assistant', '', { loading: true });
             setSending(true);
             try {
                 const history = chatMessages.slice(-10, -1).map((item) => ({
@@ -3762,6 +7443,8 @@
                         message: text,
                         job_id: activeMode === 'annual' ? annualLatestJobId : latestJobId,
                         history,
+                        active_mode: activeMode,
+                        current_config: getCanonicalCurrentConfig(activeMode),
                     }),
                 });
                 let data = {};
@@ -3775,8 +7458,13 @@
                     throw new Error(Array.isArray(detail) ? detail[0].msg : detail);
                 }
                 const reply = data.reply || 'I could not generate a response for that question.';
+                loadingBubble.parentElement.classList.remove('is-loading');
+                loadingBubble.parentElement.removeAttribute('role');
                 loadingBubble.innerHTML = renderSafeMarkdown(reply);
+                loadingBubble.parentElement.classList.toggle('clarification', isClarificationReply(reply, data));
                 chatMessages.push({ role: 'assistant', content: reply });
+                handleAgentAction(data);
+                renderExternalEvidence(reply, data);
                 if (data.job_id) {
                     if (activeMode === 'annual') {
                         annualLatestJobId = data.job_id;
@@ -3786,14 +7474,17 @@
                 }
                 if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
                 saveDashboardState();
+                scrollChatToBottom();
             } catch (e) {
                 const msg = e.message || 'The solar agent could not answer right now.';
-                loadingBubble.innerHTML = renderSafeMarkdown(msg);
-                chatMessages.push({ role: 'assistant', content: msg });
-                saveDashboardState();
+                loadingBubble.parentElement.remove();
+                appendSystemNotice(msg, 'error');
             } finally {
                 setSending(false);
-                chatInput.focus();
+                renderChatFollowups();
+                if (!isChatMobile() && (document.activeElement === chatInput || document.activeElement === document.body)) {
+                    chatInput.focus();
+                }
             }
         }
 
@@ -3801,8 +7492,13 @@
             serverSessionId = await loadServerSessionId();
             const saved = readSavedState();
             if (!saved) {
+                chatDraft = '';
+                chatInput.value = '';
+                autoResizeChatInput();
+                syncChatComposerState();
                 renderChatMessages();
                 saveDashboardState();
+                await refreshAgentState(false);
                 return;
             }
 
@@ -3810,6 +7506,7 @@
                 clearSavedState();
                 resetClientState();
                 saveDashboardState();
+                await refreshAgentState(false);
                 return;
             }
 
@@ -3820,6 +7517,17 @@
             annualLatestJobId = saved.annualLatestJobId || null;
             annualLatestResult = saved.annualLatestResult || null;
             annualRunState = saved.annualRunState || null;
+            chatDraft = String(saved.chatDraft || '').slice(0, 4000);
+            chatInput.value = chatDraft;
+            agentActivityExpanded = saved.agentActivityExpanded === true;
+            agentActivityFilter = ['all', 'review', 'active', 'complete'].includes(saved.agentActivityFilter)
+                ? saved.agentActivityFilter
+                : 'all';
+            agentActivitySelection = typeof saved.agentActivitySelection === 'string'
+                ? saved.agentActivitySelection
+                : null;
+            autoResizeChatInput();
+            syncChatComposerState();
             if (Array.isArray(saved.chatMessages) && saved.chatMessages.length) {
                 chatMessages = saved.chatMessages
                     .filter((item) => item && item.content)
@@ -3828,6 +7536,9 @@
                         content: String(item.content),
                     }))
                     .slice(-50);
+            }
+            if (Array.isArray(saved.agentExplainedJobs)) {
+                saved.agentExplainedJobs.filter(Boolean).slice(-50).forEach((jobId) => agentExplainedJobs.add(String(jobId)));
             }
 
             applyFormState(saved.form);
@@ -3843,25 +7554,32 @@
                 applyAnnualResult(annualLatestResult, false);
             }
             renderChatMessages();
-            setChatOpen(!!saved.chatOpen);
+            setChatOpen(!!saved.chatOpen, { focus: false, persist: false });
 
-            if (currentRunState && currentRunState.state === 'running' && latestJobId) {
+            if (currentRunState && ['queued', 'running'].includes(currentRunState.state) && latestJobId) {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Running...';
                 setProgress(currentRunState.progress || 0, currentRunState.stage || 'Restoring run...');
                 pollStatus(latestJobId);
             }
-            if (annualRunState && annualRunState.state === 'running' && annualLatestJobId) {
+            if (annualRunState && ['queued', 'running'].includes(annualRunState.state) && annualLatestJobId) {
                 annualRunBtn.disabled = true;
                 annualRunBtn.textContent = 'Running...';
                 setAnnualProgress(annualRunState.progress || 0, annualRunState.stage || 'Restoring annual run...');
                 pollAnnualStatus(annualLatestJobId);
             }
+            await refreshAgentState(false);
         }
 
         document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, .iam-model-input, .annual-input').forEach((el) => {
-            el.addEventListener('input', saveDashboardState);
-            el.addEventListener('change', saveDashboardState);
+            el.addEventListener('input', () => {
+                saveDashboardState();
+                updateAgentContext();
+            });
+            el.addEventListener('change', () => {
+                saveDashboardState();
+                updateAgentContext();
+            });
         });
         restoreDashboardState();
     </script>

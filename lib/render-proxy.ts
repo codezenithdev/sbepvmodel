@@ -41,10 +41,29 @@ function isAllowedApiPath(path: string[]): boolean {
   if (path.length === 1) {
     return ["session", "run", "annual-run", "chat"].includes(path[0]);
   }
+
+  const isSafeId = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
+  if (path.length === 2) {
+    return (
+      (path[0] === "status" && isSafeId(path[1])) ||
+      (path[0] === "agent" && path[1] === "state")
+    );
+  }
+
+  if (path.length === 3) {
+    return (
+      path[0] === "jobs" &&
+      isSafeId(path[1]) &&
+      ["cancel", "promote", "retry"].includes(path[2])
+    );
+  }
+
   return (
-    path.length === 2 &&
-    path[0] === "status" &&
-    /^[a-zA-Z0-9_-]+$/.test(path[1])
+    path.length === 4 &&
+    path[0] === "agent" &&
+    path[1] === "proposals" &&
+    isSafeId(path[2]) &&
+    ["confirm", "edit", "dismiss"].includes(path[3])
   );
 }
 

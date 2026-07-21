@@ -53,9 +53,10 @@ class ChatBackendTests(unittest.TestCase):
         self.assertEqual(reply, "mock reply")
         self.assertEqual(job_id, "job123")
         self.assertFalse(web_enabled)
-        self.assertIn("dashboard_run_context", self.calls[0]["input"])
-        self.assertIn("se_predicted_kwh", self.calls[0]["input"])
-        self.assertNotIn("OPENAI_API_KEY", self.calls[0]["input"])
+        input_text = self.calls[0]["input"][0]["content"]
+        self.assertIn("dashboard_run_context", input_text)
+        self.assertIn("se_predicted_kwh", input_text)
+        self.assertNotIn("OPENAI_API_KEY", input_text)
         self.assertIn("Performance Summary", self.calls[0]["instructions"])
         self.assertIn("SolarEdge", self.calls[0]["instructions"])
         self.assertIn("Solectria", self.calls[0]["instructions"])
@@ -68,7 +69,8 @@ class ChatBackendTests(unittest.TestCase):
         )
 
         self.assertTrue(web_enabled)
-        self.assertEqual(self.calls[0]["tools"], [{"type": "web_search"}])
+        self.assertIn({"type": "web_search"}, self.calls[0]["tools"])
+        self.assertIn(app.SCENARIO_TOOL, self.calls[0]["tools"])
 
     def test_missing_run_still_returns_answerable_context(self):
         reply, job_id, web_enabled = app._openai_chat_response(
@@ -78,7 +80,22 @@ class ChatBackendTests(unittest.TestCase):
         self.assertEqual(reply, "mock reply")
         self.assertEqual(job_id, "missing")
         self.assertFalse(web_enabled)
-        self.assertIn('"state": "missing"', self.calls[0]["input"])
+        self.assertIn('"state": "missing"', self.calls[0]["input"][0]["content"])
+
+    def test_physical_iam_is_explicit_even_when_martin_ruiz_coefficient_is_null(self):
+        app._openai_chat_response(
+            app.ChatRequest(
+                message="Which IAM model is selected?",
+                current_config={"iam_model": "physical", "iam_a_r": None},
+            )
+        )
+
+        input_text = self.calls[0]["input"][0]["content"]
+        self.assertIn('"visible_iam_selection"', input_text)
+        self.assertIn('"label": "Physical IAM"', input_text)
+        self.assertIn('"selected": true', input_text)
+        self.assertIn('"iam_a_r_status": "not applicable to Physical IAM"', input_text)
+        self.assertIn("Never describe Physical IAM as disabled", self.calls[0]["instructions"])
 
     def test_input_data_plots_are_rendered_from_historian_csv(self):
         csv_path = app.OUTPUT_DIR / "_test_input_plot.csv"

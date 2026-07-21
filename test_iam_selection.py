@@ -1,4 +1,5 @@
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import app
 import sbe_pv_model as model
+from agent_store import AgentStore
 
 
 class IamModelTests(unittest.TestCase):
@@ -102,6 +104,23 @@ class IamModelTests(unittest.TestCase):
 class IamApiTests(unittest.TestCase):
     def setUp(self):
         app.JOBS.clear()
+        handle = tempfile.NamedTemporaryFile(
+            prefix="iam-api-test-",
+            suffix=".sqlite3",
+            dir=Path(__file__).resolve().parent,
+            delete=False,
+        )
+        handle.close()
+        database = Path(handle.name)
+        original_store = app.AGENT_STORE
+        app.AGENT_STORE = AgentStore(database)
+        self.addCleanup(setattr, app, "AGENT_STORE", original_store)
+        self.addCleanup(
+            lambda: [
+                path.unlink(missing_ok=True)
+                for path in (database, Path(f"{database}-wal"), Path(f"{database}-shm"))
+            ]
+        )
 
     def _start_validation(self, payload):
         with patch.object(app, "_run_job", return_value=None):
@@ -252,9 +271,7 @@ class IamDashboardMarkupTests(unittest.TestCase):
         self.assertGreaterEqual(self.html.count('rel="noopener noreferrer"'), 4)
         self.assertGreaterEqual(
             self.html.count(
-                "Reference parity: Martin–Ruiz is applied after ModelChain to total "
-                "effective irradiance for Solectria; SolarEdge uses the no-loss "
-                "ModelChain result."
+                "Reference parity: If Martin-Ruiz is selected, no IAM loss will be applied to the Physical model in ModelChain to avoid double-counting."
             ),
             2,
         )

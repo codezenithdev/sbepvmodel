@@ -580,7 +580,12 @@ def add_energy(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def apply_curtailment(df: pd.DataFrame, limit_kw: float | None) -> pd.DataFrame:
-    """Clip measured and predicted AC power columns to a per-series kW limit."""
+    """Clip predicted AC power only to a per-system kW limit.
+
+    Historian measurements are observations, not controllable model outputs.
+    Keeping them immutable is required for trustworthy baseline/scenario
+    comparisons and validation residuals.
+    """
     if limit_kw is None:
         return df
 
@@ -590,12 +595,7 @@ def apply_curtailment(df: pd.DataFrame, limit_kw: float | None) -> pd.DataFrame:
 
     out = df.copy()
     cap_w = cap_kw * 1000.0
-    for col in (
-        "se_measured_power_w",
-        "sol_measured_power_w",
-        "se_predicted_power_w",
-        "sol_predicted_power_w",
-    ):
+    for col in ("se_predicted_power_w", "sol_predicted_power_w"):
         out[col] = out[col].clip(upper=cap_w)
     return out
 
@@ -952,6 +952,7 @@ def run_model(
             if active_curtailment_limit_kw is not None
             else "N/A"
         ),
+        "curtailment_scope": "predicted_only",
         "MODULES_PER_BAY": MODULES_PER_BAY,
         "SOLECTRIA_STRINGS": SOLECTRIA_STRINGS,
         "SOLECTRIA_BAYS_PER_STRING": SOLECTRIA_BAYS_PER_STRING,
@@ -1023,6 +1024,7 @@ def run_model(
             if active_curtailment_limit_kw is not None
             else None
         ),
+        "curtailment_scope": "predicted_only",
         "n_rows": int(len(df)),
         "ac_png": f"{output_base}_ac_power.png",
         "energy_png": f"{output_base}_cumulative_energy.png",

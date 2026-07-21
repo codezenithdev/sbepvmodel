@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 import app
 import midc_stac_hourly as midc
 import sbe_pv_model as model
+from agent_store import AgentStore
 
 
 RAW_HEADER = ["Year", "DOY", "MST", *midc.MEASUREMENT_COLUMNS]
@@ -204,18 +206,35 @@ class MidcModelInputTests(unittest.TestCase):
 class AnnualApiTests(unittest.TestCase):
     def setUp(self):
         app.JOBS.clear()
+        handle = tempfile.NamedTemporaryFile(
+            prefix="annual-api-test-",
+            suffix=".sqlite3",
+            dir=Path(__file__).resolve().parent,
+            delete=False,
+        )
+        handle.close()
+        database = Path(handle.name)
+        original_store = app.AGENT_STORE
+        app.AGENT_STORE = AgentStore(database)
+        self.addCleanup(setattr, app, "AGENT_STORE", original_store)
+        self.addCleanup(
+            lambda: [
+                path.unlink(missing_ok=True)
+                for path in (database, Path(f"{database}-wal"), Path(f"{database}-shm"))
+            ]
+        )
 
     def test_annual_endpoint_starts_independent_job(self):
-        with patch.object(app.threading, "Thread") as thread:
-            response = TestClient(app.app).post(
-                "/api/annual-run",
-                json={"from_date": "2025-01-01", "to_date": "2025-12-31"},
-            )
+        response = TestClient(app.app).post(
+            "/api/annual-run",
+            json={"from_date": "2025-01-01", "to_date": "2025-12-31"},
+        )
 
         self.assertEqual(response.status_code, 200)
         job_id = response.json()["job_id"]
         self.assertEqual(app.JOBS[job_id]["mode"], "annual")
-        thread.return_value.start.assert_called_once_with()
+        self.assertEqual(app.JOBS[job_id]["state"], "queued")
+        self.assertEqual(app.AGENT_STORE.get_job(job_id)["kind"], "baseline")
 
     def test_new_requests_default_to_physical_in_both_run_modes(self):
         validation = app.RunRequest(
@@ -264,18 +283,17 @@ class AnnualApiTests(unittest.TestCase):
         self.assertIn("irradiance_png", payload["input_plots"])
 
     def test_validation_endpoint_remains_separate(self):
-        with patch.object(app.threading, "Thread") as thread:
-            response = TestClient(app.app).post(
-                "/api/run",
-                json={
-                    "from_date": "2026-06-20",
-                    "to_date": "2026-06-21",
-                },
-            )
+        response = TestClient(app.app).post(
+            "/api/run",
+            json={
+                "from_date": "2026-06-20",
+                "to_date": "2026-06-21",
+            },
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(app.JOBS[response.json()["job_id"]]["mode"], "validation")
-        thread.return_value.start.assert_called_once_with()
+        self.assertEqual(app.JOBS[response.json()["job_id"]]["state"], "queued")
 
     def test_annual_worker_returns_all_artifacts_and_context(self):
         hourly = pd.DataFrame(

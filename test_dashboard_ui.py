@@ -1,4 +1,5 @@
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,11 +10,29 @@ from fastapi.testclient import TestClient
 
 import app
 import sbe_pv_model as model
+from agent_store import AgentStore
 
 
 class CurtailmentDefaultTests(unittest.TestCase):
     def setUp(self):
         app.JOBS.clear()
+        handle = tempfile.NamedTemporaryFile(
+            prefix="dashboard-api-test-",
+            suffix=".sqlite3",
+            dir=Path(__file__).resolve().parent,
+            delete=False,
+        )
+        handle.close()
+        database = Path(handle.name)
+        original_store = app.AGENT_STORE
+        app.AGENT_STORE = AgentStore(database)
+        self.addCleanup(setattr, app, "AGENT_STORE", original_store)
+        self.addCleanup(
+            lambda: [
+                path.unlink(missing_ok=True)
+                for path in (database, Path(f"{database}-wal"), Path(f"{database}-shm"))
+            ]
+        )
 
     def test_validation_and_annual_requests_default_enabled_curtailment_to_125(self):
         cases = (
