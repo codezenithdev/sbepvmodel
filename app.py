@@ -234,10 +234,12 @@ Explain model behavior in plain engineering terms: measured vs predicted energy,
 Treat visible_iam_selection as the authoritative IAM state for the visible dashboard form. Physical IAM is an active IAM selection, even though iam_a_r is null because that coefficient applies only to Martin-Ruiz. Never describe Physical IAM as disabled, off, or not selected.
 If no live run context is available, say the dashboard needs a completed analysis for grounded run-specific answers, while still answering general model questions from the provided model notes.
 When the user explicitly asks to run, test, simulate, compare, or perform a what-if with dashboard settings, call propose_model_scenario exactly once. Put only explicitly requested changes in the tool arguments and use null for every unchanged field. Do not call the tool for conceptual questions.
+Bazefield is the validation data source. If the user explicitly asks to use Bazefield, select validation mode even when the annual view is active. Validation end timestamps are exclusive: interpret a whole-day range such as June 1-7 as June 1 00:00 through June 8 00:00 so all of June 7 is included.
 IAM is a method selection, not a generic scalar. If the user gives a numeric IAM value without explicitly naming Martin-Ruiz or a_r, ask which value they mean and do not call the tool.
 Never calculate scenario deltas yourself. The application returns deterministic comparison metrics after the model run; explain those values without changing them. A multi-field scenario is a combined scenario and must not be attributed to one field. A cross-run comparison uses different input data and must not be described causally.
 After explaining a completed deterministic comparison, suggest one or two useful follow-up experiments, but never request or launch them unless the user explicitly asks in a later turn.
 The application, not you, decides whether a run requires confirmation. Never claim a run started unless the tool output says it did.
+When the tool output status is started, explicitly say the run was queued, describe whether it will reuse verified source data or pull fresh Bazefield data, and do not ask for confirmation. Ask for confirmation only when the tool output status is confirmation_required or baseline_required.
 When web_search is available and you use external information, include source links in the answer.
 Format answers for a narrow chat sidebar. Use concise Markdown with bold section labels and short bullets. Do not use nested bullets. Do not use tables unless the user explicitly asks for a table.
 For performance-summary questions, use this order: **Performance Summary**, **SolarEdge**, **Solectria**, **Run Context**. Under each system, use the same four bullets: Measured, Predicted, Difference, Model delta.
@@ -296,7 +298,8 @@ SCENARIO_TOOL = {
     "description": (
         "Propose one solar model scenario containing only settings the user explicitly "
         "asked to change. Use null for all unchanged settings. The application validates, "
-        "approves, executes, and compares the run."
+        "approves, executes, and compares the run. A changed validation window is "
+        "automatically fetched from Bazefield and compared with the selected baseline."
     ),
     "strict": True,
     "parameters": {
@@ -953,20 +956,26 @@ def _proposal_policy(
     source_available: bool,
     baseline_missing: bool = False,
 ) -> tuple[bool, str]:
-    reasons: list[str] = []
+    confirmation_reasons: list[str] = []
+    informational_reasons: list[str] = []
     if baseline_missing:
-        reasons.append("A completed baseline must be run first")
+        confirmation_reasons.append("A completed baseline must be run first")
     if mode == "annual":
-        reasons.append("Annual scenarios always require confirmation")
+        confirmation_reasons.append("Annual scenarios always require confirmation")
     if comparison_kind == "cross_run":
-        reasons.append(
-            "A fresh data fetch is required; the result will be non-like-for-like"
+        informational_reasons.append(
+            "Fresh Bazefield data will be fetched; the comparison will be non-like-for-like"
         )
     if comparison_kind == "same_input" and not source_available and not baseline_missing:
-        reasons.append("The baseline source file or SHA-256 fingerprint is unavailable")
+        confirmation_reasons.append(
+            "The baseline source file or SHA-256 fingerprint is unavailable"
+        )
     if _active_model_jobs():
-        reasons.append("Another model job is active; this run will remain queued")
-    required = bool(reasons)
+        informational_reasons.append(
+            "Another model job is active; this run will remain queued"
+        )
+    required = bool(confirmation_reasons)
+    reasons = confirmation_reasons + informational_reasons
     return required, "; ".join(reasons) if reasons else (
         "Same-input validation can reuse the baseline source fingerprint"
     )
@@ -1239,10 +1248,20 @@ def _handle_scenario_tool(
         if not proposal["confirmation_required"]:
             job = _confirm_durable_proposal(proposal, automatic=True)
             public_job = _public_job(job)
+            if proposal["comparison_kind"] == "cross_run":
+                started_message = (
+                    "The validation scenario was queued automatically. It will pull fresh "
+                    "data from Bazefield and run a non-like-for-like comparison against "
+                    "the selected baseline."
+                )
+            else:
+                started_message = (
+                    "The verified same-input validation scenario was queued automatically."
+                )
             return (
                 {
                     "status": "started",
-                    "message": "The verified same-input validation scenario was queued automatically.",
+                    "message": started_message,
                     "job": public_job,
                 },
                 {"type": "job_started", "job": public_job},
