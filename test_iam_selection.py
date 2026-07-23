@@ -100,6 +100,65 @@ class IamModelTests(unittest.TestCase):
             martin_ruiz_custom["p_mp_w"], martin_ruiz_default["p_mp_w"]
         )
 
+    def test_multi_array_modelchain_matches_individual_tilts(self):
+        location = model.pvl.location.Location(
+            model.LAT,
+            model.LON,
+            tz=model.TIMEZONE,
+        )
+        times = pd.date_range(
+            "2026-06-21 05:00",
+            periods=4,
+            freq="h",
+            tz=model.TIMEZONE,
+        )
+        weather = pd.DataFrame(
+            {
+                "dni": [0.0, 350.0, 700.0, 950.0],
+                "ghi": [0.0, 180.0, 480.0, 760.0],
+                "dhi": [0.0, 60.0, 90.0, 110.0],
+                "temp_air": [14.0, 16.0, 20.0, 24.0],
+                "wind_speed": [1.0, 1.5, 2.0, 2.5],
+            },
+            index=times,
+        )
+        tilts = [-7.44, 0.93, 7.52]
+
+        for backtrack in (True, False):
+            for iam_model, iam_a_r in (
+                (model.IAM_MODEL_PHYSICAL, None),
+                (model.IAM_MODEL_MARTIN_RUIZ, 0.2),
+            ):
+                with self.subTest(
+                    backtrack=backtrack,
+                    iam_model=iam_model,
+                ):
+                    batched = model.run_modelchain_for_axis_tilts(
+                        tilts,
+                        weather,
+                        location,
+                        backtrack=backtrack,
+                        iam_model=iam_model,
+                        iam_a_r=iam_a_r,
+                    )
+                    for tilt in tilts:
+                        individual = model.run_modelchain_for_axis_tilt(
+                            tilt,
+                            weather,
+                            location,
+                            backtrack=backtrack,
+                            iam_model=iam_model,
+                            iam_a_r=iam_a_r,
+                        )
+                        for key in ("Ee_suns", "Tk", "p_mp_w"):
+                            np.testing.assert_allclose(
+                                batched[tilt][key],
+                                individual[key],
+                                rtol=0,
+                                atol=0,
+                                equal_nan=True,
+                            )
+
 
 class IamApiTests(unittest.TestCase):
     def setUp(self):

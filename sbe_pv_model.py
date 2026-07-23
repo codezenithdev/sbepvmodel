@@ -25,6 +25,8 @@ OUTPUT:
 
 from __future__ import annotations
 
+from copy import copy
+
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -36,7 +38,7 @@ import pvlib as pvl
 import pvmismatch as pvm
 from pvmismatch.contrib import gen_coeffs
 
-__version__ = "1"
+__version__ = "2"
 
 # -----------------------------------------------------------------------------
 # RUN SETTINGS (edit here -- no command-line prompts)
@@ -448,6 +450,89 @@ def run_modelchain_for_axis_tilt(
     }
 
 
+def run_modelchain_for_axis_tilts(
+    axis_tilts: list[float],
+    weather: pd.DataFrame,
+    location: pvl.location.Location,
+    backtrack: bool = BACKTRACK,
+    include_iam: bool | None = INCLUDE_IAM,
+    iam_a_r: float | None = A_R,
+    iam_model: str | None = None,
+) -> dict[float, dict[str, np.ndarray]]:
+    """Run all tracker tilts in one multi-array pvlib ModelChain.
+
+    Solar position and other shared inputs are prepared once. pvlib returns one
+    result object per array, in the same order as the supplied tilts.
+    """
+    tilts = tuple(dict.fromkeys(float(tilt) for tilt in axis_tilts))
+    if not tilts:
+        return {}
+
+    selected_iam_model, effective_iam_a_r = resolve_iam_settings(
+        iam_model=iam_model,
+        iam_a_r=iam_a_r,
+        include_iam=include_iam,
+    )
+    arrays = [
+        pvl.pvsystem.Array(
+            mount=pvl.pvsystem.SingleAxisTrackerMount(
+                axis_tilt=tilt,
+                axis_azimuth=AXIS_AZIMUTH,
+                max_angle=MAX_ANGLE,
+                backtrack=bool(backtrack),
+                gcr=GCR,
+            ),
+            module_parameters=MODULE_PARAMETERS,
+            temperature_model_parameters=TEMPERATURE_MODEL_PARAMETERS,
+            modules_per_string=1,
+            strings=1,
+            name=f"axis_tilt_{index}",
+        )
+        for index, tilt in enumerate(tilts)
+    ]
+    system = pvl.pvsystem.PVSystem(
+        arrays=arrays,
+        inverter_parameters=INVERTER_PARAMETERS,
+    )
+    aoi_model = (
+        "no_loss"
+        if selected_iam_model == IAM_MODEL_MARTIN_RUIZ
+        else IAM_MODEL_PHYSICAL
+    )
+    mc = pvl.modelchain.ModelChain(
+        system,
+        location,
+        aoi_model=aoi_model,
+        spectral_model="no_loss",
+    )
+    mc.run_model(weather)
+
+    def per_array(value):
+        return value if isinstance(value, tuple) else (value,)
+
+    effective_results = per_array(mc.results.effective_irradiance)
+    temperature_results = per_array(mc.results.cell_temperature)
+    dc_results = per_array(mc.results.dc)
+    aoi_results = per_array(mc.results.aoi)
+
+    output: dict[float, dict[str, np.ndarray]] = {}
+    for index, tilt in enumerate(tilts):
+        effective = effective_results[index]
+        if selected_iam_model == IAM_MODEL_MARTIN_RUIZ:
+            iam = pvl.iam.martin_ruiz(
+                aoi_results[index],
+                a_r=effective_iam_a_r,
+            )
+            effective = effective * iam
+
+        output[tilt] = {
+            "Ee_suns": (effective / 1000.0).to_numpy(),
+            "Tk": (temperature_results[index] + 273.15).to_numpy(),
+            "p_mp_w": dc_results[index].p_mp.to_numpy(),
+        }
+    return output
+
+
 # -----------------------------------------------------------------------------
 # PVMISMATCH MODULE (two-diode fit)
 # -----------------------------------------------------------------------------
@@ -477,6 +562,121 @@ def build_pvmismatch_module() -> pvm.pvmodule.PVmodule:
         cellArea=MODULE_PARAMETERS["A_c"],
         pvcells=[pv_cell] * int(MODULE_PARAMETERS["N_s"]),
     )
+
+
+def _uniform_series_topology(
+    pvmod: pvm.pvmodule.PVmodule,
+) -> tuple[int, int, float]:
+    """Validate and summarize the uniform series topology used by this model.
+
+    The fast mismatch path is exact for the configured STD72 module: every
+    substring contains the same number of series-connected cells and uses the
+    same substring bypass voltage. Keeping the checks here makes a future
+    module-layout change fail loudly instead of silently changing the physics.
+    """
+    if pvmod.Vbypass_config != pvm.pvmodule.DEFAULT_BYPASS:
+        raise ValueError(
+            "Fast mismatch calculation requires substring bypass diodes."
+        )
+
+    cells_per_substring: list[int] = []
+    for substring in pvmod.cell_pos:
+        records = [record for column in substring for record in column]
+        if any(bool(record["crosstie"]) for record in records):
+            raise ValueError(
+                "Fast mismatch calculation requires series-only substrings."
+            )
+        cells_per_substring.append(len(records))
+
+    if not cells_per_substring or len(set(cells_per_substring)) != 1:
+        raise ValueError(
+            "Fast mismatch calculation requires equal-sized module substrings."
+        )
+    if any(cell is not pvmod.pvcells[0] for cell in pvmod.pvcells[1:]):
+        raise ValueError(
+            "Fast mismatch calculation requires uniform cells within a module."
+        )
+    if not np.isscalar(pvmod.Vbypass):
+        raise ValueError("Fast mismatch calculation requires one bypass voltage.")
+
+    return cells_per_substring[0], len(cells_per_substring), float(pvmod.Vbypass)
+
+
+def _uniform_module_curve(
+    template_cell: pvm.pvcell.PVcell,
+    pvconst: pvm.pvconstants.PVconstants,
+    cells_per_substring: int,
+    number_substrings: int,
+    bypass_voltage: float,
+    effective_irradiance_suns: float,
+    cell_temperature_k: float,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Return one uniform module's current, voltage, and short-circuit current.
+
+    ``PVmodule.calcMod`` interpolates every identical cell separately. For this
+    model all cells within a module have the same irradiance and temperature,
+    so one cell curve can be interpolated and its voltage multiplied by the
+    number of series-identical cells/substrings. This is electrically identical
+    to pvmismatch's generic calculation, aside from floating-point summation
+    order, while avoiding hundreds of duplicate interpolations per module.
+    """
+    cell = copy(template_cell)
+    cell.update(
+        Ee=float(effective_irradiance_suns),
+        Tcell=float(cell_temperature_k),
+    )
+    cell_current = cell.Icell.ravel()
+    cell_voltage = cell.Vcell.ravel()
+
+    current_at_breakdown = np.interp(
+        cell.VRBD,
+        cell_voltage,
+        cell_current,
+    )
+    substring_current, resampled_cell_voltage = pvconst.calcSeries(
+        cell_current[None, :],
+        cell_voltage[None, :],
+        cell.Isc,
+        current_at_breakdown,
+    )
+    substring_voltage = resampled_cell_voltage * cells_per_substring
+    substring_voltage[substring_voltage < bypass_voltage] = bypass_voltage
+
+    substring_isc = np.interp(
+        np.float64(0),
+        substring_voltage,
+        substring_current,
+    )
+    module_current, resampled_substring_voltage = pvconst.calcSeries(
+        substring_current[None, :],
+        substring_voltage[None, :],
+        substring_isc,
+        substring_current.max(),
+    )
+    module_voltage = resampled_substring_voltage * number_substrings
+    return module_current, module_voltage, float(cell.Isc)
+
+
+def _uniform_string_max_power(
+    bay_curves: list[tuple[np.ndarray, np.ndarray, float]],
+    pvconst: pvm.pvconstants.PVconstants,
+) -> float:
+    """Return max string power for four bay curves repeated six modules each."""
+    module_current = np.asarray([curve[0] for curve in bay_curves])
+    module_voltage = np.asarray([curve[1] for curve in bay_curves])
+    mean_isc = float(np.mean([curve[2] for curve in bay_curves]))
+    string_current, one_of_each_voltage = pvconst.calcSeries(
+        module_current,
+        module_voltage,
+        mean_isc,
+        module_current.max(),
+    )
+
+    # Each bay contributes MODULES_PER_BAY identical modules in series. The
+    # generic pvmismatch path interpolates the same curve six times; multiplying
+    # its voltage after one interpolation gives the same series I-V curve.
+    string_voltage = one_of_each_voltage * MODULES_PER_BAY
+    return float(np.nanmax(string_current * string_voltage))
 
 
 # -----------------------------------------------------------------------------
@@ -512,51 +712,66 @@ def predict_ac_power(
     unique_tilts = sorted({float(t) for t in all_tilts})
     print(f"ModelChain over {len(unique_tilts)} unique tilts (DHI source: {dhi_source})...")
 
-    tilt_out = {
-        t: run_modelchain_for_axis_tilt(
-            t,
-            weather,
-            location,
-            backtrack=backtrack,
-            include_iam=False,
-            iam_a_r=effective_iam_a_r,
-            iam_model=selected_iam_model,
-        )
-        for t in unique_tilts
-    }
+    tilt_out = run_modelchain_for_axis_tilts(
+        unique_tilts,
+        weather,
+        location,
+        backtrack=backtrack,
+        include_iam=False,
+        iam_a_r=effective_iam_a_r,
+        iam_model=selected_iam_model,
+    )
 
     # SolarEdge: module-level -> sum module p_mp over all bays x MODULES_PER_BAY
     se_dc = np.zeros(len(df), dtype=float)
     for t in np.array(SOLAREDGE_TILT_ASBUILT).flatten():
         se_dc += tilt_out[float(t)]["p_mp_w"] * MODULES_PER_BAY
 
-    # Solectria: per-string mismatch via pvmismatch, per timestep
+    # Solectria: per-string mismatch via pvmismatch, per timestep. Modules in a
+    # bay are identical, so calculate one curve per unique tilt and reuse the
+    # series curve rather than asking the generic library to recalculate every
+    # identical cell/module separately.
     pvm_mod = build_pvmismatch_module()
-    solectria_strings = []
-    for row in SOLECTRIA_TILT_ASBUILT:
-        nmods = MODULES_PER_BAY * SOLECTRIA_BAYS_PER_STRING
-        pvstr = pvm.pvstring.PVstring(numberMods=nmods, pvmods=[pvm_mod] * nmods)
-        bay_Ee = [tilt_out[float(t)]["Ee_suns"] for t in row]
-        bay_Tk = [tilt_out[float(t)]["Tk"] for t in row]
-        solectria_strings.append((pvstr, bay_Ee, bay_Tk))
+    cells_per_substring, number_substrings, bypass_voltage = (
+        _uniform_series_topology(pvm_mod)
+    )
+    solectria_rows = [
+        tuple(float(t) for t in row) for row in SOLECTRIA_TILT_ASBUILT
+    ]
+    solectria_tilts = sorted({tilt for row in solectria_rows for tilt in row})
+    template_cell = pvm_mod.pvcells[0]
 
     n = len(df)
     print(f"Solectria string mismatch over {n} timesteps...")
     sol_dc = np.zeros(n, dtype=float)
+    progress_interval = max(1, (n + 99) // 100)
     for j in range(n):
-        if progress_cb is not None and (j % 5 == 0 or j == n - 1):
+        if progress_cb is not None and (
+            j % progress_interval == 0 or j == n - 1
+        ):
             progress_cb(j / n if n else 1.0, f"Computing string mismatch… {j + 1}/{n}")
         # Skip night / no-irradiance steps (first string's first bay as proxy)
-        if np.isnan(solectria_strings[0][1][0][j]) or solectria_strings[0][1][0][j] < 0.01:
+        proxy_irradiance = tilt_out[solectria_rows[0][0]]["Ee_suns"][j]
+        if np.isnan(proxy_irradiance) or proxy_irradiance < 0.01:
             continue
-        for pvstr, bay_Ee, bay_Tk in solectria_strings:
-            nmods = pvstr.numberMods
-            Ee = {k: float(bay_Ee[k // MODULES_PER_BAY][j]) for k in range(nmods)}
-            Tk = {k: float(bay_Tk[k // MODULES_PER_BAY][j]) for k in range(nmods)}
-            pvstr.setSuns(Ee)
-            pvstr.setTemps(Tk)
-            _, _, Pstring = pvstr.calcString()
-            sol_dc[j] += float(np.nanmax(Pstring))
+
+        curves_by_tilt = {
+            tilt: _uniform_module_curve(
+                template_cell,
+                pvm_mod.pvconst,
+                cells_per_substring,
+                number_substrings,
+                bypass_voltage,
+                tilt_out[tilt]["Ee_suns"][j],
+                tilt_out[tilt]["Tk"][j],
+            )
+            for tilt in solectria_tilts
+        }
+        for row in solectria_rows:
+            sol_dc[j] += _uniform_string_max_power(
+                [curves_by_tilt[tilt] for tilt in row],
+                pvm_mod.pvconst,
+            )
 
     out = df.copy()
     out["se_predicted_power_w"] = se_dc * float(se_eff)
