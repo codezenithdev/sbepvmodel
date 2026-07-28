@@ -89,9 +89,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         job_id: str = "baseline-validation",
         mode: str = "validation",
         request: dict | None = None,
+        reviewed: bool | None = None,
     ) -> dict:
         if request is None:
             request = self.validation_config()
+        if reviewed is None:
+            reviewed = mode == "validation"
         _, canonical = app._canonical_request(mode, request)
 
         source_handle = tempfile.NamedTemporaryFile(
@@ -108,11 +111,56 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             "2026-06-20 14:00:00,1000,900,700,500,100,25,2\n",
             encoding="utf-8",
         )
+        source_hash = sha256_file(source)
+        provenance = (
+            {
+                "data_quality": {
+                    "review_id": f"review-{job_id}",
+                    "reviewed_source_sha256": source_hash,
+                    "reviewed_at": "2026-07-28T12:00:00+00:00",
+                    "report": {"issues": []},
+                    "cleaning": {"decisions": []},
+                }
+            }
+            if reviewed and mode == "validation"
+            else None
+        )
+        calibration_factors = {
+            "method": "measured_energy_divided_by_uncalibrated_modeled_energy",
+            "seasons": [
+                {
+                    "season": season,
+                    "systems": {
+                        "solaredge": {
+                            "factor": 1.1234567890123,
+                            "source": "season",
+                        },
+                        "solectria": {
+                            "factor": 0.9876543210987,
+                            "source": "season",
+                        },
+                    },
+                }
+                for season in ("winter", "spring", "summer", "fall")
+            ],
+        }
+        result = {"mode": mode, "stats": {}}
+        if mode == "validation":
+            result.update(
+                {
+                    "calibration_factors": calibration_factors,
+                    "factor_driver_diagnostics": {
+                        "method": "baseline diagnostics",
+                        "systems": {},
+                    },
+                }
+            )
         created = app.AGENT_STORE.create_job(
             job_id=job_id,
             kind="baseline",
             mode=mode,
             request=canonical,
+            provenance=provenance,
         )
         claimed = app.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(created["id"], claimed["id"])
@@ -122,8 +170,8 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             progress=100,
             stage="Done",
             source_path=str(source.resolve()),
-            source_hash=sha256_file(source),
-            result={"mode": mode, "stats": {}},
+            source_hash=source_hash,
+            result=result,
             artifacts={},
         )
         app.AGENT_STORE.promote_job(job_id)
@@ -211,7 +259,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual(candidate["baseline_id"], baseline["id"])
         self.assertEqual(candidate["request"]["backtrack"], False)
 
-    def test_missing_baseline_creates_run_baseline_proposal_not_scenario(self) -> None:
+    def test_missing_validation_baseline_requires_visible_data_review(self) -> None:
         tool_result, action = app._handle_scenario_tool(
             app.ChatRequest(
                 message="Use Martin-Ruiz a_r 0.80",
@@ -221,19 +269,15 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             self.tool_arguments(iam_model="martin_ruiz", iam_a_r=0.8),
         )
 
-        proposal = action["proposal"]
-        durable = app.AGENT_STORE.get_proposal(proposal["proposal_id"])
-        self.assertEqual(tool_result["status"], "baseline_required")
-        self.assertEqual(action["type"], "proposal")
-        self.assertEqual(proposal["kind"], "baseline")
-        self.assertTrue(proposal["confirmation_required"])
-        self.assertEqual(proposal["changes"], [])
-        self.assertEqual(proposal["effective_request"]["iam_model"], "physical")
-        self.assertIsNone(proposal["effective_request"]["iam_a_r"])
+        self.assertEqual(tool_result["status"], "data_review_required")
+        self.assertEqual(action["type"], "data_review_required")
+        self.assertIn("visible Bazefield data-quality review", tool_result["message"])
+        self.assertIn("No Solar Agent proposal or model job", tool_result["message"])
         self.assertEqual(
-            durable["confirmation_metadata"]["deferred_scenario_overrides"],
-            {"iam_model": "martin_ruiz", "iam_a_r": 0.8},
+            tool_result["effective_request"]["iam_model"], "martin_ruiz"
         )
+        self.assertEqual(tool_result["effective_request"]["iam_a_r"], 0.8)
+        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
         self.assertEqual(app.AGENT_STORE.list_jobs(), [])
 
     def test_verified_same_input_auto_start_reuses_hash_and_never_fetches(self) -> None:
@@ -255,6 +299,16 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual(candidate["baseline_id"], baseline["id"])
         self.assertEqual(candidate["source_path"], baseline["source_path"])
         self.assertEqual(candidate["source_hash"], baseline["source_hash"])
+        profile = candidate["provenance"]["calibration_profile"]
+        self.assertEqual(profile["origin_job_id"], baseline["id"])
+        self.assertEqual(
+            profile["seasonal_factors"]["summer"]["solaredge"],
+            1.1234567890123,
+        )
+        self.assertEqual(
+            candidate["provenance"]["data_quality"]["review_id"],
+            f"review-{baseline['id']}",
+        )
 
         claimed = app.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(claimed["id"], job_id)
@@ -281,6 +335,8 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 app.RunRequest(**candidate["request"]),
                 source_path=candidate["source_path"],
                 expected_source_hash=candidate["source_hash"],
+                data_quality_context=candidate["provenance"]["data_quality"],
+                calibration_profile=profile,
             )
 
         historian_call.assert_not_called()
@@ -288,9 +344,17 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             Path(model_call.call_args.kwargs["input_csv"]).resolve(),
             Path(baseline["source_path"]).resolve(),
         )
+        self.assertIs(
+            model_call.call_args.kwargs["calibration_profile"],
+            profile,
+        )
+        self.assertEqual(
+            model_call.call_args.kwargs["data_quality_context"]["review_id"],
+            f"review-{baseline['id']}",
+        )
         finish_call.assert_called_once()
 
-    def test_fresh_validation_window_auto_starts_and_is_cancelable_and_promotable(
+    def test_fresh_validation_window_requires_review_without_state_change(
         self,
     ) -> None:
         baseline = self.completed_baseline()
@@ -308,59 +372,140 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(tool_result["status"], "started")
-        self.assertIn("pull fresh data from Bazefield", tool_result["message"])
-        self.assertEqual(action["type"], "job_started")
-        first = action["job"]
-        candidates = app.AGENT_STORE.list_jobs(kind="candidate")
-        self.assertEqual(len(candidates), 1)
-        self.assertIsNone(candidates[0]["source_path"])
-        self.assertIsNone(candidates[0]["source_hash"])
-        self.assertEqual(candidates[0]["baseline_id"], baseline["id"])
-        self.assertEqual(candidates[0]["request"]["from_date"], "2026-06-01")
-        self.assertEqual(candidates[0]["request"]["to_date"], "2026-06-08")
-        self.assertEqual(candidates[0]["request"]["iam_model"], "physical")
-        self.assertIsNone(candidates[0]["request"]["iam_a_r"])
-        proposal = app.AGENT_STORE.get_proposal(candidates[0]["proposal_id"])
-        self.assertEqual(proposal["state"], "confirmed")
-        self.assertEqual(proposal["comparison_kind"], "cross_run")
-        self.assertFalse(proposal["confirmation_required"])
-        self.assertIn(
-            "fresh bazefield data", proposal["confirmation_reason"].lower()
+        self.assertEqual(tool_result["status"], "data_review_required")
+        self.assertEqual(action["type"], "data_review_required")
+        self.assertEqual(
+            action["effective_request"]["from_date"], "2026-06-01"
+        )
+        self.assertEqual(action["effective_request"]["to_date"], "2026-06-08")
+        self.assertIn("Retain or Exclude", action["message"])
+        self.assertEqual(app.AGENT_STORE.list_jobs(kind="candidate"), [])
+        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(
+            app.AGENT_STORE.get_current_baseline("validation")["job_id"],
+            baseline["id"],
         )
 
-        cancelled = json.loads(
-            app.cancel_model_job(first["job_id"]).body.decode("utf-8")
-        )["job"]
-        self.assertEqual(cancelled["state"], "cancelled")
-        self.assertTrue(cancelled["cancel_requested"])
-        with self.assertRaises(HTTPException) as context:
-            app.promote_model_job(first["job_id"])
-        self.assertEqual(context.exception.status_code, 409)
+    def test_same_input_unreviewed_baseline_requires_visible_review(self) -> None:
+        baseline = self.completed_baseline(reviewed=False)
 
-        app.retry_model_job(first["job_id"])
+        tool_result, action = app._handle_scenario_tool(
+            app.ChatRequest(
+                message="Turn backtracking off.",
+                job_id=baseline["id"],
+                active_mode="validation",
+                current_config=self.validation_config(),
+            ),
+            self.tool_arguments(backtrack=False),
+        )
+
+        self.assertEqual(tool_result["status"], "data_review_required")
+        self.assertEqual(action["type"], "data_review_required")
+        self.assertEqual(app.AGENT_STORE.list_jobs(kind="candidate"), [])
+        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
+
+    def test_promoted_same_input_scenario_reuses_original_profile(self) -> None:
+        original = self.completed_baseline()
+        _, first_action = app._handle_scenario_tool(
+            app.ChatRequest(
+                message="Turn backtracking off.",
+                job_id=original["id"],
+                active_mode="validation",
+                current_config=self.validation_config(),
+            ),
+            self.tool_arguments(backtrack=False),
+        )
+        first_id = first_action["job"]["job_id"]
         claimed = app.AGENT_STORE.claim_next_queued_job()
-        self.assertEqual(claimed["id"], first["job_id"])
+        self.assertEqual(claimed["id"], first_id)
         app.AGENT_STORE.update_job(
-            first["job_id"],
+            first_id,
             state="done",
             progress=100,
             stage="Done",
-            result={"mode": "validation", "stats": {"marker": "candidate"}},
-            comparison={"comparison_type": "cross_run"},
-            provenance={"warning": "non-like-for-like"},
-            artifacts={"comparison_workbook": {"url": "/outputs/compare.xlsx"}},
+            result={
+                "calibration_factors": {
+                    "seasons": [
+                        {
+                            "season": "summer",
+                            "systems": {
+                                "solaredge": {"factor": 9.0},
+                                "solectria": {"factor": 9.0},
+                            },
+                        }
+                    ]
+                }
+            },
         )
-        promoted = json.loads(
-            app.promote_model_job(first["job_id"]).body.decode("utf-8")
+        promoted_payload = json.loads(
+            app.promote_model_job(first_id).body.decode("utf-8")
         )
-        self.assertEqual(promoted["job_id"], first["job_id"])
+        self.assertEqual(promoted_payload["job_id"], first_id)
+
+        promoted = app.AGENT_STORE.get_job(first_id)
+        _, second_action = app._handle_scenario_tool(
+            app.ChatRequest(
+                message="Use 95 percent SolarEdge inverter efficiency.",
+                job_id=first_id,
+                active_mode="validation",
+                current_config=promoted["request"],
+            ),
+            self.tool_arguments(solaredge_inverter_efficiency=0.95),
+        )
+        second = app.AGENT_STORE.get_job(
+            second_action["job"]["job_id"]
+        )
+        profile = second["provenance"]["calibration_profile"]
+        self.assertEqual(profile["origin_job_id"], original["id"])
         self.assertEqual(
-            app.AGENT_STORE.get_current_baseline("validation")["job_id"],
-            first["job_id"],
+            profile["seasonal_factors"]["summer"]["solaredge"],
+            1.1234567890123,
         )
 
-    def test_fresh_validation_window_queues_behind_active_job_without_confirmation(
+    def test_reviewed_profile_missing_candidate_season_is_rejected(self) -> None:
+        multi_season_request = self.validation_config(
+            from_date="2026-01-01",
+            from_time="00:00",
+            to_date="2026-07-01",
+            to_time="00:00",
+        )
+        baseline = self.completed_baseline(request=multi_season_request)
+        result = baseline["result"]
+        summer_only = {
+            **result["calibration_factors"],
+            "seasons": [
+                record
+                for record in result["calibration_factors"]["seasons"]
+                if record["season"] == "summer"
+            ],
+        }
+        app.AGENT_STORE.update_job(
+            baseline["id"],
+            result={
+                **result,
+                "calibration_factors": summer_only,
+            },
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            app._handle_scenario_tool(
+                app.ChatRequest(
+                    message="Turn backtracking off.",
+                    job_id=baseline["id"],
+                    active_mode="validation",
+                    current_config=multi_season_request,
+                ),
+                self.tool_arguments(backtrack=False),
+            )
+
+        self.assertEqual(context.exception.status_code, 409)
+        self.assertIn("winter", str(context.exception.detail).lower())
+        self.assertEqual(
+            app.AGENT_STORE.list_jobs(kind="candidate"),
+            [],
+        )
+
+    def test_fresh_validation_window_does_not_queue_behind_active_job(
         self,
     ) -> None:
         baseline = self.completed_baseline()
@@ -388,130 +533,94 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(tool_result["status"], "started")
-        self.assertEqual(action["type"], "job_started")
-        queued = app.AGENT_STORE.get_job(action["job"]["job_id"])
-        self.assertEqual(queued["state"], "queued")
-        proposal = app.AGENT_STORE.get_proposal(queued["proposal_id"])
-        self.assertFalse(proposal["confirmation_required"])
-        self.assertIn("remain queued", proposal["confirmation_reason"])
+        self.assertEqual(tool_result["status"], "data_review_required")
+        self.assertEqual(action["type"], "data_review_required")
+        self.assertEqual(
+            [job["id"] for job in app.AGENT_STORE.list_jobs(kind="candidate")],
+            [active["id"]],
+        )
+        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
 
-    def test_fresh_validation_worker_pulls_bazefield_and_builds_comparison(
+    def test_cross_run_validation_proposal_cannot_be_confirmed(
         self,
     ) -> None:
         baseline = self.completed_baseline()
-        _, action = app._handle_scenario_tool(
-            app.ChatRequest(
-                message="Run June 1-7 using Bazefield with physical IAM.",
-                job_id=baseline["id"],
-                active_mode="validation",
-                current_config=self.validation_config(),
-            ),
-            self.tool_arguments(
+        _, candidate = app._canonical_request(
+            "validation",
+            self.validation_config(
                 from_date="2026-06-01",
                 from_time="00:00",
                 to_date="2026-06-08",
                 to_time="00:00",
-                iam_model="physical",
             ),
         )
-        job_id = action["job"]["job_id"]
+        proposal = app.AGENT_STORE.create_proposal(
+            mode="validation",
+            effective_request=candidate,
+            changes=[
+                {
+                    "field": "from_date",
+                    "label": "Start date",
+                    "from": baseline["request"]["from_date"],
+                    "to": candidate["from_date"],
+                }
+            ],
+            baseline_id=baseline["id"],
+            comparison_kind="cross_run",
+            confirmation_required=True,
+            confirmation_reason="legacy cross-run proposal",
+            confirmation_metadata={"job_kind": "candidate"},
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            app._confirm_durable_proposal(proposal)
+
+        self.assertEqual(context.exception.status_code, 409)
+        self.assertIn("visible Calibration", str(context.exception.detail))
+        self.assertEqual(app.AGENT_STORE.list_jobs(kind="candidate"), [])
+
+    def test_unreviewed_validation_candidate_cannot_be_promoted(self) -> None:
+        baseline = self.completed_baseline()
+        candidate = app.AGENT_STORE.create_job(
+            job_id="unreviewed-candidate",
+            kind="candidate",
+            mode="validation",
+            request=self.validation_config(backtrack=False),
+            baseline_id=baseline["id"],
+            source_path=baseline["source_path"],
+            source_hash=baseline["source_hash"],
+            provenance={"calibration_profile": {"schema_version": 1}},
+        )
         claimed = app.AGENT_STORE.claim_next_queued_job()
-        self.assertEqual(claimed["id"], job_id)
-
-        output_root = app.OUTPUT_DIR
-        source_csv = output_root / f"{job_id}.csv"
-        self.generated_files.append(source_csv)
-        baseline_workbook = output_root / f"{job_id}-baseline.xlsx"
+        self.assertEqual(claimed["id"], candidate["id"])
         app.AGENT_STORE.update_job(
+            candidate["id"],
+            state="done",
+            result={"mode": "validation", "stats": {}},
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            app.promote_model_job(candidate["id"])
+
+        self.assertEqual(context.exception.status_code, 409)
+        self.assertIn("hash-verified data-quality review", context.exception.detail)
+        self.assertEqual(
+            app.AGENT_STORE.get_current_baseline("validation")["job_id"],
             baseline["id"],
-            result={
-                "mode": "validation",
-                "stats": {"excel": str(baseline_workbook)},
-            },
         )
 
-        def fake_historian(**kwargs):
-            Path(kwargs["output_csv"]).write_text(
-                "timestamp,solaredge_measured_power,solectria_measured_power,"
-                "dni,ghi,dhi,temp_air,wind_speed\n"
-                "2026-06-01 06:00:00,1000,900,700,500,100,25,2\n",
-                encoding="utf-8",
-            )
-            return 168
-
-        model_result = {
-            "ac_png": str(output_root / "candidate_ac.png"),
-            "energy_png": str(output_root / "candidate_energy.png"),
-            "excel": str(output_root / "candidate.xlsx"),
-        }
-        generated_comparison = {
-            "comparison": {
-                "comparison_type": "cross_run",
-                "attribution": {"scope": "descriptive_only"},
-            },
-            "provenance": {"comparability": "non-like-for-like"},
-            "artifacts": {
-                "comparison_workbook": {"url": "/outputs/comparison.xlsx"}
-            },
-        }
-
-        with (
-            patch.object(
-                app.historian, "run_historian", side_effect=fake_historian
-            ) as historian_call,
-            patch.object(app, "_render_input_data_plots", return_value={}),
-            patch.object(
-                app.model, "run_model", return_value=model_result
-            ) as model_call,
-            patch.object(
-                app,
-                "generate_comparison_artifacts",
-                return_value=generated_comparison,
-            ) as comparison_call,
-        ):
-            app._run_job(job_id, app.RunRequest(**claimed["request"]))
-
-        historian_call.assert_called_once_with(
-            from_time="2026-06-01T06:00:00",
-            to_time="2026-06-08T06:00:00",
-            interval="3600",
-            output_csv=str(source_csv),
-        )
-        self.assertEqual(model_call.call_args.kwargs["iam_model"], "physical")
-        self.assertIsNone(model_call.call_args.kwargs["iam_a_r"])
-        self.assertEqual(
-            Path(model_call.call_args.kwargs["input_csv"]),
-            source_csv,
+    def test_tampered_reviewed_source_cannot_be_promoted(self) -> None:
+        baseline = self.completed_baseline()
+        Path(baseline["source_path"]).write_text(
+            "tampered after completion",
+            encoding="utf-8",
         )
 
-        comparison_call.assert_called_once()
-        comparison_kwargs = comparison_call.call_args.kwargs
-        self.assertEqual(comparison_kwargs["comparison_type"], "cross_run")
-        self.assertEqual(comparison_kwargs["baseline_job_id"], baseline["id"])
-        self.assertEqual(comparison_kwargs["candidate_job_id"], job_id)
-        self.assertEqual(
-            Path(comparison_kwargs["candidate_source_path"]),
-            source_csv,
-        )
-        self.assertTrue(comparison_kwargs["candidate_source_sha256"])
-        self.assertNotEqual(
-            comparison_kwargs["candidate_source_sha256"],
-            comparison_kwargs["baseline_source_sha256"],
-        )
+        with self.assertRaises(HTTPException) as context:
+            app.promote_model_job(baseline["id"])
 
-        finished = app.AGENT_STORE.get_job(job_id)
-        self.assertEqual(finished["state"], "done")
-        self.assertEqual(
-            finished["comparison"]["comparison_type"], "cross_run"
-        )
-        self.assertEqual(
-            finished["comparison"]["attribution"]["scope"],
-            "descriptive_only",
-        )
-        self.assertEqual(
-            finished["provenance"]["comparability"], "non-like-for-like"
-        )
+        self.assertEqual(context.exception.status_code, 409)
+        self.assertIn("hash-verified", context.exception.detail)
 
     def test_mode_change_clones_active_mode_baseline_and_is_cross_run(self) -> None:
         validation = self.completed_baseline(job_id="validation-selected")

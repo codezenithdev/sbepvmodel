@@ -26,6 +26,7 @@ OUTPUT:
 from __future__ import annotations
 
 from copy import copy
+import json
 
 import numpy as np
 import pandas as pd
@@ -39,7 +40,12 @@ import pvlib as pvl
 import pvmismatch as pvm
 from pvmismatch.contrib import gen_coeffs
 
-__version__ = "2"
+from calibration_workflow import (
+    apply_frozen_seasonal_calibration,
+    apply_seasonal_calibration,
+)
+
+__version__ = "3"
 
 # -----------------------------------------------------------------------------
 # RUN SETTINGS (edit here -- no command-line prompts)
@@ -48,6 +54,7 @@ INPUT_CSV = "stac1.csv"
 OUTPUT_BASE = "stac1_model"
 INPUT_IS_UTC = True  # historian writes UTC timestamps
 TIMEZONE = "America/Denver"  # local tz for display/indexing
+MAX_TEMPERATURE_INTERPOLATION_GAP_ROWS = 2
 
 # AC conversion efficiencies (predicted DC * eff). 1.0 = no derate.
 SE_EFF = 1.0
@@ -230,6 +237,28 @@ MIDC_COLUMNS = {
 # -----------------------------------------------------------------------------
 # I/O + PRE-PROCESSING
 # -----------------------------------------------------------------------------
+def _bounded_temperature_interpolation(values: pd.Series) -> pd.Series:
+    """Interpolate only short consecutive temperature gaps."""
+
+    numeric = pd.to_numeric(values, errors="coerce").replace(
+        [np.inf, -np.inf], np.nan
+    )
+    missing = numeric.isna()
+    if not missing.any() or missing.all():
+        return numeric
+    groups = missing.ne(missing.shift(fill_value=False)).cumsum()
+    missing_run_lengths = missing.groupby(groups).transform("sum")
+    interpolated = numeric.interpolate(limit_direction="both")
+    interpolated.loc[
+        missing
+        & (
+            missing_run_lengths
+            > int(MAX_TEMPERATURE_INTERPOLATION_GAP_ROWS)
+        )
+    ] = np.nan
+    return interpolated
+
+
 def parse_input_csv(path: str) -> pd.DataFrame:
     """Read stac1.csv, rename to canonical columns, index by local (tz-aware) time."""
     df = pd.read_csv(path)
@@ -239,6 +268,8 @@ def parse_input_csv(path: str) -> pd.DataFrame:
     ts = pd.to_datetime(df["timestamp"], errors="coerce")
     df = df.loc[~ts.isna()].copy()
     ts = ts.loc[~ts.isna()]
+    if df.empty:
+        raise ValueError("Historian file contains no valid timestamp rows.")
 
     if getattr(ts.dt, "tz", None) is None:
         if INPUT_IS_UTC:
@@ -267,11 +298,41 @@ def parse_input_csv(path: str) -> pd.DataFrame:
     ]
     for c in numeric:
         if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
+            df[c] = pd.to_numeric(df[c], errors="coerce").replace(
+                [np.inf, -np.inf], np.nan
+            )
 
+    required_weather = ("dni_wm2", "ghi_wm2", "temp_air_c")
+    all_missing = [
+        column for column in required_weather if not df[column].notna().any()
+    ]
+    if all_missing:
+        labels = {
+            "dni_wm2": "DNI",
+            "ghi_wm2": "GHI",
+            "temp_air_c": "air temperature",
+        }
+        raise ValueError(
+            "Historian weather is missing for the entire date range: "
+            + ", ".join(labels[column] for column in all_missing)
+            + "."
+        )
+
+    # Rows using a retained required-weather fallback remain modelable but do
+    # not influence the measured/model calibration ratio.
+    df["calibration_fit_eligible"] = df[
+        ["dni_wm2", "ghi_wm2", "temp_air_c"]
+    ].notna().all(axis=1)
     df["dni_wm2"] = df["dni_wm2"].fillna(0.0)
     df["ghi_wm2"] = df["ghi_wm2"].fillna(0.0)
-    df["temp_air_c"] = df["temp_air_c"].interpolate(limit_direction="both")
+    df["temp_air_c"] = _bounded_temperature_interpolation(df["temp_air_c"])
+    unfilled_temperature_rows = int(df["temp_air_c"].isna().sum())
+    if unfilled_temperature_rows:
+        raise ValueError(
+            "Historian air-temperature gaps exceed the bounded fallback "
+            f"of {MAX_TEMPERATURE_INTERPOLATION_GAP_ROWS} consecutive row(s); "
+            "exclude the affected rows and retry."
+        )
     df["wind_speed_ms"] = (
         df["wind_speed_ms"].interpolate(limit_direction="both").fillna(0.0)
     )
@@ -780,17 +841,36 @@ def predict_ac_power(
     return out, dhi_source
 
 
-def add_energy(df: pd.DataFrame) -> pd.DataFrame:
+def add_energy(
+    df: pd.DataFrame,
+    expected_interval_seconds: int | None = None,
+) -> pd.DataFrame:
     """Add interval dt_hours and cumulative energies (kWh)."""
     out = df.copy()
     dt_h = out.index.to_series().diff().dt.total_seconds() / 3600.0
-    dt0 = float(dt_h.dropna().median()) if dt_h.notna().any() else 0.0
-    out["dt_hours"] = dt_h.fillna(dt0).clip(lower=0.0)
+    if expected_interval_seconds is not None:
+        dt0 = max(float(expected_interval_seconds) / 3600.0, 0.0)
+    else:
+        dt0 = float(dt_h.dropna().median()) if dt_h.notna().any() else 0.0
+    # Each aggregated historian row represents at most one nominal interval.
+    # A missing/excluded timestamp must not make the next row stand in for the
+    # entire gap and overstate energy.
+    bounded = dt_h.fillna(dt0).clip(lower=0.0)
+    if dt0 > 0:
+        bounded = bounded.clip(upper=dt0)
+    out["dt_hours"] = bounded
 
     for sysname in ("se", "sol"):
-        for kind in ("measured", "predicted"):
+        for kind in ("measured", "predicted", "uncalibrated"):
+            power_column = f"{sysname}_{kind}_power_w"
+            if power_column not in out:
+                continue
             step = f"{sysname}_{kind}_energy_step_kwh"
-            out[step] = out[f"{sysname}_{kind}_power_w"] * out["dt_hours"] / 1000.0
+            out[step] = (
+                pd.to_numeric(out[power_column], errors="coerce")
+                * out["dt_hours"]
+                / 1000.0
+            ).fillna(0.0)
             out[f"{sysname}_{kind}_energy_kwh"] = out[step].cumsum()
     return out
 
@@ -811,8 +891,14 @@ def apply_curtailment(df: pd.DataFrame, limit_kw: float | None) -> pd.DataFrame:
 
     out = df.copy()
     cap_w = cap_kw * 1000.0
-    for col in ("se_predicted_power_w", "sol_predicted_power_w"):
-        out[col] = out[col].clip(upper=cap_w)
+    for col in (
+        "se_predicted_power_w",
+        "sol_predicted_power_w",
+        "se_uncalibrated_power_w",
+        "sol_uncalibrated_power_w",
+    ):
+        if col in out:
+            out[col] = out[col].clip(upper=cap_w)
     return out
 
 
@@ -857,7 +943,9 @@ def plot_results(
     if not annual_mode:
         ax1.plot(df.index, df["se_measured_power_w"] / 1000.0, "r--", label="SolarEdge measured")
         ax1.plot(df.index, df["sol_measured_power_w"] / 1000.0, "b--", label="Solectria measured")
-    ax1.set_title(f"AC Power (kW) — sbe_pv_model v{__version__}")
+    ax1.set_title(
+        f"Seasonally Calibrated AC Power (kW) — sbe_pv_model v{__version__}"
+    )
     if annual_mode:
         ax1.set_title("Predicted AC Power (kW) - Annual Simulation")
     ax1.set_xlabel(f"Time ({df.index.tz})")
@@ -1018,9 +1106,24 @@ def plot_monthly_energy(df: pd.DataFrame, out_prefix: str) -> None:
 
 
 def write_excel(
-    df: pd.DataFrame, excel_path: str, meta: dict, annual_mode: bool = False
+    df: pd.DataFrame,
+    excel_path: str,
+    meta: dict,
+    annual_mode: bool = False,
+    calibration_factors: dict | None = None,
+    factor_driver_diagnostics: dict | None = None,
+    data_quality_context: dict | None = None,
 ) -> None:
-    """Write time series, layout, run metadata, and optional monthly energy."""
+    """Write time series, calibration audit tables, layout, and metadata."""
+    calibration_factors = (
+        calibration_factors or meta.get("_calibration_factors")
+    )
+    factor_driver_diagnostics = (
+        factor_driver_diagnostics or meta.get("_factor_driver_diagnostics")
+    )
+    data_quality_context = (
+        data_quality_context or meta.get("_data_quality_context")
+    )
     out = df.copy()
     out["timestamp_local_naive"] = out.index.tz_localize(None)
     out["timestamp_utc_naive"] = out["timestamp_utc"].dt.tz_localize(None)
@@ -1029,30 +1132,114 @@ def write_excel(
         "timestamp_local_naive",
         "timestamp_utc_naive",
         "se_measured_power_w",
+        "se_uncalibrated_power_w",
         "se_predicted_power_w",
+        "se_calibration_factor",
         "sol_measured_power_w",
+        "sol_uncalibrated_power_w",
         "sol_predicted_power_w",
+        "sol_calibration_factor",
         "se_measured_energy_kwh",
+        "se_uncalibrated_energy_kwh",
         "se_predicted_energy_kwh",
         "sol_measured_energy_kwh",
+        "sol_uncalibrated_energy_kwh",
         "sol_predicted_energy_kwh",
         "dni_wm2",
         "ghi_wm2",
+        "dhi_wm2",
         "temp_air_c",
         "wind_speed_ms",
         "dt_hours",
     ]
-    if "dhi_wm2" in out.columns:
-        cols.insert(11, "dhi_wm2")
+    cols = [column for column in cols if column in out.columns]
 
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         out[cols].to_excel(writer, sheet_name="time_series", index=False)
         tilt_summary().to_excel(writer, sheet_name="tilts_and_strings", index=False)
+        if calibration_factors:
+            factor_rows: list[dict] = []
+            for season in calibration_factors.get("seasons", []):
+                for system, details in (season.get("systems") or {}).items():
+                    factor_rows.append(
+                        {
+                            "season": season.get("season"),
+                            "months": season.get("months"),
+                            "first_timestamp": season.get("first_timestamp"),
+                            "last_timestamp": season.get("last_timestamp"),
+                            "system": system,
+                            **dict(details or {}),
+                        }
+                    )
+            pd.DataFrame(factor_rows).to_excel(
+                writer, sheet_name="calibration_factors", index=False
+            )
+        if factor_driver_diagnostics:
+            driver_rows: list[dict] = []
+            for system, diagnostic in (
+                factor_driver_diagnostics.get("systems") or {}
+            ).items():
+                drivers = diagnostic.get("drivers") or []
+                if not drivers:
+                    driver_rows.append(
+                        {
+                            "system": system,
+                            "status": diagnostic.get("status"),
+                            "sample_count": diagnostic.get("sample_count"),
+                            "message": diagnostic.get("message"),
+                        }
+                    )
+                for driver in drivers:
+                    driver_rows.append(
+                        {
+                            "system": system,
+                            "status": diagnostic.get("status"),
+                            "sample_count": diagnostic.get("sample_count"),
+                            "r_squared": diagnostic.get("r_squared"),
+                            **dict(driver),
+                        }
+                    )
+            pd.DataFrame(driver_rows).to_excel(
+                writer, sheet_name="factor_drivers", index=False
+            )
+        if data_quality_context:
+            decisions = {
+                item.get("issue_id"): item.get("action")
+                for item in (
+                    data_quality_context.get("cleaning") or {}
+                ).get("decisions", [])
+            }
+            quality_rows = [
+                {
+                    "issue_id": issue.get("id"),
+                    "category": issue.get("category"),
+                    "severity": issue.get("severity"),
+                    "title": issue.get("title"),
+                    "row_count": issue.get("row_count"),
+                    "decision": decisions.get(
+                        issue.get("id"), issue.get("recommended_action")
+                    ),
+                }
+                for issue in (
+                    (data_quality_context.get("report") or {}).get("issues")
+                    or []
+                )
+            ]
+            pd.DataFrame(quality_rows).to_excel(
+                writer, sheet_name="data_quality_review", index=False
+            )
         if annual_mode:
             monthly_energy_table(df).to_excel(
                 writer, sheet_name="monthly_energy", index=False
             )
-        pd.DataFrame(list(meta.items()), columns=["parameter", "value"]).to_excel(
+        public_meta = {
+            key: value
+            for key, value in meta.items()
+            if not str(key).startswith("_")
+        }
+        pd.DataFrame(
+            list(public_meta.items()), columns=["parameter", "value"]
+        ).to_excel(
             writer, sheet_name="run_info", index=False
         )
 
@@ -1076,6 +1263,9 @@ def run_model(
     input_kind: str = "historian",
     annual_mode: bool = False,
     iam_model: str | None = None,
+    data_quality_context: dict | None = None,
+    expected_interval_seconds: int | None = None,
+    calibration_profile: dict | None = None,
 ) -> dict:
     """Run the full model on input_csv, write PNGs + Excel, return a stats dict.
 
@@ -1123,13 +1313,66 @@ def run_model(
     )
     if curtailment_enabled and curtailment_limit_kw is None:
         curtailment_limit_kw = DEFAULT_CURTAILMENT_LIMIT_KW
+    calibration_factors: dict | None = None
+    factor_driver_diagnostics: dict | None = None
+    if input_kind == "historian" and not annual_mode:
+        if calibration_profile is not None:
+            if progress_cb:
+                progress_cb(
+                    0.85,
+                    "Applying frozen baseline seasonal calibration factors",
+                )
+            (
+                df,
+                calibration_factors,
+                factor_driver_diagnostics,
+            ) = apply_frozen_seasonal_calibration(
+                df,
+                calibration_profile=calibration_profile,
+            )
+        else:
+            if progress_cb:
+                progress_cb(
+                    0.85,
+                    "Calculating and applying seasonal calibration factors",
+                )
+            (
+                df,
+                calibration_factors,
+                factor_driver_diagnostics,
+            ) = apply_seasonal_calibration(
+                df,
+                expected_interval_seconds=expected_interval_seconds,
+                maximum_uncurtailed_power_w=(
+                    float(curtailment_limit_kw) * 1_000.0
+                    if curtailment_enabled and curtailment_limit_kw is not None
+                    else None
+                ),
+            )
+        data_quality_warnings.extend(calibration_factors.get("warnings") or [])
+        if data_quality_context:
+            cleaning = data_quality_context.get("cleaning") or {}
+            excluded_rows = int(cleaning.get("excluded_rows") or 0)
+            retained_issues = cleaning.get("retained_issue_ids") or []
+            if excluded_rows:
+                data_quality_warnings.append(
+                    f"Data-quality review excluded {excluded_rows} historian row(s)."
+                )
+            if retained_issues:
+                data_quality_warnings.append(
+                    "Data-quality review retained: "
+                    + ", ".join(str(value) for value in retained_issues)
+                )
     if progress_cb:
         progress_cb(0.86, "Applying curtailment and integrating energy")
     active_curtailment_limit_kw = (
         float(curtailment_limit_kw) if curtailment_enabled else None
     )
     df = apply_curtailment(df, active_curtailment_limit_kw)
-    df = add_energy(df)
+    df = add_energy(
+        df,
+        expected_interval_seconds=expected_interval_seconds,
+    )
 
     if progress_cb:
         progress_cb(0.89, "Rendering power and energy charts")
@@ -1182,6 +1425,20 @@ def run_model(
         "SOLAREDGE_BAYS_PER_STRING": SOLAREDGE_BAYS_PER_STRING,
         "module_name": MODULE_NAME,
         "data_quality_warnings": " | ".join(data_quality_warnings) or "None",
+        "calibration_method": (
+            calibration_factors.get("method")
+            if calibration_factors
+            else "not_applied"
+        ),
+        "calibration_factors": (
+            json.dumps(calibration_factors, sort_keys=True)
+            if calibration_factors
+            else "None"
+        ),
+        "data_quality_reviewed": bool(data_quality_context),
+        "_calibration_factors": calibration_factors,
+        "_factor_driver_diagnostics": factor_driver_diagnostics,
+        "_data_quality_context": data_quality_context,
     }
     if progress_cb:
         progress_cb(0.97, "Creating Excel workbook")
@@ -1198,6 +1455,16 @@ def run_model(
     se_pred = float(df["se_predicted_energy_kwh"].iloc[-1])
     sol_meas = float(df["sol_measured_energy_kwh"].iloc[-1])
     sol_pred = float(df["sol_predicted_energy_kwh"].iloc[-1])
+    se_uncalibrated = (
+        float(df["se_uncalibrated_energy_kwh"].iloc[-1])
+        if "se_uncalibrated_energy_kwh" in df
+        else se_pred
+    )
+    sol_uncalibrated = (
+        float(df["sol_uncalibrated_energy_kwh"].iloc[-1])
+        if "sol_uncalibrated_energy_kwh" in df
+        else sol_pred
+    )
 
     def _safe(x, ndigits=1):
         # JSON-safe: NaN/Inf -> None; else rounded float.
@@ -1227,6 +1494,19 @@ def run_model(
         "sol_predicted_kwh": _safe(sol_pred),
         "se_pct": None if annual_mode else _pct(se_pred, se_meas),
         "sol_pct": None if annual_mode else _pct(sol_pred, sol_meas),
+        "uncalibrated": (
+            None
+            if annual_mode
+            else {
+                "se_predicted_kwh": _safe(se_uncalibrated),
+                "sol_predicted_kwh": _safe(sol_uncalibrated),
+                "se_pct": _pct(se_uncalibrated, se_meas),
+                "sol_pct": _pct(sol_uncalibrated, sol_meas),
+            }
+        ),
+        "calibration_factors": calibration_factors,
+        "factor_driver_diagnostics": factor_driver_diagnostics,
+        "data_quality_review": data_quality_context,
         "predicted_difference_kwh": _safe(predicted_difference),
         "predicted_difference_pct": _safe(predicted_difference_pct, 2),
         "dhi_source": dhi_source,
@@ -1264,7 +1544,11 @@ def run_model(
 
 def main() -> None:
     print(f"sbe_pv_model.py (v{__version__}) — input: {INPUT_CSV}")
-    stats = run_model(INPUT_CSV, OUTPUT_BASE)
+    stats = run_model(
+        INPUT_CSV,
+        OUTPUT_BASE,
+        expected_interval_seconds=3_600,
+    )
     print(f"Wrote: {stats['excel']}, {stats['ac_png']}, {stats['energy_png']}")
     print("End-of-period energy (kWh):")
     print(f"  SolarEdge  measured={stats['se_measured_kwh']:,.2f}  predicted={stats['se_predicted_kwh']:,.2f}")

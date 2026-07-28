@@ -483,6 +483,307 @@
             margin: 8px 0 0 18px;
         }
 
+        .calibration-review-panel {
+            display: grid;
+            gap: 16px;
+            margin: 18px 0 0;
+            padding: 20px;
+            border: 1px solid #8fc6bc;
+            border-left: 4px solid var(--accent);
+            border-radius: 10px;
+            background: #f5fbf9;
+            box-shadow: 0 10px 24px rgba(15, 118, 110, 0.08);
+        }
+
+        .calibration-review-panel.hidden,
+        .calibration-factor-panel.hidden {
+            display: none;
+        }
+
+        .calibration-review-heading,
+        .calibration-factor-heading,
+        .calibration-review-actions {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .calibration-review-eyebrow,
+        .calibration-factor-eyebrow {
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 850;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+        }
+
+        .calibration-review-heading h3,
+        .calibration-factor-heading h3 {
+            margin-top: 3px;
+            color: var(--text);
+            font-size: 18px;
+        }
+
+        .calibration-review-heading p,
+        .calibration-factor-heading p {
+            max-width: 760px;
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .calibration-review-summary {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .calibration-review-stat {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .calibration-review-stat span {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 720;
+            text-transform: uppercase;
+        }
+
+        .calibration-review-stat strong {
+            display: block;
+            margin-top: 4px;
+            color: var(--text);
+            font-size: 18px;
+        }
+
+        .calibration-season-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+        }
+
+        .calibration-season-chip {
+            padding: 5px 9px;
+            border: 1px solid #a8d3ca;
+            border-radius: 999px;
+            background: #e7f6f2;
+            color: #245b50;
+            font-size: 11px;
+            font-weight: 750;
+            text-transform: capitalize;
+        }
+
+        .calibration-issue-list {
+            display: grid;
+            gap: 9px;
+            max-height: 430px;
+            overflow: auto;
+            padding-right: 3px;
+        }
+
+        .calibration-issue {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(150px, 190px);
+            gap: 16px;
+            align-items: center;
+            padding: 13px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .calibration-issue-title-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .calibration-issue-title {
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .calibration-severity {
+            padding: 2px 6px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 850;
+            text-transform: uppercase;
+        }
+
+        .calibration-severity.critical,
+        .calibration-severity.high {
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .calibration-severity.medium {
+            background: var(--warning-soft);
+            color: var(--warning);
+        }
+
+        .calibration-severity.low {
+            background: var(--info-soft);
+            color: var(--info);
+        }
+
+        .calibration-issue-description {
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .calibration-issue-evidence {
+            margin-top: 5px;
+            color: var(--muted-strong);
+            font-size: 11px;
+        }
+
+        .calibration-decision-label {
+            display: grid;
+            gap: 5px;
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 750;
+        }
+
+        .calibration-decision-select {
+            width: 100%;
+            min-height: 38px;
+            padding: 8px 10px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            background: #ffffff;
+            color: var(--text);
+        }
+
+        .calibration-decision-note {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .calibration-review-actions {
+            align-items: center;
+            padding-top: 4px;
+            border-top: 1px solid var(--border);
+        }
+
+        .calibration-review-actions p {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .calibration-review-button-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .calibration-secondary-btn {
+            min-height: 40px;
+            padding: 9px 14px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            cursor: pointer;
+            font-weight: 760;
+        }
+
+        .calibration-factor-panel {
+            display: grid;
+            gap: 14px;
+            margin-bottom: 18px;
+            padding: 18px;
+            border: 1px solid #a8d3ca;
+            border-radius: 10px;
+            background: #f5fbf9;
+        }
+
+        .calibration-factor-table-wrap {
+            overflow-x: auto;
+        }
+
+        .calibration-factor-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--surface);
+            font-size: 12px;
+        }
+
+        .calibration-factor-table th,
+        .calibration-factor-table td {
+            padding: 10px 11px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        .calibration-factor-table th {
+            color: var(--muted);
+            font-size: 10px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .calibration-factor-value {
+            color: var(--accent-strong);
+            font-weight: 850;
+            white-space: normal;
+        }
+
+        .calibration-factor-evidence,
+        .calibration-factor-source {
+            display: block;
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 650;
+            line-height: 1.35;
+            white-space: normal;
+        }
+
+        .calibration-factor-evidence:first-child {
+            margin-top: 0;
+        }
+
+        .calibration-audit-line,
+        .calibration-driver-insights {
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .calibration-driver-insights {
+            display: grid;
+            gap: 5px;
+            padding-top: 11px;
+            border-top: 1px solid var(--border);
+        }
+
+        @media (max-width: 900px) {
+            .calibration-review-summary {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .calibration-issue {
+                grid-template-columns: 1fr;
+            }
+
+            .calibration-review-actions,
+            .calibration-review-heading,
+            .calibration-factor-heading {
+                flex-direction: column;
+            }
+        }
+
         .runtime-warning {
             display: none;
             margin-top: 14px;
@@ -3931,6 +4232,10 @@
                     <p class="eyebrow">Renewable Energy Operations</p>
                     <div class="header-title-row">
                         <h1 class="header-title" id="dashboardTitle">SolarEdge &amp; Solectria Performance Analysis</h1>
+                        <span class="help-tip-wrap">
+                            <button class="help-tip" type="button" aria-label="Dashboard overview help" aria-describedby="dashboardHelpTooltip" aria-expanded="false">?</button>
+                            <span class="help-tooltip" id="dashboardHelpTooltip" role="tooltip">Use Model Calibration to review Bazefield data and fit seasonal factors. Use Annual Simulation for long-range weather-based production forecasts.</span>
+                        </span>
                     </div>
                     <p class="header-subtitle">
                         Compare measured power, irradiance, calibrated model predictions, and export-ready run artifacts for the SBE
@@ -4367,7 +4672,7 @@
                 <div class="configuration-actions">
                     <p class="configuration-actions-copy">
                         <strong>Ready to calibrate?</strong>
-                        Run the configured window; workbook export appears when processing completes.
+                        Retrieve and review Bazefield quality first; calibration begins only after your retain/exclude decisions.
                     </p>
                     <div class="control-actions">
                         <a class="download-link hidden" id="excelLink" href="#" download>Export workbook</a>
@@ -4376,7 +4681,29 @@
                 </div>
             </section>
 
-            <div class="progress-wrap validation-only" id="progressWrap">
+            <section class="calibration-review-panel hidden validation-only" id="calibrationReviewPanel"
+                role="region" aria-labelledby="calibrationReviewHeading" aria-live="polite">
+                <div class="calibration-review-heading">
+                    <div>
+                        <div class="calibration-review-eyebrow">Source-data decision gate</div>
+                        <h3 id="calibrationReviewHeading" tabindex="-1">Review Bazefield irregularities</h3>
+                        <p id="calibrationReviewDescription">Choose whether each detected issue should be retained or excluded before the model calculates calibration factors.</p>
+                    </div>
+                </div>
+                <div class="calibration-review-summary" id="calibrationReviewSummary"></div>
+                <div class="calibration-season-list" id="calibrationReviewSeasons" aria-label="Seasons in selected range"></div>
+                <div class="calibration-issue-list" id="calibrationIssueList"></div>
+                <div class="calibration-review-actions">
+                    <p id="calibrationReviewActionNote">Recommended decisions are selected by default. Review them before continuing.</p>
+                    <div class="calibration-review-button-row">
+                        <button class="calibration-secondary-btn" id="cancelCalibrationReviewBtn" type="button">Change configuration</button>
+                        <button class="run-btn" id="applyCalibrationReviewBtn" type="button">Apply decisions &amp; calibrate</button>
+                    </div>
+                </div>
+            </section>
+
+            <div class="progress-wrap validation-only" id="progressWrap" role="progressbar" tabindex="-1"
+                aria-label="Calibration progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                 <div class="progress-head">
                     <span id="progressStage">Starting...</span>
                     <span id="progressPct">0%</span>
@@ -4385,7 +4712,7 @@
                     <div class="progress-fill" id="progressFill"></div>
                 </div>
             </div>
-            <div class="error-banner validation-only" id="errorBanner"></div>
+            <div class="error-banner validation-only" id="errorBanner" role="alert" aria-live="assertive"></div>
 
             <section class="validation-results-shell validation-only" aria-labelledby="validationResultsHeading">
                 <div class="annual-results-heading">
@@ -4395,6 +4722,32 @@
                     </div>
                     <span class="annual-results-note">Measured vs predicted</span>
                 </div>
+
+                <section class="calibration-factor-panel hidden" id="calibrationFactorPanel" aria-labelledby="calibrationFactorHeading">
+                    <div class="calibration-factor-heading">
+                        <div>
+                            <div class="calibration-factor-eyebrow">Applied model calibration</div>
+                            <h3 id="calibrationFactorHeading">Seasonal calibration factors</h3>
+                            <p>Each season uses accepted daylight samples when evidence is sufficient; any overall-period or neutral fallback is shown explicitly.</p>
+                        </div>
+                    </div>
+                    <div class="calibration-audit-line" id="calibrationAuditLine"></div>
+                    <div class="calibration-factor-table-wrap">
+                        <table class="calibration-factor-table">
+                            <thead>
+                                <tr>
+                                    <th>Season</th>
+                                    <th>Coverage</th>
+                                    <th>SolarEdge factor</th>
+                                    <th>Solectria factor</th>
+                                    <th>Confidence</th>
+                                </tr>
+                            </thead>
+                            <tbody id="calibrationFactorRows"></tbody>
+                        </table>
+                    </div>
+                    <div class="calibration-driver-insights" id="calibrationDriverInsights"></div>
+                </section>
 
                 <section class="validation-system-summaries" aria-label="System calibration summary">
                     <article class="validation-system-summary solaredge-summary" aria-labelledby="validationSolarEdgeSummaryHeading">
@@ -4694,6 +5047,17 @@
         const progressPct = document.getElementById('progressPct');
         const progressFill = document.getElementById('progressFill');
         const errorBanner = document.getElementById('errorBanner');
+        const calibrationReviewPanel = document.getElementById('calibrationReviewPanel');
+        const calibrationReviewSummary = document.getElementById('calibrationReviewSummary');
+        const calibrationReviewSeasons = document.getElementById('calibrationReviewSeasons');
+        const calibrationIssueList = document.getElementById('calibrationIssueList');
+        const calibrationReviewActionNote = document.getElementById('calibrationReviewActionNote');
+        const applyCalibrationReviewBtn = document.getElementById('applyCalibrationReviewBtn');
+        const cancelCalibrationReviewBtn = document.getElementById('cancelCalibrationReviewBtn');
+        const calibrationFactorPanel = document.getElementById('calibrationFactorPanel');
+        const calibrationAuditLine = document.getElementById('calibrationAuditLine');
+        const calibrationFactorRows = document.getElementById('calibrationFactorRows');
+        const calibrationDriverInsights = document.getElementById('calibrationDriverInsights');
         const curtailmentEnabled = document.getElementById('curtailmentEnabled');
         const curtailmentLimitKw = document.getElementById('curtailmentLimitKw');
         const curtailmentLimitGroup = document.getElementById('curtailmentLimitGroup');
@@ -4724,6 +5088,11 @@
         let latestInputPlots = null;
         let latestResult = null;
         let currentRunState = null;
+        let pendingCalibrationReview = null;
+        let calibrationWorkflowRevision = 0;
+        let calibrationReviewAbortController = null;
+        let reviewedCalibrationAbortController = null;
+        let calibrationControlDisabledState = null;
         let pollTimer = null;
         let activeMode = 'validation';
         let annualLatestJobId = null;
@@ -4750,9 +5119,11 @@
         let agentActivitySelection = null;
 
         function setProgress(pct, stage) {
+            const bounded = Math.min(100, Math.max(0, Number(pct) || 0));
             progressWrap.classList.add('visible');
-            progressFill.style.width = pct + '%';
-            progressPct.textContent = pct + '%';
+            progressWrap.setAttribute('aria-valuenow', String(Math.round(bounded)));
+            progressFill.style.width = bounded + '%';
+            progressPct.textContent = Math.round(bounded) + '%';
             progressStage.textContent = stage || '';
         }
 
@@ -5125,6 +5496,329 @@
             }
         }
 
+        function reviewStat(label, value) {
+            const card = document.createElement('div');
+            card.className = 'calibration-review-stat';
+            const name = document.createElement('span');
+            name.textContent = label;
+            const amount = document.createElement('strong');
+            amount.textContent = value;
+            card.append(name, amount);
+            return card;
+        }
+
+        function calibrationReviewIsExpired(reviewPayload) {
+            const expiresAt = Date.parse(String(reviewPayload?.expires_at || ''));
+            return Number.isFinite(expiresAt) && expiresAt <= Date.now();
+        }
+
+        function calibrationReviewExpiryText(reviewPayload) {
+            const expiresAt = Date.parse(String(reviewPayload?.expires_at || ''));
+            if (!Number.isFinite(expiresAt)) return '';
+            return new Date(expiresAt).toLocaleString();
+        }
+
+        function renderCalibrationReview(reviewPayload, { focusPanel = true } = {}) {
+            pendingCalibrationReview = {
+                ...reviewPayload,
+                decisions: { ...(reviewPayload?.decisions || {}) },
+            };
+            const report = reviewPayload?.report || {};
+            const summary = report.summary || {};
+            const source = report.source || {};
+            calibrationReviewSummary.replaceChildren(
+                reviewStat('Source rows', Number(source.row_count || 0).toLocaleString()),
+                reviewStat('Affected rows', Number(summary.affected_rows || 0).toLocaleString()),
+                reviewStat('Missing intervals', Number(summary.missing_intervals || 0).toLocaleString()),
+                reviewStat('Issues', Number(summary.issue_count || 0).toLocaleString())
+            );
+
+            calibrationReviewSeasons.replaceChildren();
+            (report.seasons || []).forEach((season) => {
+                const chip = document.createElement('span');
+                chip.className = 'calibration-season-chip';
+                chip.textContent = String(season.name || 'season') + ' · ' +
+                    String(season.months || '') + ' · ' +
+                    Number(season.row_count || 0).toLocaleString() + ' rows';
+                calibrationReviewSeasons.appendChild(chip);
+            });
+
+            calibrationIssueList.replaceChildren();
+            const issues = Array.isArray(report.issues) ? report.issues : [];
+            if (!issues.length) {
+                const clean = document.createElement('div');
+                clean.className = 'quality-panel ok';
+                clean.textContent = 'No discrepancies, missing values, outliers, gaps, or irregular patterns were detected. Continue to calculate the calibration factors.';
+                calibrationIssueList.appendChild(clean);
+            }
+            issues.forEach((issue) => {
+                const card = document.createElement('article');
+                card.className = 'calibration-issue';
+
+                const copy = document.createElement('div');
+                const titleRow = document.createElement('div');
+                titleRow.className = 'calibration-issue-title-row';
+                const title = document.createElement('span');
+                title.className = 'calibration-issue-title';
+                title.textContent = String(issue.title || issue.id || 'Data issue');
+                const severity = document.createElement('span');
+                severity.className = 'calibration-severity ' + String(issue.severity || 'low').toLowerCase();
+                severity.textContent = String(issue.severity || 'low');
+                const count = document.createElement('span');
+                count.className = 'calibration-decision-note';
+                count.textContent = Number(issue.row_count || 0).toLocaleString() + ' affected';
+                titleRow.append(title, severity, count);
+                const description = document.createElement('p');
+                description.className = 'calibration-issue-description';
+                description.textContent = String(issue.description || '');
+                copy.append(titleRow, description);
+                const samples = Array.isArray(issue.sample_timestamps) ? issue.sample_timestamps : [];
+                if (samples.length) {
+                    const evidence = document.createElement('p');
+                    evidence.className = 'calibration-issue-evidence';
+                    evidence.textContent = 'Examples: ' + samples.slice(0, 3).join(', ');
+                    copy.appendChild(evidence);
+                }
+
+                const decision = document.createElement('div');
+                const actions = Array.isArray(issue.allowed_actions) ? issue.allowed_actions : [];
+                if (actions.length > 1) {
+                    const issueId = String(issue.id);
+                    const issueTitle = String(issue.title || issue.id || 'data issue');
+                    const savedDecision = pendingCalibrationReview.decisions[issueId];
+                    const selectedDecision = actions.includes(savedDecision)
+                        ? savedDecision
+                        : issue.recommended_action;
+                    const label = document.createElement('label');
+                    label.className = 'calibration-decision-label';
+                    label.textContent = 'Decision for ' + issueTitle;
+                    const select = document.createElement('select');
+                    select.className = 'calibration-decision-select';
+                    select.dataset.issueId = issueId;
+                    select.setAttribute('aria-label', 'Decision for ' + issueTitle);
+                    actions.forEach((action) => {
+                        const option = document.createElement('option');
+                        option.value = String(action);
+                        option.textContent = action === 'exclude'
+                            ? 'Exclude affected rows'
+                            : 'Retain affected rows';
+                        option.selected = action === selectedDecision;
+                        select.appendChild(option);
+                    });
+                    pendingCalibrationReview.decisions[issueId] = select.value;
+                    select.addEventListener('change', () => {
+                        if (!pendingCalibrationReview) return;
+                        pendingCalibrationReview.decisions[issueId] = select.value;
+                        saveDashboardState();
+                    });
+                    label.appendChild(select);
+                    const recommendation = document.createElement('span');
+                    recommendation.className = 'calibration-decision-note';
+                    recommendation.textContent = 'Recommended: ' + String(issue.recommended_action || 'review');
+                    decision.append(label, recommendation);
+                } else {
+                    const fixed = document.createElement('span');
+                    fixed.className = 'calibration-decision-note';
+                    fixed.textContent = actions[0] === 'exclude'
+                        ? 'Required cleanup · excluded'
+                        : 'Informational · no row decision';
+                    decision.appendChild(fixed);
+                }
+                card.append(copy, decision);
+                calibrationIssueList.appendChild(card);
+            });
+
+            const expired = calibrationReviewIsExpired(pendingCalibrationReview);
+            const blocked = !!summary.blocking || expired;
+            const expiresText = calibrationReviewExpiryText(pendingCalibrationReview);
+            cancelCalibrationReviewBtn.disabled = false;
+            applyCalibrationReviewBtn.disabled = blocked;
+            applyCalibrationReviewBtn.textContent = expired
+                ? 'Review expired'
+                : blocked
+                ? 'Calibration blocked'
+                : 'Apply decisions & calibrate';
+            calibrationReviewActionNote.textContent = expired
+                ? 'This private review snapshot expired. Start a new review before calibrating.'
+                : summary.blocking
+                ? 'A critical source issue prevents calibration. Change the date range or repair the Bazefield export.'
+                : summary.actionable_issue_count
+                    ? 'Recommended decisions are selected by default. Change any choice, then continue.'
+                    : 'No retain/exclude choices are needed. Continue to apply any required cleanup and calculate seasonal factors.';
+            if (!expired && expiresText) {
+                calibrationReviewActionNote.textContent += ' Review expires ' + expiresText + '.';
+            }
+            calibrationReviewPanel.classList.remove('hidden');
+            progressWrap.classList.remove('visible');
+            runBtn.textContent = expired ? 'Review expired' : 'Review ready';
+            currentRunState = {
+                state: 'review_required',
+                progress: 20,
+                stage: expired ? 'Data-quality review expired' : 'Data-quality decision required',
+            };
+            saveDashboardState();
+            if (focusPanel) {
+                requestAnimationFrame(() => {
+                    document.getElementById('calibrationReviewHeading').focus({ preventScroll: true });
+                    calibrationReviewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                });
+            }
+        }
+
+        function clearCalibrationReview() {
+            pendingCalibrationReview = null;
+            calibrationReviewPanel.classList.add('hidden');
+            calibrationReviewSummary.replaceChildren();
+            calibrationReviewSeasons.replaceChildren();
+            calibrationIssueList.replaceChildren();
+        }
+
+        function calibrationReviewWorkflowIsActive() {
+            return ['reviewing', 'review_required', 'applying_review'].includes(
+                currentRunState?.state
+            );
+        }
+
+        function abortCalibrationReviewRequests() {
+            if (calibrationReviewAbortController) {
+                calibrationReviewAbortController.abort();
+                calibrationReviewAbortController = null;
+            }
+            if (reviewedCalibrationAbortController) {
+                reviewedCalibrationAbortController.abort();
+                reviewedCalibrationAbortController = null;
+            }
+        }
+
+        function setCalibrationControlsLocked(locked) {
+            const controls = Array.from(
+                document.querySelectorAll('#analysisControls input, #analysisControls select, #analysisControls button')
+            );
+            if (locked) {
+                if (calibrationControlDisabledState) return;
+                calibrationControlDisabledState = new Map(
+                    controls.map((control) => [control, control.disabled])
+                );
+                controls.forEach((control) => {
+                    control.disabled = true;
+                });
+                return;
+            }
+            if (!calibrationControlDisabledState) return;
+            calibrationControlDisabledState.forEach((wasDisabled, control) => {
+                control.disabled = wasDisabled;
+            });
+            calibrationControlDisabledState = null;
+        }
+
+        function calibrationReviewDecisions() {
+            const decisions = {};
+            calibrationIssueList.querySelectorAll('.calibration-decision-select').forEach((select) => {
+                decisions[select.dataset.issueId] = select.value;
+            });
+            return decisions;
+        }
+
+        function factorValue(value) {
+            if (value === null || value === undefined || String(value).trim() === '') {
+                return 'n/a';
+            }
+            const number = Number(value);
+            return Number.isFinite(number) ? number.toFixed(4) : 'n/a';
+        }
+
+        function factorSourceLabel(source) {
+            if (source === 'season') return 'Season fit';
+            if (source === 'overall_period_fallback') return 'Overall-period fallback';
+            if (source === 'neutral_fallback') return 'Neutral fallback';
+            return String(source || 'Source unavailable');
+        }
+
+        function appendFactorValue(cell, observation) {
+            const value = document.createElement('span');
+            value.textContent = factorValue(observation?.factor);
+            const source = document.createElement('span');
+            source.className = 'calibration-factor-source';
+            source.textContent = factorSourceLabel(observation?.source);
+            if (observation?.fallback_reason) {
+                source.textContent += ' · ' + String(observation.fallback_reason);
+            }
+            cell.append(value, source);
+        }
+
+        function appendFactorEvidence(cell, label, observation) {
+            const line = document.createElement('span');
+            line.className = 'calibration-factor-evidence';
+            const samples = Number(observation?.sample_count || 0).toLocaleString();
+            const hours = Number(observation?.valid_hours || 0).toLocaleString(
+                undefined,
+                { maximumFractionDigits: 1 }
+            );
+            line.textContent = label + ': ' + samples + ' samples · ' + hours + ' h';
+            cell.appendChild(line);
+        }
+
+        function renderCalibrationFactors(result) {
+            const stats = result?.stats || {};
+            const calibration = stats.calibration_factors || result?.calibration_factors;
+            const seasons = calibration?.seasons;
+            if (!Array.isArray(seasons) || !seasons.length) {
+                calibrationFactorPanel.classList.add('hidden');
+                return;
+            }
+
+            calibrationFactorRows.replaceChildren();
+            seasons.forEach((season) => {
+                const solarEdge = season.systems?.solaredge || {};
+                const solectria = season.systems?.solectria || {};
+                const row = document.createElement('tr');
+                const seasonCell = document.createElement('td');
+                seasonCell.textContent = String(season.season || '').replace(/^./, (value) => value.toUpperCase());
+                const coverage = document.createElement('td');
+                appendFactorEvidence(coverage, 'SE', solarEdge);
+                appendFactorEvidence(coverage, 'Sol', solectria);
+                const seFactor = document.createElement('td');
+                seFactor.className = 'calibration-factor-value';
+                appendFactorValue(seFactor, solarEdge);
+                const solFactor = document.createElement('td');
+                solFactor.className = 'calibration-factor-value';
+                appendFactorValue(solFactor, solectria);
+                const confidence = document.createElement('td');
+                confidence.textContent = 'SE ' + String(solarEdge.confidence || 'low') +
+                    ' · Sol ' + String(solectria.confidence || 'low');
+                row.append(seasonCell, coverage, seFactor, solFactor, confidence);
+                calibrationFactorRows.appendChild(row);
+            });
+
+            const quality = result?.data_quality || stats.data_quality_review || {};
+            const cleaning = quality.cleaning || {};
+            const uncalibrated = stats.uncalibrated || {};
+            calibrationAuditLine.textContent =
+                Number(cleaning.excluded_rows || 0).toLocaleString() + ' source rows excluded · ' +
+                Number(cleaning.final_rows || stats.n_rows || 0).toLocaleString() + ' rows modeled · ' +
+                'Before calibration delta: SolarEdge ' + fmtPct(uncalibrated.se_pct) +
+                ', Solectria ' + fmtPct(uncalibrated.sol_pct);
+
+            calibrationDriverInsights.replaceChildren();
+            const diagnostics = stats.factor_driver_diagnostics || result?.factor_driver_diagnostics;
+            Object.entries(diagnostics?.systems || {}).forEach(([system, diagnostic]) => {
+                const line = document.createElement('p');
+                const label = system === 'solaredge' ? 'SolarEdge' : 'Solectria';
+                const topDriver = diagnostic?.drivers?.[0];
+                line.textContent = topDriver
+                    ? label + ' diagnostic: ' + String(topDriver.label) + ' has the strongest association with the residual factor (' +
+                        String(topDriver.direction) + ', ' +
+                        Number(topDriver.factor_change_pct_per_standard_deviation || 0).toFixed(1) + '% per observed standard deviation; R² ' +
+                        Number(diagnostic.r_squared || 0).toFixed(2) + ').'
+                    : label + ' driver diagnostic: ' + String(diagnostic?.message || 'insufficient data for a stable physical-driver model.');
+                calibrationDriverInsights.appendChild(line);
+            });
+            const caveat = document.createElement('p');
+            caveat.textContent = 'Driver findings are diagnostic associations, not causal effects. Soiling needs a dedicated sensor, rainfall history, or cleaning records.';
+            calibrationDriverInsights.appendChild(caveat);
+            calibrationFactorPanel.classList.remove('hidden');
+        }
+
         function applyResult(result, cacheBust = true) {
             if (!result || !result.stats) return;
             const s = result.stats;
@@ -5150,6 +5844,7 @@
             document.getElementById('statSolPred').textContent = fmtNum(s.sol_predicted_kwh);
             document.getElementById('statSePct').textContent = fmtPct(s.se_pct);
             document.getElementById('statSolPct').textContent = fmtPct(s.sol_pct);
+            renderCalibrationFactors(result);
             if (result.input_plots) applyInputPlots(result.input_plots, cacheBust);
             if (result.ac_png) showImage('acImg', 'acIcon', 'acChartBox', result.ac_png, cacheBust);
             if (result.energy_png) showImage('energyImg', 'energyIcon', 'energyChartBox', result.energy_png, cacheBust);
@@ -5223,10 +5918,14 @@
         }
 
         function resetClientState() {
+            calibrationWorkflowRevision += 1;
+            abortCalibrationReviewRequests();
+            setCalibrationControlsLocked(false);
             latestJobId = null;
             latestInputPlots = null;
             latestResult = null;
             currentRunState = null;
+            pendingCalibrationReview = null;
             annualLatestJobId = null;
             annualLatestResult = null;
             annualRunState = null;
@@ -5250,6 +5949,8 @@
             agentJobPollTimers.clear();
             progressWrap.classList.remove('visible');
             errorBanner.classList.remove('visible');
+            calibrationReviewPanel.classList.add('hidden');
+            calibrationFactorPanel.classList.add('hidden');
             clearRunImages();
             clearAnnualImages();
             setExcelLink(null);
@@ -5269,6 +5970,7 @@
                     latestInputPlots,
                     latestResult,
                     currentRunState,
+                    pendingCalibrationReview,
                     form: getFormState(),
                     annualLatestJobId,
                     annualLatestResult,
@@ -5316,13 +6018,24 @@
                 return;
             }
 
+            abortCalibrationReviewRequests();
+            calibrationWorkflowRevision += 1;
+            const workflowRevision = calibrationWorkflowRevision;
+            const reviewController = new AbortController();
+            calibrationReviewAbortController = reviewController;
             runBtn.disabled = true;
-            runBtn.textContent = 'Running...';
-            setProgress(0, 'Starting...');
+            runBtn.textContent = 'Reviewing data...';
+            setProgress(5, 'Retrieving Bazefield data for quality review...');
+            clearCalibrationReview();
+            calibrationFactorPanel.classList.add('hidden');
             latestInputPlots = null;
             latestResult = null;
-            currentRunState = { state: 'running', progress: 0, stage: 'Starting...' };
+            currentRunState = { state: 'reviewing', progress: 5, stage: 'Retrieving Bazefield data...' };
             clearRunImages();
+            ['statSeMeasured', 'statSolMeasured', 'statMeasuredDiff', 'statMeasuredDiffPct',
+                'statSePred', 'statSolPred', 'statSePct', 'statSolPct'].forEach((id) => {
+                document.getElementById(id).textContent = '--';
+            });
             setExcelLink(null);
             saveDashboardState();
 
@@ -5345,13 +6058,14 @@
             if (iamModel === 'martin_ruiz') body.iam_a_r = iamArValue;
 
             try {
-                const res = await fetch('/api/run', {
+                const res = await fetch('/api/calibration-reviews', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
+                    signal: reviewController.signal,
                 });
                 if (!res.ok) {
-                    let msg = 'Failed to start run (' + res.status + ')';
+                    let msg = 'Failed to review Bazefield data (' + res.status + ')';
                     try {
                         const err = await res.json();
                         if (err.detail) {
@@ -5362,14 +6076,125 @@
                     }
                     throw new Error(msg);
                 }
-                const { job_id } = await res.json();
-                latestJobId = job_id;
-                currentRunState = { state: 'running', progress: 0, stage: 'Queued...' };
-                saveDashboardState();
-                pollStatus(job_id);
+                const reviewPayload = await res.json();
+                if (workflowRevision !== calibrationWorkflowRevision) return;
+                renderCalibrationReview(reviewPayload);
             } catch (e) {
-                showError(e.message);
+                if (e?.name === 'AbortError' || workflowRevision !== calibrationWorkflowRevision) {
+                    return;
+                }
+                showError(e.message || 'Could not review Bazefield data.');
+                currentRunState = null;
                 resetRunBtn();
+                progressWrap.classList.remove('visible');
+                saveDashboardState();
+            } finally {
+                if (calibrationReviewAbortController === reviewController) {
+                    calibrationReviewAbortController = null;
+                }
+            }
+        }
+
+        async function applyCalibrationReview() {
+            if (!pendingCalibrationReview?.review_id) {
+                showError('Start a new Bazefield data review before calibrating.');
+                return;
+            }
+            if (calibrationReviewIsExpired(pendingCalibrationReview)) {
+                showError('This data review expired. Start a new review before calibrating.');
+                cancelCalibrationReview({ focusRunButton: true });
+                return;
+            }
+            if (reviewedCalibrationAbortController) {
+                reviewedCalibrationAbortController.abort();
+            }
+            const workflowRevision = calibrationWorkflowRevision;
+            const runController = new AbortController();
+            reviewedCalibrationAbortController = runController;
+            let responseStatus = null;
+            applyCalibrationReviewBtn.disabled = true;
+            applyCalibrationReviewBtn.textContent = 'Queuing calibration...';
+            setProgress(22, 'Applying data-quality decisions...');
+            currentRunState = {
+                state: 'applying_review',
+                progress: 22,
+                stage: 'Applying data-quality decisions',
+            };
+            setCalibrationControlsLocked(true);
+            cancelCalibrationReviewBtn.disabled = true;
+            saveDashboardState();
+            try {
+                const res = await fetch(
+                    '/api/calibration-reviews/' + encodeURIComponent(pendingCalibrationReview.review_id) + '/run',
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ decisions: calibrationReviewDecisions() }),
+                        signal: runController.signal,
+                    }
+                );
+                responseStatus = res.status;
+                if (!res.ok) {
+                    let message = 'Could not start reviewed calibration (' + res.status + ')';
+                    try {
+                        const error = await res.json();
+                        if (error.detail) message = Array.isArray(error.detail) ? error.detail[0].msg : error.detail;
+                    } catch (_) {
+                        // Keep the status-based message.
+                    }
+                    throw new Error(message);
+                }
+                const data = await res.json();
+                if (workflowRevision !== calibrationWorkflowRevision) return;
+                latestJobId = data.job_id;
+                currentRunState = { state: 'queued', progress: 22, stage: 'Reviewed calibration queued' };
+                setCalibrationControlsLocked(false);
+                cancelCalibrationReviewBtn.disabled = false;
+                clearCalibrationReview();
+                runBtn.textContent = 'Running...';
+                saveDashboardState();
+                progressWrap.focus({ preventScroll: true });
+                pollStatus(data.job_id);
+            } catch (error) {
+                if (error?.name === 'AbortError' || workflowRevision !== calibrationWorkflowRevision) {
+                    return;
+                }
+                showError(error.message || 'Could not start reviewed calibration.');
+                if (responseStatus === 410) {
+                    cancelCalibrationReview({ focusRunButton: true });
+                    return;
+                }
+                setCalibrationControlsLocked(false);
+                cancelCalibrationReviewBtn.disabled = false;
+                currentRunState = {
+                    state: 'review_required',
+                    progress: 20,
+                    stage: 'Data-quality decision required',
+                };
+                progressWrap.classList.remove('visible');
+                applyCalibrationReviewBtn.disabled = false;
+                applyCalibrationReviewBtn.textContent = 'Apply decisions & calibrate';
+                saveDashboardState();
+                applyCalibrationReviewBtn.focus();
+            } finally {
+                if (reviewedCalibrationAbortController === runController) {
+                    reviewedCalibrationAbortController = null;
+                }
+            }
+        }
+
+        function cancelCalibrationReview({ focusRunButton = false } = {}) {
+            calibrationWorkflowRevision += 1;
+            abortCalibrationReviewRequests();
+            setCalibrationControlsLocked(false);
+            cancelCalibrationReviewBtn.disabled = false;
+            clearCalibrationReview();
+            progressWrap.classList.remove('visible');
+            currentRunState = null;
+            resetRunBtn();
+            saveDashboardState();
+            if (focusRunButton) {
+                runBtn.focus();
             }
         }
 
@@ -5595,6 +6420,10 @@
         }
 
         runBtn.addEventListener('click', runAnalysis);
+        applyCalibrationReviewBtn.addEventListener('click', applyCalibrationReview);
+        cancelCalibrationReviewBtn.addEventListener('click', () => {
+            cancelCalibrationReview({ focusRunButton: true });
+        });
         curtailmentEnabled.addEventListener('change', syncCurtailmentLimit);
         iamModelRadios.forEach((radio) => radio.addEventListener('change', syncIamAr));
         annualRunBtn.addEventListener('click', runAnnualAnalysis);
@@ -7669,6 +8498,13 @@
         }
 
         async function promoteAgentJob(jobId) {
+            if (currentRunState?.state === 'applying_review') {
+                appendSystemNotice(
+                    'Wait for the reviewed calibration to enter the queue before promoting another calibration result.',
+                    'error'
+                );
+                return;
+            }
             try {
                 const data = await postAgentAction('/api/jobs/' + encodeURIComponent(jobId) + '/promote');
                 const previous = agentJobSnapshots.get(jobId) || {};
@@ -7676,6 +8512,9 @@
                 const promoted = { ...previous, ...data, job_id: jobId, mode, state: 'done', progress: 100 };
                 putAgentJob(promoted);
                 agentServerState.promoted_baselines[mode] = jobId;
+                if (mode === 'validation' && calibrationReviewWorkflowIsActive()) {
+                    cancelCalibrationReview();
+                }
                 applyPromotedRequest(mode, data.request || promoted.request || promoted.provenance?.request);
                 if (mode === 'annual') {
                     annualLatestJobId = jobId;
@@ -7857,6 +8696,7 @@
             latestInputPlots = saved.latestInputPlots || null;
             latestResult = saved.latestResult || null;
             currentRunState = saved.currentRunState || null;
+            pendingCalibrationReview = saved.pendingCalibrationReview || null;
             annualLatestJobId = saved.annualLatestJobId || null;
             annualLatestResult = saved.annualLatestResult || null;
             annualRunState = saved.annualRunState || null;
@@ -7908,6 +8748,21 @@
             if (annualLatestResult) {
                 applyAnnualResult(annualLatestResult, false);
             }
+            if (
+                pendingCalibrationReview &&
+                ['review_required', 'applying_review'].includes(currentRunState?.state)
+            ) {
+                runBtn.disabled = true;
+                currentRunState = {
+                    state: 'review_required',
+                    progress: 20,
+                    stage: 'Data-quality decision required',
+                };
+                renderCalibrationReview(pendingCalibrationReview, { focusPanel: false });
+            } else if (currentRunState?.state === 'reviewing') {
+                currentRunState = null;
+                resetRunBtn();
+            }
             renderChatMessages();
             setChatOpen(!!saved.chatOpen, { focus: false, persist: false });
 
@@ -7928,10 +8783,16 @@
 
         document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, .iam-model-input, .annual-input').forEach((el) => {
             el.addEventListener('input', () => {
+                if (calibrationReviewWorkflowIsActive()) {
+                    cancelCalibrationReview();
+                }
                 saveDashboardState();
                 updateAgentContext();
             });
             el.addEventListener('change', () => {
+                if (calibrationReviewWorkflowIsActive()) {
+                    cancelCalibrationReview();
+                }
                 saveDashboardState();
                 updateAgentContext();
             });

@@ -595,6 +595,7 @@ class AgentStore:
         confirmation_metadata: Mapping[str, Any] | None = None,
         source_path: str | None = None,
         source_hash: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Confirm once and atomically enqueue exactly one candidate job.
 
@@ -625,6 +626,9 @@ class AgentStore:
                     f"cannot confirm proposal in state {proposal['state']}"
                 )
 
+            provenance_json = (
+                None if provenance is None else _json_dump(dict(provenance))
+            )
             existing_metadata = _json_load(proposal["confirmation_metadata_json"])
             existing_metadata.update(dict(confirmation_metadata or {}))
             metadata_json = _json_dump(existing_metadata)
@@ -639,7 +643,7 @@ class AgentStore:
                     proposal_id=proposal_id,
                     source_path=source_path,
                     source_hash=source_hash,
-                    provenance_json=None,
+                    provenance_json=provenance_json,
                     artifacts_json=None,
                     now_text=now_text,
                 )

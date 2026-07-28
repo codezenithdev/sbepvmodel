@@ -162,6 +162,13 @@ class IamModelTests(unittest.TestCase):
 
 class IamApiTests(unittest.TestCase):
     def setUp(self):
+        legacy_run = patch.object(
+            app,
+            "_legacy_unreviewed_run_enabled",
+            return_value=True,
+        )
+        legacy_run.start()
+        self.addCleanup(legacy_run.stop)
         app.JOBS.clear()
         handle = tempfile.NamedTemporaryFile(
             prefix="iam-api-test-",

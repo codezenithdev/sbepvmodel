@@ -18,6 +18,18 @@ TEST_TEMP_ROOT = Path(__file__).resolve().parent / "outputs"
 PLOT_TIMESTAMP_FORMAT = "%m-%d-%Y %H:%M"
 
 
+def setUpModule():
+    TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def tearDownModule():
+    try:
+        TEST_TEMP_ROOT.rmdir()
+    except OSError:
+        # Preserve the directory if another test worker is using it.
+        pass
+
+
 def assert_plot_timestamp_format(test_case, axis):
     formatter = axis.xaxis.get_major_formatter()
     test_case.assertIsInstance(formatter, mdates.DateFormatter)

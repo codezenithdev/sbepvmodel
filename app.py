@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+from copy import deepcopy
+import hashlib
 import logging
 import secrets
 import threading
@@ -23,7 +25,7 @@ import json
 import os
 from time import perf_counter
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -37,11 +39,20 @@ from pydantic import BaseModel, ConfigDict, Field
 import bazefield_historian as historian
 import midc_stac_hourly as midc
 import sbe_pv_model as model
+from calibration_workflow import (
+    CALIBRATION_PROFILE_SCHEMA_VERSION,
+    apply_quality_decisions,
+    inspect_historian_csv,
+    public_quality_report,
+    season_name,
+    validate_seasonal_calibration_profile,
+)
 from agent_store import (
     AgentStore,
     AgentStoreError,
     InvalidStateTransition,
     RecordNotFound,
+    StoreConflict,
 )
 from scenario_reporting import (
     SourceFingerprintMismatch,
@@ -68,6 +79,11 @@ def _configured_output_dir() -> Path:
 
 OUTPUT_DIR = _configured_output_dir()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+CALIBRATION_REVIEW_DIR = OUTPUT_DIR / ".calibration_reviews"
+CALIBRATION_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+CALIBRATION_REVIEW_TTL = timedelta(hours=24)
+CALIBRATION_REVIEW_MAX_RANGE = timedelta(days=366)
+CALIBRATION_REVIEW_MAX_ROWS = 200_000
 
 # ``JOBS`` remains as a live compatibility/read-through cache for existing local
 # integrations. SQLite is the authoritative registry and survives restarts.
@@ -160,7 +176,9 @@ async def require_dashboard_basic_auth(request: Request, call_next):
         return await call_next(request)
     if not _basic_auth_is_valid(request.headers.get("authorization")):
         return _auth_required_response()
-    if request.url.path.startswith("/outputs/.agent_state/"):
+    if request.url.path.startswith(
+        ("/outputs/.agent_state/", "/outputs/.calibration_reviews/")
+    ):
         return JSONResponse({"detail": "Not found."}, status_code=404)
     return await call_next(request)
 
@@ -190,6 +208,12 @@ class RunRequest(StrictRequest):
     iam_a_r: float | None = model.A_R
     curtailment_enabled: bool = False
     curtailment_limit_kw: float | None = None
+
+
+class CalibrationDecisionRequest(StrictRequest):
+    decisions: dict[str, Literal["retain", "exclude"]] = Field(
+        default_factory=dict
+    )
 
 
 class AnnualRunRequest(StrictRequest):
@@ -232,6 +256,8 @@ class ProposalEditRequest(StrictRequest):
 SOLAR_AGENT_INSTRUCTIONS = """You are Solar Agent, a concise PV performance analyst for a local SB Energy dashboard.
 Use the supplied dashboard run context as the source of truth for run-specific questions.
 Explain model behavior in plain engineering terms: measured vs predicted energy, percent deltas, DHI source, IAM, backtracking, clipping/curtailment, and efficiency assumptions.
+Calibration runs first review Bazefield quality and record the user's retain/exclude decisions. Treat data_quality, calibration_factors, uncalibrated, and factor_driver_diagnostics in the run result as authoritative. Explain that each per-system meteorological-season factor is measured energy divided by the uncalibrated physics-model energy over accepted daylight samples; factors may be above 1. Driver diagnostics are associations, not causal proof, and soiling cannot be isolated without dedicated soiling, rainfall, cleaning, or maintenance data.
+Solar Agent may start a calibration scenario only when it reuses the exact hash-verified source and frozen calibration profile of a reviewed baseline. A new date, time, interval, missing reviewed baseline, changed source, or other cross-run calibration request requires the visible Calibration form: the user must retrieve Bazefield data, review every flagged irregularity, choose Retain or Exclude where offered, and then apply the reviewed run. If the tool returns data_review_required, say clearly that no proposal or model job was created and direct the user to that visible review flow.
 Treat visible_iam_selection as the authoritative IAM state for the visible dashboard form. Physical IAM is an active IAM selection, even though iam_a_r is null because that coefficient applies only to Martin-Ruiz. Never describe Physical IAM as disabled, off, or not selected.
 If no live run context is available, say the dashboard needs a completed analysis for grounded run-specific answers, while still answering general model questions from the provided model notes.
 When the user explicitly asks to run, test, simulate, compare, or perform a what-if with dashboard settings, call propose_model_scenario exactly once. Put only explicitly requested changes in the tool arguments and use null for every unchanged field. Do not call the tool for conceptual questions.
@@ -240,7 +266,7 @@ IAM is a method selection, not a generic scalar. If the user gives a numeric IAM
 Never calculate scenario deltas yourself. The application returns deterministic comparison metrics after the model run; explain those values without changing them. A multi-field scenario is a combined scenario and must not be attributed to one field. A cross-run comparison uses different input data and must not be described causally.
 After explaining a completed deterministic comparison, suggest one or two useful follow-up experiments, but never request or launch them unless the user explicitly asks in a later turn.
 The application, not you, decides whether a run requires confirmation. Never claim a run started unless the tool output says it did.
-When the tool output status is started, explicitly say the run was queued, describe whether it will reuse verified source data or pull fresh Bazefield data, and do not ask for confirmation. Ask for confirmation only when the tool output status is confirmation_required or baseline_required.
+When the tool output status is started, explicitly say the run was queued from the reviewed, verified source data and do not ask for confirmation. Ask for confirmation only when the tool output status is confirmation_required or baseline_required. A data_review_required status is not a confirmation request and must never be described as a queued run.
 When web_search is available and you use external information, include source links in the answer.
 Format answers for a narrow chat sidebar. Use concise Markdown with bold section labels and short bullets. Do not use nested bullets. Do not use tables unless the user explicitly asks for a table.
 For performance-summary questions, use this order: **Performance Summary**, **SolarEdge**, **Solectria**, **Run Context**. Under each system, use the same four bullets: Measured, Predicted, Difference, Model delta.
@@ -299,8 +325,9 @@ SCENARIO_TOOL = {
     "description": (
         "Propose one solar model scenario containing only settings the user explicitly "
         "asked to change. Use null for all unchanged settings. The application validates, "
-        "approves, executes, and compares the run. A changed calibration window is "
-        "automatically fetched from Bazefield and compared with the selected baseline."
+        "approves, executes, and compares the run. A calibration scenario can execute only "
+        "from the exact reviewed baseline source. A new calibration window is handed back "
+        "to the visible data-quality review flow and is never fetched automatically."
     ),
     "strict": True,
     "parameters": {
@@ -378,7 +405,9 @@ SOLAR_MODEL_KNOWLEDGE = {
         "solectria_bays_per_string": model.SOLECTRIA_BAYS_PER_STRING,
     },
     "outputs": (
-        "Calibration runs return measured-versus-predicted summary stats, AC power and "
+        "Calibration runs return an audited Bazefield data-quality review, user "
+        "retain/exclude decisions, per-system meteorological-season factors, before/after "
+        "model residuals, diagnostic physical-driver associations, AC power and "
         "cumulative energy charts, and an Excel workbook. Annual MIDC runs return "
         "predicted-only AC power, cumulative energy, and monthly energy charts, the "
         "exact hourly source CSV, an Excel workbook with a monthly_energy sheet, and "
@@ -450,9 +479,14 @@ def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
             start = datetime.fromisoformat(_iso(req.from_date, req.from_time))
             end = datetime.fromisoformat(_iso(req.to_date, req.to_time))
         except (TypeError, ValueError) as exc:
+            detail = (
+                str(exc)
+                if str(exc).startswith("The selected local time")
+                else "Calibration dates and times must use YYYY-MM-DD and HH:MM."
+            )
             raise HTTPException(
                 status_code=422,
-                detail="Calibration dates and times must use YYYY-MM-DD and HH:MM.",
+                detail=detail,
             ) from exc
         if start >= end:
             raise HTTPException(
@@ -517,12 +551,43 @@ def _iso(date_str: str, time_str: str) -> str:
     if len(t) == 5:  # HH:MM -> HH:MM:SS
         t += ":00"
     naive = datetime.strptime(f"{date_str}T{t}", "%Y-%m-%dT%H:%M:%S")
-    utc = naive.replace(tzinfo=LOCAL_TZ).astimezone(UTC_TZ)
+    candidates: dict[datetime, datetime] = {}
+    for fold in (0, 1):
+        aware = naive.replace(tzinfo=LOCAL_TZ, fold=fold)
+        utc_candidate = aware.astimezone(UTC_TZ)
+        if (
+            utc_candidate.astimezone(LOCAL_TZ).replace(tzinfo=None)
+            == naive
+        ):
+            candidates[utc_candidate] = aware
+    if not candidates:
+        raise ValueError(
+            "The selected local time does not exist because of the daylight-saving "
+            "transition. Choose a different boundary time."
+        )
+    if len(candidates) > 1:
+        raise ValueError(
+            "The selected local time occurs twice because of the daylight-saving "
+            "transition. Choose a boundary outside the repeated hour."
+        )
+    utc = next(iter(candidates))
     return utc.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _output_url(path: Path) -> str:
     return f"/outputs/{path.name}"
+
+
+def _public_source_url(path: Path) -> str | None:
+    """Return a URL only for source snapshots directly served from OUTPUT_DIR."""
+
+    try:
+        relative = path.resolve().relative_to(OUTPUT_DIR.resolve())
+    except (OSError, ValueError):
+        return None
+    if relative.parent != Path("."):
+        return None
+    return _output_url(path)
 
 
 def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str]:
@@ -670,6 +735,322 @@ def _run_request_context(req: RunRequest | AnnualRunRequest) -> dict:
     context = _model_dump(req)
     context.update(_iam_metadata(req))
     return context
+
+
+def _calibration_review_path(review_id: str, suffix: str) -> Path:
+    candidate = str(review_id).strip().lower()
+    if len(candidate) != 32 or any(
+        character not in "0123456789abcdef" for character in candidate
+    ):
+        raise HTTPException(status_code=404, detail="Unknown calibration review.")
+    return CALIBRATION_REVIEW_DIR / f"{candidate}{suffix}"
+
+
+_CALIBRATION_REVIEW_SUFFIXES = (
+    ".json",
+    ".json.tmp",
+    ".raw.csv",
+    ".reviewed.csv",
+)
+
+
+def _delete_calibration_review_artifacts(
+    review_id: str,
+    *,
+    preserve_reviewed: bool = False,
+) -> int:
+    """Delete the private files for one validated review identifier."""
+
+    review_root = CALIBRATION_REVIEW_DIR.resolve()
+    removed = 0
+    candidates = {
+        _calibration_review_path(review_id, suffix)
+        for suffix in _CALIBRATION_REVIEW_SUFFIXES
+    }
+    candidates.update(CALIBRATION_REVIEW_DIR.glob(f"{review_id}.*.json.tmp"))
+    candidates.update(
+        CALIBRATION_REVIEW_DIR.glob(f"{review_id}.*.reviewed.csv")
+    )
+    for candidate in candidates:
+        if preserve_reviewed and candidate.name.endswith(".reviewed.csv"):
+            continue
+        try:
+            resolved = candidate.resolve()
+            if resolved.parent != review_root:
+                continue
+            if candidate.is_file():
+                candidate.unlink()
+                removed += 1
+        except OSError:
+            logger.warning(
+                "Could not remove expired calibration review artifact %s",
+                candidate,
+                exc_info=True,
+            )
+    return removed
+
+
+def _reviewed_source_is_job_bound(
+    record: dict[str, Any],
+    *,
+    review_id: str | None = None,
+) -> bool:
+    """Return whether a review snapshot is still bound to its durable job."""
+
+    bound_review_id = str(review_id or record.get("review_id") or "").strip()
+    if not bound_review_id:
+        return False
+    job_id = str(
+        record.get("job_id") or f"review-{bound_review_id}"
+    ).strip()
+    job = _get_job_record(job_id)
+    if not job or not job.get("source_path"):
+        return False
+    quality = (job.get("provenance") or {}).get("data_quality")
+    if (
+        not isinstance(quality, dict)
+        or quality.get("review_id") != bound_review_id
+        or quality.get("reviewed_source_sha256") != job.get("source_hash")
+    ):
+        return False
+    cleaned_source = record.get("cleaned_source_path") or job.get("source_path")
+    try:
+        source_path = Path(str(job["source_path"])).resolve()
+        return (
+            Path(str(cleaned_source)).resolve() == source_path
+            and source_path.parent == CALIBRATION_REVIEW_DIR.resolve()
+            and source_path.name.startswith(f"{bound_review_id}.")
+            and source_path.name.endswith(".reviewed.csv")
+        )
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _cleanup_expired_calibration_reviews(
+    *, now: datetime | None = None
+) -> int:
+    """Opportunistically remove expired or stale orphaned private review files."""
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    else:
+        current = current.astimezone(timezone.utc)
+    stale_before = current - CALIBRATION_REVIEW_TTL
+    removed = 0
+    review_root = CALIBRATION_REVIEW_DIR
+    try:
+        records = list(review_root.glob("*.json"))
+    except OSError:
+        logger.warning(
+            "Could not enumerate calibration review records", exc_info=True
+        )
+        return 0
+
+    for path in records:
+        review_id = path.name[: -len(".json")]
+        try:
+            _calibration_review_path(review_id, ".json")
+        except HTTPException:
+            continue
+        expired = False
+        record: dict[str, Any] = {}
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            expires_at = datetime.fromisoformat(str(record["expires_at"]))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expired = expires_at.astimezone(timezone.utc) <= current
+        except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+            try:
+                modified = datetime.fromtimestamp(
+                    path.stat().st_mtime, tz=timezone.utc
+                )
+                expired = modified <= stale_before
+            except OSError:
+                continue
+        if expired:
+            removed += _delete_calibration_review_artifacts(
+                review_id,
+                preserve_reviewed=_reviewed_source_is_job_bound(
+                    record,
+                    review_id=review_id,
+                ),
+            )
+
+    # Reviewed CSVs can remain the immutable source for a queued/completed job
+    # and its same-input scenarios. Orphans are removed only after confirming
+    # that the deterministic review job no longer references them.
+    for pattern in ("*.json.tmp", "*.raw.csv", "*.reviewed.csv"):
+        try:
+            orphan_candidates = list(review_root.glob(pattern))
+        except OSError:
+            continue
+        for path in orphan_candidates:
+            review_id = path.name.split(".", 1)[0]
+            try:
+                record_path = _calibration_review_path(review_id, ".json")
+                _calibration_review_path(review_id, path.name[len(review_id) :])
+                modified = datetime.fromtimestamp(
+                    path.stat().st_mtime, tz=timezone.utc
+                )
+            except (HTTPException, OSError):
+                continue
+            if not record_path.is_file() and modified <= stale_before:
+                if path.name.endswith(".reviewed.csv") and (
+                    _reviewed_source_is_job_bound(
+                        {"review_id": review_id},
+                        review_id=review_id,
+                    )
+                ):
+                    continue
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    logger.warning(
+                        "Could not remove orphaned calibration review artifact %s",
+                        path,
+                        exc_info=True,
+                    )
+    return removed
+
+
+def _save_calibration_review(record: dict[str, Any]) -> None:
+    review_id = str(record["review_id"])
+    destination = _calibration_review_path(review_id, ".json")
+    temporary = _calibration_review_path(
+        review_id,
+        f".{uuid.uuid4().hex}.json.tmp",
+    )
+    try:
+        temporary.write_text(
+            json.dumps(record, allow_nan=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        os.replace(temporary, destination)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "Could not remove temporary calibration review record %s",
+                temporary,
+                exc_info=True,
+            )
+
+
+def _load_calibration_review(review_id: str) -> dict[str, Any]:
+    path = _calibration_review_path(review_id, ".json")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Unknown calibration review.")
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        expires_at = datetime.fromisoformat(str(record["expires_at"]))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="The calibration review record is invalid; start a new review.",
+        ) from exc
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= datetime.now(timezone.utc):
+        _delete_calibration_review_artifacts(
+            review_id,
+            preserve_reviewed=_reviewed_source_is_job_bound(
+                record,
+                review_id=review_id,
+            ),
+        )
+        raise HTTPException(
+            status_code=410,
+            detail="This calibration review expired; retrieve the data again.",
+        )
+    try:
+        source_path = Path(str(record.get("source_path", ""))).resolve()
+        review_root = CALIBRATION_REVIEW_DIR.resolve()
+        source_is_available = (
+            review_root in source_path.parents and source_path.is_file()
+        )
+    except (OSError, RuntimeError, ValueError):
+        source_is_available = False
+    if not source_is_available:
+        raise HTTPException(
+            status_code=409,
+            detail="The reviewed Bazefield source is unavailable; start a new review.",
+        )
+    try:
+        verify_source_sha256(source_path, str(record["source_hash"]))
+    except (
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+        SourceFingerprintMismatch,
+    ) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="The reviewed Bazefield source changed; start a new review.",
+        ) from exc
+    return record
+
+
+def _quality_context(
+    record: dict[str, Any],
+    *,
+    cleaning: dict[str, Any],
+    reviewed_source_hash: str,
+    submitted_decisions: dict[str, str],
+) -> dict[str, Any]:
+    return {
+        "review_id": record["review_id"],
+        "source_sha256": record["source_hash"],
+        "reviewed_source_sha256": reviewed_source_hash,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "submitted_decisions": dict(submitted_decisions),
+        "report": public_quality_report(record["report"]),
+        "cleaning": cleaning,
+    }
+
+
+def _calibration_review_state(report: dict[str, Any]) -> str:
+    status = str((report.get("summary") or {}).get("status") or "").strip()
+    if status == "blocked":
+        return "blocked"
+    if status == "clean":
+        return "ready"
+    return "decision_required"
+
+
+def _validate_calibration_review_size(
+    *,
+    from_iso: str,
+    to_iso: str,
+    interval_seconds: int,
+) -> None:
+    start = datetime.fromisoformat(from_iso).replace(tzinfo=timezone.utc)
+    end = datetime.fromisoformat(to_iso).replace(tzinfo=timezone.utc)
+    span = end - start
+    if span > CALIBRATION_REVIEW_MAX_RANGE:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Calibration reviews are limited to "
+                f"{CALIBRATION_REVIEW_MAX_RANGE.days} days."
+            ),
+        )
+    expected_rows = int(
+        math.ceil(span.total_seconds() / max(int(interval_seconds), 1))
+    )
+    if expected_rows > CALIBRATION_REVIEW_MAX_ROWS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The selected range and interval would produce approximately "
+                f"{expected_rows:,} rows; calibration reviews are limited to "
+                f"{CALIBRATION_REVIEW_MAX_ROWS:,} rows."
+            ),
+        )
 
 
 def _cache_job_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -955,10 +1336,144 @@ def _verified_baseline_source(
         return None, None
     try:
         verify_source_sha256(source_path, source_hash)
-    except (OSError, SourceFingerprintMismatch):
+    except (OSError, TypeError, ValueError, SourceFingerprintMismatch):
         logger.warning("Baseline source fingerprint is unavailable or changed")
         return None, None
     return str(source_path), str(source_hash)
+
+
+def _reviewed_baseline_data_quality(
+    baseline: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return review provenance only when it is bound to baseline source bytes."""
+
+    if str(baseline.get("mode") or "") != "validation":
+        return None
+    quality = (baseline.get("provenance") or {}).get("data_quality")
+    if not isinstance(quality, dict):
+        return None
+    review_id = quality.get("review_id")
+    reviewed_hash = quality.get("reviewed_source_sha256")
+    source_hash = baseline.get("source_hash")
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in (review_id, reviewed_hash, source_hash)
+    ):
+        return None
+    if not secrets.compare_digest(
+        str(reviewed_hash).strip(), str(source_hash).strip()
+    ):
+        return None
+    return deepcopy(quality)
+
+
+def _validation_request_seasons(request: dict[str, Any]) -> tuple[str, ...]:
+    """Return Denver-local meteorological seasons in an end-exclusive request."""
+
+    try:
+        start = datetime.fromisoformat(
+            f"{request['from_date']}T{request.get('from_time') or '00:00'}"
+        )
+        end = datetime.fromisoformat(
+            f"{request['to_date']}T{request.get('to_time') or '00:00'}"
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Validation request dates are unavailable for profile coverage."
+        ) from exc
+    if end <= start:
+        raise ValueError("Validation request end must be after its start.")
+    last_included = end - timedelta(microseconds=1)
+    cursor = datetime(start.year, start.month, 1)
+    final_month = datetime(last_included.year, last_included.month, 1)
+    seasons: list[str] = []
+    while cursor <= final_month:
+        label = season_name(cursor)
+        if label not in seasons:
+            seasons.append(label)
+        cursor = (
+            datetime(cursor.year + 1, 1, 1)
+            if cursor.month == 12
+            else datetime(cursor.year, cursor.month + 1, 1)
+        )
+    return tuple(seasons)
+
+
+def _baseline_calibration_profile(
+    baseline: dict[str, Any],
+    *,
+    candidate_request: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Snapshot or reuse the reviewed baseline's immutable fit profile."""
+
+    if str(baseline.get("mode") or "") != "validation":
+        return None
+    required_seasons = _validation_request_seasons(candidate_request)
+    existing = (baseline.get("provenance") or {}).get(
+        "calibration_profile"
+    )
+    if existing is not None:
+        return validate_seasonal_calibration_profile(
+            existing,
+            required_seasons=required_seasons,
+        )
+
+    quality = _reviewed_baseline_data_quality(baseline)
+    if quality is None:
+        # Compatibility for local jobs created before calibration reviews.
+        return None
+    result = baseline.get("result") or {}
+    stats = result.get("stats") or {}
+    fit_metadata = (
+        result.get("calibration_factors")
+        or stats.get("calibration_factors")
+    )
+    if not isinstance(fit_metadata, dict):
+        raise ValueError(
+            "The reviewed baseline does not contain seasonal calibration factors."
+        )
+    factors: dict[str, dict[str, float]] = {}
+    for record in fit_metadata.get("seasons") or []:
+        if not isinstance(record, dict):
+            raise ValueError(
+                "The reviewed baseline contains an invalid seasonal factor record."
+            )
+        label = str(record.get("season") or "").strip().lower()
+        if label in factors:
+            raise ValueError(
+                f"The reviewed baseline contains duplicate {label} factors."
+            )
+        systems = record.get("systems")
+        if not label or not isinstance(systems, dict):
+            raise ValueError(
+                "The reviewed baseline contains an invalid seasonal factor record."
+            )
+        factors[label] = {}
+        for system in ("solaredge", "solectria"):
+            details = systems.get(system)
+            if not isinstance(details, dict):
+                raise ValueError(
+                    f"The reviewed baseline {label} {system} factor is invalid."
+                )
+            factors[label][system] = details.get("factor")
+    diagnostics = (
+        result.get("factor_driver_diagnostics")
+        or stats.get("factor_driver_diagnostics")
+        or {}
+    )
+    profile = {
+        "schema_version": CALIBRATION_PROFILE_SCHEMA_VERSION,
+        "origin_job_id": str(baseline["id"]),
+        "origin_source_sha256": str(baseline["source_hash"]),
+        "origin_review_id": str(quality["review_id"]),
+        "seasonal_factors": factors,
+        "fit_metadata": deepcopy(fit_metadata),
+        "factor_driver_diagnostics": deepcopy(diagnostics),
+    }
+    return validate_seasonal_calibration_profile(
+        profile,
+        required_seasons=required_seasons,
+    )
 
 
 def _proposal_policy(
@@ -1137,6 +1652,35 @@ def _create_baseline_proposal(
     return proposal
 
 
+def _calibration_review_required(
+    *,
+    effective_request: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return a non-mutating handoff to the visible calibration review flow."""
+
+    message = (
+        "This calibration request needs a visible Bazefield data-quality review "
+        "before a model job can start. Select the requested range and settings in "
+        "the Calibration form, retrieve the data, review every irregularity, choose "
+        "Retain or Exclude where offered, and then apply the reviewed run. No Solar "
+        "Agent proposal or model job was created."
+    )
+    request = deepcopy(effective_request) if effective_request else None
+    result: dict[str, Any] = {
+        "status": "data_review_required",
+        "message": message,
+    }
+    action: dict[str, Any] = {
+        "type": "data_review_required",
+        "mode": "validation",
+        "message": message,
+    }
+    if request is not None:
+        result["effective_request"] = request
+        action["effective_request"] = request
+    return result, action
+
+
 def _create_candidate_proposal(
     *,
     mode: Literal["validation", "annual"],
@@ -1181,23 +1725,98 @@ def _create_candidate_proposal(
 def _confirm_durable_proposal(
     proposal: dict[str, Any], *, automatic: bool = False
 ) -> dict[str, Any]:
+    if proposal.get("confirmed_job_id"):
+        existing = _get_job_record(str(proposal["confirmed_job_id"]))
+        if existing is None:
+            raise HTTPException(
+                status_code=409,
+                detail="The confirmed proposal references an unavailable job.",
+            )
+        return existing
     metadata = proposal.get("confirmation_metadata") or {}
+    job_kind = str(metadata.get("job_kind", "candidate"))
     source_path: str | None = None
     source_hash: str | None = None
-    if proposal.get("baseline_id") and proposal.get("comparison_kind") == "same_input":
+    provenance: dict[str, Any] = {}
+    baseline: dict[str, Any] | None = None
+    if proposal.get("baseline_id"):
         baseline = _get_job_record(str(proposal["baseline_id"]))
+    validation_quality: dict[str, Any] | None = None
+    if proposal.get("mode") == "validation":
+        if (
+            job_kind != "candidate"
+            or proposal.get("comparison_kind") != "same_input"
+            or baseline is None
+            or baseline.get("state") != "done"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Calibration jobs that do not reuse a completed reviewed baseline "
+                    "must start from the visible Calibration data-quality review."
+                ),
+            )
+        validation_quality = _reviewed_baseline_data_quality(baseline)
+        if validation_quality is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The calibration baseline is not bound to a hash-verified "
+                    "data-quality review. Use the visible Calibration form to review "
+                    "the requested data before running this scenario."
+                ),
+            )
+    if (
+        proposal.get("baseline_id")
+        and proposal.get("comparison_kind") == "same_input"
+    ):
         source_path, source_hash = _verified_baseline_source(baseline)
         if not source_path or not source_hash:
             raise HTTPException(
                 status_code=409,
                 detail="The baseline source fingerprint is no longer valid. Confirm a fresh baseline run.",
             )
+    if (
+        proposal.get("mode") == "validation"
+        and job_kind == "candidate"
+        and proposal.get("baseline_id")
+    ):
+        if baseline is None or baseline.get("state") != "done":
+            raise HTTPException(
+                status_code=409,
+                detail="The completed baseline bound to this proposal is unavailable.",
+            )
+        try:
+            profile = _baseline_calibration_profile(
+                baseline,
+                candidate_request=dict(proposal.get("effective_request") or {}),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The reviewed baseline calibration profile is invalid or "
+                    f"does not cover this date range: {exc}"
+                ),
+            ) from exc
+        if profile is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The reviewed baseline does not contain a frozen seasonal "
+                    "calibration profile. Re-run it through the visible Calibration "
+                    "data-quality review."
+                ),
+            )
+        provenance["calibration_profile"] = profile
+        provenance["data_quality"] = validation_quality
     job = AGENT_STORE.confirm_proposal(
         str(proposal["id"]),
-        job_kind=str(metadata.get("job_kind", "candidate")),
+        job_kind=job_kind,
         confirmation_metadata={"automatic": automatic},
         source_path=source_path,
         source_hash=source_hash,
+        provenance=provenance or None,
     )
     _cache_job_record(job)
     _WORKER_WAKE.set()
@@ -1230,6 +1849,20 @@ def _handle_scenario_tool(
             else _selected_baseline(target_mode)
         ) or _selected_baseline(target_mode)
         if baseline is None:
+            if target_mode == "validation":
+                effective_request: dict[str, Any] | None = None
+                if req.current_config:
+                    candidate_values = dict(req.current_config)
+                    candidate_values.update(overrides)
+                    try:
+                        _, effective_request = _canonical_request(
+                            "validation", candidate_values
+                        )
+                    except HTTPException:
+                        effective_request = None
+                return _calibration_review_required(
+                    effective_request=effective_request
+                )
             active_baseline = next(
                 (
                     job
@@ -1280,6 +1913,18 @@ def _handle_scenario_tool(
                 status_code=422,
                 detail="The requested settings are already active in the selected baseline.",
             )
+        if target_mode == "validation":
+            source_path, source_hash = _verified_baseline_source(baseline)
+            same_reviewed_input = (
+                baseline_mode == "validation"
+                and _same_input_context("validation", baseline_request, candidate)
+                and bool(source_path and source_hash)
+                and _reviewed_baseline_data_quality(baseline) is not None
+            )
+            if not same_reviewed_input:
+                return _calibration_review_required(
+                    effective_request=candidate
+                )
         proposal = _create_candidate_proposal(
             mode=target_mode,
             baseline=baseline,
@@ -1688,11 +2333,16 @@ def _model_worker_loop() -> None:
                 req = RunRequest(**record["request"])
                 _validate_run_request(req)
                 _validate_curtailment(req)
+                provenance = record.get("provenance") or {}
                 _run_job(
                     job_id,
                     req,
                     source_path=record.get("source_path"),
                     expected_source_hash=record.get("source_hash"),
+                    data_quality_context=provenance.get("data_quality"),
+                    calibration_profile=provenance.get(
+                        "calibration_profile"
+                    ),
                 )
         except Exception:
             logger.exception("Unhandled model worker failure for %s", job_id)
@@ -1759,7 +2409,10 @@ def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
             extra_warnings=tuple(result.get("warnings") or ()),
         )
         comparison = generated["comparison"]
-        provenance = generated["provenance"]
+        provenance = {
+            **dict(provenance or {}),
+            **dict(generated["provenance"] or {}),
+        }
         artifacts.update(generated["artifacts"])
 
     _check_job_cancelled(job_id)
@@ -1809,6 +2462,8 @@ def _run_job(
     *,
     source_path: str | Path | None = None,
     expected_source_hash: str | None = None,
+    data_quality_context: dict[str, Any] | None = None,
+    calibration_profile: dict[str, Any] | None = None,
 ) -> None:
     JOBS.setdefault(job_id, {"mode": "validation", "state": "running"})
 
@@ -1872,6 +2527,9 @@ def _run_job(
             iam_a_r=(req.iam_a_r if req.iam_model == "martin_ruiz" else None),
             curtailment_enabled=req.curtailment_enabled,
             curtailment_limit_kw=req.curtailment_limit_kw,
+            data_quality_context=data_quality_context,
+            expected_interval_seconds=interval_seconds,
+            calibration_profile=calibration_profile,
         )
         set_progress(95, "Finalizing model artifacts")
         result = {
@@ -1881,7 +2539,12 @@ def _run_job(
             "energy_png": _output_url(Path(stats["energy_png"])),
             "excel": _output_url(Path(stats["excel"])),
             "input_plots": JOBS[job_id].get("input_plots"),
-            "source_csv": _output_url(csv_path),
+            "source_csv": _public_source_url(csv_path),
+            "data_quality": data_quality_context,
+            "calibration_factors": stats.get("calibration_factors"),
+            "factor_driver_diagnostics": stats.get(
+                "factor_driver_diagnostics"
+            ),
             "window": {
                 "from": from_iso,
                 "to": to_iso,
@@ -2004,6 +2667,7 @@ def _run_annual_job(
             curtailment_limit_kw=req.curtailment_limit_kw,
             input_kind="midc",
             annual_mode=True,
+            expected_interval_seconds=3600,
         )
         warnings = list(
             dict.fromkeys([*source_warnings, *stats.get("data_quality_warnings", [])])
@@ -2018,7 +2682,7 @@ def _run_annual_job(
             "monthly_png": _output_url(Path(stats["monthly_png"])),
             "excel": _output_url(Path(stats["excel"])),
             "input_plots": JOBS[job_id].get("input_plots"),
-            "source_csv": _output_url(csv_path),
+            "source_csv": _public_source_url(csv_path),
             "warnings": warnings,
             "source_quality": source_quality,
             "window": {
@@ -2075,21 +2739,293 @@ def session() -> JSONResponse:
 def _enqueue_baseline_job(
     mode: Literal["validation", "annual"],
     request_snapshot: dict[str, Any],
+    *,
+    job_id: str | None = None,
+    source_path: str | None = None,
+    source_hash: str | None = None,
+    provenance: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     with _ORCHESTRATION_LOCK:
         record = AGENT_STORE.create_job(
             kind="baseline",
             mode=mode,
             request=request_snapshot,
-            job_id=uuid.uuid4().hex[:12],
+            job_id=job_id or uuid.uuid4().hex[:12],
+            source_path=source_path,
+            source_hash=source_hash,
+            provenance=provenance,
+            artifacts=artifacts,
         )
         _cache_job_record(record)
         _WORKER_WAKE.set()
         return record
 
 
+@app.post("/api/calibration-reviews")
+def create_calibration_review(req: RunRequest) -> JSONResponse:
+    """Retrieve Bazefield data and return issues before model calibration."""
+
+    _validate_run_request(req)
+    _validate_curtailment(req)
+    with _ORCHESTRATION_LOCK:
+        _cleanup_expired_calibration_reviews()
+    review_id = uuid.uuid4().hex
+    interval_seconds = int(req.interval_value) * UNIT_SECONDS[req.interval_unit]
+    source_path = _calibration_review_path(review_id, ".raw.csv")
+    from_iso = _iso(req.from_date, req.from_time)
+    to_iso = _iso(req.to_date, req.to_time)
+    _validate_calibration_review_size(
+        from_iso=from_iso,
+        to_iso=to_iso,
+        interval_seconds=interval_seconds,
+    )
+    try:
+        row_count = historian.run_historian(
+            from_time=from_iso,
+            to_time=to_iso,
+            interval=str(interval_seconds),
+            output_csv=str(source_path),
+        )
+        if int(row_count) > CALIBRATION_REVIEW_MAX_ROWS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Bazefield returned {int(row_count):,} rows; calibration "
+                    f"reviews are limited to {CALIBRATION_REVIEW_MAX_ROWS:,} rows."
+                ),
+            )
+        source_hash = sha256_file(source_path)
+        report = inspect_historian_csv(
+            source_path,
+            expected_interval_seconds=interval_seconds,
+            requested_start=from_iso,
+            requested_end=to_iso,
+        )
+        profiled_rows = int((report.get("source") or {}).get("row_count") or 0)
+        if profiled_rows > CALIBRATION_REVIEW_MAX_ROWS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Bazefield returned {profiled_rows:,} rows; calibration "
+                    f"reviews are limited to {CALIBRATION_REVIEW_MAX_ROWS:,} rows."
+                ),
+            )
+    except HTTPException:
+        _delete_calibration_review_artifacts(review_id)
+        raise
+    except historian.BazefieldError as exc:
+        _delete_calibration_review_artifacts(review_id)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Bazefield data retrieval failed: {exc}",
+        ) from exc
+    except (OSError, TypeError, ValueError) as exc:
+        _delete_calibration_review_artifacts(review_id)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Bazefield data could not be profiled: {exc}",
+        ) from exc
+
+    report["source"]["sha256"] = source_hash
+    now = datetime.now(timezone.utc)
+    record = {
+        "review_id": review_id,
+        "state": "pending",
+        "created_at": now.isoformat(),
+        "expires_at": (now + CALIBRATION_REVIEW_TTL).isoformat(),
+        "request": _run_request_context(req),
+        "source_path": str(source_path.resolve()),
+        "source_hash": source_hash,
+        "source_row_count": int(row_count),
+        "report": report,
+    }
+    try:
+        _save_calibration_review(record)
+    except (OSError, TypeError, ValueError) as exc:
+        _delete_calibration_review_artifacts(review_id)
+        raise HTTPException(
+            status_code=500,
+            detail="The calibration review could not be stored; try again.",
+        ) from exc
+    return JSONResponse(
+        {
+            "review_id": review_id,
+            "state": _calibration_review_state(report),
+            "created_at": record["created_at"],
+            "expires_at": record["expires_at"],
+            "report": public_quality_report(report),
+        }
+    )
+
+
+@app.post("/api/calibration-reviews/{review_id}/run")
+def run_reviewed_calibration(
+    review_id: str,
+    req: CalibrationDecisionRequest,
+) -> JSONResponse:
+    """Apply audited decisions and enqueue calibration from the reviewed source."""
+
+    with _ORCHESTRATION_LOCK:
+        record = _load_calibration_review(review_id)
+        canonical_decisions = {
+            str(key): str(value)
+            for key, value in sorted(req.decisions.items())
+        }
+        if record.get("state") == "consumed":
+            if canonical_decisions != (record.get("decisions") or {}):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This review already started with different decisions; "
+                        "retrieve the data again for another calibration."
+                    ),
+                )
+            job = _get_job_record(str(record["job_id"]))
+            if job is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This review references a job that is no longer available; "
+                        "retrieve the data again."
+                    ),
+                )
+            return JSONResponse(
+                {
+                    "job_id": job["id"],
+                    "review_id": record["review_id"],
+                    "state": job["state"],
+                    "data_quality": record.get("quality_context"),
+                }
+            )
+        if record.get("state") != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail="This calibration review can no longer start a run.",
+            )
+
+        decision_payload = json.dumps(
+            canonical_decisions,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        decision_digest = hashlib.sha256(decision_payload).hexdigest()[:16]
+        cleaned_path = _calibration_review_path(
+            review_id,
+            f".{decision_digest}.reviewed.csv",
+        )
+        try:
+            cleaning = apply_quality_decisions(
+                record["source_path"],
+                cleaned_path,
+                record["report"],
+                canonical_decisions,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        cleaned_hash = sha256_file(cleaned_path)
+        quality_context = _quality_context(
+            record,
+            cleaning=cleaning,
+            reviewed_source_hash=cleaned_hash,
+            submitted_decisions=canonical_decisions,
+        )
+        deterministic_job_id = f"review-{review_id}"
+        try:
+            job = _enqueue_baseline_job(
+                "validation",
+                dict(record["request"]),
+                job_id=deterministic_job_id,
+                source_path=str(cleaned_path.resolve()),
+                source_hash=cleaned_hash,
+                provenance={"data_quality": quality_context},
+            )
+        except StoreConflict as exc:
+            existing = _get_job_record(deterministic_job_id)
+            existing_quality = (
+                (existing or {}).get("provenance") or {}
+            ).get("data_quality")
+            same_review = (
+                isinstance(existing_quality, dict)
+                and existing_quality.get("review_id") == review_id
+                and existing_quality.get("submitted_decisions")
+                == canonical_decisions
+                and existing_quality.get("reviewed_source_sha256")
+                == cleaned_hash
+                and (existing or {}).get("source_hash") == cleaned_hash
+            )
+            if not same_review:
+                try:
+                    cleaned_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning(
+                        "Could not remove conflicting reviewed source %s",
+                        cleaned_path,
+                        exc_info=True,
+                    )
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This review already started with different decisions; "
+                        "retrieve the data again for another calibration."
+                    ),
+                ) from exc
+            job = existing
+            quality_context = existing_quality
+            cleaned_path = Path(str(job["source_path"]))
+            cleaned_hash = str(job["source_hash"])
+        record.update(
+            {
+                "state": "consumed",
+                "decisions": canonical_decisions,
+                "cleaned_source_path": str(cleaned_path.resolve()),
+                "cleaned_source_hash": cleaned_hash,
+                "quality_context": quality_context,
+                "job_id": job["id"],
+                "consumed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        try:
+            _save_calibration_review(record)
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "The calibration job started, but its review receipt could "
+                    "not be stored. Retry the same decisions to recover the job."
+                ),
+            ) from exc
+        return JSONResponse(
+            {
+                "job_id": job["id"],
+                "review_id": review_id,
+                "state": job["state"],
+                "data_quality": quality_context,
+            }
+        )
+
+
+def _legacy_unreviewed_run_enabled() -> bool:
+    return os.getenv(
+        "PV_DASHBOARD_ENABLE_LEGACY_RUN", ""
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 @app.post("/api/run")
 def start_run(req: RunRequest) -> JSONResponse:
+    if not _legacy_unreviewed_run_enabled():
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Direct calibration runs are retired. Start with "
+                "POST /api/calibration-reviews, review the detected issues, "
+                "then submit decisions to the returned review run endpoint."
+            ),
+        )
     _validate_run_request(req)
     _validate_curtailment(req)
     job = _enqueue_baseline_job("validation", _run_request_context(req))
@@ -2273,10 +3209,27 @@ def retry_model_job(job_id: str) -> JSONResponse:
 
 @app.post("/api/jobs/{job_id}/promote")
 def promote_model_job(job_id: str) -> JSONResponse:
+    candidate = _get_job_record(job_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Unknown job id")
+    if candidate.get("mode") == "validation":
+        reviewed_quality = _reviewed_baseline_data_quality(candidate)
+        verified_path, verified_hash = _verified_baseline_source(candidate)
+        if (
+            reviewed_quality is None
+            or not verified_path
+            or not verified_hash
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This calibration job is not bound to an available, hash-verified "
+                    "data-quality review and cannot be promoted. Run the requested "
+                    "range through the visible Calibration review first."
+                ),
+            )
     try:
         promoted = AGENT_STORE.promote_job(job_id)
-    except RecordNotFound as exc:
-        raise HTTPException(status_code=404, detail="Unknown job id") from exc
     except InvalidStateTransition as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     job = promoted["job"]

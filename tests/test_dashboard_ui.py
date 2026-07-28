@@ -31,6 +31,13 @@ def assert_plot_timestamp_format(test_case, axis):
 
 class CurtailmentDefaultTests(unittest.TestCase):
     def setUp(self):
+        legacy_run = patch.object(
+            app,
+            "_legacy_unreviewed_run_enabled",
+            return_value=True,
+        )
+        legacy_run.start()
+        self.addCleanup(legacy_run.stop)
         app.JOBS.clear()
         handle = tempfile.NamedTemporaryFile(
             prefix="dashboard-api-test-",
@@ -144,6 +151,26 @@ class DashboardInteractionMarkupTests(unittest.TestCase):
             '<button class="run-btn" id="runBtn">Run analysis</button>',
             self.html,
         )
+
+    def test_calibration_requires_data_review_and_renders_seasonal_factors(self):
+        for marker in (
+            'id="calibrationReviewPanel"',
+            'id="calibrationIssueList"',
+            'id="applyCalibrationReviewBtn"',
+            'id="calibrationFactorPanel"',
+            'id="calibrationFactorRows"',
+            "/api/calibration-reviews",
+            "calibrationReviewDecisions()",
+            "renderCalibrationFactors(result)",
+            "new AbortController()",
+            "calibrationWorkflowRevision",
+            "pendingCalibrationReview.decisions[issueId]",
+            "overall_period_fallback",
+            "calibrationReviewIsExpired",
+            "Decision for ",
+        ):
+            self.assertIn(marker, self.html)
+        self.assertNotIn("fetch('/api/run'", self.html)
 
     def test_chat_window_has_a_persistent_drag_handle(self):
         self.assertIn('id="chatDragHandle"', self.html)
