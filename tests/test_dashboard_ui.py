@@ -1,9 +1,11 @@
 import re
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import matplotlib.dates as mdates
 import matplotlib.figure
 import pandas as pd
 from fastapi.testclient import TestClient
@@ -11,6 +13,20 @@ from fastapi.testclient import TestClient
 import app
 import sbe_pv_model as model
 from agent_store import AgentStore
+
+
+PLOT_TIMESTAMP_FORMAT = "%m-%d-%Y %H:%M"
+
+
+def assert_plot_timestamp_format(test_case, axis):
+    formatter = axis.xaxis.get_major_formatter()
+    test_case.assertIsInstance(formatter, mdates.DateFormatter)
+    test_case.assertEqual(formatter.fmt, PLOT_TIMESTAMP_FORMAT)
+    sample = datetime(2025, 12, 15, 9, 0, tzinfo=formatter.tz)
+    test_case.assertEqual(
+        formatter(mdates.date2num(sample)),
+        "12-15-2025 09:00",
+    )
 
 
 class CurtailmentDefaultTests(unittest.TestCase):
@@ -119,9 +135,15 @@ class DashboardInteractionMarkupTests(unittest.TestCase):
         )
         self.assertNotIn("curtailmentLimitKw.value = '';", self.html)
 
-    def test_validation_action_uses_run_configuration_copy(self):
-        self.assertIn("<strong>Ready to run configuration?</strong>", self.html)
+    def test_calibration_action_uses_calibration_copy(self):
+        self.assertIn("<strong>Ready to calibrate?</strong>", self.html)
+        self.assertIn('<button class="run-btn" id="runBtn">Run calibration</button>', self.html)
+        self.assertNotIn("<strong>Ready to run configuration?</strong>", self.html)
         self.assertNotIn("<strong>Ready to validate?</strong>", self.html)
+        self.assertNotIn(
+            '<button class="run-btn" id="runBtn">Run analysis</button>',
+            self.html,
+        )
 
     def test_chat_window_has_a_persistent_drag_handle(self):
         self.assertIn('id="chatDragHandle"', self.html)
@@ -176,6 +198,118 @@ class AcChartLayoutTests(unittest.TestCase):
         self.assertEqual(len(ac_figure.texts), 1)
         self.assertEqual(len(ac_figure.legends), 1)
         self.assertLessEqual(ac_axes.get_position().y1, 0.781)
+
+
+class GeneratedPlotTimestampTests(unittest.TestCase):
+    @staticmethod
+    def _model_frame():
+        index = pd.date_range(
+            "2025-12-15 09:00", periods=3, freq="h", tz="America/Denver"
+        )
+        return pd.DataFrame(
+            {
+                "se_predicted_power_w": [0.0, 100_000.0, 0.0],
+                "sol_predicted_power_w": [0.0, 90_000.0, 0.0],
+                "se_measured_power_w": [0.0, 95_000.0, 0.0],
+                "sol_measured_power_w": [0.0, 85_000.0, 0.0],
+                "se_predicted_energy_kwh": [0.0, 50.0, 100.0],
+                "sol_predicted_energy_kwh": [0.0, 45.0, 90.0],
+                "se_measured_energy_kwh": [0.0, 47.5, 95.0],
+                "sol_measured_energy_kwh": [0.0, 42.5, 85.0],
+            },
+            index=index,
+        )
+
+    def test_calibrated_model_power_and_energy_plots_use_requested_format(self):
+        saved_figures = []
+
+        def capture(figure, *_args, **_kwargs):
+            saved_figures.append(figure)
+
+        with patch.object(
+            matplotlib.figure.Figure,
+            "savefig",
+            autospec=True,
+            side_effect=capture,
+        ):
+            model.plot_results(self._model_frame(), "ignored")
+
+        self.assertEqual(len(saved_figures), 2)
+        for figure in saved_figures:
+            assert_plot_timestamp_format(self, figure.axes[0])
+
+    def test_historian_input_plots_use_requested_format(self):
+        saved_figures = []
+        source_frame = pd.DataFrame(
+            {
+                "timestamp": [
+                    "2025-12-15 16:00:00",
+                    "2025-12-15 17:00:00",
+                ],
+                "solaredge_measured_power": [1000.0, 1500.0],
+                "solectria_measured_power": [900.0, 1400.0],
+                "dni": [700.0, 750.0],
+                "ghi": [500.0, 550.0],
+                "dhi": [100.0, 110.0],
+            }
+        )
+
+        def capture(figure, *_args, **_kwargs):
+            saved_figures.append(figure)
+
+        with (
+            patch.object(pd, "read_csv", return_value=source_frame),
+            patch.object(
+                matplotlib.figure.Figure,
+                "savefig",
+                autospec=True,
+                side_effect=capture,
+            ),
+        ):
+            app._render_input_data_plots(
+                Path("ignored.csv"),
+                Path("ignored"),
+            )
+
+        self.assertEqual(len(saved_figures), 2)
+        for figure in saved_figures:
+            assert_plot_timestamp_format(self, figure.axes[0])
+
+    def test_annual_input_plot_uses_requested_format(self):
+        frame = pd.DataFrame(
+            {
+                "dni_wm2": [700.0, 750.0],
+                "ghi_wm2": [500.0, 550.0],
+                "dhi_wm2": [100.0, 110.0],
+            },
+            index=pd.date_range(
+                "2025-12-15 09:00",
+                periods=2,
+                freq="h",
+                tz="America/Denver",
+            ),
+        )
+        saved_figures = []
+
+        def capture(figure, *_args, **_kwargs):
+            saved_figures.append(figure)
+
+        with (
+            patch.object(app.model, "parse_midc_csv", return_value=(frame, [])),
+            patch.object(
+                matplotlib.figure.Figure,
+                "savefig",
+                autospec=True,
+                side_effect=capture,
+            ),
+        ):
+            app._render_midc_input_data_plots(
+                Path("ignored.csv"),
+                Path("ignored"),
+            )
+
+        self.assertEqual(len(saved_figures), 1)
+        assert_plot_timestamp_format(self, saved_figures[0].axes[0])
 
 
 if __name__ == "__main__":

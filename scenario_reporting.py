@@ -2,7 +2,7 @@
 
 This module deliberately contains no language-model logic.  It reads the model
 workbooks produced by :mod:`sbe_pv_model`, verifies source provenance for
-like-for-like comparisons, calculates all engineering deltas in Python, and
+same-interval comparisons, calculates all engineering deltas in Python, and
 creates the comparison workbook and charts consumed by the scenario-agent UI.
 """
 
@@ -21,6 +21,7 @@ from urllib.parse import quote
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -33,9 +34,9 @@ CROSS_RUN = "cross_run"
 COMPARISON_TYPES = frozenset({SAME_INPUT, CROSS_RUN})
 
 CROSS_RUN_CAVEAT = (
-    "Non-like-for-like comparison: the source data, timestamps, or run window "
-    "differs. Aggregate differences are descriptive only and must not be "
-    "attributed causally to parameter changes."
+    "Different interval or source data: aggregate differences are descriptive "
+    "only and must not be attributed causally to parameter changes. Run the "
+    "same interval with different parameters for a controlled comparison."
 )
 
 PREDICTED_POWER_COLUMNS = (
@@ -69,7 +70,7 @@ FORMULAS = {
 
 
 class ComparisonInvariantError(ValueError):
-    """Raised when a requested same-input comparison is not like-for-like."""
+    """Raised when a requested same-input comparison breaks alignment invariants."""
 
 
 class SourceFingerprintMismatch(ComparisonInvariantError):
@@ -726,7 +727,7 @@ def _summary_frame(comparison: Mapping[str, Any]) -> pd.DataFrame:
         if validation:
             rows.append(
                 {
-                    "section": "validation",
+                    "section": "calibration",
                     "system": label,
                     "metric": "model_residual",
                     "baseline_value": validation["baseline_residual_pct"],
@@ -882,10 +883,12 @@ def _write_comparison_workbook(
         worksheet["A1"] = "Solar Scenario Comparison"
         worksheet["A2"] = "Comparison type"
         worksheet["B2"] = comparison["comparison_type"]
-        worksheet["A3"] = "Like for like"
+        worksheet["A3"] = "Same interval and source data"
         worksheet["B3"] = bool(comparison["like_for_like"])
         worksheet["A4"] = "Caveat"
-        worksheet["B4"] = comparison.get("caveat") or "Like-for-like source and measured-data invariants passed."
+        worksheet["B4"] = comparison.get("caveat") or (
+            "Same interval and source data; only the requested parameters change."
+        )
 
     _format_workbook(path)
 
@@ -924,11 +927,15 @@ def _plot_same_input(
             linewidth=1.7,
             label=f"{labels[system]} scenario",
         )
-    axis.set_title(f"{title}\nLike-for-like inputs; dashed = baseline, solid = scenario")
+    axis.set_title(
+        f"{title}\nSame interval, different parameters; "
+        "dashed = baseline, solid = scenario"
+    )
     axis.set_xlabel(x_label)
     axis.set_ylabel(unit)
     axis.grid(True, color="#D1D5DB", alpha=0.55, linewidth=0.7)
     axis.legend(loc="best", ncol=2)
+    axis.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d-%Y %H:%M"))
     fig.autofmt_xdate()
     fig.tight_layout()
     fig.savefig(path, dpi=180, bbox_inches="tight", facecolor="white")
@@ -968,13 +975,15 @@ def _plot_cross_run(
         axis.set_xlabel(x_label)
         axis.grid(True, color="#D1D5DB", alpha=0.55, linewidth=0.7)
         axis.legend(loc="best")
+        axis.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d-%Y %H:%M"))
         axis.tick_params(axis="x", rotation=25)
     axes[0].set_ylabel(unit)
     fig.suptitle(f"{title} — Separate Run Windows", fontsize=14)
     fig.text(
         0.5,
         0.015,
-        "Non-like-for-like: panels are not pointwise aligned; aggregate differences are descriptive only.",
+        "Different interval or source data: panels are not pointwise aligned; "
+        "aggregate differences are descriptive only.",
         ha="center",
         color="#6B7280",
         fontsize=9,
@@ -1018,9 +1027,9 @@ def _plot_monthly(monthly: pd.DataFrame, path: Path, comparison_type: str) -> No
     axes[1].set_xticks(positions)
     axes[1].set_xticklabels(labels, rotation=35, ha="right")
     subtitle = (
-        "Like-for-like monthly totals"
+        "Same interval, different parameters"
         if comparison_type == SAME_INPUT
-        else "Non-like-for-like monthly totals; descriptive comparison only"
+        else "Different interval or source data; descriptive comparison only"
     )
     fig.suptitle(f"Monthly Predicted Energy Comparison\n{subtitle}", fontsize=14)
     fig.tight_layout(rect=(0, 0, 1, 0.94))

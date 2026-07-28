@@ -32,6 +32,7 @@ import pandas as pd
 import matplotlib
 
 matplotlib.use("Agg")  # non-interactive: save PNGs, never block on show()
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 
 import pvlib as pvl
@@ -797,7 +798,7 @@ def add_energy(df: pd.DataFrame) -> pd.DataFrame:
 def apply_curtailment(df: pd.DataFrame, limit_kw: float | None) -> pd.DataFrame:
     """Clip predicted AC power only to a per-system kW limit.
 
-    Historian measurements are observations, not controllable model outputs.
+    Historian measurements are observations, not controllable modeled values.
     Keeping them immutable is required for trustworthy baseline/scenario
     comparisons and validation residuals.
     """
@@ -862,6 +863,9 @@ def plot_results(
     ax1.set_xlabel(f"Time ({df.index.tz})")
     ax1.set_ylabel("AC Power (kW)")
     ax1.grid(True, alpha=0.25)
+    ax1.xaxis.set_major_formatter(
+        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=df.index.tz)
+    )
     fig1.autofmt_xdate()
     fig1.subplots_adjust(top=0.78)
 
@@ -914,6 +918,9 @@ def plot_results(
     ax2.set_ylabel("Cumulative Energy (kWh)")
     ax2.grid(True, alpha=0.25)
     ax2.legend(loc="best")
+    ax2.xaxis.set_major_formatter(
+        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=df.index.tz)
+    )
     fig2.autofmt_xdate()
 
     meas_sys_pct = (se_meas - sol_meas) / sol_meas * 100.0 if sol_meas != 0 else np.nan
@@ -1180,7 +1187,12 @@ def run_model(
         progress_cb(0.97, "Creating Excel workbook")
     write_excel(df, f"{output_base}.xlsx", meta, annual_mode=annual_mode)
     if progress_cb:
-        progress_cb(1.0, "Model outputs ready")
+        progress_cb(
+            1.0,
+            "Annual model predictions ready"
+            if annual_mode
+            else "Calibrated Model Predictions ready",
+        )
 
     se_meas = float(df["se_measured_energy_kwh"].iloc[-1])
     se_pred = float(df["se_predicted_energy_kwh"].iloc[-1])

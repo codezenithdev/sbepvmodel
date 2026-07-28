@@ -132,6 +132,148 @@ class AgentFrontendContractTests(unittest.TestCase):
         self.assertIn("Scenario results stay separate until you promote them.", self.html)
         self.assertNotIn("Model runs always need your approval", self.html)
 
+    def test_solar_agent_prompt_uses_exact_new_copy(self):
+        self.assertIn('placeholder="Ask Solar Agent…"', self.html)
+        self.assertIn('title="Ask Solar Agent. Drag to move."', self.html)
+        self.assertNotIn("Ask about this dashboard", self.html)
+
+    def test_customer_copy_uses_calibration_while_internal_mode_stays_validation(self):
+        for customer_copy in (
+            ">Model Calibration</button>",
+            ">Calibration window</h3>",
+            ">Calibration results</h2>",
+            'aria-label="Calibration efficiencies"',
+            ">Calibration IAM model</legend>",
+            'aria-label="System calibration summary"',
+            "'Calibration'",
+        ):
+            self.assertIn(customer_copy, self.html)
+
+        for retired_copy in (
+            ">Model Validation</button>",
+            ">Validation window</h3>",
+            ">Validation results</h2>",
+            'aria-label="Validation efficiencies"',
+            ">Validation IAM model</legend>",
+            'aria-label="System validation summary"',
+            "'Validation'",
+        ):
+            self.assertNotIn(retired_copy, self.html)
+
+        for internal_contract in (
+            'id="validationTab"',
+            "let activeMode = 'validation'",
+            "switchMode('validation')",
+            "activeMode === 'validation'",
+            "validation: promoted.validation || null",
+        ):
+            self.assertIn(internal_contract, self.html)
+
+    def test_help_tooltips_are_focusable_described_and_keyboard_visible(self):
+        tooltip_ids = (
+            "dashboardHelpTooltip",
+            "calibrationHelpTooltip",
+            "calibrationEfficiencyHelpTooltip",
+            "solarAgentHelpTooltip",
+        )
+        for tooltip_id in tooltip_ids:
+            with self.subTest(tooltip_id=tooltip_id):
+                self.assertRegex(
+                    self.html,
+                    (
+                        rf'<button\b'
+                        rf'(?=[^>]*\bclass="help-tip")'
+                        rf'(?=[^>]*\btype="button")'
+                        rf'(?=[^>]*\baria-describedby="{tooltip_id}")'
+                        rf'(?=[^>]*\baria-expanded="false")[^>]*>'
+                    ),
+                )
+                self.assertRegex(
+                    self.html,
+                    (
+                        rf'<span\b'
+                        rf'(?=[^>]*\bclass="help-tooltip")'
+                        rf'(?=[^>]*\bid="{tooltip_id}")'
+                        rf'(?=[^>]*\brole="tooltip")[^>]*>'
+                    ),
+                )
+
+        for interaction_hook in (
+            ".help-tip-wrap:hover .help-tooltip",
+            ".help-tip:focus-visible + .help-tooltip",
+            '.help-tip[aria-expanded="true"] + .help-tooltip',
+            "helpTipButtons.forEach((button) => {",
+            "event.key !== 'Escape'",
+        ):
+            self.assertIn(interaction_hook, self.html)
+
+    def test_card_help_controls_are_anchored_to_the_right_corner(self):
+        self.assertEqual(
+            self.html.count('class="annual-card-heading has-corner-help"'),
+            3,
+        )
+        self.assertEqual(
+            self.html.count('class="help-tip-wrap card-corner-help"'),
+            3,
+        )
+        for layout_hook in (
+            ".annual-card-heading.has-corner-help",
+            ".annual-card-heading .card-corner-help",
+            "right: 18px",
+            ".card-corner-help .help-tooltip",
+            "right: 0",
+            "left: auto",
+        ):
+            self.assertIn(layout_hook, self.html)
+
+    def test_chat_timestamp_and_timing_metadata_render_and_persist(self):
+        for rendering_hook in (
+            "function formatDashboardTimestamp(value)",
+            "timeZone: 'America/Denver'",
+            ".formatToParts(normalizeChatTimestamp(value))",
+            "return `${values.month}-${values.day}-${values.year} ${values.hour}:${values.minute}`",
+            "meta.className = 'message-meta'",
+            "timestamp.dateTime = createdAt",
+            "timestamp.textContent = formatDashboardTimestamp(createdAt)",
+            "gpt_seconds: finiteElapsedSeconds(timing.gpt_seconds)",
+            "model_run_seconds: finiteElapsedSeconds(timing.model_run_seconds)",
+            "modelTimingText(",
+            "applyMessageMeta(loadingBubble.parentElement, 'assistant', assistantMessage)",
+        ):
+            self.assertIn(rendering_hook, self.html)
+
+        self.assertRegex(
+            self.html,
+            r"const userMessage = \{\s*role: 'user',\s*content: text,\s*"
+            r"created_at: new Date\(\)\.toISOString\(\),\s*\};",
+        )
+        for persistence_hook in (
+            "chatMessages,",
+            "saved.chatMessages",
+            "item.created_at || item.createdAt",
+            "item.gpt_seconds ?? item.gptSeconds",
+            "item.model_run_seconds ?? item.modelSeconds",
+            "item.model_run_status || item.modelStatus || 'not_run'",
+        ):
+            self.assertIn(persistence_hook, self.html)
+
+    def test_calibrated_predictions_and_comparison_wording_are_customer_facing(self):
+        self.assertIn(
+            '<div class="chart-title">Calibrated Model Predictions</div>',
+            self.html,
+        )
+        self.assertNotRegex(self.html, re.compile(r"\bmodel outputs?\b", re.IGNORECASE))
+        for comparison_copy in (
+            "Run the same interval with different parameters",
+            "Different interval or source data",
+            "Same interval and source data; only the requested parameters change.",
+        ):
+            self.assertIn(comparison_copy, self.html)
+        self.assertNotRegex(
+            self.html,
+            re.compile(r"\b(?:non-)?like[- ]for[- ]like\b", re.IGNORECASE),
+        )
+
     def test_minimize_collapses_chat_without_clearing_conversation(self):
         self.assertIn(
             'aria-label="Minimize Solar Agent to view dashboard charts"', self.html
@@ -165,7 +307,10 @@ class AgentFrontendContractTests(unittest.TestCase):
         )
         self.assertIsNotNone(start_new)
         body = start_new.group(1)
-        self.assertIn("chatMessages = [{ role: 'assistant'", body)
+        self.assertIn("chatMessages = [{", body)
+        self.assertIn("role: 'assistant'", body)
+        self.assertIn("content: DEFAULT_ASSISTANT_MESSAGE", body)
+        self.assertIn("created_at: new Date().toISOString()", body)
         self.assertNotIn("agentProposalSnapshots.clear", body)
         self.assertNotIn("agentJobSnapshots.clear", body)
 

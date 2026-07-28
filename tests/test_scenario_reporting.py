@@ -1,10 +1,13 @@
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
+import matplotlib.dates as mdates
+import matplotlib.figure
 import pandas as pd
 
 import sbe_pv_model as model
@@ -12,6 +15,18 @@ import scenario_reporting as reporting
 
 
 TEST_TEMP_ROOT = Path(__file__).resolve().parent / "outputs"
+PLOT_TIMESTAMP_FORMAT = "%m-%d-%Y %H:%M"
+
+
+def assert_plot_timestamp_format(test_case, axis):
+    formatter = axis.xaxis.get_major_formatter()
+    test_case.assertIsInstance(formatter, mdates.DateFormatter)
+    test_case.assertEqual(formatter.fmt, PLOT_TIMESTAMP_FORMAT)
+    sample = datetime(2025, 12, 15, 9, 0, tzinfo=formatter.tz)
+    test_case.assertEqual(
+        formatter(mdates.date2num(sample)),
+        "12-15-2025 09:00",
+    )
 
 
 def unique_output_path(suffix):
@@ -272,10 +287,49 @@ class ComparisonMetricTests(unittest.TestCase):
         )
 
         self.assertFalse(result["like_for_like"])
-        self.assertIn("Non-like-for-like", result["caveat"])
+        self.assertIn("Different interval or source data", result["caveat"])
+        self.assertIn(
+            "Run the same interval with different parameters", result["caveat"]
+        )
         self.assertEqual(result["attribution"]["scope"], "descriptive_only")
         self.assertFalse(result["attribution"]["causal_attribution_allowed"])
         self.assertFalse(result["invariants"]["timestamps_aligned"])
+
+
+class PlotTimestampFormatTests(unittest.TestCase):
+    def test_same_interval_and_cross_run_plots_use_requested_format(self):
+        same_interval = make_time_series(start="2025-12-15 09:00")
+        later_interval = make_time_series(start="2026-01-15 09:00")
+        saved_figures = []
+
+        def capture(figure, *_args, **_kwargs):
+            saved_figures.append(figure)
+
+        with patch.object(
+            matplotlib.figure.Figure,
+            "savefig",
+            autospec=True,
+            side_effect=capture,
+        ):
+            reporting._plot_same_input(
+                same_interval,
+                same_interval.copy(),
+                Path("ignored-same-input.png"),
+                quantity="power",
+            )
+            reporting._plot_cross_run(
+                same_interval,
+                later_interval,
+                Path("ignored-cross-run.png"),
+                quantity="energy",
+            )
+
+        self.assertEqual(len(saved_figures), 2)
+        self.assertEqual(len(saved_figures[0].axes), 1)
+        self.assertEqual(len(saved_figures[1].axes), 2)
+        for figure in saved_figures:
+            for axis in figure.axes:
+                assert_plot_timestamp_format(self, axis)
 
 
 class ArtifactTests(unittest.TestCase):

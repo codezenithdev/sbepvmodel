@@ -266,6 +266,7 @@
         }
 
         .header-copy {
+            position: relative;
             padding: 24px;
             background: var(--surface);
             border: 1px solid var(--border);
@@ -288,6 +289,90 @@
             font-weight: 820;
             line-height: 1.12;
             margin-bottom: 12px;
+        }
+
+        .header-title-row,
+        .heading-with-help {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-title-row {
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .header-title-row .header-title {
+            margin-bottom: 0;
+        }
+
+        .help-tip-wrap {
+            position: relative;
+            z-index: 30;
+            display: inline-grid;
+            flex: 0 0 auto;
+        }
+
+        .help-tip {
+            width: 30px;
+            height: 30px;
+            display: grid;
+            place-items: center;
+            padding: 0;
+            border: 1px solid var(--border-strong);
+            border-radius: 50%;
+            background: var(--surface);
+            color: var(--accent-strong);
+            font-size: 14px;
+            font-weight: 900;
+            line-height: 1;
+            cursor: help;
+            box-shadow: 0 2px 7px rgba(22, 34, 29, 0.08);
+        }
+
+        .help-tip:hover,
+        .help-tip:focus-visible,
+        .help-tip[aria-expanded="true"] {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            outline: none;
+        }
+
+        .help-tooltip {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            width: min(310px, calc(100vw - 32px));
+            padding: 11px 12px;
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            background: #ffffff;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.45;
+            text-align: left;
+            box-shadow: 0 12px 30px rgba(22, 34, 29, 0.18);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-4px);
+            pointer-events: none;
+            transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
+        }
+
+        .help-tip-wrap.align-left .help-tooltip {
+            right: auto;
+            left: 0;
+        }
+
+        .help-tip-wrap:hover .help-tooltip,
+        .help-tip:focus-visible + .help-tooltip,
+        .help-tip[aria-expanded="true"] + .help-tooltip {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
         }
 
         .header-subtitle {
@@ -511,6 +596,7 @@
         }
 
         .annual-config-card {
+            position: relative;
             min-width: 0;
             padding: 18px;
             border: 1px solid var(--border);
@@ -523,6 +609,21 @@
             align-items: flex-start;
             gap: 12px;
             margin-bottom: 18px;
+        }
+
+        .annual-card-heading.has-corner-help {
+            padding-right: 42px;
+        }
+
+        .annual-card-heading .card-corner-help {
+            position: absolute;
+            top: 18px;
+            right: 18px;
+        }
+
+        .card-corner-help .help-tooltip {
+            right: 0;
+            left: auto;
         }
 
         .annual-card-heading h3 {
@@ -3252,6 +3353,64 @@
             box-shadow: 0 6px 16px rgba(15, 118, 110, 0.14);
         }
 
+        .message {
+            display: grid;
+            row-gap: 5px;
+            column-gap: 10px;
+        }
+
+        .message.assistant {
+            grid-template-columns: 32px minmax(0, 1fr);
+        }
+
+        .message.assistant::before {
+            grid-column: 1;
+            grid-row: 1 / span 2;
+        }
+
+        .message.assistant .message-content,
+        .message.assistant .message-meta {
+            grid-column: 2;
+            max-width: 100%;
+            justify-self: start;
+        }
+
+        .message.user {
+            grid-template-columns: minmax(0, 1fr);
+            justify-items: end;
+        }
+
+        .message.user .message-content,
+        .message.user .message-meta {
+            grid-column: 1;
+        }
+
+        .message.system {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .message-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px 8px;
+            padding: 0 3px;
+            color: var(--muted);
+            font-size: 10.5px;
+            font-variant-numeric: tabular-nums;
+            font-weight: 700;
+            line-height: 1.35;
+        }
+
+        .message.user .message-meta {
+            justify-content: flex-end;
+            text-align: right;
+        }
+
+        .message-meta time,
+        .message-timing {
+            white-space: nowrap;
+        }
+
         .message.system .message-content {
             max-width: 100%;
             border-radius: 10px;
@@ -3445,6 +3604,18 @@
         @media (max-width: 560px) {
             body.chat-open {
                 overflow: hidden;
+            }
+
+            .help-tip-wrap.align-left .help-tooltip,
+            .card-corner-help .help-tooltip,
+            .sidebar-header-actions .help-tooltip {
+                position: fixed;
+                top: max(72px, calc(env(safe-area-inset-top) + 60px));
+                right: 12px;
+                left: 12px;
+                width: auto;
+                max-height: calc(100dvh - 96px);
+                overflow-y: auto;
             }
 
             .floating-chat-btn {
@@ -3651,7 +3822,7 @@
             }
 
             .message.assistant .message-content {
-                max-width: calc(100% - 42px);
+                max-width: 100%;
             }
 
             .chat-followups {
@@ -3758,16 +3929,18 @@
             <section class="header" aria-labelledby="dashboardTitle">
                 <div class="header-copy">
                     <p class="eyebrow">Renewable Energy Operations</p>
-                    <h1 class="header-title" id="dashboardTitle">SolarEdge &amp; Solectria Performance Analysis</h1>
+                    <div class="header-title-row">
+                        <h1 class="header-title" id="dashboardTitle">SolarEdge &amp; Solectria Performance Analysis</h1>
+                    </div>
                     <p class="header-subtitle">
-                        Compare measured power, irradiance, model output, and export-ready run artifacts for the SBE
+                        Compare measured power, irradiance, calibrated model predictions, and export-ready run artifacts for the SBE
                         Innovation Site.
                     </p>
                 </div>
             </section>
 
             <nav class="mode-tabs" aria-label="Analysis mode">
-                <button class="mode-tab active" id="validationTab" type="button" aria-selected="true">Model Validation</button>
+                <button class="mode-tab active" id="validationTab" type="button" aria-selected="true">Model Calibration</button>
                 <button class="mode-tab" id="annualTab" type="button" aria-selected="false">Annual Simulation</button>
             </nav>
 
@@ -3839,10 +4012,16 @@
                         </section>
 
                         <section class="annual-config-card" aria-labelledby="annualEfficiencyHeading">
-                            <div class="annual-card-heading">
+                            <div class="annual-card-heading has-corner-help">
                                 <span class="annual-step" aria-hidden="true">2</span>
                                 <div>
-                                    <h3 id="annualEfficiencyHeading">System efficiencies</h3>
+                                    <div class="heading-with-help">
+                                        <h3 id="annualEfficiencyHeading">System efficiencies</h3>
+                                        <span class="help-tip-wrap card-corner-help">
+                                            <button class="help-tip" type="button" aria-label="Explain annual system efficiency fields" aria-describedby="annualEfficiencyHelpTooltip" aria-expanded="false">?</button>
+                                            <span class="help-tooltip" id="annualEfficiencyHelpTooltip" role="tooltip">Enter decimal multipliers from 0 to 1. Inverter efficiency represents AC-conversion efficiency; balance of system covers other modeled losses. The model applies inverter × balance of system for each PV path.</span>
+                                        </span>
+                                    </div>
                                     <p>Use decimal values where 1.0 equals 100%.</p>
                                 </div>
                             </div>
@@ -3949,7 +4128,7 @@
                             <h2 id="annualResultsHeading">Simulation results</h2>
                             <p>Headline production first, then model differences, coverage, and time-series detail.</p>
                         </div>
-                        <span class="annual-results-note">Weather inputs render before model outputs</span>
+                        <span class="annual-results-note">Weather inputs render before annual predictions</span>
                     </div>
 
                 <section class="stats-bar annual-stats" aria-label="Annual simulation summary">
@@ -4020,17 +4199,23 @@
                 <div class="controls-header">
                     <div class="validation-heading-copy">
                         <p class="validation-kicker">Measured vs modeled</p>
-                        <h2 class="section-title">Run configuration</h2>
-                        <p class="section-subtitle">Configure the validation window and both PV model paths, then compare predictions against measured site performance.</p>
+                        <h2 class="section-title">Calibration configuration</h2>
+                        <p class="section-subtitle">Configure the calibration window and both PV model paths, then compare predictions against measured site performance.</p>
                     </div>
                 </div>
 
                 <div class="annual-config-grid validation-config-grid">
                     <section class="annual-config-card" aria-labelledby="validationWindowHeading">
-                        <div class="annual-card-heading">
+                        <div class="annual-card-heading has-corner-help">
                             <span class="annual-step" aria-hidden="true">1</span>
                             <div>
-                                <h3 id="validationWindowHeading">Validation window</h3>
+                                <div class="heading-with-help">
+                                    <h3 id="validationWindowHeading">Calibration window</h3>
+                                    <span class="help-tip-wrap card-corner-help">
+                                        <button class="help-tip" type="button" aria-label="Explain model calibration fields" aria-describedby="calibrationHelpTooltip" aria-expanded="false">?</button>
+                                        <span class="help-tooltip" id="calibrationHelpTooltip" role="tooltip">Choose the measured-data start and end in Mountain time, set the sampling interval, then adjust backtracking or curtailment if needed. Select Run calibration to compare predictions with Bazefield measurements.</span>
+                                    </span>
+                                </div>
                                 <p>Select the measured-data period in Mountain time.</p>
                             </div>
                         </div>
@@ -4092,14 +4277,20 @@
                     </section>
 
                     <section class="annual-config-card model-settings" aria-labelledby="validationEfficiencyHeading">
-                        <div class="annual-card-heading">
+                        <div class="annual-card-heading has-corner-help">
                             <span class="annual-step" aria-hidden="true">2</span>
                             <div>
-                                <h3 id="validationEfficiencyHeading">System efficiencies</h3>
+                                <div class="heading-with-help">
+                                    <h3 id="validationEfficiencyHeading">System efficiencies</h3>
+                                    <span class="help-tip-wrap card-corner-help">
+                                        <button class="help-tip" type="button" aria-label="Explain calibration system efficiency fields" aria-describedby="calibrationEfficiencyHelpTooltip" aria-expanded="false">?</button>
+                                        <span class="help-tooltip" id="calibrationEfficiencyHelpTooltip" role="tooltip">Enter decimal multipliers from 0 to 1. Inverter efficiency represents AC-conversion efficiency; balance of system covers other modeled losses. The model applies inverter × balance of system for each PV path.</span>
+                                    </span>
+                                </div>
                                 <p>Use decimal values where 1.0 equals 100%.</p>
                             </div>
                         </div>
-                        <div class="annual-system-grid" aria-label="Validation efficiencies">
+                        <div class="annual-system-grid" aria-label="Calibration efficiencies">
                             <section class="annual-system-card solaredge" aria-labelledby="validationSolarEdgeHeading">
                                 <div class="annual-system-heading">
                                     <span class="system-dot solaredge-dot" aria-hidden="true"></span>
@@ -4142,7 +4333,7 @@
                                 <p>Choose how incidence-angle optical losses are modeled.</p>
                             </div>
                             <fieldset class="iam-model-fieldset" aria-labelledby="validationIamHeading">
-                                <legend class="sr-only">Validation IAM model</legend>
+                                <legend class="sr-only">Calibration IAM model</legend>
                                 <div class="iam-model-options">
                                     <div class="iam-model-card">
                                         <input type="radio" class="iam-model-input" id="iamModelPhysical" name="iamModel" value="physical" aria-describedby="iamPhysicalDescription iamPhysicalReference" checked>
@@ -4175,12 +4366,12 @@
                 </div>
                 <div class="configuration-actions">
                     <p class="configuration-actions-copy">
-                        <strong>Ready to run configuration?</strong>
+                        <strong>Ready to calibrate?</strong>
                         Run the configured window; workbook export appears when processing completes.
                     </p>
                     <div class="control-actions">
                         <a class="download-link hidden" id="excelLink" href="#" download>Export workbook</a>
-                        <button class="run-btn" id="runBtn">Run analysis</button>
+                        <button class="run-btn" id="runBtn">Run calibration</button>
                     </div>
                 </div>
             </section>
@@ -4199,13 +4390,13 @@
             <section class="validation-results-shell validation-only" aria-labelledby="validationResultsHeading">
                 <div class="annual-results-heading">
                     <div>
-                        <h2 id="validationResultsHeading">Validation results</h2>
+                        <h2 id="validationResultsHeading">Calibration results</h2>
                         <p>Measured energy, predicted performance, and model deltas over the selected window.</p>
                     </div>
                     <span class="annual-results-note">Measured vs predicted</span>
                 </div>
 
-                <section class="validation-system-summaries" aria-label="System validation summary">
+                <section class="validation-system-summaries" aria-label="System calibration summary">
                     <article class="validation-system-summary solaredge-summary" aria-labelledby="validationSolarEdgeSummaryHeading">
                         <div class="validation-system-summary-heading">
                             <span class="system-dot solaredge-dot" aria-hidden="true"></span>
@@ -4327,8 +4518,8 @@
                     <article class="chart-card">
                         <div class="chart-header">
                             <div>
-                                <div class="chart-title">AC Power Output</div>
-                                <div class="chart-meta">SolarEdge vs Solectria - predicted and measured AC output</div>
+                                <div class="chart-title">Calibrated Model Predictions</div>
+                                <div class="chart-meta">SolarEdge vs Solectria - predicted and measured AC power</div>
                             </div>
                             <span class="chart-badge">Power</span>
                         </div>
@@ -4345,7 +4536,7 @@
 
     <button class="floating-chat-btn" id="chatToggle" type="button"
         aria-label="Open Solar Agent. Drag to move." aria-controls="chatSidebar" aria-haspopup="dialog"
-        aria-expanded="false" title="Ask about this dashboard. Drag to move.">
+        aria-expanded="false" title="Ask Solar Agent. Drag to move.">
         <span class="chat-launch-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"></path></svg>
         </span>
@@ -4368,6 +4559,10 @@
                 </div>
             </div>
             <div class="sidebar-header-actions">
+                <span class="help-tip-wrap">
+                    <button class="help-tip" type="button" aria-label="Solar Agent help" aria-describedby="solarAgentHelpTooltip" aria-expanded="false">?</button>
+                    <span class="help-tooltip" id="solarAgentHelpTooltip" role="tooltip">Ask about the active calibration or annual run. Solar Agent can explain results and prepare scenarios, but a scenario stays separate from the active baseline until you promote it.</span>
+                </span>
                 <button class="header-icon-btn" id="newChatBtn" type="button" aria-label="Start a new Solar Agent conversation" title="New conversation">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>
                 </button>
@@ -4383,7 +4578,7 @@
             <div class="agent-context-row">
                 <div class="agent-context-badge" id="agentContextBadge" title="Current Solar Agent context">
                     <span class="agent-context-dot" aria-hidden="true"></span>
-                    <span class="agent-context-text" id="agentContextText">Validation &middot; No baseline yet</span>
+                    <span class="agent-context-text" id="agentContextText">Calibration &middot; No baseline yet</span>
                 </div>
                 <button class="agent-activity-toggle hidden" id="agentActivityToggle" type="button"
                     aria-controls="agentActivity" aria-expanded="false">
@@ -4408,7 +4603,7 @@
                             <p class="chat-welcome-description">Ask about performance, model accuracy, or explore a what-if scenario using the active dashboard context.</p>
                         </div>
                         <div class="chat-prompt-grid" aria-label="Suggested Solar Agent questions">
-                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Summarize this validation window">Summarize this view</button>
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Summarize this calibration window">Summarize this view</button>
                             <button class="chat-prompt-btn" type="button" data-chat-prompt="Why do measured and modeled values differ?">Explain modeled vs measured</button>
                             <button class="chat-prompt-btn" type="button" data-chat-prompt="Compare SolarEdge and Solectria">Compare both systems</button>
                             <button class="chat-prompt-btn" type="button" data-chat-prompt="Test what changes with backtracking off">Test backtracking off</button>
@@ -4420,7 +4615,7 @@
                     <label class="sr-only" for="chatInput">Message Solar Agent</label>
                     <div class="chat-composer-row">
                         <textarea class="input-field chat-input" id="chatInput" rows="1" maxlength="4000"
-                            aria-describedby="chatComposerStatus" placeholder="Ask about this dashboard..."></textarea>
+                            aria-describedby="chatComposerStatus" placeholder="Ask Solar Agent…"></textarea>
                         <button class="send-btn" id="sendBtn" type="button" aria-label="Send message">
                             <span class="send-label">Send</span>
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19 0-14M6.5 10.5 12 5l5.5 5.5"></path></svg>
@@ -4459,6 +4654,39 @@
         </div>
     </div>
     <script>
+        const helpTipButtons = Array.from(document.querySelectorAll('.help-tip'));
+
+        function closeHelpTips(except = null) {
+            helpTipButtons.forEach((button) => {
+                if (button !== except) button.setAttribute('aria-expanded', 'false');
+            });
+        }
+
+        helpTipButtons.forEach((button) => {
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const willOpen = button.getAttribute('aria-expanded') !== 'true';
+                closeHelpTips(button);
+                button.setAttribute('aria-expanded', String(willOpen));
+            });
+        });
+
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('.help-tip-wrap')) closeHelpTips();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            const activeHelp = event.target.closest?.('.help-tip');
+            const hasOpenHelp = helpTipButtons.some(
+                (button) => button.getAttribute('aria-expanded') === 'true'
+            );
+            if (!activeHelp && !hasOpenHelp) return;
+            closeHelpTips();
+            activeHelp?.blur();
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        });
+
         // ---- Run pipeline + progress polling ----
         const runBtn = document.getElementById('runBtn');
         const progressWrap = document.getElementById('progressWrap');
@@ -4502,7 +4730,11 @@
         let annualLatestResult = null;
         let annualRunState = null;
         let annualPollTimer = null;
-        let chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
+        let chatMessages = [{
+            role: 'assistant',
+            content: DEFAULT_ASSISTANT_MESSAGE,
+            created_at: new Date().toISOString(),
+        }];
         let serverSessionId = null;
         let agentServerState = { proposals: [], jobs: [], promoted_baselines: { validation: null, annual: null } };
         const agentJobPollTimers = new Map();
@@ -4998,7 +5230,11 @@
             annualLatestJobId = null;
             annualLatestResult = null;
             annualRunState = null;
-            chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
+            chatMessages = [{
+                role: 'assistant',
+                content: DEFAULT_ASSISTANT_MESSAGE,
+                created_at: new Date().toISOString(),
+            }];
             chatDraft = '';
             chatInput.value = '';
             autoResizeChatInput();
@@ -5139,7 +5375,7 @@
 
         function resetRunBtn() {
             runBtn.disabled = false;
-            runBtn.textContent = 'Run analysis';
+            runBtn.textContent = 'Run calibration';
         }
 
         async function pollStatus(jobId) {
@@ -5426,7 +5662,7 @@
             messagesContainer.setAttribute('aria-busy', String(chatIsSending));
             sendBtn.setAttribute('aria-label', chatIsSending ? 'Solar Agent is responding' : 'Send message');
             chatComposerStatus.textContent = chatIsSending
-                ? 'Reviewing the active ' + (activeMode === 'annual' ? 'annual simulation' : 'validation run') + '...'
+                ? 'Reviewing the active ' + (activeMode === 'annual' ? 'annual simulation' : 'calibration run') + '...'
                 : isChatMobile()
                     ? 'Tap Send · Enter adds a new line'
                     : 'Enter to send · Shift+Enter for a new line';
@@ -5468,7 +5704,11 @@
 
         function startNewChat() {
             if (chatIsSending) return;
-            chatMessages = [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
+            chatMessages = [{
+                role: 'assistant',
+                content: DEFAULT_ASSISTANT_MESSAGE,
+                created_at: new Date().toISOString(),
+            }];
             chatDraft = '';
             chatInput.value = '';
             autoResizeChatInput();
@@ -5859,7 +6099,7 @@
                 ];
             }
             return [
-                ['Summarize this view', 'Summarize this validation window'],
+                ['Summarize this view', 'Summarize this calibration window'],
                 ['Explain modeled vs measured', 'Why do measured and modeled values differ?'],
                 ['Compare both systems', 'Compare SolarEdge and Solectria'],
                 ['Test backtracking off', 'Test what changes with backtracking off'],
@@ -5923,6 +6163,96 @@
             });
         }
 
+        function normalizeChatTimestamp(value) {
+            const parsed = new Date(value || Date.now());
+            return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+        }
+
+        function formatDashboardTimestamp(value) {
+            const parts = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'America/Denver',
+                month: '2-digit',
+                day: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hourCycle: 'h23',
+            }).formatToParts(normalizeChatTimestamp(value));
+            const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+            return `${values.month}-${values.day}-${values.year} ${values.hour}:${values.minute}`;
+        }
+
+        function finiteElapsedSeconds(value) {
+            if (value === null || value === undefined || value === '') return null;
+            const numeric = Number(value);
+            return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+        }
+
+        function formatElapsedSeconds(value) {
+            const seconds = finiteElapsedSeconds(value);
+            return seconds === null ? null : `${seconds.toFixed(1)}s`;
+        }
+
+        function modelTimingText(status, seconds) {
+            const formatted = formatElapsedSeconds(seconds);
+            if (formatted !== null) return `Model run ${formatted}`;
+            if (status === 'queued') return 'Model run queued';
+            if (status === 'running') return 'Model run in progress';
+            if (status === 'failed') return 'Model run failed';
+            if (status === 'canceled' || status === 'cancelled') return 'Model run canceled';
+            return 'Model run not used';
+        }
+
+        function assistantMessageFromResponse(content, data = {}) {
+            const timing = data.timing || {};
+            return {
+                role: 'assistant',
+                content,
+                created_at: normalizeChatTimestamp(
+                    timing.response_timestamp
+                ).toISOString(),
+                gpt_seconds: finiteElapsedSeconds(timing.gpt_seconds),
+                model_run_seconds: finiteElapsedSeconds(timing.model_run_seconds),
+                model_run_status: timing.model_run_status || 'not_run',
+            };
+        }
+
+        function applyMessageMeta(message, role, options = {}) {
+            message.querySelector('.message-meta')?.remove();
+            if (!['user', 'assistant'].includes(role) || options.loading) return;
+
+            const createdAt = normalizeChatTimestamp(
+                options.created_at || options.createdAt
+            ).toISOString();
+            const meta = document.createElement('div');
+            meta.className = 'message-meta';
+
+            const timestamp = document.createElement('time');
+            timestamp.dateTime = createdAt;
+            timestamp.textContent = formatDashboardTimestamp(createdAt);
+            meta.appendChild(timestamp);
+
+            if (role === 'assistant') {
+                const gpt = document.createElement('span');
+                gpt.className = 'message-timing';
+                const gptSeconds = formatElapsedSeconds(
+                    options.gpt_seconds ?? options.gptSeconds
+                );
+                gpt.textContent = gptSeconds === null
+                    ? 'GPT time unavailable'
+                    : `GPT ${gptSeconds}`;
+
+                const model = document.createElement('span');
+                model.className = 'message-timing';
+                model.textContent = modelTimingText(
+                    options.model_run_status || options.modelStatus,
+                    options.model_run_seconds ?? options.modelSeconds
+                );
+                meta.append(gpt, model);
+            }
+            message.appendChild(meta);
+        }
+
         function appendMessage(role, content, options = {}) {
             const shouldStick = role === 'user' || shouldStickChatToBottom();
             messagesContainer.querySelector('.chat-welcome')?.remove();
@@ -5941,6 +6271,7 @@
                 bubble.innerHTML = renderSafeMarkdown(content);
             }
             msg.appendChild(bubble);
+            applyMessageMeta(msg, role, options);
             messagesContainer.appendChild(msg);
             if (shouldStick) scrollChatToBottom(true);
             return bubble;
@@ -6296,7 +6627,7 @@
 
         function updateAgentContext() {
             if (!agentContextText || !agentContextBadge) return;
-            const modeLabel = activeMode === 'annual' ? 'Annual' : 'Validation';
+            const modeLabel = activeMode === 'annual' ? 'Annual' : 'Calibration';
             const visibleIamModel = getCanonicalCurrentConfig(activeMode).iam_model;
             const iamLabel = visibleIamModel === 'martin_ruiz' ? 'Martin–Ruiz IAM' : 'Physical IAM';
             const baselineId = agentServerState.promoted_baselines?.[activeMode] || null;
@@ -6446,7 +6777,7 @@
             const meta = document.createElement('div');
             meta.className = 'agent-card-meta';
             const runSummary = summarizeAgentRequest({ type: 'proposal', item: proposal });
-            meta.textContent = (proposal.mode === 'annual' ? 'Annual' : 'Validation') + ' · ' + runSummary.window +
+            meta.textContent = (proposal.mode === 'annual' ? 'Annual' : 'Calibration') + ' · ' + runSummary.window +
                 (proposal.baseline_job_id ? ' · Baseline ' + shortAgentId(proposal.baseline_job_id) : '');
             heading.append(title, meta);
             const expiresAt = proposal.expires_at ? Date.parse(proposal.expires_at) : NaN;
@@ -6481,8 +6812,8 @@
             const reason = document.createElement('div');
             reason.className = 'agent-card-note' + (comparisonKind === 'cross_run' ? ' cross-run' : '');
             reason.textContent = comparisonKind === 'cross_run'
-                ? 'Non-like-for-like comparison: ' + (proposal.confirmation_reason || 'the source window or interval changes, so aggregate differences are not causal attribution.')
-                : (proposal.confirmation_reason || (proposal.confirmation_required ? 'Confirmation is required before this run starts.' : 'This same-input validation scenario can reuse the baseline source data.'));
+                ? 'Different interval or source data: ' + (proposal.confirmation_reason || 'results are descriptive only and must not be attributed to one parameter. Run the same interval with different parameters for a controlled comparison.')
+                : (proposal.confirmation_reason || (proposal.confirmation_required ? 'Confirmation is required before this run starts.' : 'Same interval and source data; only the requested parameters change.'));
             card.appendChild(reason);
 
             const effective = proposal.effective_request;
@@ -6600,7 +6931,7 @@
             if (classification === 'cross_run') {
                 const warning = document.createElement('div');
                 warning.className = 'agent-card-note cross-run';
-                warning.textContent = comparison.caveat || 'Non-like-for-like aggregate comparison. The input window or source changed, so these deltas must not be interpreted as a single-parameter causal effect.';
+                warning.textContent = comparison.caveat || 'Different interval or source data; results are descriptive only and must not be attributed to one parameter. Run the same interval with different parameters for a controlled comparison.';
                 section.appendChild(warning);
             }
 
@@ -6811,7 +7142,7 @@
             const meta = document.createElement('div');
             meta.className = 'agent-card-meta';
             const runSummary = summarizeAgentRequest({ type: 'job', item: job });
-            meta.textContent = (job.mode === 'annual' ? 'Annual' : 'Validation') + ' · ' + runSummary.window +
+            meta.textContent = (job.mode === 'annual' ? 'Annual' : 'Calibration') + ' · ' + runSummary.window +
                 ' · Job ' + shortAgentId(job.job_id) + (job.baseline_job_id ? ' · Baseline ' + shortAgentId(job.baseline_job_id) : '');
             heading.append(title, meta);
             head.append(heading, makeStatePill(job.cancel_requested ? 'cancel requested' : job.state));
@@ -7005,7 +7336,7 @@
             foot.className = 'agent-run-summary-foot';
             const meta = document.createElement('span');
             meta.className = 'agent-run-meta';
-            meta.textContent = (summaryData.mode === 'annual' ? 'Annual' : 'Validation') + ' · ' +
+            meta.textContent = (summaryData.mode === 'annual' ? 'Annual' : 'Calibration') + ' · ' +
                 (entry.type === 'proposal' ? 'Proposal ' + shortAgentId(entry.item.proposal_id) : 'Job ' + shortAgentId(entry.item.job_id));
             const expand = document.createElement('span');
             expand.className = 'agent-run-expand';
@@ -7325,8 +7656,9 @@
                 });
                 const data = await readAgentResponse(response, 'The engineering explanation is temporarily unavailable.');
                 const reply = data.reply || 'The comparison is complete, but no engineering explanation was returned.';
-                appendMessage('assistant', reply);
-                chatMessages.push({ role: 'assistant', content: reply });
+                const assistantMessage = assistantMessageFromResponse(reply, data);
+                appendMessage('assistant', reply, assistantMessage);
+                chatMessages.push(assistantMessage);
                 if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
                 renderExternalEvidence(reply, data);
                 renderChatFollowups();
@@ -7358,7 +7690,7 @@
                 }
                 saveDashboardState();
                 renderAgentActivity();
-                appendSystemNotice('Scenario promoted to the ' + (mode === 'annual' ? 'annual' : 'validation') + ' baseline. Dashboard controls and results now reflect it.');
+                appendSystemNotice('Scenario promoted to the ' + (mode === 'annual' ? 'annual' : 'calibration') + ' baseline. Dashboard controls and results now reflect it.');
                 await refreshAgentState(false);
             } catch (error) {
                 appendSystemNotice(error.message || 'Could not promote this scenario.', 'error');
@@ -7381,7 +7713,11 @@
                 return;
             }
             const messages = chatMessages.length ? chatMessages : [{ role: 'assistant', content: DEFAULT_ASSISTANT_MESSAGE }];
-            messages.forEach((item) => appendMessage(item.role === 'user' ? 'user' : 'assistant', item.content));
+            messages.forEach((item) => appendMessage(
+                item.role === 'user' ? 'user' : 'assistant',
+                item.content,
+                item
+            ));
             renderChatFollowups();
             scrollChatToBottom(true);
         }
@@ -7424,8 +7760,13 @@
             chatDraft = '';
             autoResizeChatInput();
             syncChatComposerState();
-            appendMessage('user', text);
-            chatMessages.push({ role: 'user', content: text });
+            const userMessage = {
+                role: 'user',
+                content: text,
+                created_at: new Date().toISOString(),
+            };
+            appendMessage('user', text, userMessage);
+            chatMessages.push(userMessage);
             if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
             saveDashboardState();
 
@@ -7462,7 +7803,9 @@
                 loadingBubble.parentElement.removeAttribute('role');
                 loadingBubble.innerHTML = renderSafeMarkdown(reply);
                 loadingBubble.parentElement.classList.toggle('clarification', isClarificationReply(reply, data));
-                chatMessages.push({ role: 'assistant', content: reply });
+                const assistantMessage = assistantMessageFromResponse(reply, data);
+                applyMessageMeta(loadingBubble.parentElement, 'assistant', assistantMessage);
+                chatMessages.push(assistantMessage);
                 handleAgentAction(data);
                 renderExternalEvidence(reply, data);
                 if (data.job_id) {
@@ -7534,6 +7877,18 @@
                     .map((item) => ({
                         role: item.role === 'user' ? 'user' : 'assistant',
                         content: String(item.content),
+                        created_at: normalizeChatTimestamp(
+                            item.created_at || item.createdAt
+                        ).toISOString(),
+                        gpt_seconds: finiteElapsedSeconds(
+                            item.gpt_seconds ?? item.gptSeconds
+                        ),
+                        model_run_seconds: finiteElapsedSeconds(
+                            item.model_run_seconds ?? item.modelSeconds
+                        ),
+                        model_run_status: String(
+                            item.model_run_status || item.modelStatus || 'not_run'
+                        ),
                     }))
                     .slice(-50);
             }

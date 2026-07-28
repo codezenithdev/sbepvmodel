@@ -1,10 +1,12 @@
 import base64
+from datetime import datetime
 import os
 import sys
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 import app
@@ -25,6 +27,17 @@ class ChatBackendTests(unittest.TestCase):
             )
         )
         sys.modules["openai"] = types.SimpleNamespace(OpenAI=lambda: fake_client)
+
+    def assert_chat_timing_contract(self, timing):
+        self.assertIsInstance(timing, dict)
+        parsed_timestamp = datetime.fromisoformat(
+            timing["response_timestamp"].replace("Z", "+00:00")
+        )
+        self.assertIsNotNone(parsed_timestamp.tzinfo)
+        self.assertIsInstance(timing["gpt_seconds"], (int, float))
+        self.assertGreaterEqual(timing["gpt_seconds"], 0)
+        self.assertIn("model_run_seconds", timing)
+        self.assertIn("model_run_status", timing)
 
     def test_completed_run_context_is_sent_without_secrets(self):
         app.JOBS["job123"] = {
@@ -81,6 +94,43 @@ class ChatBackendTests(unittest.TestCase):
         self.assertEqual(job_id, "missing")
         self.assertFalse(web_enabled)
         self.assertIn('"state": "missing"', self.calls[0]["input"][0]["content"])
+
+    def test_chat_response_reports_timestamp_gpt_and_completed_model_runtime(self):
+        job_id = f"chat-timing-{uuid4().hex}"
+        app.JOBS[job_id] = {
+            "state": "done",
+            "progress": 100,
+            "stage": "Done",
+            "mode": "validation",
+            "started_at": "2026-07-28T12:00:00+00:00",
+            "completed_at": "2026-07-28T12:00:12.500000+00:00",
+            "request": {"from_date": "2026-06-20"},
+            "result": {"stats": {}},
+        }
+
+        response = TestClient(app.app).post(
+            "/api/chat",
+            json={"message": "Summarize this completed run.", "job_id": job_id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        timing = response.json()["timing"]
+        self.assert_chat_timing_contract(timing)
+        self.assertAlmostEqual(timing["model_run_seconds"], 12.5)
+        self.assertEqual(timing["model_run_status"], "completed")
+
+    def test_chat_response_without_model_run_reports_null_runtime(self):
+        with patch.object(app, "_latest_completed_job_id", return_value=None):
+            response = TestClient(app.app).post(
+                "/api/chat",
+                json={"message": "What does the model do?"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        timing = response.json()["timing"]
+        self.assert_chat_timing_contract(timing)
+        self.assertIsNone(timing["model_run_seconds"])
+        self.assertEqual(timing["model_run_status"], "not_run")
 
     def test_physical_iam_is_explicit_even_when_martin_ruiz_coefficient_is_null(self):
         app._openai_chat_response(

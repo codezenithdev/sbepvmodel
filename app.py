@@ -21,6 +21,7 @@ import uuid
 import math
 import json
 import os
+from time import perf_counter
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -234,7 +235,7 @@ Explain model behavior in plain engineering terms: measured vs predicted energy,
 Treat visible_iam_selection as the authoritative IAM state for the visible dashboard form. Physical IAM is an active IAM selection, even though iam_a_r is null because that coefficient applies only to Martin-Ruiz. Never describe Physical IAM as disabled, off, or not selected.
 If no live run context is available, say the dashboard needs a completed analysis for grounded run-specific answers, while still answering general model questions from the provided model notes.
 When the user explicitly asks to run, test, simulate, compare, or perform a what-if with dashboard settings, call propose_model_scenario exactly once. Put only explicitly requested changes in the tool arguments and use null for every unchanged field. Do not call the tool for conceptual questions.
-Bazefield is the validation data source. If the user explicitly asks to use Bazefield, select validation mode even when the annual view is active. Validation end timestamps are exclusive: interpret a whole-day range such as June 1-7 as June 1 00:00 through June 8 00:00 so all of June 7 is included.
+Bazefield supplies measured data for calibration. The internal API value for this view is validation; select that mode if the user explicitly asks to use Bazefield, even when the annual view is active. Always call this view calibration in user-facing answers. Calibration end timestamps are exclusive: interpret a whole-day range such as June 1-7 as June 1 00:00 through June 8 00:00 so all of June 7 is included.
 IAM is a method selection, not a generic scalar. If the user gives a numeric IAM value without explicitly naming Martin-Ruiz or a_r, ask which value they mean and do not call the tool.
 Never calculate scenario deltas yourself. The application returns deterministic comparison metrics after the model run; explain those values without changing them. A multi-field scenario is a combined scenario and must not be attributed to one field. A cross-run comparison uses different input data and must not be described causally.
 After explaining a completed deterministic comparison, suggest one or two useful follow-up experiments, but never request or launch them unless the user explicitly asks in a later turn.
@@ -298,7 +299,7 @@ SCENARIO_TOOL = {
     "description": (
         "Propose one solar model scenario containing only settings the user explicitly "
         "asked to change. Use null for all unchanged settings. The application validates, "
-        "approves, executes, and compares the run. A changed validation window is "
+        "approves, executes, and compares the run. A changed calibration window is "
         "automatically fetched from Bazefield and compared with the selected baseline."
     ),
     "strict": True,
@@ -377,7 +378,7 @@ SOLAR_MODEL_KNOWLEDGE = {
         "solectria_bays_per_string": model.SOLECTRIA_BAYS_PER_STRING,
     },
     "outputs": (
-        "Validation runs return measured-versus-predicted summary stats, AC power and "
+        "Calibration runs return measured-versus-predicted summary stats, AC power and "
         "cumulative energy charts, and an Excel workbook. Annual MIDC runs return "
         "predicted-only AC power, cumulative energy, and monthly energy charts, the "
         "exact hourly source CSV, an Excel workbook with a monthly_energy sheet, and "
@@ -451,12 +452,12 @@ def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
         except (TypeError, ValueError) as exc:
             raise HTTPException(
                 status_code=422,
-                detail="Validation dates and times must use YYYY-MM-DD and HH:MM.",
+                detail="Calibration dates and times must use YYYY-MM-DD and HH:MM.",
             ) from exc
         if start >= end:
             raise HTTPException(
                 status_code=422,
-                detail="Validation start date/time must be before end date/time.",
+                detail="Calibration start date/time must be before end date/time.",
             )
 
 
@@ -528,6 +529,7 @@ def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str
     """Render early historian-input plots before the slower PV model runs."""
     import pandas as pd
     import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
 
     df = pd.read_csv(csv_path)
     if "timestamp" not in df.columns:
@@ -574,6 +576,9 @@ def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str
     ax1.set_ylabel("Measured Power (kW)")
     ax1.grid(True, alpha=0.25)
     ax1.legend(loc="best")
+    ax1.xaxis.set_major_formatter(
+        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=LOCAL_TZ)
+    )
     fig1.autofmt_xdate()
     fig1.savefig(measured_path, dpi=200, bbox_inches="tight")
     plt.close(fig1)
@@ -591,6 +596,9 @@ def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str
     ax2.set_ylabel("Irradiance (W/m2)")
     ax2.grid(True, alpha=0.25)
     ax2.legend(loc="best")
+    ax2.xaxis.set_major_formatter(
+        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=LOCAL_TZ)
+    )
     fig2.autofmt_xdate()
     fig2.savefig(irradiance_path, dpi=200, bbox_inches="tight")
     plt.close(fig2)
@@ -606,6 +614,7 @@ def _render_midc_input_data_plots(
 ) -> dict[str, str]:
     """Render annual irradiance as soon as the MIDC source is available."""
     import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
 
     frame, _ = model.parse_midc_csv(str(csv_path))
     irradiance_path = output_base.with_name(f"{output_base.name}_irradiance.png")
@@ -630,6 +639,9 @@ def _render_midc_input_data_plots(
     ax.set_ylim(bottom=0)
     ax.grid(True, alpha=0.25)
     ax.legend(loc="best", ncols=3)
+    ax.xaxis.set_major_formatter(
+        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=LOCAL_TZ)
+    )
     fig.autofmt_xdate()
     fig.tight_layout()
     fig.savefig(irradiance_path, dpi=200, bbox_inches="tight")
@@ -964,7 +976,7 @@ def _proposal_policy(
         confirmation_reasons.append("Annual scenarios always require confirmation")
     if comparison_kind == "cross_run":
         informational_reasons.append(
-            "Fresh Bazefield data will be fetched; the comparison will be non-like-for-like"
+            "Fresh Bazefield data will be fetched; the interval or source data will differ, so results are descriptive only"
         )
     if comparison_kind == "same_input" and not source_available and not baseline_missing:
         confirmation_reasons.append(
@@ -977,7 +989,7 @@ def _proposal_policy(
     required = bool(confirmation_reasons)
     reasons = confirmation_reasons + informational_reasons
     return required, "; ".join(reasons) if reasons else (
-        "Same-input validation can reuse the baseline source fingerprint"
+        "Same interval and source data; only the requested parameters change"
     )
 
 
@@ -1067,6 +1079,35 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
     if job.get("error"):
         payload["error"] = job["error"]
     return payload
+
+
+def _chat_timing(
+    *, gpt_seconds: float, model_job_id: str | None
+) -> dict[str, Any]:
+    """Build timing metadata for one Solar Agent response."""
+
+    model_run_seconds: float | None = None
+    model_run_status = "not_run"
+    if model_job_id:
+        job = _get_job_record(model_job_id)
+        if job is not None:
+            public_job = _public_job(job)
+            state = str(public_job.get("state") or "not_run")
+            model_run_status = "completed" if state == "done" else state
+            elapsed = public_job.get("elapsed_seconds")
+            if (
+                state == "done"
+                and isinstance(elapsed, (int, float))
+                and math.isfinite(float(elapsed))
+            ):
+                model_run_seconds = round(max(float(elapsed), 0.0), 3)
+
+    return {
+        "response_timestamp": datetime.now(timezone.utc).isoformat(),
+        "gpt_seconds": round(max(float(gpt_seconds), 0.0), 3),
+        "model_run_seconds": model_run_seconds,
+        "model_run_status": model_run_status,
+    }
 
 
 def _create_baseline_proposal(
@@ -1174,7 +1215,7 @@ def _handle_scenario_tool(
     if target_mode == "annual" and validation_only.intersection(overrides):
         raise HTTPException(
             status_code=422,
-            detail="Times and intervals can only be changed for validation runs.",
+            detail="Times and intervals can only be changed for calibration runs.",
         )
     if "interval_value" in overrides and "interval_unit" not in overrides:
         raise HTTPException(
@@ -1250,13 +1291,14 @@ def _handle_scenario_tool(
             public_job = _public_job(job)
             if proposal["comparison_kind"] == "cross_run":
                 started_message = (
-                    "The validation scenario was queued automatically. It will pull fresh "
-                    "data from Bazefield and run a non-like-for-like comparison against "
-                    "the selected baseline."
+                    "The calibration scenario was queued automatically. It will pull fresh "
+                    "data from Bazefield. The interval or source data will differ, so the "
+                    "comparison is descriptive only."
                 )
             else:
                 started_message = (
-                    "The verified same-input validation scenario was queued automatically."
+                    "The calibration scenario was queued automatically with the same interval "
+                    "and source data; only the requested parameters will change."
                 )
             return (
                 {
@@ -1420,8 +1462,9 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         )
 
     resolved_job_id, run_context = _chat_run_context(req.job_id, req.active_mode)
+    gpt_seconds = 0.0
     if _ambiguous_numeric_iam(req.message):
-        return {
+        result = {
             "reply": (
                 "**IAM clarification**\n\nYour model supports **Physical IAM** or "
                 "**Martin-Ruiz IAM** with an `a_r` coefficient. Is your numeric "
@@ -1433,6 +1476,10 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             "web_search_enabled": False,
             "action": None,
         }
+        result["timing"] = _chat_timing(
+            gpt_seconds=gpt_seconds, model_job_id=resolved_job_id
+        )
+        return result
 
     try:
         from openai import OpenAI
@@ -1476,6 +1523,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
     }
 
     client = OpenAI()
+    gpt_started = perf_counter()
     try:
         response = client.responses.create(
             model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -1491,6 +1539,8 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             status_code=502,
             detail="Solar Agent is temporarily unavailable. Please retry.",
         ) from exc
+    finally:
+        gpt_seconds += perf_counter() - gpt_started
 
     web_sources = _extract_web_sources(response)
     action: dict[str, Any] | None = None
@@ -1526,6 +1576,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
                 "output": json.dumps(tool_result, default=str),
             }
         )
+        gpt_started = perf_counter()
         try:
             response = client.responses.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -1547,17 +1598,29 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
                 (),
                 {"output_text": tool_result.get("message", "Scenario request prepared.")},
             )()
+        finally:
+            gpt_seconds += perf_counter() - gpt_started
 
     reply = _extract_response_text(response)
     if not reply:
         reply = "I could not generate a response from the model for this question."
-    return {
+    result = {
         "reply": reply,
         "job_id": resolved_job_id,
         "web_search_enabled": allow_web,
         "web_sources": web_sources,
         "action": action,
     }
+    timing_job_id = resolved_job_id
+    if action:
+        if action.get("type") == "job_started":
+            timing_job_id = (action.get("job") or {}).get("job_id")
+        elif action.get("type") == "proposal":
+            timing_job_id = None
+    result["timing"] = _chat_timing(
+        gpt_seconds=gpt_seconds, model_job_id=timing_job_id
+    )
+    return result
 
 
 def _openai_chat_response(req: ChatRequest) -> tuple[str, str | None, bool]:
@@ -2117,7 +2180,7 @@ def edit_agent_proposal(
         if target_mode == "annual" and validation_only.intersection(overrides):
             raise HTTPException(
                 status_code=422,
-                detail="Times and intervals can only be changed for validation runs.",
+                detail="Times and intervals can only be changed for calibration runs.",
             )
         if "interval_value" in overrides and "interval_unit" not in overrides:
             raise HTTPException(
