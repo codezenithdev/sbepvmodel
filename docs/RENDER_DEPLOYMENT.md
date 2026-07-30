@@ -5,18 +5,18 @@
 Create a private GitHub repository in the browser and upload only these project files:
 
 - `app.py`
+- `agent_store.py`
 - `bazefield_historian.py`
+- `calibration_workflow.py`
+- `scenario_reporting.py`
 - `sbe_pv_model.py`
 - `run_pipeline.py`
-- `test_chat_backend.py`
 - `requirements.txt`
 - `env.example`
 - `.gitignore`
-- `DEPLOYMENT_REVIEW.md`
-- `RENDER_DEPLOYMENT.md`
+- `docs/`
 - `sb_energy_dashboard_modern.html`
-- `sb_energy_dashboard.html`
-- `sb_energy_dashboard_legacy.html`
+- `tests/`
 
 Do not upload `.env`, `outputs/`, `__pycache__/`, generated `.csv` / `.xlsx` / `.png` files, or log files.
 
@@ -49,6 +49,8 @@ Set these in Render, not in the GitHub repo:
 - `PV_DASHBOARD_OUTPUT_DIR=/var/data/outputs`
 
 Leave `OPENAI_MODEL` unset initially. Add it only if the deployed chat smoke test returns a model-access error.
+Leave `PV_DASHBOARD_ENABLE_LEGACY_RUN` unset so all calibration runs must pass
+through the data-quality review.
 
 ## Smoke Test
 
@@ -56,7 +58,10 @@ After the first deploy succeeds:
 
 1. Open `https://<service>.onrender.com/healthz` and confirm it returns `{"status":"ok"}`.
 2. Open `https://<service>.onrender.com/` and confirm the browser asks for the shared username and password.
-3. Run a short known-good analysis window and confirm progress, plots, stats, and CSV/XLSX downloads.
-4. Ask one dashboard chat question and confirm the response is grounded in the run context.
-5. Share Cliff only the Render URL and dashboard password, never API keys.
+3. Select a short known-good calibration window, retrieve its Bazefield review,
+   inspect the detected issues, make each Retain/Exclude choice, and apply it.
+4. Confirm seasonal factors, review provenance, plots, stats, and CSV/XLSX
+   downloads are present.
+5. Ask one dashboard chat question and confirm the response is grounded in the run context.
+6. Share Cliff only the Render URL and dashboard password, never API keys.
 

@@ -3,6 +3,11 @@
 
 Date: 2026-07-06
 
+> Historical review: this document records the original Python-only state.
+> The repository now includes a Sites-compatible frontend proxy backed by the
+> separate Render Python service; see `RENDER_DEPLOYMENT.md` and
+> `CALIBRATION_WORKFLOW.md` for the current deployment contract.
+
 ## Summary
 
 This project is not deployable to Sites as-is. Sites hosts Cloudflare Worker-compatible JavaScript/TypeScript deployments that build to ESM Worker output. The current dashboard is a FastAPI Python application with scientific Python dependencies, background jobs, generated filesystem outputs, and external API calls.

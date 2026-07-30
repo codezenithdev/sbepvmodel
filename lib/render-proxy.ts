@@ -39,7 +39,12 @@ function safePath(path: string[]): string {
 
 function isAllowedApiPath(path: string[]): boolean {
   if (path.length === 1) {
-    return ["session", "run", "annual-run", "chat"].includes(path[0]);
+    return [
+      "session",
+      "annual-run",
+      "chat",
+      "calibration-reviews",
+    ].includes(path[0]);
   }
 
   const isSafeId = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
@@ -52,9 +57,16 @@ function isAllowedApiPath(path: string[]): boolean {
 
   if (path.length === 3) {
     return (
-      path[0] === "jobs" &&
-      isSafeId(path[1]) &&
-      ["cancel", "promote", "retry"].includes(path[2])
+      (
+        path[0] === "jobs" &&
+        isSafeId(path[1]) &&
+        ["cancel", "promote", "retry"].includes(path[2])
+      ) ||
+      (
+        path[0] === "calibration-reviews" &&
+        isSafeId(path[1]) &&
+        path[2] === "run"
+      )
     );
   }
 

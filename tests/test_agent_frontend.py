@@ -65,6 +65,11 @@ class AgentFrontendContractTests(unittest.TestCase):
         self.assertIn("{ overrides }", self.html)
         self.assertIn("Promote to baseline", self.html)
 
+    def test_reviewed_calibration_endpoints_are_allowed_by_render_proxy(self):
+        self.assertIn('"calibration-reviews"', self.proxy)
+        self.assertIn('path[2] === "run"', self.proxy)
+        self.assertIn("/api/calibration-reviews", self.html)
+
     def test_errors_are_system_notices_and_are_not_saved_as_assistant_history(self):
         catch_block = re.search(
             r"catch \(e\) \{\s*const msg = e\.message.*?\n\s*\} finally",
@@ -107,7 +112,10 @@ class AgentFrontendContractTests(unittest.TestCase):
         ):
             self.assertIn(hook, self.html)
         promote_function = re.search(
-            r"async function promoteAgentJob\(jobId\) \{(.*?)\n\s*\}",
+            (
+                r"async function promoteAgentJob\(jobId\) \{(.*?)"
+                r"\n\s*(?:async\s+)?function\s+\w+\("
+            ),
             self.html,
             flags=re.DOTALL,
         )

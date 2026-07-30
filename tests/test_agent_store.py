@@ -163,20 +163,33 @@ class AgentStoreTests(unittest.TestCase):
 
     def test_confirm_is_idempotent_and_copies_immutable_request(self) -> None:
         proposal = self.proposal()
+        provenance = {
+            "calibration_profile": {
+                "schema_version": 1,
+                "seasonal_factors": {"summer": {"solaredge": 1.1}},
+            }
+        }
         first = self.store.confirm_proposal(
             proposal["id"],
             job_id="candidate-1",
             confirmation_metadata={"actor": "auto_policy"},
             source_path="baseline.csv",
             source_hash="abc123",
+            provenance=provenance,
         )
-        second = self.store.confirm_proposal(proposal["id"], job_id="ignored-job")
+        second = self.store.confirm_proposal(
+            proposal["id"],
+            job_id="ignored-job",
+            provenance={"calibration_profile": {"schema_version": 999}},
+        )
 
         self.assertEqual("candidate-1", first["id"])
         self.assertEqual(first["id"], second["id"])
         self.assertEqual(proposal["effective_request"], first["request"])
         self.assertEqual("baseline-1", first["baseline_id"])
         self.assertEqual("abc123", first["source_hash"])
+        self.assertEqual(provenance, first["provenance"])
+        self.assertEqual(provenance, second["provenance"])
         self.assertEqual(1, len(self.store.list_jobs()))
         confirmed = self.store.get_proposal(proposal["id"])
         self.assertEqual("confirmed", confirmed["state"])
@@ -196,9 +209,16 @@ class AgentStoreTests(unittest.TestCase):
         def confirm(index: int) -> str:
             local_store = AgentStore(self.db_path, now=self.clock)
             barrier.wait(timeout=5)
-            return local_store.confirm_proposal(
-                proposal["id"], job_id=f"candidate-{index}"
-            )["id"]
+            confirmed = local_store.confirm_proposal(
+                proposal["id"],
+                job_id=f"candidate-{index}",
+                provenance={"confirmation_marker": index},
+            )
+            self.assertEqual(
+                int(confirmed["id"].rsplit("-", 1)[1]),
+                confirmed["provenance"]["confirmation_marker"],
+            )
+            return confirmed["id"]
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             ids = list(pool.map(confirm, range(8)))
@@ -277,8 +297,18 @@ class AgentStoreTests(unittest.TestCase):
         self.assertEqual("cancelled", finished["state"])
 
     def test_restart_interrupts_running_job_and_retry_is_explicit(self) -> None:
+        profile = {
+            "calibration_profile": {
+                "schema_version": 1,
+                "seasonal_factors": {"summer": {"solaredge": 1.1}},
+            }
+        }
         job = self.store.create_job(
-            job_id="restart-job", kind="candidate", mode="validation", request={}
+            job_id="restart-job",
+            kind="candidate",
+            mode="validation",
+            request={},
+            provenance=profile,
         )
         self.store.claim_next_queued_job()
 
@@ -291,6 +321,7 @@ class AgentStoreTests(unittest.TestCase):
         self.assertEqual("queued", retried["state"])
         self.assertFalse(retried["cancel_requested"])
         self.assertEqual(job["request"], retried["request"])
+        self.assertEqual(profile, retried["provenance"])
         self.assertEqual(job["id"], self.store.claim_next_queued_job()["id"])
 
     def test_stale_cutoff_leaves_recent_running_job_untouched(self) -> None:

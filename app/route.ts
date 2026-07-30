@@ -2,7 +2,7 @@ import dashboardHtml from "../sb_energy_dashboard_modern.html?raw";
 
 const TITLE = "SB Energy Operations Dashboard";
 const DESCRIPTION =
-  "Run and review SBE Innovation Center photovoltaic performance simulations, comparisons, and export-ready results.";
+  "Review Bazefield data quality, fit seasonal PV calibration factors, compare measured and modeled performance, and export audited results.";
 
 function escapeAttribute(value: string): string {
   return value
@@ -14,7 +14,7 @@ function escapeAttribute(value: string): string {
 
 export async function GET(request: Request): Promise<Response> {
   const origin = new URL(request.url).origin;
-  const imageUrl = `${origin}/og.png`;
+  const imageUrl = `${origin}/og-calibration.png`;
   const socialMetadata = `
     <meta name="description" content="${escapeAttribute(DESCRIPTION)}">
     <meta property="og:type" content="website">
