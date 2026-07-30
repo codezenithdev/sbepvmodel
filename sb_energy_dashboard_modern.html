@@ -6714,6 +6714,8 @@
         let savedChatWindowPosition = null;
         let suppressChatClick = false;
         let lastChatTrigger = null;
+        let agentActivityInteractionPointerId = null;
+        let agentActivityRenderQueued = false;
 
         function isChatMobile() {
             return window.innerWidth <= CHAT_MOBILE_BREAKPOINT;
@@ -9520,6 +9522,61 @@
             saveDashboardState();
         }
 
+        function captureAgentActivityViewState() {
+            const openDetails = new Set();
+            agentActivityList.querySelectorAll('details[open]').forEach((details) => {
+                const jobId = details.closest('[data-job-id]')?.dataset.jobId;
+                if (!jobId) return;
+                const kind = details.classList.contains('agent-downloads') ? 'downloads' : 'provenance';
+                openDetails.add(jobId + ':' + kind);
+            });
+            const sweepScrollLeft = new Map();
+            agentActivityList.querySelectorAll('[data-sweep-id] .parameter-sweep-table-wrap').forEach((wrap) => {
+                const sweepId = wrap.closest('[data-sweep-id]')?.dataset.sweepId;
+                if (sweepId) sweepScrollLeft.set(sweepId, wrap.scrollLeft);
+            });
+            return { openDetails, sweepScrollLeft };
+        }
+
+        function restoreAgentActivityViewState(viewState) {
+            agentActivityList.querySelectorAll('details').forEach((details) => {
+                const jobId = details.closest('[data-job-id]')?.dataset.jobId;
+                if (!jobId) return;
+                const kind = details.classList.contains('agent-downloads') ? 'downloads' : 'provenance';
+                details.open = viewState.openDetails.has(jobId + ':' + kind);
+            });
+            agentActivityList.querySelectorAll('[data-sweep-id] .parameter-sweep-table-wrap').forEach((wrap) => {
+                const sweepId = wrap.closest('[data-sweep-id]')?.dataset.sweepId;
+                const scrollLeft = sweepId ? viewState.sweepScrollLeft.get(sweepId) : undefined;
+                if (Number.isFinite(scrollLeft)) wrap.scrollLeft = scrollLeft;
+            });
+        }
+
+        function renderAgentActivityWhenIdle() {
+            if (agentActivityInteractionPointerId !== null) {
+                agentActivityRenderQueued = true;
+                return;
+            }
+            renderAgentActivity();
+        }
+
+        agentActivityList.addEventListener('pointerdown', (event) => {
+            if (!event.target.closest?.('.parameter-sweep-table-wrap')) return;
+            agentActivityInteractionPointerId = event.pointerId;
+        });
+
+        function finishAgentActivityInteraction(event) {
+            if (event.pointerId !== agentActivityInteractionPointerId) return;
+            agentActivityInteractionPointerId = null;
+            if (agentActivityRenderQueued) {
+                agentActivityRenderQueued = false;
+                renderAgentActivity();
+            }
+        }
+
+        window.addEventListener('pointerup', finishAgentActivityInteraction);
+        window.addEventListener('pointercancel', finishAgentActivityInteraction);
+
         function syncAgentActivityControls(items = getAgentActivityItems()) {
             const pendingCount = items.filter((entry) => entry.type === 'proposal').length;
             const runningCount = items.filter((entry) => entry.type === 'job' && entry.item.state === 'running' && !entry.item.cancel_requested).length;
@@ -9558,6 +9615,7 @@
 
         function renderAgentActivity() {
             const editorState = captureAgentEditorState();
+            const viewState = captureAgentActivityViewState();
             const activityScrollTop = agentActivityBody.scrollTop;
             const focusedKey = document.activeElement?.closest?.('[data-agent-run-row]')?.dataset.agentRunRow || null;
             const items = getAgentActivityItems();
@@ -9580,6 +9638,7 @@
                 visibleItems.forEach((entry) => agentActivityList.appendChild(buildAgentRunSummary(entry)));
             }
             restoreAgentEditorState(editorState);
+            restoreAgentActivityViewState(viewState);
             agentActivityBody.scrollTop = activityScrollTop;
             if (!editorState.some((editor) => editor.focusedField) && focusedKey) {
                 Array.from(agentActivityList.querySelectorAll('[data-agent-run-row]'))
@@ -9593,7 +9652,7 @@
 
         function renderAgentJobUpdate(job) {
             if (!job || !job.job_id) return;
-            renderAgentActivity();
+            renderAgentActivityWhenIdle();
         }
 
         function formatElapsed(milliseconds) {
