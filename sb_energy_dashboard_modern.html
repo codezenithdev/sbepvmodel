@@ -5800,6 +5800,10 @@
                 ', Solectria ' + fmtPct(uncalibrated.sol_pct);
 
             calibrationDriverInsights.replaceChildren();
+            /*
+             * Physical-driver diagnostic sentences are intentionally hidden
+             * from the dashboard. The diagnostic calculations remain in the
+             * result payload for future analysis.
             const diagnostics = stats.factor_driver_diagnostics || result?.factor_driver_diagnostics;
             Object.entries(diagnostics?.systems || {}).forEach(([system, diagnostic]) => {
                 const line = document.createElement('p');
@@ -5814,8 +5818,9 @@
                 calibrationDriverInsights.appendChild(line);
             });
             const caveat = document.createElement('p');
-            caveat.textContent = 'Driver findings are diagnostic associations, not causal effects. Soiling needs a dedicated sensor, rainfall history, or cleaning records.';
+            // caveat.textContent = 'Driver findings are diagnostic associations, not causal effects. Soiling needs a dedicated sensor, rainfall history, or cleaning records.';
             calibrationDriverInsights.appendChild(caveat);
+            */
             calibrationFactorPanel.classList.remove('hidden');
         }
 
