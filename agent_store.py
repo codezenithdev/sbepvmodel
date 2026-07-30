@@ -1002,6 +1002,109 @@ class AgentStore:
             ).fetchone()
         return self._job_from_row(updated)  # type: ignore[return-value]
 
+    def delete_job(self, job_id: str) -> dict[str, Any]:
+        """Delete a terminal Solar Agent run.
+
+        A baseline can be deleted even after promotion; its current-baseline
+        pointer and promotion-history references are removed in the same
+        transaction.  Scenario runs still need an unpromoted state because
+        promoted scenarios are used as baselines by later comparisons.
+        """
+
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(f"unknown job: {job_id}")
+            is_scenario = row["kind"] == "candidate"
+            is_baseline = row["kind"] in {"baseline", "manual"}
+            if not (is_scenario or is_baseline) or (
+                is_scenario and row["baseline_id"] is None
+            ):
+                raise InvalidStateTransition(
+                    "only baseline or scenario runs can be deleted"
+                )
+            if row["state"] in {"queued", "running"}:
+                raise InvalidStateTransition(
+                    "cancel the active run before deleting it"
+                )
+
+            promotion = connection.execute(
+                """
+                SELECT 1 FROM current_baselines
+                 WHERE job_id = ? OR previous_job_id = ?
+                UNION ALL
+                SELECT 1 FROM baseline_promotions
+                 WHERE job_id = ? OR previous_job_id = ?
+                LIMIT 1
+                """,
+                (job_id, job_id, job_id, job_id),
+            ).fetchone()
+            if promotion is not None and is_scenario:
+                raise InvalidStateTransition(
+                    "promoted scenario runs cannot be deleted"
+                )
+
+            child = connection.execute(
+                "SELECT 1 FROM jobs WHERE baseline_id = ? LIMIT 1", (job_id,)
+            ).fetchone()
+            if child is not None:
+                raise InvalidStateTransition(
+                    "scenario runs with dependent comparisons cannot be deleted"
+                )
+
+            pending_proposal = connection.execute(
+                """
+                SELECT 1 FROM proposals
+                 WHERE baseline_id = ? AND state = 'pending'
+                 LIMIT 1
+                """,
+                (job_id,),
+            ).fetchone()
+            if pending_proposal is not None:
+                raise InvalidStateTransition(
+                    "runs referenced by a pending proposal cannot be deleted"
+                )
+
+            deleted = self._job_from_row(row)
+            if is_baseline:
+                connection.execute(
+                    "DELETE FROM current_baselines WHERE job_id = ?", (job_id,)
+                )
+                connection.execute(
+                    """
+                    UPDATE current_baselines
+                       SET previous_job_id = NULL
+                     WHERE previous_job_id = ?
+                    """,
+                    (job_id,),
+                )
+                connection.execute(
+                    "DELETE FROM baseline_promotions WHERE job_id = ?", (job_id,)
+                )
+                connection.execute(
+                    """
+                    UPDATE baseline_promotions
+                       SET previous_job_id = NULL
+                     WHERE previous_job_id = ?
+                    """,
+                    (job_id,),
+                )
+            if row["proposal_id"]:
+                connection.execute(
+                    """
+                    UPDATE proposals
+                       SET state = 'dismissed', confirmed_job_id = NULL,
+                           dismissed_at = ?, updated_at = ?
+                     WHERE proposal_id = ? AND confirmed_job_id = ?
+                    """,
+                    (now_text, now_text, row["proposal_id"], job_id),
+                )
+            connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+        return deleted  # type: ignore[return-value]
+
     def promote_job(self, job_id: str) -> dict[str, Any]:
         """Make a completed job the current baseline for its mode."""
 

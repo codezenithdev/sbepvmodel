@@ -23,6 +23,7 @@ import uuid
 import math
 import json
 import os
+from decimal import Decimal, InvalidOperation
 from time import perf_counter
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -260,15 +261,17 @@ Calibration runs first review Bazefield quality and record the user's retain/exc
 Solar Agent may start a calibration scenario only when it reuses the exact hash-verified source and frozen calibration profile of a reviewed baseline. A new date, time, interval, missing reviewed baseline, changed source, or other cross-run calibration request requires the visible Calibration form: the user must retrieve Bazefield data, review every flagged irregularity, choose Retain or Exclude where offered, and then apply the reviewed run. If the tool returns data_review_required, say clearly that no proposal or model job was created and direct the user to that visible review flow.
 Treat visible_iam_selection as the authoritative IAM state for the visible dashboard form. Physical IAM is an active IAM selection, even though iam_a_r is null because that coefficient applies only to Martin-Ruiz. Never describe Physical IAM as disabled, off, or not selected.
 If no live run context is available, say the dashboard needs a completed analysis for grounded run-specific answers, while still answering general model questions from the provided model notes.
-When the user explicitly asks to run, test, simulate, compare, or perform a what-if with dashboard settings, call propose_model_scenario exactly once. Put only explicitly requested changes in the tool arguments and use null for every unchanged field. Do not call the tool for conceptual questions.
+When the user explicitly asks to run, test, simulate, compare, or perform a what-if with one dashboard configuration, call propose_model_scenario exactly once. Put only explicitly requested changes in the tool arguments and use null for every unchanged field. Do not call the tool for conceptual questions.
+When the user explicitly asks to compare multiple values or gives a range and increment for one supported numeric model parameter, call run_model_parameter_sweep exactly once and do not also call propose_model_scenario. Supported sweep parameters are Martin-Ruiz a_r, SolarEdge or Solectria inverter efficiency, SolarEdge or Solectria BOS efficiency, and the curtailment limit. The sweep is inclusive, keeps every unrelated baseline setting and the source data fixed, applies required dependent selectors such as Martin-Ruiz IAM or enabled curtailment, and returns one application-rendered deterministic comparison across the values. Efficiency values use decimal ratios from 0 to 1, so convert an explicit percentage such as 97% to 0.97. Do not sweep dates, times, mode, or interval because those change the input context.
 Bazefield supplies measured data for calibration. The internal API value for this view is validation; select that mode if the user explicitly asks to use Bazefield, even when the annual view is active. Always call this view calibration in user-facing answers. Calibration end timestamps are exclusive: interpret a whole-day range such as June 1-7 as June 1 00:00 through June 8 00:00 so all of June 7 is included.
 IAM is a method selection, not a generic scalar. If the user gives a numeric IAM value without explicitly naming Martin-Ruiz or a_r, ask which value they mean and do not call the tool.
 Never calculate scenario deltas yourself. The application returns deterministic comparison metrics after the model run; explain those values without changing them. A multi-field scenario is a combined scenario and must not be attributed to one field. A cross-run comparison uses different input data and must not be described causally.
 After explaining a completed deterministic comparison, suggest one or two useful follow-up experiments, but never request or launch them unless the user explicitly asks in a later turn.
 The application, not you, decides whether a run requires confirmation. Never claim a run started unless the tool output says it did.
-When the tool output status is started, explicitly say the run was queued from the reviewed, verified source data and do not ask for confirmation. Ask for confirmation only when the tool output status is confirmation_required or baseline_required. A data_review_required status is not a confirmation request and must never be described as a queued run.
+When the tool output status is started or batch_started, explicitly say the run or sweep was queued from the reviewed, verified source data and do not ask for confirmation. Ask for confirmation only when the tool output status is confirmation_required or baseline_required. A data_review_required status is not a confirmation request and must never be described as a queued run.
 When web_search is available and you use external information, include source links in the answer.
 Format answers for a narrow chat sidebar. Use concise Markdown with bold section labels and short bullets. Do not use nested bullets. Do not use tables unless the user explicitly asks for a table.
+For ordinary questions, lead with the answer and stay under 90 words unless the user asks for detail. Do not restate the request or repeat the same metric in prose and bullets.
 For performance-summary questions, use this order: **Performance Summary**, **SolarEdge**, **Solectria**, **Run Context**. Under each system, use the same four bullets: Measured, Predicted, Difference, Model delta.
 Use signs consistently: Difference should be actual minus predicted, with + when measured is above predicted. Model delta should explain whether the model underpredicted or overpredicted.
 Do not invent measurements, hidden files, credentials, or run outputs not present in the supplied context."""
@@ -327,7 +330,8 @@ SCENARIO_TOOL = {
         "asked to change. Use null for all unchanged settings. The application validates, "
         "approves, executes, and compares the run. A calibration scenario can execute only "
         "from the exact reviewed baseline source. A new calibration window is handed back "
-        "to the visible data-quality review flow and is never fetched automatically."
+        "to the visible data-quality review flow and is never fetched automatically. Do not "
+        "use this tool for multiple values or ranges; use run_model_parameter_sweep."
     ),
     "strict": True,
     "parameters": {
@@ -367,6 +371,79 @@ SCENARIO_TOOL = {
             ),
         },
         "required": list(SCENARIO_OVERRIDE_FIELDS),
+        "additionalProperties": False,
+    },
+}
+
+SWEEPABLE_PARAMETER_CONFIG: dict[str, dict[str, Any]] = {
+    "solaredge_inverter_efficiency": {
+        "label": "SolarEdge inverter efficiency",
+        "minimum": Decimal("0"),
+        "maximum": Decimal("1"),
+    },
+    "solaredge_bos_efficiency": {
+        "label": "SolarEdge BOS efficiency",
+        "minimum": Decimal("0"),
+        "maximum": Decimal("1"),
+    },
+    "solectria_inverter_efficiency": {
+        "label": "Solectria inverter efficiency",
+        "minimum": Decimal("0"),
+        "maximum": Decimal("1"),
+    },
+    "solectria_bos_efficiency": {
+        "label": "Solectria BOS efficiency",
+        "minimum": Decimal("0"),
+        "maximum": Decimal("1"),
+    },
+    "iam_a_r": {
+        "label": "Martin-Ruiz a_r",
+        "exclusive_minimum": Decimal("0"),
+    },
+    "curtailment_limit_kw": {
+        "label": "Curtailment limit",
+        "unit": "kW",
+        "exclusive_minimum": Decimal("0"),
+    },
+}
+PARAMETER_SWEEP_FIELDS = ("mode", "parameter", "start", "stop", "increment")
+MAX_PARAMETER_SWEEP_VALUES = 12
+
+PARAMETER_SWEEP_TOOL = {
+    "type": "function",
+    "name": "run_model_parameter_sweep",
+    "description": (
+        "Run a controlled numeric model-parameter sweep against the selected baseline. "
+        "Supported parameters are IAM a_r, SolarEdge/Solectria inverter efficiency, "
+        "SolarEdge/Solectria BOS efficiency, and curtailment limit kW. Efficiency "
+        "values are decimal ratios from 0 to 1. The inclusive start, stop, and "
+        f"increment must produce between 2 and {MAX_PARAMETER_SWEEP_VALUES} values. "
+        "Every unrelated model input and the verified source data stay fixed; "
+        "required dependent selectors are applied consistently to every sweep row."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "mode": _nullable_schema(
+                "string", enum=["validation", "annual", None]
+            ),
+            "parameter": {
+                "type": "string",
+                "enum": list(SWEEPABLE_PARAMETER_CONFIG),
+            },
+            "start": {
+                "type": "number",
+            },
+            "stop": {
+                "type": "number",
+            },
+            "increment": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+            },
+        },
+        "required": list(PARAMETER_SWEEP_FIELDS),
         "additionalProperties": False,
     },
 }
@@ -588,6 +665,77 @@ def _public_source_url(path: Path) -> str | None:
     if relative.parent != Path("."):
         return None
     return _output_url(path)
+
+
+def _job_output_file(raw: Any) -> Path | None:
+    """Resolve one recorded job artifact only when it is a direct output file."""
+
+    if not isinstance(raw, str) or not raw:
+        return None
+    value = raw.split("?", 1)[0].split("#", 1)[0]
+    if value.startswith("/outputs/"):
+        candidate = OUTPUT_DIR / value.removeprefix("/outputs/")
+    else:
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = OUTPUT_DIR / candidate
+    try:
+        resolved = candidate.resolve()
+        if resolved.parent != OUTPUT_DIR.resolve() or not resolved.is_file():
+            return None
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return resolved
+
+
+def _delete_job_artifacts(job: dict[str, Any]) -> int:
+    """Remove files generated for one job without touching shared sources."""
+
+    job_id = str(job.get("id") or "").strip()
+    if not job_id or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for character in job_id):
+        return 0
+    output_root = OUTPUT_DIR.resolve()
+    candidates: set[Path] = set()
+
+    def collect(value: Any) -> None:
+        if isinstance(value, dict):
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                collect(item)
+        else:
+            path = _job_output_file(value)
+            if path is not None:
+                candidates.add(path)
+
+    collect(job.get("result"))
+    collect(job.get("artifacts"))
+    source_path = job.get("source_path")
+    source_file = _job_output_file(source_path)
+    if source_file is not None:
+        candidates.add(source_file)
+
+    try:
+        generated = [output_root / job_id, *output_root.glob(f"{job_id}_*")]
+        candidates.update(
+            path.resolve()
+            for path in generated
+            if path.is_file() and path.resolve().parent == output_root
+        )
+    except OSError:
+        logger.warning("Could not enumerate output artifacts for job %s", job_id, exc_info=True)
+
+    removed = 0
+    for candidate in candidates:
+        try:
+            if candidate.parent != output_root or not candidate.is_file():
+                continue
+            candidate.unlink()
+            removed += 1
+        except OSError:
+            logger.warning("Could not remove deleted job artifact %s", candidate, exc_info=True)
+    return removed
 
 
 def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str]:
@@ -1202,6 +1350,123 @@ def _explicit_overrides(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _parameter_sweep_values(
+    arguments: dict[str, Any],
+) -> tuple[
+    Literal["validation", "annual"] | None,
+    str,
+    dict[str, Any],
+    list[float],
+]:
+    unknown = set(arguments) - set(PARAMETER_SWEEP_FIELDS)
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported parameter sweep field: {sorted(unknown)[0]}",
+        )
+    target_mode = arguments.get("mode")
+    if target_mode not in {None, "validation", "annual"}:
+        raise HTTPException(status_code=422, detail="Unsupported analysis mode.")
+
+    parameter = arguments.get("parameter")
+    parameter_config = SWEEPABLE_PARAMETER_CONFIG.get(str(parameter))
+    if parameter_config is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This field cannot be swept as a controlled same-input model "
+                "parameter."
+            ),
+        )
+
+    decimals: dict[str, Decimal] = {}
+    labels = {
+        "start": "Parameter sweep start",
+        "stop": "Parameter sweep stop",
+        "increment": "Parameter sweep increment",
+    }
+    for field, label in labels.items():
+        value = arguments.get(field)
+        if isinstance(value, bool):
+            raise HTTPException(status_code=422, detail=f"{label} must be a number.")
+        try:
+            parsed = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail=f"{label} must be a number."
+            ) from exc
+        if not parsed.is_finite():
+            raise HTTPException(
+                status_code=422, detail=f"{label} must be a finite number."
+            )
+        if field == "increment" and parsed <= 0:
+            raise HTTPException(
+                status_code=422, detail=f"{label} must be greater than zero."
+            )
+        decimals[field] = parsed
+
+    start = decimals["start"]
+    stop = decimals["stop"]
+    increment = decimals["increment"]
+    if stop < start:
+        raise HTTPException(
+            status_code=422,
+            detail="Parameter sweep stop must be greater than or equal to its start.",
+        )
+    minimum = parameter_config.get("minimum")
+    exclusive_minimum = parameter_config.get("exclusive_minimum")
+    maximum = parameter_config.get("maximum")
+    if minimum is not None and start < minimum:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{parameter_config['label']} must be at least {minimum}.",
+        )
+    if exclusive_minimum is not None and start <= exclusive_minimum:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{parameter_config['label']} must be greater than "
+                f"{exclusive_minimum}."
+            ),
+        )
+    if maximum is not None and stop > maximum:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{parameter_config['label']} must not exceed {maximum}.",
+        )
+    step_count = (stop - start) / increment
+    whole_steps = step_count.to_integral_value()
+    if step_count != whole_steps:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Parameter sweep increment must land exactly on the inclusive stop "
+                "value."
+            ),
+        )
+    if whole_steps >= MAX_PARAMETER_SWEEP_VALUES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"A parameter sweep can contain at most "
+                f"{MAX_PARAMETER_SWEEP_VALUES} values."
+            ),
+        )
+    count = int(whole_steps) + 1
+    if count < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="A parameter sweep must contain at least two values.",
+        )
+    values = [float(start + increment * index) for index in range(count)]
+    if not all(math.isfinite(value) for value in values):
+        raise HTTPException(
+            status_code=422,
+            detail="Parameter sweep values must be finite numbers.",
+        )
+    return target_mode, str(parameter), parameter_config, values
+
+
 def _scenario_changes(
     baseline: dict[str, Any], candidate: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -1542,6 +1807,11 @@ def _public_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
         "changes": proposal.get("changes") or [],
         "unchanged_fields": unchanged_fields,
         "effective_request": proposal.get("effective_request") or {},
+        "scenario_sweep": (
+            deepcopy(metadata.get("scenario_sweep"))
+            if isinstance(metadata.get("scenario_sweep"), dict)
+            else None
+        ),
         "expires_at": proposal.get("expires_at"),
         "created_at": proposal.get("created_at"),
         "confirmed_job_id": proposal.get("confirmed_job_id"),
@@ -1688,6 +1958,7 @@ def _create_candidate_proposal(
     candidate: dict[str, Any],
     changes: list[dict[str, Any]],
     supersedes_id: str | None = None,
+    scenario_sweep: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     baseline_mode = str(baseline.get("mode", "validation"))
     baseline_request = baseline.get("request") or {}
@@ -1704,6 +1975,14 @@ def _create_candidate_proposal(
         comparison_kind=comparison_kind,
         source_available=bool(source_path and source_hash),
     )
+    confirmation_metadata: dict[str, Any] = {
+        "job_kind": "candidate",
+        "source_reusable": reusable,
+        "baseline_source_path": source_path if reusable else None,
+        "baseline_source_hash": source_hash if reusable else None,
+    }
+    if scenario_sweep:
+        confirmation_metadata["scenario_sweep"] = deepcopy(scenario_sweep)
     return AGENT_STORE.create_proposal(
         mode=mode,
         effective_request=candidate,
@@ -1712,12 +1991,7 @@ def _create_candidate_proposal(
         comparison_kind=comparison_kind,
         confirmation_required=confirmation_required,
         confirmation_reason=confirmation_reason,
-        confirmation_metadata={
-            "job_kind": "candidate",
-            "source_reusable": reusable,
-            "baseline_source_path": source_path if reusable else None,
-            "baseline_source_hash": source_hash if reusable else None,
-        },
+        confirmation_metadata=confirmation_metadata,
         supersedes_id=supersedes_id,
     )
 
@@ -1738,6 +2012,9 @@ def _confirm_durable_proposal(
     source_path: str | None = None
     source_hash: str | None = None
     provenance: dict[str, Any] = {}
+    scenario_sweep = metadata.get("scenario_sweep")
+    if isinstance(scenario_sweep, dict):
+        provenance["scenario_sweep"] = deepcopy(scenario_sweep)
     baseline: dict[str, Any] | None = None
     if proposal.get("baseline_id"):
         baseline = _get_job_record(str(proposal["baseline_id"]))
@@ -1964,6 +2241,269 @@ def _handle_scenario_tool(
         )
 
 
+def _handle_parameter_sweep_tool(
+    req: ChatRequest, arguments: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    requested_mode, parameter, parameter_config, values = (
+        _parameter_sweep_values(arguments)
+    )
+    target_mode: Literal["validation", "annual"] = (
+        requested_mode or req.active_mode
+    )
+
+    with _ORCHESTRATION_LOCK:
+        baseline = _selected_baseline(target_mode)
+        if baseline is None:
+            if target_mode == "validation":
+                effective_request: dict[str, Any] | None = None
+                if req.current_config:
+                    candidate_values = dict(req.current_config)
+                    candidate_values.update(
+                        _apply_dependent_scenario_overrides(
+                            {parameter: values[0]}, candidate_values
+                        )
+                    )
+                    try:
+                        _, effective_request = _canonical_request(
+                            "validation", candidate_values
+                        )
+                    except HTTPException:
+                        effective_request = None
+                return _calibration_review_required(
+                    effective_request=effective_request
+                )
+            active_baseline = next(
+                (
+                    job
+                    for job in _active_model_jobs()
+                    if job.get("mode") == target_mode
+                    and job.get("kind") in {"baseline", "manual"}
+                ),
+                None,
+            )
+            if active_baseline:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A baseline for the visible mode is already queued or running.",
+                )
+            proposal = _create_baseline_proposal(req, target_mode, {})
+            public = _public_proposal(proposal)
+            return (
+                {
+                    "status": "baseline_required",
+                    "message": (
+                        "Run the visible dashboard configuration as a baseline, "
+                        "then request the parameter sweep again."
+                    ),
+                    "proposal": public,
+                },
+                {"type": "proposal", "proposal": public},
+            )
+
+        baseline_request = dict(baseline.get("request") or {})
+        candidate_specs: list[dict[str, Any]] = []
+        baseline_index: int | None = None
+        for index, value in enumerate(values):
+            candidate_values = dict(baseline_request)
+            candidate_values.update(
+                _apply_dependent_scenario_overrides(
+                    {parameter: value}, baseline_request
+                )
+            )
+            _, candidate = _canonical_request(target_mode, candidate_values)
+            changes = _scenario_changes(baseline_request, candidate)
+            if not changes:
+                baseline_index = index
+                continue
+            candidate_specs.append(
+                {
+                    "index": index,
+                    "value": value,
+                    "candidate": candidate,
+                    "changes": changes,
+                }
+            )
+
+        if not candidate_specs:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The selected baseline already represents every requested "
+                    "sweep value."
+                ),
+            )
+
+        if target_mode == "validation":
+            source_path, source_hash = _verified_baseline_source(baseline)
+            same_reviewed_input = (
+                str(baseline.get("mode")) == "validation"
+                and bool(source_path and source_hash)
+                and _reviewed_baseline_data_quality(baseline) is not None
+            )
+            if not same_reviewed_input:
+                return _calibration_review_required(
+                    effective_request=candidate_specs[0]["candidate"]
+                )
+            try:
+                profile = _baseline_calibration_profile(
+                    baseline,
+                    candidate_request=candidate_specs[0]["candidate"],
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "The reviewed baseline calibration profile is invalid or "
+                        f"does not cover this date range: {exc}"
+                    ),
+                ) from exc
+            if profile is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "The reviewed baseline does not contain a frozen seasonal "
+                        "calibration profile. Re-run it through the visible "
+                        "Calibration data-quality review."
+                    ),
+                )
+
+        baseline_parameter_value = baseline_request.get(parameter)
+        if parameter == "iam_a_r" and baseline_request.get("iam_model") != "martin_ruiz":
+            baseline_label = "Physical IAM"
+            baseline_parameter_value = None
+        elif (
+            parameter == "curtailment_limit_kw"
+            and not baseline_request.get("curtailment_enabled")
+        ):
+            baseline_label = "Curtailment off"
+        else:
+            unit = parameter_config.get("unit")
+            baseline_label = (
+                f"{parameter_config['label']} "
+                f"{baseline_parameter_value}"
+                + (f" {unit}" if unit else "")
+            )
+
+        sweep_id = f"parameter-{uuid.uuid4().hex[:12]}"
+        sweep_common: dict[str, Any] = {
+            "type": "parameter_sweep",
+            "sweep_id": sweep_id,
+            "parameter": parameter,
+            "label": parameter_config["label"],
+            "unit": parameter_config.get("unit"),
+            "mode": target_mode,
+            "values": values,
+            "count": len(values),
+            "candidate_count": len(candidate_specs),
+            "baseline_job_id": str(baseline["id"]),
+            "baseline_index": baseline_index,
+            "baseline_value": (
+                values[baseline_index] if baseline_index is not None else None
+            ),
+            "baseline_parameter_value": baseline_parameter_value,
+            "baseline_label": baseline_label,
+        }
+        proposals: list[dict[str, Any]] = []
+        jobs: list[dict[str, Any]] = []
+        for spec in candidate_specs:
+            scenario_sweep = {
+                **sweep_common,
+                "index": spec["index"],
+                "value": spec["value"],
+            }
+            proposal = _create_candidate_proposal(
+                mode=target_mode,
+                baseline=baseline,
+                candidate=spec["candidate"],
+                changes=spec["changes"],
+                scenario_sweep=scenario_sweep,
+            )
+            proposals.append(proposal)
+            if not proposal["confirmation_required"]:
+                jobs.append(
+                    _confirm_durable_proposal(proposal, automatic=True)
+                )
+
+        public_sweep = deepcopy(sweep_common)
+        if jobs:
+            public_jobs = [_public_job(job) for job in jobs]
+            public_sweep["job_ids"] = [job["job_id"] for job in public_jobs]
+            baseline_note = (
+                f" The baseline already represents "
+                f"{parameter_config['label']} "
+                f"{values[baseline_index]:g}"
+                + (
+                    f" {parameter_config['unit']}"
+                    if parameter_config.get("unit")
+                    else ""
+                )
+                + ", so it is reused as that row."
+                if baseline_index is not None
+                else ""
+            )
+            message = (
+                f"Queued {len(public_jobs)} controlled "
+                f"{parameter_config['label']} scenario runs "
+                "from the same reviewed, hash-verified baseline source. The "
+                "comparison table will update as each value completes."
+                + baseline_note
+            )
+            return (
+                {
+                    "status": "batch_started",
+                    "message": message,
+                    "sweep": public_sweep,
+                    "job_ids": public_sweep["job_ids"],
+                },
+                {
+                    "type": "job_batch_started",
+                    "sweep": public_sweep,
+                    "jobs": public_jobs,
+                },
+            )
+
+        public_proposals = [_public_proposal(item) for item in proposals]
+        public_sweep["proposal_ids"] = [
+            item["proposal_id"] for item in public_proposals
+        ]
+        message = (
+            f"The annual {parameter_config['label']} sweep is ready for one "
+            "grouped confirmation. "
+            f"Confirm it in Scenario Runs to queue {len(public_proposals)} "
+            "controlled runs against the same baseline."
+        )
+        return (
+            {
+                "status": "confirmation_required",
+                "message": message,
+                "sweep": public_sweep,
+                "proposal_ids": public_sweep["proposal_ids"],
+            },
+            {
+                "type": "proposal_batch",
+                "sweep": public_sweep,
+                "proposals": public_proposals,
+            },
+        )
+
+
+def _handle_iam_ar_sweep_tool(
+    req: ChatRequest, arguments: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Backward-compatible adapter for pre-generalization IAM sweep calls."""
+
+    return _handle_parameter_sweep_tool(
+        req,
+        {
+            "mode": arguments.get("mode"),
+            "parameter": "iam_a_r",
+            "start": arguments.get("start_a_r"),
+            "stop": arguments.get("stop_a_r"),
+            "increment": arguments.get("increment"),
+        },
+    )
+
+
 def _clean_chat_history(history: list[ChatMessage]) -> list[dict[str, str]]:
     cleaned: list[dict[str, str]] = []
     for item in history[-8:]:
@@ -2090,11 +2630,16 @@ def _response_item_value(item: Any, name: str, default: Any = None) -> Any:
 
 
 def _scenario_tool_calls(response: Any) -> list[Any]:
+    supported_tools = {
+        "propose_model_scenario",
+        "run_model_parameter_sweep",
+        "run_iam_ar_sweep",
+    }
     return [
         item
         for item in (getattr(response, "output", None) or [])
         if _response_item_value(item, "type") == "function_call"
-        and _response_item_value(item, "name") == "propose_model_scenario"
+        and _response_item_value(item, "name") in supported_tools
     ]
 
 
@@ -2145,7 +2690,9 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
 
     allow_web = _should_allow_web_search(req.message)
     tools: list[dict[str, Any]] = (
-        [SCENARIO_TOOL] if req.allow_scenario_actions else []
+        [SCENARIO_TOOL, PARAMETER_SWEEP_TOOL]
+        if req.allow_scenario_actions
+        else []
     )
     if allow_web:
         tools.append({"type": "web_search"})
@@ -2189,11 +2736,12 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
 
     web_sources = _extract_web_sources(response)
     action: dict[str, Any] | None = None
+    deterministic_reply: str | None = None
     tool_calls = _scenario_tool_calls(response) if req.allow_scenario_actions else []
     if len(tool_calls) > 1:
         raise HTTPException(
             status_code=502,
-            detail="Solar Agent requested more than one scenario. Please retry.",
+            detail="Solar Agent requested more than one scenario action. Please retry.",
         )
     if tool_calls:
         tool_call = tool_calls[0]
@@ -2201,7 +2749,13 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             arguments = json.loads(_response_item_value(tool_call, "arguments", "{}"))
             if not isinstance(arguments, dict):
                 raise ValueError("Tool arguments must be an object")
-            tool_result, action = _handle_scenario_tool(req, arguments)
+            tool_name = _response_item_value(tool_call, "name")
+            if tool_name == "run_model_parameter_sweep":
+                tool_result, action = _handle_parameter_sweep_tool(req, arguments)
+            elif tool_name == "run_iam_ar_sweep":
+                tool_result, action = _handle_iam_ar_sweep_tool(req, arguments)
+            else:
+                tool_result, action = _handle_scenario_tool(req, arguments)
         except HTTPException as exc:
             tool_result = {"status": "rejected", "message": str(exc.detail)}
             action = None
@@ -2211,42 +2765,11 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
                 "message": "The requested scenario settings were invalid.",
             }
             action = None
-
-        followup_input: list[Any] = [user_input]
-        followup_input.extend(getattr(response, "output", None) or [])
-        followup_input.append(
-            {
-                "type": "function_call_output",
-                "call_id": _response_item_value(tool_call, "call_id"),
-                "output": json.dumps(tool_result, default=str),
-            }
+        deterministic_reply = str(
+            tool_result.get("message") or "Scenario request prepared."
         )
-        gpt_started = perf_counter()
-        try:
-            response = client.responses.create(
-                model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
-                instructions=SOLAR_AGENT_INSTRUCTIONS,
-                input=followup_input,
-                store=False,
-                text={"verbosity": "low"},
-            )
-            web_sources.extend(
-                source
-                for source in _extract_web_sources(response)
-                if source not in web_sources
-            )
-        except Exception as exc:
-            logger.error("OpenAI tool follow-up failed: %s", exc.__class__.__name__)
-            # The deterministic action remains valid even if the explanatory turn fails.
-            response = type(
-                "FallbackResponse",
-                (),
-                {"output_text": tool_result.get("message", "Scenario request prepared.")},
-            )()
-        finally:
-            gpt_seconds += perf_counter() - gpt_started
 
-    reply = _extract_response_text(response)
+    reply = deterministic_reply or _extract_response_text(response)
     if not reply:
         reply = "I could not generate a response from the model for this question."
     result = {
@@ -2260,7 +2783,10 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
     if action:
         if action.get("type") == "job_started":
             timing_job_id = (action.get("job") or {}).get("job_id")
-        elif action.get("type") == "proposal":
+        elif action.get("type") == "job_batch_started":
+            jobs = action.get("jobs") or []
+            timing_job_id = jobs[0].get("job_id") if jobs else None
+        elif action.get("type") in {"proposal", "proposal_batch"}:
             timing_job_id = None
     result["timing"] = _chat_timing(
         gpt_seconds=gpt_seconds, model_job_id=timing_job_id
@@ -3205,6 +3731,26 @@ def retry_model_job(job_id: str) -> JSONResponse:
     _cache_job_record(job)
     _WORKER_WAKE.set()
     return JSONResponse({"job": _public_job(job)})
+
+
+@app.post("/api/jobs/{job_id}/delete")
+def delete_model_job(job_id: str) -> JSONResponse:
+    with _ORCHESTRATION_LOCK:
+        try:
+            job = AGENT_STORE.delete_job(job_id)
+        except RecordNotFound as exc:
+            raise HTTPException(status_code=404, detail="Unknown job id") from exc
+        except InvalidStateTransition as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        JOBS.pop(job_id, None)
+        artifacts_deleted = _delete_job_artifacts(job)
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "deleted": True,
+            "artifacts_deleted": artifacts_deleted,
+        }
+    )
 
 
 @app.post("/api/jobs/{job_id}/promote")

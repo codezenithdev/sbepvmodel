@@ -60,7 +60,7 @@ function isAllowedApiPath(path: string[]): boolean {
       (
         path[0] === "jobs" &&
         isSafeId(path[1]) &&
-        ["cancel", "promote", "retry"].includes(path[2])
+        ["cancel", "delete", "promote", "retry"].includes(path[2])
       ) ||
       (
         path[0] === "calibration-reviews" &&

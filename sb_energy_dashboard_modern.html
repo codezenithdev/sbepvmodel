@@ -2224,6 +2224,15 @@
             font-variant-numeric: tabular-nums;
         }
 
+        .parameter-sweep-table-wrap {
+            max-width: 100%;
+            overflow-x: auto;
+        }
+
+        .parameter-sweep-table {
+            min-width: 560px;
+        }
+
         .agent-details summary {
             cursor: pointer;
             color: var(--muted-strong);
@@ -2478,6 +2487,230 @@
             font-weight: 700;
             text-decoration: underline;
             overflow-wrap: anywhere;
+        }
+
+        .chat-action-card {
+            display: grid;
+            gap: 9px;
+            margin-top: 10px;
+            padding: 11px;
+            border: 1px solid #d9e5e1;
+            border-radius: 12px;
+            background: #f7faf9;
+            box-shadow: inset 3px 0 0 rgba(15, 118, 110, 0.72);
+        }
+
+        .chat-action-card-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 9px;
+        }
+
+        .chat-action-card-kicker {
+            color: var(--accent-strong);
+            font-size: 9px;
+            font-weight: 850;
+            letter-spacing: 0.055em;
+            text-transform: uppercase;
+        }
+
+        .chat-action-card-title {
+            margin-top: 1px;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 850;
+            line-height: 1.35;
+        }
+
+        .chat-action-card-meta {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 650;
+            line-height: 1.45;
+        }
+
+        .chat-action-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+
+        .chat-action-chip {
+            padding: 4px 7px;
+            border-radius: 999px;
+            background: #e7f0ed;
+            color: var(--muted-strong);
+            font-size: 9px;
+            font-weight: 780;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .chat-action-results {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 7px;
+        }
+
+        .chat-action-metric {
+            min-width: 0;
+            padding: 8px;
+            border: 1px solid #e0e9e6;
+            border-radius: 9px;
+            background: #ffffff;
+        }
+
+        .chat-action-metric span,
+        .chat-action-metric small {
+            display: block;
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 700;
+            line-height: 1.35;
+        }
+
+        .chat-action-metric strong {
+            display: block;
+            margin: 2px 0;
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 850;
+            font-variant-numeric: tabular-nums;
+            overflow-wrap: anywhere;
+        }
+
+        .chat-sweep-chart {
+            margin: 0;
+            padding: 8px;
+            border: 1px solid #e0e9e6;
+            border-radius: 9px;
+            background: #ffffff;
+        }
+
+        .chat-sweep-chart figcaption {
+            margin-bottom: 4px;
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        .chat-sweep-chart svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            overflow: visible;
+        }
+
+        .chat-chart-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px 12px;
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 720;
+        }
+
+        .chat-chart-legend span::before {
+            content: '';
+            display: inline-block;
+            width: 9px;
+            height: 3px;
+            margin-right: 4px;
+            border-radius: 3px;
+            vertical-align: middle;
+            background: var(--accent);
+        }
+
+        .chat-chart-legend span:last-child::before {
+            background: #2563eb;
+        }
+
+        .chat-action-details {
+            border-top: 1px solid #dfe8e5;
+        }
+
+        .chat-action-details summary {
+            min-height: 30px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        .chat-action-detail-list {
+            display: grid;
+            gap: 5px;
+            margin: 0 0 7px;
+        }
+
+        .chat-action-detail-row {
+            display: grid;
+            grid-template-columns: minmax(82px, 0.8fr) minmax(0, 1.2fr);
+            gap: 8px;
+            color: var(--muted);
+            font-size: 9px;
+            line-height: 1.4;
+        }
+
+        .chat-action-detail-row strong {
+            color: var(--muted-strong);
+            font-size: 9px;
+        }
+
+        .chat-action-table-wrap {
+            max-width: 100%;
+            margin-bottom: 7px;
+            overflow-x: auto;
+        }
+
+        .chat-action-table {
+            width: 100%;
+            min-width: 390px;
+            border-collapse: collapse;
+            color: var(--muted-strong);
+            font-size: 9px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .chat-action-table th,
+        .chat-action-table td {
+            padding: 5px 4px;
+            border-bottom: 1px solid #e8eeeb;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        .chat-action-table th {
+            color: var(--muted);
+            font-size: 8px;
+            text-transform: uppercase;
+        }
+
+        .chat-action-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .chat-action-actions .agent-action-btn {
+            min-height: 34px;
+            padding: 6px 9px;
+            font-size: 10px;
+        }
+
+        @media (max-width: 460px) {
+            .chat-action-actions .agent-action-btn {
+                flex: 1 1 125px;
+            }
+        }
+
+        @media (max-width: 350px) {
+            .chat-action-results {
+                grid-template-columns: 1fr;
+            }
         }
 
         .input-area {
@@ -4960,6 +5193,7 @@
                             <button class="chat-prompt-btn" type="button" data-chat-prompt="Why do measured and modeled values differ?">Explain modeled vs measured</button>
                             <button class="chat-prompt-btn" type="button" data-chat-prompt="Compare SolarEdge and Solectria">Compare both systems</button>
                             <button class="chat-prompt-btn" type="button" data-chat-prompt="Test what changes with backtracking off">Test backtracking off</button>
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Run SolarEdge inverter efficiency from 0.96 to 1.00 by 0.01 and compare the results">Sweep inverter efficiency</button>
                         </div>
                         <div class="chat-welcome-note">Agent scenarios cannot replace the active baseline without your action.</div>
                     </div>
@@ -5111,6 +5345,7 @@
         const agentJobSnapshots = new Map();
         const agentProposalSnapshots = new Map();
         const agentExplainedJobs = new Set();
+        const agentCompletionCards = new Set();
         let chatDraft = '';
         let chatIsSending = false;
         let chatDraftSaveTimer = null;
@@ -5950,6 +6185,7 @@
             agentProposalSnapshots.clear();
             agentJobSnapshots.clear();
             agentExplainedJobs.clear();
+            agentCompletionCards.clear();
             agentJobPollTimers.forEach((timer) => clearTimeout(timer));
             agentJobPollTimers.clear();
             progressWrap.classList.remove('visible');
@@ -5987,6 +6223,7 @@
                     agentActivityFilter,
                     agentActivitySelection,
                     agentExplainedJobs: Array.from(agentExplainedJobs).slice(-50),
+                    agentCompletionCards: Array.from(agentCompletionCards).slice(-100),
                     chatOpen: !chatSidebar.classList.contains('hidden'),
                 }));
             } catch (_) {
@@ -6930,6 +7167,7 @@
                     ['Explain the main yield drivers', 'Which assumptions influence annual yield most?'],
                     ['Compare both systems', 'Compare SolarEdge and Solectria annual performance'],
                     ['Explore an efficiency scenario', 'Prepare a 2% efficiency improvement scenario'],
+                    ['Sweep IAM a_r', 'Run annual IAM a_r from 0.1 to 0.5 by 0.1 and compare the results'],
                 ];
             }
             return [
@@ -6937,6 +7175,7 @@
                 ['Explain modeled vs measured', 'Why do measured and modeled values differ?'],
                 ['Compare both systems', 'Compare SolarEdge and Solectria'],
                 ['Test backtracking off', 'Test what changes with backtracking off'],
+                ['Sweep inverter efficiency', 'Run SolarEdge inverter efficiency from 0.96 to 1.00 by 0.01 and compare the results'],
             ];
         }
 
@@ -7032,6 +7271,7 @@
             if (formatted !== null) return `Model run ${formatted}`;
             if (status === 'queued') return 'Model run queued';
             if (status === 'running') return 'Model run in progress';
+            if (status === 'done' || status === 'completed') return 'Model run completed';
             if (status === 'failed') return 'Model run failed';
             if (status === 'canceled' || status === 'cancelled') return 'Model run canceled';
             return 'Model run not used';
@@ -7039,7 +7279,7 @@
 
         function assistantMessageFromResponse(content, data = {}) {
             const timing = data.timing || {};
-            return {
+            const message = {
                 role: 'assistant',
                 content,
                 created_at: normalizeChatTimestamp(
@@ -7048,7 +7288,11 @@
                 gpt_seconds: finiteElapsedSeconds(timing.gpt_seconds),
                 model_run_seconds: finiteElapsedSeconds(timing.model_run_seconds),
                 model_run_status: timing.model_run_status || 'not_run',
+                automated: data.automated === true,
             };
+            const actionCard = normalizeChatActionCard(data.action_card);
+            if (actionCard) message.action_card = actionCard;
+            return message;
         }
 
         function applyMessageMeta(message, role, options = {}) {
@@ -7067,14 +7311,22 @@
             meta.appendChild(timestamp);
 
             if (role === 'assistant') {
-                const gpt = document.createElement('span');
-                gpt.className = 'message-timing';
-                const gptSeconds = formatElapsedSeconds(
-                    options.gpt_seconds ?? options.gptSeconds
-                );
-                gpt.textContent = gptSeconds === null
-                    ? 'GPT time unavailable'
-                    : `GPT ${gptSeconds}`;
+                if (options.automated !== true) {
+                    const gpt = document.createElement('span');
+                    gpt.className = 'message-timing';
+                    const gptSeconds = formatElapsedSeconds(
+                        options.gpt_seconds ?? options.gptSeconds
+                    );
+                    gpt.textContent = gptSeconds === null
+                        ? 'GPT time unavailable'
+                        : `GPT ${gptSeconds}`;
+                    meta.appendChild(gpt);
+                } else {
+                    const update = document.createElement('span');
+                    update.className = 'message-timing';
+                    update.textContent = 'Live model update';
+                    meta.appendChild(update);
+                }
 
                 const model = document.createElement('span');
                 model.className = 'message-timing';
@@ -7082,9 +7334,15 @@
                     options.model_run_status || options.modelStatus,
                     options.model_run_seconds ?? options.modelSeconds
                 );
-                meta.append(gpt, model);
+                meta.appendChild(model);
             }
             message.appendChild(meta);
+        }
+
+        function renderMessageBubbleContent(bubble, content, options = {}) {
+            bubble.innerHTML = renderSafeMarkdown(content);
+            const actionCard = renderChatActionCard(options.action_card);
+            if (actionCard) bubble.appendChild(actionCard);
         }
 
         function appendMessage(role, content, options = {}) {
@@ -7102,7 +7360,7 @@
                 msg.setAttribute('role', 'status');
                 bubble.innerHTML = '<span class="chat-loading-label">Reviewing dashboard</span><span class="chat-typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>';
             } else {
-                bubble.innerHTML = renderSafeMarkdown(content);
+                renderMessageBubbleContent(bubble, content, options);
             }
             msg.appendChild(bubble);
             applyMessageMeta(msg, role, options);
@@ -7497,13 +7755,695 @@
 
         function normalizeAgentAction(data) {
             if (!data) return null;
-            if (data.action) return data.action;
-            if (data.type === 'proposal' || data.type === 'job_started') return data;
+            const actionTypes = ['proposal', 'proposal_batch', 'job_started', 'job_batch_started', 'data_review_required'];
+            if (data.action && actionTypes.includes(data.action.type)) return data.action;
+            if (actionTypes.includes(data.type)) return data;
             if (data.job) return { type: 'job_started', job: data.job };
+            if (Array.isArray(data.jobs)) return { type: 'job_batch_started', jobs: data.jobs, sweep: data.sweep };
+            if (Array.isArray(data.proposals)) return { type: 'proposal_batch', proposals: data.proposals, sweep: data.sweep };
             if (data.proposal) return { type: 'proposal', proposal: data.proposal };
             if (data.proposal_id) return { type: 'proposal', proposal: data };
             if (data.job_id) return { type: 'job_started', job: data };
             return null;
+        }
+
+        function boundedChatCardString(value, maximum = 180) {
+            if (value === null || value === undefined) return null;
+            const text = String(value).trim();
+            return text ? text.slice(0, maximum) : null;
+        }
+
+        function finiteChatCardNumber(value) {
+            if (value === null || value === undefined || value === '') return null;
+            const number = Number(value);
+            return Number.isFinite(number) ? number : null;
+        }
+
+        function chatCardScalar(value) {
+            if (typeof value === 'boolean') return value;
+            const number = finiteChatCardNumber(value);
+            if (number !== null && value !== '') return number;
+            return boundedChatCardString(value, 120);
+        }
+
+        function normalizeChatActionCard(card) {
+            if (!card || typeof card !== 'object') return null;
+            const allowedKinds = [
+                'proposal_review',
+                'sweep_review',
+                'job_started',
+                'sweep_started',
+                'data_review_required',
+                'run_complete',
+                'sweep_complete',
+            ];
+            const kind = boundedChatCardString(card.kind, 40);
+            if (!allowedKinds.includes(kind)) return null;
+            const normalized = { kind };
+            [
+                'title',
+                'status',
+                'mode',
+                'sweep_id',
+                'job_id',
+                'proposal_id',
+                'baseline_job_id',
+                'label',
+                'unit',
+                'parameter',
+                'window',
+                'run_kind',
+                'error',
+            ].forEach((field) => {
+                const value = boundedChatCardString(card[field], field === 'error' ? 300 : 180);
+                if (value !== null) normalized[field] = value;
+            });
+            ['count', 'candidate_count', 'error_count', 'elapsed_seconds'].forEach((field) => {
+                const value = finiteChatCardNumber(card[field]);
+                if (value !== null) normalized[field] = value;
+            });
+            ['job_ids', 'proposal_ids'].forEach((field) => {
+                if (!Array.isArray(card[field])) return;
+                normalized[field] = card[field]
+                    .map((value) => boundedChatCardString(value, 160))
+                    .filter(Boolean)
+                    .slice(0, 12);
+            });
+            if (Array.isArray(card.values)) {
+                normalized.values = card.values
+                    .map(finiteChatCardNumber)
+                    .filter((value) => value !== null)
+                    .slice(0, 12);
+            }
+            if (Array.isArray(card.changes)) {
+                normalized.changes = card.changes
+                    .filter((item) => item && typeof item === 'object')
+                    .slice(0, 12)
+                    .map((item) => ({
+                        field: boundedChatCardString(item.field, 100),
+                        label: boundedChatCardString(item.label, 120),
+                        from: chatCardScalar(item.from),
+                        to: chatCardScalar(item.to),
+                        unit: boundedChatCardString(item.unit, 30),
+                    }));
+            }
+            if (Array.isArray(card.systems)) {
+                normalized.systems = card.systems
+                    .filter((item) => item && typeof item === 'object')
+                    .slice(0, 4)
+                    .map((item) => ({
+                        name: boundedChatCardString(item.name, 80) || 'System',
+                        baseline_kwh: finiteChatCardNumber(item.baseline_kwh),
+                        predicted_kwh: finiteChatCardNumber(item.predicted_kwh),
+                        delta_pct: finiteChatCardNumber(item.delta_pct),
+                    }));
+            }
+            if (Array.isArray(card.rows)) {
+                normalized.rows = card.rows
+                    .filter((item) => item && typeof item === 'object')
+                    .slice(0, 12)
+                    .map((item) => ({
+                        value: finiteChatCardNumber(item.value),
+                        state: boundedChatCardString(item.state, 40) || 'unknown',
+                        job_id: boundedChatCardString(item.job_id, 160),
+                        solaredge_kwh: finiteChatCardNumber(item.solaredge_kwh),
+                        solaredge_delta_pct: finiteChatCardNumber(item.solaredge_delta_pct),
+                        solectria_kwh: finiteChatCardNumber(item.solectria_kwh),
+                        solectria_delta_pct: finiteChatCardNumber(item.solectria_delta_pct),
+                    }));
+            }
+            return normalized;
+        }
+
+        function chatActionSweepMetadata(action) {
+            if (action?.sweep && typeof action.sweep === 'object') return action.sweep;
+            const member = action?.jobs?.[0] || action?.proposals?.[0] || action?.job || action?.proposal;
+            return agentParameterSweepMetadata(member);
+        }
+
+        function buildChatActionCard(action) {
+            if (!action || typeof action !== 'object') return null;
+            if (action.type === 'data_review_required') {
+                const request = action.effective_request || {};
+                return normalizeChatActionCard({
+                    kind: 'data_review_required',
+                    title: 'Calibration data review required',
+                    status: 'action required',
+                    mode: 'validation',
+                    window: compactAgentRunWindow(request, 'validation'),
+                });
+            }
+            if (action.type === 'proposal_batch') {
+                const sweep = chatActionSweepMetadata(action) || {};
+                return normalizeChatActionCard({
+                    kind: 'sweep_review',
+                    title: String(sweep.label || 'Parameter') + ' sweep',
+                    status: 'needs review',
+                    mode: sweep.mode,
+                    sweep_id: sweep.sweep_id,
+                    proposal_ids: (action.proposals || []).map((item) => item?.proposal_id),
+                    baseline_job_id: sweep.baseline_job_id,
+                    label: sweep.label,
+                    unit: sweep.unit,
+                    parameter: sweep.parameter,
+                    values: sweep.values,
+                    count: sweep.count,
+                    candidate_count: sweep.candidate_count,
+                });
+            }
+            if (action.type === 'job_batch_started') {
+                const sweep = chatActionSweepMetadata(action) || {};
+                return normalizeChatActionCard({
+                    kind: 'sweep_started',
+                    title: String(sweep.label || 'Parameter') + ' sweep',
+                    status: 'queued',
+                    mode: sweep.mode,
+                    sweep_id: sweep.sweep_id,
+                    job_ids: (action.jobs || []).map((item) => item?.job_id),
+                    baseline_job_id: sweep.baseline_job_id,
+                    label: sweep.label,
+                    unit: sweep.unit,
+                    parameter: sweep.parameter,
+                    values: sweep.values,
+                    count: sweep.count,
+                    candidate_count: sweep.candidate_count,
+                });
+            }
+            if (action.type === 'proposal' && action.proposal) {
+                const proposal = action.proposal;
+                const request = proposal.effective_request || {};
+                const baseline = proposal.kind === 'baseline';
+                return normalizeChatActionCard({
+                    kind: 'proposal_review',
+                    title: baseline ? 'Baseline model run' : 'Scenario model run',
+                    status: 'needs review',
+                    mode: proposal.mode,
+                    proposal_id: proposal.proposal_id,
+                    baseline_job_id: proposal.baseline_job_id,
+                    run_kind: proposal.kind,
+                    window: compactAgentRunWindow(request, proposal.mode),
+                    changes: proposal.changes,
+                });
+            }
+            if (action.type === 'job_started' && action.job) {
+                const job = action.job;
+                const baseline = ['baseline', 'manual'].includes(job.kind);
+                return normalizeChatActionCard({
+                    kind: 'job_started',
+                    title: baseline ? 'Baseline model run' : 'Scenario model run',
+                    status: job.state || 'queued',
+                    mode: job.mode,
+                    job_id: job.job_id,
+                    baseline_job_id: job.baseline_job_id,
+                    run_kind: job.kind,
+                    window: compactAgentRunWindow(job.request || {}, job.mode),
+                });
+            }
+            return null;
+        }
+
+        function agentActionSummary(action) {
+            const sweep = chatActionSweepMetadata(action) || {};
+            const label = String(sweep.label || 'parameter');
+            if (action?.type === 'data_review_required') {
+                return 'This scenario needs a calibration data review before a model run can start.';
+            }
+            if (action?.type === 'proposal_batch') {
+                return `The ${label} sweep is ready for review before its runs are queued.`;
+            }
+            if (action?.type === 'job_batch_started') {
+                return `The ${label} sweep is queued, and its live comparison is ready to track.`;
+            }
+            if (action?.type === 'proposal') {
+                return action.proposal?.kind === 'baseline'
+                    ? 'The baseline model run is ready for review.'
+                    : 'The scenario model run is ready for review.';
+            }
+            if (action?.type === 'job_started') {
+                return ['baseline', 'manual'].includes(action.job?.kind)
+                    ? 'The baseline model run is queued.'
+                    : 'The scenario model run is queued against the selected baseline.';
+            }
+            return 'The requested model action is ready.';
+        }
+
+        function chatCardModeLabel(mode) {
+            return mode === 'annual' ? 'Annual' : 'Calibration';
+        }
+
+        function chatCardValueRange(card) {
+            const values = Array.isArray(card.values) ? card.values : [];
+            if (!values.length) return null;
+            if (values.length === 1) return formatAgentValue(values[0], card.unit);
+            return formatAgentValue(values[0], card.unit) + ' to ' +
+                formatAgentValue(values[values.length - 1], card.unit);
+        }
+
+        function appendChatActionChip(container, text) {
+            if (!text) return;
+            const chip = document.createElement('span');
+            chip.className = 'chat-action-chip';
+            chip.textContent = text;
+            container.appendChild(chip);
+        }
+
+        function appendChatActionMetric(container, label, value, note) {
+            const metric = document.createElement('div');
+            metric.className = 'chat-action-metric';
+            const labelNode = document.createElement('span');
+            labelNode.textContent = label;
+            const valueNode = document.createElement('strong');
+            valueNode.textContent = value;
+            metric.append(labelNode, valueNode);
+            if (note) {
+                const noteNode = document.createElement('small');
+                noteNode.textContent = note;
+                metric.appendChild(noteNode);
+            }
+            container.appendChild(metric);
+        }
+
+        function formatChatEnergy(value) {
+            const number = finiteChatCardNumber(value);
+            return number === null
+                ? 'Unavailable'
+                : number.toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' kWh';
+        }
+
+        function makeChatActionDetails(summaryText) {
+            const details = document.createElement('details');
+            details.className = 'chat-action-details';
+            const summary = document.createElement('summary');
+            summary.textContent = summaryText;
+            details.appendChild(summary);
+            return details;
+        }
+
+        function appendChatDetailRow(container, label, value) {
+            if (value === null || value === undefined || value === '') return;
+            const row = document.createElement('div');
+            row.className = 'chat-action-detail-row';
+            const key = document.createElement('strong');
+            key.textContent = label;
+            const content = document.createElement('span');
+            content.textContent = String(value);
+            row.append(key, content);
+            container.appendChild(row);
+        }
+
+        function createChatSvgNode(name, attributes = {}) {
+            const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+            Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+            return node;
+        }
+
+        function buildChatSweepChart(card) {
+            const rows = (card.rows || [])
+                .filter((row) => row.value !== null && (
+                    row.solaredge_kwh !== null || row.solectria_kwh !== null
+                ))
+                .sort((left, right) => left.value - right.value);
+            const yValues = rows.flatMap((row) => [row.solaredge_kwh, row.solectria_kwh])
+                .filter((value) => value !== null && Number.isFinite(value));
+            if (rows.length < 2 || yValues.length < 2) return null;
+
+            const width = 320;
+            const height = 130;
+            const margin = { top: 10, right: 9, bottom: 28, left: 46 };
+            const plotWidth = width - margin.left - margin.right;
+            const plotHeight = height - margin.top - margin.bottom;
+            const xMin = Math.min(...rows.map((row) => row.value));
+            const xMax = Math.max(...rows.map((row) => row.value));
+            const rawYMin = Math.min(...yValues);
+            const rawYMax = Math.max(...yValues);
+            const yPadding = rawYMax === rawYMin ? Math.max(Math.abs(rawYMax) * 0.02, 1) : (rawYMax - rawYMin) * 0.08;
+            const yMin = rawYMin - yPadding;
+            const yMax = rawYMax + yPadding;
+            const xPosition = (value, index) => xMax === xMin
+                ? margin.left + (plotWidth * index / Math.max(rows.length - 1, 1))
+                : margin.left + ((value - xMin) / (xMax - xMin)) * plotWidth;
+            const yPosition = (value) => margin.top + (1 - ((value - yMin) / (yMax - yMin))) * plotHeight;
+
+            const figure = document.createElement('figure');
+            figure.className = 'chat-sweep-chart';
+            const caption = document.createElement('figcaption');
+            caption.textContent = 'Predicted energy by ' + String(card.label || 'parameter');
+            const svg = createChatSvgNode('svg', {
+                viewBox: `0 0 ${width} ${height}`,
+                role: 'img',
+                'aria-label': caption.textContent + ' for SolarEdge and Solectria',
+            });
+            const title = createChatSvgNode('title');
+            title.textContent = caption.textContent;
+            svg.appendChild(title);
+
+            [0, 0.5, 1].forEach((fraction) => {
+                const y = margin.top + fraction * plotHeight;
+                svg.appendChild(createChatSvgNode('line', {
+                    x1: margin.left,
+                    x2: width - margin.right,
+                    y1: y,
+                    y2: y,
+                    stroke: '#dfe8e5',
+                    'stroke-width': 1,
+                }));
+                const value = yMax - fraction * (yMax - yMin);
+                const label = createChatSvgNode('text', {
+                    x: margin.left - 5,
+                    y: y + 3,
+                    fill: '#64736d',
+                    'font-size': 8,
+                    'text-anchor': 'end',
+                });
+                label.textContent = Math.round(value).toLocaleString();
+                svg.appendChild(label);
+            });
+
+            const xLabelIndexes = [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])];
+            xLabelIndexes.forEach((index) => {
+                const row = rows[index];
+                const label = createChatSvgNode('text', {
+                    x: xPosition(row.value, index),
+                    y: height - 9,
+                    fill: '#64736d',
+                    'font-size': 8,
+                    'text-anchor': 'middle',
+                });
+                label.textContent = formatAgentValue(row.value, card.unit);
+                svg.appendChild(label);
+            });
+
+            [
+                { field: 'solaredge_kwh', color: '#0f766e' },
+                { field: 'solectria_kwh', color: '#2563eb' },
+            ].forEach((series) => {
+                const points = rows
+                    .map((row, index) => row[series.field] === null ? null : {
+                        x: xPosition(row.value, index),
+                        y: yPosition(row[series.field]),
+                    })
+                    .filter(Boolean);
+                if (points.length < 2) return;
+                svg.appendChild(createChatSvgNode('polyline', {
+                    points: points.map((point) => `${point.x},${point.y}`).join(' '),
+                    fill: 'none',
+                    stroke: series.color,
+                    'stroke-width': 2.4,
+                    'stroke-linecap': 'round',
+                    'stroke-linejoin': 'round',
+                }));
+                points.forEach((point) => {
+                    svg.appendChild(createChatSvgNode('circle', {
+                        cx: point.x,
+                        cy: point.y,
+                        r: 2.8,
+                        fill: '#ffffff',
+                        stroke: series.color,
+                        'stroke-width': 1.8,
+                    }));
+                });
+            });
+
+            const legend = document.createElement('div');
+            legend.className = 'chat-chart-legend';
+            const solarEdge = document.createElement('span');
+            solarEdge.textContent = 'SolarEdge';
+            const solectria = document.createElement('span');
+            solectria.textContent = 'Solectria';
+            legend.append(solarEdge, solectria);
+            figure.append(caption, svg, legend);
+            return figure;
+        }
+
+        function renderChatCompletionDetails(card) {
+            if (card.kind === 'sweep_complete' && Array.isArray(card.rows)) {
+                const details = makeChatActionDetails('Engineering details');
+                const wrap = document.createElement('div');
+                wrap.className = 'chat-action-table-wrap';
+                const table = document.createElement('table');
+                table.className = 'chat-action-table';
+                table.innerHTML = '<thead><tr><th>Value</th><th>Status</th><th>SolarEdge</th><th>SE delta</th><th>Solectria</th><th>Solectria delta</th></tr></thead>';
+                const body = document.createElement('tbody');
+                card.rows.forEach((item) => {
+                    const row = document.createElement('tr');
+                    [
+                        formatAgentValue(item.value, card.unit),
+                        humanizeAgentField(item.state),
+                        formatChatEnergy(item.solaredge_kwh),
+                        comparisonPercent(item.solaredge_delta_pct),
+                        formatChatEnergy(item.solectria_kwh),
+                        comparisonPercent(item.solectria_delta_pct),
+                    ].forEach((value) => {
+                        const cell = document.createElement('td');
+                        cell.textContent = value;
+                        row.appendChild(cell);
+                    });
+                    body.appendChild(row);
+                });
+                table.appendChild(body);
+                wrap.appendChild(table);
+                details.appendChild(wrap);
+                return details;
+            }
+            if (card.kind === 'run_complete' && Array.isArray(card.systems) && card.systems.length) {
+                const details = makeChatActionDetails('Engineering details');
+                const list = document.createElement('div');
+                list.className = 'chat-action-detail-list';
+                card.systems.forEach((system) => {
+                    appendChatDetailRow(
+                        list,
+                        system.name,
+                        'Baseline ' + formatChatEnergy(system.baseline_kwh) +
+                        ' | Run ' + formatChatEnergy(system.predicted_kwh) +
+                        ' | Delta ' + comparisonPercent(system.delta_pct)
+                    );
+                });
+                details.appendChild(list);
+                return details;
+            }
+            return null;
+        }
+
+        function openAgentActivityFromChat(card) {
+            if (['proposal_review', 'sweep_review'].includes(card.kind) && card.status === 'needs review') {
+                agentActivityFilter = 'review';
+            } else if (['run_complete', 'sweep_complete'].includes(card.kind)) {
+                agentActivityFilter = 'complete';
+            } else {
+                agentActivityFilter = 'all';
+            }
+            if (card.proposal_id) agentActivitySelection = 'proposal:' + card.proposal_id;
+            else if (card.job_id) agentActivitySelection = 'job:' + card.job_id;
+            else agentActivitySelection = null;
+            renderAgentActivity();
+            setAgentActivityOpen(true);
+        }
+
+        function openCalibrationFromChat() {
+            switchMode('validation');
+            setChatOpen(false);
+            window.setTimeout(() => {
+                fromDate.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                fromDate.focus({ preventScroll: true });
+            }, 0);
+        }
+
+        async function explainChatCardJob(jobId) {
+            let job = agentJobSnapshots.get(jobId);
+            if (!job) {
+                try {
+                    const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                    job = await readAgentResponse(response, 'Could not load this completed run.');
+                    putAgentJob(job);
+                    renderAgentActivity();
+                } catch (error) {
+                    appendSystemNotice(error.message || 'Could not load this completed run.', 'error');
+                    return;
+                }
+            }
+            requestAgentCompletionExplanation(job);
+        }
+
+        function updateStoredChatActionCardStatus(match, status) {
+            let changed = false;
+            chatMessages.forEach((message) => {
+                const card = normalizeChatActionCard(message.action_card);
+                if (!card) return;
+                const matches = (
+                    (match.job_id && (card.job_id === match.job_id || card.job_ids?.includes(match.job_id))) ||
+                    (match.proposal_id && (card.proposal_id === match.proposal_id || card.proposal_ids?.includes(match.proposal_id))) ||
+                    (match.sweep_id && card.sweep_id === match.sweep_id)
+                );
+                if (!matches || card.status === status) return;
+                message.action_card = { ...card, status };
+                changed = true;
+            });
+            if (!changed) return false;
+            renderChatMessages();
+            saveDashboardState();
+            return true;
+        }
+
+        function appendChatCardActions(section, card) {
+            const actions = document.createElement('div');
+            actions.className = 'chat-action-actions';
+            if (card.kind === 'proposal_review' && card.proposal_id && card.status === 'needs review') {
+                actions.append(
+                    makeAgentButton(card.run_kind === 'baseline' ? 'Approve baseline' : 'Approve & run', 'primary', () => confirmAgentProposal(card.proposal_id)),
+                    makeAgentButton('Open review', '', () => openAgentActivityFromChat(card)),
+                    makeAgentButton('Dismiss', 'danger', () => dismissAgentProposal(card.proposal_id))
+                );
+            } else if (card.kind === 'sweep_review' && card.sweep_id && card.status === 'needs review') {
+                actions.append(
+                    makeAgentButton('Run sweep', 'primary', () => confirmAgentSweep(card.sweep_id, card.proposal_ids)),
+                    makeAgentButton('Open review', '', () => openAgentActivityFromChat(card)),
+                    makeAgentButton('Dismiss', 'danger', () => dismissAgentSweep(card.sweep_id, card.proposal_ids))
+                );
+            } else if (['proposal_review', 'sweep_review'].includes(card.kind) && card.status !== 'dismissed') {
+                actions.appendChild(makeAgentButton('Open runs', 'primary', () => openAgentActivityFromChat(card)));
+            } else if (card.kind === 'data_review_required') {
+                actions.appendChild(makeAgentButton('Open calibration form', 'primary', openCalibrationFromChat));
+            } else if (card.kind === 'run_complete') {
+                if (card.status !== 'deleted') {
+                    actions.appendChild(makeAgentButton('Open run', 'primary', () => openAgentActivityFromChat(card)));
+                }
+                if (card.status === 'done' && card.job_id && card.systems?.length) {
+                    const explainButton = makeAgentButton('Explain results', '', () => explainChatCardJob(card.job_id));
+                    if (agentExplainedJobs.has(card.job_id)) {
+                        explainButton.disabled = true;
+                        explainButton.textContent = 'Explanation added';
+                    }
+                    actions.appendChild(explainButton);
+                }
+            } else if (card.kind === 'sweep_complete') {
+                actions.appendChild(makeAgentButton('Open full comparison', 'primary', () => openAgentActivityFromChat(card)));
+            } else if ((card.kind === 'job_started' || card.kind === 'sweep_started') && card.status !== 'deleted') {
+                actions.appendChild(makeAgentButton(
+                    card.kind === 'sweep_started' ? 'Open live comparison' : 'Open run',
+                    'primary',
+                    () => openAgentActivityFromChat(card)
+                ));
+                if (card.kind === 'job_started' && card.job_id && ['queued', 'running'].includes(card.status)) {
+                    actions.appendChild(makeAgentButton('Cancel run', 'danger', () => cancelAgentJob(card.job_id)));
+                }
+            }
+            if (actions.childElementCount) section.appendChild(actions);
+        }
+
+        function renderChatActionCard(rawCard) {
+            const card = normalizeChatActionCard(rawCard);
+            if (!card) return null;
+            const section = document.createElement('section');
+            section.className = 'chat-action-card';
+            section.dataset.chatCardKind = card.kind;
+            if (card.job_id) section.dataset.jobId = card.job_id;
+            if (card.sweep_id) section.dataset.sweepId = card.sweep_id;
+            section.setAttribute('aria-label', card.title || 'Solar Agent action');
+
+            const head = document.createElement('div');
+            head.className = 'chat-action-card-head';
+            const heading = document.createElement('div');
+            const kicker = document.createElement('div');
+            kicker.className = 'chat-action-card-kicker';
+            kicker.textContent = ['run_complete', 'sweep_complete'].includes(card.kind)
+                ? 'Model results'
+                : card.kind === 'data_review_required'
+                    ? 'Next step'
+                    : 'Model action';
+            const title = document.createElement('div');
+            title.className = 'chat-action-card-title';
+            title.textContent = card.title || 'Solar Agent action';
+            heading.append(kicker, title);
+            head.append(heading, makeStatePill(card.status || 'ready'));
+            section.appendChild(head);
+
+            const metaParts = [];
+            if (card.mode) metaParts.push(chatCardModeLabel(card.mode));
+            if (card.window && card.window !== 'Window unavailable') metaParts.push(card.window);
+            if (card.baseline_job_id) metaParts.push('Baseline ' + shortAgentId(card.baseline_job_id));
+            if (card.job_id) metaParts.push('Run ' + shortAgentId(card.job_id));
+            if (metaParts.length) {
+                const meta = document.createElement('div');
+                meta.className = 'chat-action-card-meta';
+                meta.textContent = metaParts.join(' | ');
+                section.appendChild(meta);
+            }
+
+            const chips = document.createElement('div');
+            chips.className = 'chat-action-chips';
+            const range = chatCardValueRange(card);
+            if (range) appendChatActionChip(chips, range);
+            if (card.count) appendChatActionChip(chips, card.count + ' values');
+            if (card.candidate_count !== undefined) appendChatActionChip(chips, card.candidate_count + ' scenario runs');
+            if (card.changes?.length) appendChatActionChip(chips, card.changes.length + ' changed field' + (card.changes.length === 1 ? '' : 's'));
+            if (card.error_count) appendChatActionChip(chips, card.error_count + ' issue' + (card.error_count === 1 ? '' : 's'));
+            if (chips.childElementCount) section.appendChild(chips);
+
+            if (card.kind === 'run_complete' && card.systems?.length) {
+                const results = document.createElement('div');
+                results.className = 'chat-action-results';
+                card.systems.forEach((system) => {
+                    appendChatActionMetric(
+                        results,
+                        system.name,
+                        formatChatEnergy(system.predicted_kwh),
+                        comparisonPercent(system.delta_pct) + ' vs baseline'
+                    );
+                });
+                section.appendChild(results);
+            }
+
+            if (card.kind === 'sweep_complete' && card.rows?.length) {
+                const results = document.createElement('div');
+                results.className = 'chat-action-results';
+                [
+                    { name: 'SolarEdge highest', field: 'solaredge_kwh', delta: 'solaredge_delta_pct' },
+                    { name: 'Solectria highest', field: 'solectria_kwh', delta: 'solectria_delta_pct' },
+                ].forEach((definition) => {
+                    const candidates = card.rows.filter((row) => row[definition.field] !== null);
+                    if (!candidates.length) return;
+                    const highest = candidates.reduce((best, row) => (
+                        row[definition.field] > best[definition.field] ? row : best
+                    ));
+                    appendChatActionMetric(
+                        results,
+                        definition.name,
+                        formatChatEnergy(highest[definition.field]),
+                        'at ' + formatAgentValue(highest.value, card.unit) +
+                        ' | ' + comparisonPercent(highest[definition.delta])
+                    );
+                });
+                if (results.childElementCount) section.appendChild(results);
+                const chart = buildChatSweepChart(card);
+                if (chart) section.appendChild(chart);
+            }
+
+            if (card.error) {
+                const error = document.createElement('div');
+                error.className = 'agent-card-note cross-run';
+                error.textContent = card.error;
+                section.appendChild(error);
+            }
+
+            if (card.changes?.length) {
+                const details = makeChatActionDetails('Review changed fields');
+                const list = document.createElement('div');
+                list.className = 'chat-action-detail-list';
+                card.changes.forEach((change) => {
+                    appendChatDetailRow(
+                        list,
+                        change.label || humanizeAgentField(change.field),
+                        formatAgentValue(change.from, change.unit) + ' to ' +
+                        formatAgentValue(change.to, change.unit)
+                    );
+                });
+                details.appendChild(list);
+                section.appendChild(details);
+            }
+            const completionDetails = renderChatCompletionDetails(card);
+            if (completionDetails) section.appendChild(completionDetails);
+            appendChatCardActions(section, card);
+            return section;
         }
 
         function makeAgentButton(label, className, onClick) {
@@ -7747,6 +8687,355 @@
             if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
             const number = Number(value);
             return (number >= 0 ? '+' : '') + number.toFixed(2) + '%';
+        }
+
+        function agentParameterSweepMetadata(item) {
+            const metadata = item?.scenario_sweep || item?.provenance?.scenario_sweep;
+            if (!metadata || metadata.type !== 'parameter_sweep' || !metadata.parameter || !metadata.sweep_id) return null;
+            return metadata;
+        }
+
+        function isAgentParameterSweepJob(job) {
+            return !!agentParameterSweepMetadata(job);
+        }
+
+        function getAgentParameterSweepGroups() {
+            const groups = new Map();
+            const addMember = (item, collection) => {
+                const metadata = agentParameterSweepMetadata(item);
+                if (!metadata) return;
+                const sweepId = String(metadata.sweep_id);
+                if (!groups.has(sweepId)) {
+                    groups.set(sweepId, {
+                        sweep_id: sweepId,
+                        metadata: { ...metadata },
+                        jobs: [],
+                        proposals: [],
+                        created_at: item.created_at || null,
+                    });
+                }
+                const group = groups.get(sweepId);
+                group.metadata = { ...group.metadata, ...metadata };
+                group[collection].push(item);
+                const timestamp = item.created_at ? Date.parse(item.created_at) : NaN;
+                const currentTimestamp = group.created_at ? Date.parse(group.created_at) : NaN;
+                if (Number.isFinite(timestamp) && (!Number.isFinite(currentTimestamp) || timestamp < currentTimestamp)) {
+                    group.created_at = item.created_at;
+                }
+            };
+            agentProposalSnapshots.forEach((proposal) => addMember(proposal, 'proposals'));
+            agentJobSnapshots.forEach((job) => addMember(job, 'jobs'));
+            return Array.from(groups.values())
+                .map((group) => {
+                    const latestJobsByIndex = new Map();
+                    group.jobs.forEach((job) => {
+                        const index = Number(agentParameterSweepMetadata(job)?.index);
+                        const existing = latestJobsByIndex.get(index);
+                        const jobTime = job.created_at ? Date.parse(job.created_at) : 0;
+                        const existingTime = existing?.created_at ? Date.parse(existing.created_at) : 0;
+                        if (!existing || jobTime >= existingTime) latestJobsByIndex.set(index, job);
+                    });
+                    group.jobs = Array.from(latestJobsByIndex.values());
+                    group.jobs.sort((left, right) => Number(agentParameterSweepMetadata(left)?.index) - Number(agentParameterSweepMetadata(right)?.index));
+                    group.proposals.sort((left, right) => Number(agentParameterSweepMetadata(left)?.index) - Number(agentParameterSweepMetadata(right)?.index));
+                    return group;
+                })
+                .sort((left, right) => {
+                    const leftTime = left.created_at ? Date.parse(left.created_at) : 0;
+                    const rightTime = right.created_at ? Date.parse(right.created_at) : 0;
+                    return rightTime - leftTime;
+                });
+        }
+
+        function agentParameterSweepState(group) {
+            if (group.proposals.length) return 'needs review';
+            if (group.jobs.some((job) => job.state === 'running' && !job.cancel_requested)) return 'running';
+            if (group.jobs.some((job) => job.state === 'queued' && !job.cancel_requested)) return 'queued';
+            if (group.jobs.some((job) => ['error', 'cancelled', 'interrupted'].includes(job.state))) return 'error';
+            if (group.jobs.length && group.jobs.every((job) => job.state === 'done')) return 'done';
+            return 'pending';
+        }
+
+        function agentParameterSweepMatchesFilter(group, filter = agentActivityFilter) {
+            if (filter === 'all') return true;
+            if (filter === 'review') return group.proposals.length > 0;
+            const active = group.jobs.some(isAgentJobActive);
+            if (filter === 'active') return active;
+            return filter === 'complete' && !group.proposals.length && !active;
+        }
+
+        function parameterSweepSystemValues(comparison, systemName) {
+            const systems = comparison?.systems || comparison?.per_system || {};
+            if (Array.isArray(systems)) {
+                return systems.find((item) => String(item?.system || item?.name || '').toLowerCase() === systemName) || null;
+            }
+            return systems[systemName]
+                || systems[systemName === 'solaredge' ? 'SolarEdge' : 'Solectria']
+                || null;
+        }
+
+        function compactChatComparisonSystems(comparison) {
+            const systems = comparison?.systems || comparison?.per_system || {};
+            const entries = Array.isArray(systems)
+                ? systems.map((item) => [item?.system || item?.name || 'System', item])
+                : Object.entries(systems);
+            return entries
+                .filter(([, values]) => values && typeof values === 'object')
+                .slice(0, 4)
+                .map(([name, values]) => {
+                    const normalizedName = String(name || '').toLowerCase();
+                    return {
+                        name: normalizedName === 'solaredge'
+                            ? 'SolarEdge'
+                            : normalizedName === 'solectria'
+                                ? 'Solectria'
+                                : humanizeAgentField(name),
+                        baseline_kwh: firstDefined(values, ['baseline_predicted_kwh', 'baseline_kwh', 'baseline']),
+                        predicted_kwh: firstDefined(values, ['candidate_predicted_kwh', 'scenario_predicted_kwh', 'candidate_kwh', 'candidate']),
+                        delta_pct: firstDefined(values, ['delta_pct', 'change_pct', 'percent_change']),
+                    };
+                });
+        }
+
+        function buildRunCompletionChatCard(job) {
+            const baseline = ['baseline', 'manual'].includes(job.kind);
+            const successful = job.state === 'done';
+            return normalizeChatActionCard({
+                kind: 'run_complete',
+                title: baseline
+                    ? (successful ? 'Baseline model run complete' : 'Baseline model run stopped')
+                    : (successful ? 'Scenario comparison complete' : 'Scenario model run stopped'),
+                status: job.state,
+                mode: job.mode,
+                job_id: job.job_id,
+                baseline_job_id: job.baseline_job_id,
+                run_kind: job.kind,
+                window: compactAgentRunWindow(job.request || {}, job.mode),
+                systems: compactChatComparisonSystems(job.comparison),
+                error: successful ? null : (job.error || job.stage || 'The model run did not complete.'),
+                elapsed_seconds: job.elapsed_seconds,
+            });
+        }
+
+        function buildSweepCompletionChatCard(group) {
+            const metadata = group.metadata || {};
+            const values = Array.isArray(metadata.values) ? metadata.values.map(Number) : [];
+            const referenceComparison = group.jobs.find((job) => job.state === 'done' && job.comparison)?.comparison || null;
+            const rows = values.map((value, index) => {
+                const job = group.jobs.find((item) => Number(agentParameterSweepMetadata(item)?.index) === index);
+                const isBaselineValue = Number(metadata.baseline_index) === index &&
+                    metadata.baseline_index !== null && metadata.baseline_index !== undefined;
+                const comparison = job?.comparison || null;
+                const solarEdge = parameterSweepSystemValues(comparison, 'solaredge');
+                const solectria = parameterSweepSystemValues(comparison, 'solectria');
+                const referenceSolarEdge = parameterSweepSystemValues(referenceComparison, 'solaredge');
+                const referenceSolectria = parameterSweepSystemValues(referenceComparison, 'solectria');
+                return {
+                    value,
+                    state: isBaselineValue && !job ? 'baseline' : (job?.state || 'unavailable'),
+                    job_id: job?.job_id,
+                    solaredge_kwh: isBaselineValue && !job
+                        ? firstDefined(referenceSolarEdge, ['baseline_predicted_kwh', 'baseline_kwh', 'baseline'])
+                        : firstDefined(solarEdge, ['candidate_predicted_kwh', 'scenario_predicted_kwh', 'candidate_kwh', 'candidate']),
+                    solaredge_delta_pct: isBaselineValue && !job
+                        ? 0
+                        : firstDefined(solarEdge, ['delta_pct', 'change_pct', 'percent_change']),
+                    solectria_kwh: isBaselineValue && !job
+                        ? firstDefined(referenceSolectria, ['baseline_predicted_kwh', 'baseline_kwh', 'baseline'])
+                        : firstDefined(solectria, ['candidate_predicted_kwh', 'scenario_predicted_kwh', 'candidate_kwh', 'candidate']),
+                    solectria_delta_pct: isBaselineValue && !job
+                        ? 0
+                        : firstDefined(solectria, ['delta_pct', 'change_pct', 'percent_change']),
+                };
+            });
+            const errorCount = group.jobs.filter((job) => job.state !== 'done').length;
+            return normalizeChatActionCard({
+                kind: 'sweep_complete',
+                title: String(metadata.label || 'Parameter') + ' sweep comparison',
+                status: errorCount ? 'error' : 'done',
+                mode: metadata.mode,
+                sweep_id: group.sweep_id,
+                job_ids: group.jobs.map((job) => job.job_id),
+                baseline_job_id: metadata.baseline_job_id,
+                label: metadata.label,
+                unit: metadata.unit,
+                parameter: metadata.parameter,
+                values,
+                count: values.length,
+                candidate_count: metadata.candidate_count || group.jobs.length,
+                error_count: errorCount,
+                rows,
+            });
+        }
+
+        function appendAutomatedChatCardMessage(content, actionCard, options = {}) {
+            const assistantMessage = assistantMessageFromResponse(content, {
+                automated: true,
+                action_card: actionCard,
+                timing: {
+                    response_timestamp: new Date().toISOString(),
+                    model_run_seconds: options.model_run_seconds,
+                    model_run_status: options.model_run_status || 'completed',
+                },
+            });
+            appendMessage('assistant', content, assistantMessage);
+            chatMessages.push(assistantMessage);
+            if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
+            renderChatFollowups();
+            saveDashboardState();
+            scrollChatToBottom();
+        }
+
+        function rememberAgentCompletionCard(key) {
+            agentCompletionCards.add(key);
+            while (agentCompletionCards.size > 100) {
+                const oldest = agentCompletionCards.values().next().value;
+                if (!oldest) break;
+                agentCompletionCards.delete(oldest);
+            }
+        }
+
+        function announceAgentCompletion(job) {
+            if (!isAgentJobTerminal(job)) return;
+            const sweepMetadata = agentParameterSweepMetadata(job);
+            if (sweepMetadata) {
+                const group = getAgentParameterSweepGroups().find((item) => item.sweep_id === sweepMetadata.sweep_id);
+                const expected = Number(group?.metadata?.candidate_count || 0);
+                if (!group || group.proposals.length || expected <= 0 ||
+                    group.jobs.length < expected || !group.jobs.every(isAgentJobTerminal)) return;
+                const completionKey = 'sweep:' + group.sweep_id;
+                if (agentCompletionCards.has(completionKey)) return;
+                rememberAgentCompletionCard(completionKey);
+                const card = buildSweepCompletionChatCard(group);
+                const errorCount = card?.error_count || 0;
+                const label = String(card?.label || 'parameter');
+                updateStoredChatActionCardStatus(
+                    { sweep_id: group.sweep_id },
+                    errorCount ? 'error' : 'done'
+                );
+                appendAutomatedChatCardMessage(
+                    errorCount
+                        ? `The ${label} sweep finished with ${errorCount} run issue${errorCount === 1 ? '' : 's'}.`
+                        : `The ${label} sweep is complete, and the comparison is ready.`,
+                    card,
+                    { model_run_status: errorCount ? 'failed' : 'completed' }
+                );
+                return;
+            }
+
+            const completionKey = 'job:' + job.job_id;
+            if (agentCompletionCards.has(completionKey)) return;
+            rememberAgentCompletionCard(completionKey);
+            const card = buildRunCompletionChatCard(job);
+            const baseline = ['baseline', 'manual'].includes(job.kind);
+            const successful = job.state === 'done';
+            updateStoredChatActionCardStatus({ job_id: job.job_id }, job.state);
+            appendAutomatedChatCardMessage(
+                successful
+                    ? (baseline ? 'The baseline model run is complete.' : 'The scenario comparison is complete.')
+                    : (baseline ? 'The baseline model run stopped before completion.' : 'The scenario model run stopped before completion.'),
+                card,
+                {
+                    model_run_seconds: job.elapsed_seconds,
+                    model_run_status: successful ? 'completed' : 'failed',
+                }
+            );
+        }
+
+        function buildParameterSweepComparisonCard(group) {
+            const metadata = group.metadata || {};
+            const values = Array.isArray(metadata.values) ? metadata.values.map(Number) : [];
+            const section = document.createElement('section');
+            section.className = 'agent-card parameter-sweep-card';
+            section.dataset.sweepId = group.sweep_id;
+            section.setAttribute('aria-label', String(metadata.label || 'Model parameter') + ' sweep comparison');
+
+            const head = document.createElement('div');
+            head.className = 'agent-card-head';
+            const heading = document.createElement('div');
+            const title = document.createElement('div');
+            title.className = 'agent-card-title';
+            title.textContent = String(metadata.label || humanizeAgentField(metadata.parameter)) + ' sweep comparison';
+            const completedJobs = group.jobs.filter((job) => job.state === 'done').length;
+            const meta = document.createElement('div');
+            meta.className = 'agent-card-meta';
+            meta.textContent = (metadata.mode === 'annual' ? 'Annual' : 'Calibration') + ' · ' +
+                values.length + ' values · ' + completedJobs + '/' + Number(metadata.candidate_count || group.jobs.length) +
+                ' scenario runs complete · Baseline ' + shortAgentId(metadata.baseline_job_id);
+            heading.append(title, meta);
+            head.append(heading, makeStatePill(agentParameterSweepState(group)));
+            section.appendChild(head);
+
+            const note = document.createElement('div');
+            note.className = 'agent-card-note';
+            note.textContent = 'Across the sweep rows, all other model inputs and source data stay fixed. Predicted energy and deltas are compared with the ' +
+                String(metadata.baseline_label || 'selected') + ' baseline; positive delta means more predicted energy.';
+            section.appendChild(note);
+
+            const referenceComparison = group.jobs.find((job) => job.state === 'done' && job.comparison)?.comparison || null;
+            const table = document.createElement('table');
+            table.className = 'comparison-table parameter-sweep-table';
+            table.innerHTML = '<thead><tr><th>Value</th><th>Status</th><th>SolarEdge kWh</th><th>SE Δ vs baseline</th><th>Solectria kWh</th><th>Solectria Δ vs baseline</th></tr></thead>';
+            const body = document.createElement('tbody');
+            values.forEach((value, index) => {
+                const job = group.jobs.find((item) => Number(agentParameterSweepMetadata(item)?.index) === index);
+                const proposal = group.proposals.find((item) => Number(agentParameterSweepMetadata(item)?.index) === index);
+                const isBaselineValue = Number(metadata.baseline_index) === index && metadata.baseline_index !== null && metadata.baseline_index !== undefined;
+                const comparison = job?.comparison || null;
+                const solarEdge = parameterSweepSystemValues(comparison, 'solaredge');
+                const solectria = parameterSweepSystemValues(comparison, 'solectria');
+                const referenceSolarEdge = parameterSweepSystemValues(referenceComparison, 'solaredge');
+                const referenceSolectria = parameterSweepSystemValues(referenceComparison, 'solectria');
+                let status = 'Not available';
+                if (isBaselineValue && !job) status = 'Baseline';
+                else if (proposal) status = 'Needs review';
+                else if (job?.state === 'running') status = 'Running ' + Math.round(Number(job.progress) || 0) + '%';
+                else if (job?.state === 'queued') status = 'Queued';
+                else if (job?.state === 'done') status = 'Done';
+                else if (job?.state) status = humanizeAgentField(job.state);
+
+                const solarEdgeKwh = isBaselineValue && !job
+                    ? firstDefined(referenceSolarEdge, ['baseline_predicted_kwh', 'baseline_kwh', 'baseline'])
+                    : firstDefined(solarEdge, ['candidate_predicted_kwh', 'scenario_predicted_kwh', 'candidate_kwh', 'candidate']);
+                const solectriaKwh = isBaselineValue && !job
+                    ? firstDefined(referenceSolectria, ['baseline_predicted_kwh', 'baseline_kwh', 'baseline'])
+                    : firstDefined(solectria, ['candidate_predicted_kwh', 'scenario_predicted_kwh', 'candidate_kwh', 'candidate']);
+                const solarEdgeDelta = isBaselineValue && !job
+                    ? 0
+                    : firstDefined(solarEdge, ['delta_pct', 'change_pct', 'percent_change']);
+                const solectriaDelta = isBaselineValue && !job
+                    ? 0
+                    : firstDefined(solectria, ['delta_pct', 'change_pct', 'percent_change']);
+                const row = document.createElement('tr');
+                [
+                    formatAgentValue(value, metadata.unit || undefined),
+                    status,
+                    formatAgentValue(solarEdgeKwh),
+                    comparisonPercent(solarEdgeDelta),
+                    formatAgentValue(solectriaKwh),
+                    comparisonPercent(solectriaDelta),
+                ].forEach((cellValue) => {
+                    const cell = document.createElement('td');
+                    cell.textContent = cellValue;
+                    row.appendChild(cell);
+                });
+                body.appendChild(row);
+            });
+            table.appendChild(body);
+            labelAgentTable(table);
+            const tableWrap = document.createElement('div');
+            tableWrap.className = 'parameter-sweep-table-wrap';
+            tableWrap.appendChild(table);
+            section.appendChild(tableWrap);
+
+            if (group.proposals.length) {
+                const actions = document.createElement('div');
+                actions.className = 'agent-card-actions';
+                actions.appendChild(makeAgentButton('Run sweep', 'primary', () => confirmAgentSweep(group.sweep_id)));
+                actions.appendChild(makeAgentButton('Dismiss sweep', '', () => dismissAgentSweep(group.sweep_id)));
+                section.appendChild(actions);
+            }
+            return section;
         }
 
         function buildComparisonCard(comparison) {
@@ -8058,7 +9347,12 @@
             }
             const isPromoted = agentServerState.promoted_baselines?.[job.mode] === job.job_id;
             if (job.state === 'done' && job.comparison) {
-                actions.appendChild(makeAgentButton('Explain results', '', () => requestAgentCompletionExplanation(job, true)));
+                const explainButton = makeAgentButton('Explain results', '', () => requestAgentCompletionExplanation(job));
+                if (agentExplainedJobs.has(job.job_id)) {
+                    explainButton.disabled = true;
+                    explainButton.textContent = 'Explanation added';
+                }
+                actions.appendChild(explainButton);
             }
             if (job.state === 'done' && !isPromoted) {
                 actions.appendChild(makeAgentButton('Promote to baseline', 'primary', () => promoteAgentJob(job.job_id)));
@@ -8068,6 +9362,11 @@
                 promoted.className = 'agent-state-pill done';
                 promoted.textContent = 'Current baseline';
                 actions.appendChild(promoted);
+            }
+            const isScenarioRun = job.kind === 'candidate' && job.baseline_job_id;
+            const isBaselineRun = ['baseline', 'manual'].includes(job.kind);
+            if (((isScenarioRun && !isPromoted) || isBaselineRun) && !isAgentJobActive(job)) {
+                actions.appendChild(makeAgentButton('Delete run', 'danger', () => deleteAgentJob(job.job_id)));
             }
             if (actions.childElementCount) card.appendChild(actions);
             return card;
@@ -8266,8 +9565,10 @@
                 agentActivitySelection = null;
             }
             const visibleItems = items.filter((entry) => agentActivityMatchesFilter(entry));
+            const visibleSweeps = getAgentParameterSweepGroups()
+                .filter((group) => agentParameterSweepMatchesFilter(group));
             agentActivityList.innerHTML = '';
-            if (!visibleItems.length) {
+            if (!visibleItems.length && !visibleSweeps.length) {
                 const empty = document.createElement('div');
                 empty.className = 'agent-activity-empty';
                 empty.textContent = agentActivityFilter === 'all'
@@ -8275,6 +9576,7 @@
                     : 'No runs match this filter.';
                 agentActivityList.appendChild(empty);
             } else {
+                visibleSweeps.forEach((group) => agentActivityList.appendChild(buildParameterSweepComparisonCard(group)));
                 visibleItems.forEach((entry) => agentActivityList.appendChild(buildAgentRunSummary(entry)));
             }
             restoreAgentEditorState(editorState);
@@ -8328,9 +9630,19 @@
                 const data = await readAgentResponse(response, 'Scenario status is temporarily unavailable.');
                 const previous = agentJobSnapshots.get(jobId);
                 putAgentJob(data);
+                if (isAgentParameterSweepJob(data) && agentActivityFilter === 'active') {
+                    const sweepId = agentParameterSweepMetadata(data)?.sweep_id;
+                    const group = getAgentParameterSweepGroups().find((item) => item.sweep_id === sweepId);
+                    const expected = Number(group?.metadata?.candidate_count || 0);
+                    if (group && !group.proposals.length && group.jobs.length >= expected && group.jobs.every(isAgentJobTerminal)) {
+                        agentActivityFilter = 'complete';
+                    }
+                }
                 renderAgentJobUpdate(data);
-                if (data.state === 'done' && previous?.state !== 'done' && data.kind === 'candidate' && data.comparison) {
-                    requestAgentCompletionExplanation(data, false);
+                if (isAgentJobTerminal(data) && (
+                    !isAgentJobTerminal(previous) || previous?.state !== data.state
+                )) {
+                    announceAgentCompletion(data);
                 }
                 if (isAgentJobTerminal(data)) await refreshAgentState(false);
                 else scheduleAgentJobPoll(jobId);
@@ -8378,6 +9690,15 @@
         function handleAgentAction(data) {
             const action = normalizeAgentAction(data);
             if (!action) return;
+            if (action.type === 'proposal_batch' && Array.isArray(action.proposals)) {
+                action.proposals.forEach(putAgentProposal);
+                agentActivityFilter = 'review';
+                const firstProposal = action.proposals[0];
+                if (firstProposal) agentActivitySelection = 'proposal:' + firstProposal.proposal_id;
+                renderAgentActivity();
+                setAgentActivityOpen(true);
+                return;
+            }
             if (action.type === 'proposal' && action.proposal) {
                 putAgentProposal(action.proposal);
                 agentActivityFilter = 'review';
@@ -8386,15 +9707,92 @@
                 setAgentActivityOpen(true);
                 return;
             }
+            if (action.type === 'job_batch_started' && Array.isArray(action.jobs)) {
+                action.jobs.forEach((job) => {
+                    putAgentJob(job);
+                    if (job.proposal_id) {
+                        agentProposalSnapshots.delete(job.proposal_id);
+                        updateStoredChatActionCardStatus({ proposal_id: job.proposal_id }, job.state || 'queued');
+                    }
+                });
+                agentActivityFilter = 'active';
+                if (agentActivityExpanded) {
+                    const firstJob = action.jobs[0];
+                    if (firstJob) agentActivitySelection = 'job:' + firstJob.job_id;
+                }
+                renderAgentActivity();
+                action.jobs.forEach((job) => {
+                    if (isAgentJobTerminal(job)) announceAgentCompletion(job);
+                    else scheduleAgentJobPoll(job.job_id, 150);
+                });
+                return;
+            }
             if (action.type === 'job_started' && action.job) {
                 putAgentJob(action.job);
-                if (action.job.proposal_id) agentProposalSnapshots.delete(action.job.proposal_id);
+                if (action.job.proposal_id) {
+                    agentProposalSnapshots.delete(action.job.proposal_id);
+                    updateStoredChatActionCardStatus(
+                        { proposal_id: action.job.proposal_id },
+                        action.job.state || 'queued'
+                    );
+                }
                 if (agentActivityExpanded) {
                     agentActivityFilter = 'active';
                     agentActivitySelection = 'job:' + action.job.job_id;
                 }
                 renderAgentActivity();
-                scheduleAgentJobPoll(action.job.job_id, 150);
+                if (isAgentJobTerminal(action.job)) announceAgentCompletion(action.job);
+                else scheduleAgentJobPoll(action.job.job_id, 150);
+            }
+        }
+
+        async function confirmAgentSweep(sweepId, fallbackProposalIds = []) {
+            const group = getAgentParameterSweepGroups().find((item) => item.sweep_id === sweepId);
+            const proposalIds = (group?.proposals || []).map((proposal) => proposal.proposal_id);
+            if (!proposalIds.length && Array.isArray(fallbackProposalIds)) {
+                proposalIds.push(...fallbackProposalIds.filter(Boolean));
+            }
+            if (!proposalIds.length) return;
+            let failures = 0;
+            for (const proposalId of proposalIds) {
+                try {
+                    const data = await postAgentAction('/api/agent/proposals/' + encodeURIComponent(proposalId) + '/confirm');
+                    agentProposalSnapshots.delete(proposalId);
+                    handleAgentAction(data);
+                } catch (_) {
+                    failures += 1;
+                }
+            }
+            await refreshAgentState(false);
+            if (failures) {
+                appendSystemNotice(failures + ' sweep run' + (failures === 1 ? '' : 's') + ' could not be queued.', 'error');
+            } else {
+                const cardUpdated = updateStoredChatActionCardStatus({ sweep_id: sweepId }, 'queued');
+                if (!cardUpdated) appendSystemNotice('Parameter sweep queued against the selected baseline.', 'success');
+            }
+        }
+
+        async function dismissAgentSweep(sweepId, fallbackProposalIds = []) {
+            const group = getAgentParameterSweepGroups().find((item) => item.sweep_id === sweepId);
+            const proposalIds = (group?.proposals || []).map((proposal) => proposal.proposal_id);
+            if (!proposalIds.length && Array.isArray(fallbackProposalIds)) {
+                proposalIds.push(...fallbackProposalIds.filter(Boolean));
+            }
+            if (!proposalIds.length) return;
+            let failures = 0;
+            for (const proposalId of proposalIds) {
+                try {
+                    await postAgentAction('/api/agent/proposals/' + encodeURIComponent(proposalId) + '/dismiss');
+                    agentProposalSnapshots.delete(proposalId);
+                } catch (_) {
+                    failures += 1;
+                }
+            }
+            await refreshAgentState(false);
+            if (failures) appendSystemNotice('Some parameter sweep proposals could not be dismissed.', 'error');
+            else {
+                const cardUpdated = updateStoredChatActionCardStatus({ sweep_id: sweepId }, 'dismissed');
+                if (!cardUpdated) appendSystemNotice('Parameter sweep dismissed.');
             }
         }
 
@@ -8426,8 +9824,9 @@
             try {
                 await postAgentAction('/api/agent/proposals/' + encodeURIComponent(proposalId) + '/dismiss');
                 agentProposalSnapshots.delete(proposalId);
+                const cardUpdated = updateStoredChatActionCardStatus({ proposal_id: proposalId }, 'dismissed');
                 renderAgentActivity();
-                appendSystemNotice('Scenario proposal dismissed.');
+                if (!cardUpdated) appendSystemNotice('Scenario proposal dismissed.');
             } catch (error) {
                 appendSystemNotice(error.message || 'Could not dismiss this proposal.', 'error');
             }
@@ -8447,10 +9846,55 @@
                     cancel_requested: cancelRequested,
                     stage: returned.stage || (cancelRequested ? 'Cancellation requested…' : current.stage),
                 });
+                updateStoredChatActionCardStatus({ job_id: jobId }, 'cancel requested');
                 renderAgentJobUpdate(agentJobSnapshots.get(jobId));
                 scheduleAgentJobPoll(jobId, 150);
             } catch (error) {
                 appendSystemNotice(error.message || 'Could not cancel this run.', 'error');
+            }
+        }
+
+        async function deleteAgentJob(jobId) {
+            const job = agentJobSnapshots.get(jobId);
+            const isScenarioRun = job?.kind === 'candidate' && job?.baseline_job_id;
+            const isBaselineRun = ['baseline', 'manual'].includes(job?.kind);
+            if (!job || (!isScenarioRun && !isBaselineRun) || isAgentJobActive(job)) return;
+            const runLabel = isBaselineRun ? 'baseline' : 'scenario';
+            if (!window.confirm('Delete this ' + runLabel + ' run and its generated files? This cannot be undone.')) return;
+            try {
+                await postAgentAction('/api/jobs/' + encodeURIComponent(jobId) + '/delete');
+                const timer = agentJobPollTimers.get(jobId);
+                if (timer) clearTimeout(timer);
+                agentJobPollTimers.delete(jobId);
+                agentJobStartedAt.delete(jobId);
+                agentJobSnapshots.delete(jobId);
+                agentExplainedJobs.delete(jobId);
+                agentCompletionCards.delete('job:' + jobId);
+                updateStoredChatActionCardStatus({ job_id: jobId }, 'deleted');
+                if (job.mode === 'annual' && annualLatestJobId === jobId) {
+                    annualLatestJobId = null;
+                    annualLatestResult = null;
+                    annualRunState = null;
+                    clearAnnualImages();
+                    renderAnnualQuality([]);
+                    setAnnualExcelLink(null);
+                }
+                if (job.mode !== 'annual' && latestJobId === jobId) {
+                    latestJobId = null;
+                    latestInputPlots = null;
+                    latestResult = null;
+                    currentRunState = null;
+                    clearRunImages();
+                    calibrationFactorPanel.classList.add('hidden');
+                    setExcelLink(null);
+                }
+                if (agentActivitySelection === 'job:' + jobId) agentActivitySelection = null;
+                renderAgentActivity();
+                appendSystemNotice('The ' + runLabel + ' run was deleted, including its generated files.');
+                saveDashboardState();
+                await refreshAgentState(false);
+            } catch (error) {
+                appendSystemNotice(error.message || 'Could not delete this scenario run.', 'error');
             }
         }
 
@@ -8459,21 +9903,29 @@
                 const data = await postAgentAction('/api/jobs/' + encodeURIComponent(job.job_id) + '/retry');
                 const action = normalizeAgentAction(data);
                 const retried = action?.job || data.job || data;
+                const sweepId = agentParameterSweepMetadata(retried)?.sweep_id;
+                agentCompletionCards.delete(sweepId ? 'sweep:' + sweepId : 'job:' + retried.job_id);
+                const cardUpdated = updateStoredChatActionCardStatus(
+                    sweepId ? { sweep_id: sweepId } : { job_id: retried.job_id },
+                    retried.state || 'queued'
+                );
                 putAgentJob(retried);
                 renderAgentJobUpdate(agentJobSnapshots.get(retried.job_id));
                 scheduleAgentJobPoll(retried.job_id, 150);
-                appendSystemNotice('Retry queued with the same immutable request snapshot.');
+                if (!cardUpdated) appendSystemNotice('Retry queued with the same immutable request snapshot.');
             } catch (error) {
                 appendSystemNotice(error.message || 'Could not retry this run.', 'error');
             }
         }
 
-        async function requestAgentCompletionExplanation(job, force = false) {
+        async function requestAgentCompletionExplanation(job) {
             if (!job || job.state !== 'done' || !job.comparison) return;
-            if (!force && agentExplainedJobs.has(job.job_id)) return;
+            if (agentExplainedJobs.has(job.job_id)) return;
             agentExplainedJobs.add(job.job_id);
             saveDashboardState();
-            if (!force) appendSystemNotice('Scenario complete. Preparing an engineering explanation from the trusted comparison…');
+            const loadingBubble = appendMessage('assistant', '', { loading: true });
+            const loadingLabel = loadingBubble.querySelector('.chat-loading-label');
+            if (loadingLabel) loadingLabel.textContent = 'Preparing engineering explanation';
             try {
                 const history = chatMessages.slice(-8).map((item) => ({ role: item.role, content: item.content }));
                 const response = await fetch('/api/chat', {
@@ -8491,13 +9943,18 @@
                 const data = await readAgentResponse(response, 'The engineering explanation is temporarily unavailable.');
                 const reply = data.reply || 'The comparison is complete, but no engineering explanation was returned.';
                 const assistantMessage = assistantMessageFromResponse(reply, data);
-                appendMessage('assistant', reply, assistantMessage);
+                loadingBubble.parentElement.remove();
                 chatMessages.push(assistantMessage);
                 if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
+                renderChatMessages();
+                renderAgentActivity();
                 renderExternalEvidence(reply, data);
                 renderChatFollowups();
                 saveDashboardState();
             } catch (error) {
+                loadingBubble.parentElement.remove();
+                agentExplainedJobs.delete(job.job_id);
+                saveDashboardState();
                 appendSystemNotice(error.message || 'The comparison completed, but its explanation could not be generated.', 'error');
             }
         }
@@ -8642,16 +10099,22 @@
                     const detail = data.detail || 'Chat request failed (' + res.status + ')';
                     throw new Error(Array.isArray(detail) ? detail[0].msg : detail);
                 }
-                const reply = data.reply || 'I could not generate a response for that question.';
+                const action = normalizeAgentAction(data);
+                const modelReply = data.reply || 'I could not generate a response for that question.';
+                const reply = action ? agentActionSummary(action) : modelReply;
+                const actionCard = action ? buildChatActionCard(action) : null;
                 loadingBubble.parentElement.classList.remove('is-loading');
                 loadingBubble.parentElement.removeAttribute('role');
-                loadingBubble.innerHTML = renderSafeMarkdown(reply);
-                loadingBubble.parentElement.classList.toggle('clarification', isClarificationReply(reply, data));
-                const assistantMessage = assistantMessageFromResponse(reply, data);
+                renderMessageBubbleContent(loadingBubble, reply, { action_card: actionCard });
+                loadingBubble.parentElement.classList.toggle('clarification', !action && isClarificationReply(reply, data));
+                const assistantMessage = assistantMessageFromResponse(reply, {
+                    ...data,
+                    action_card: actionCard,
+                });
                 applyMessageMeta(loadingBubble.parentElement, 'assistant', assistantMessage);
                 chatMessages.push(assistantMessage);
                 handleAgentAction(data);
-                renderExternalEvidence(reply, data);
+                if (!action) renderExternalEvidence(reply, data);
                 if (data.job_id) {
                     if (activeMode === 'annual') {
                         annualLatestJobId = data.job_id;
@@ -8719,26 +10182,35 @@
             if (Array.isArray(saved.chatMessages) && saved.chatMessages.length) {
                 chatMessages = saved.chatMessages
                     .filter((item) => item && item.content)
-                    .map((item) => ({
-                        role: item.role === 'user' ? 'user' : 'assistant',
-                        content: String(item.content),
-                        created_at: normalizeChatTimestamp(
-                            item.created_at || item.createdAt
-                        ).toISOString(),
-                        gpt_seconds: finiteElapsedSeconds(
-                            item.gpt_seconds ?? item.gptSeconds
-                        ),
-                        model_run_seconds: finiteElapsedSeconds(
-                            item.model_run_seconds ?? item.modelSeconds
-                        ),
-                        model_run_status: String(
-                            item.model_run_status || item.modelStatus || 'not_run'
-                        ),
-                    }))
+                    .map((item) => {
+                        const restored = {
+                            role: item.role === 'user' ? 'user' : 'assistant',
+                            content: String(item.content),
+                            created_at: normalizeChatTimestamp(
+                                item.created_at || item.createdAt
+                            ).toISOString(),
+                            gpt_seconds: finiteElapsedSeconds(
+                                item.gpt_seconds ?? item.gptSeconds
+                            ),
+                            model_run_seconds: finiteElapsedSeconds(
+                                item.model_run_seconds ?? item.modelSeconds
+                            ),
+                            model_run_status: String(
+                                item.model_run_status || item.modelStatus || 'not_run'
+                            ),
+                            automated: item.automated === true,
+                        };
+                        const actionCard = normalizeChatActionCard(item.action_card);
+                        if (actionCard) restored.action_card = actionCard;
+                        return restored;
+                    })
                     .slice(-50);
             }
             if (Array.isArray(saved.agentExplainedJobs)) {
                 saved.agentExplainedJobs.filter(Boolean).slice(-50).forEach((jobId) => agentExplainedJobs.add(String(jobId)));
+            }
+            if (Array.isArray(saved.agentCompletionCards)) {
+                saved.agentCompletionCards.filter(Boolean).slice(-100).forEach((key) => agentCompletionCards.add(String(key)));
             }
 
             applyFormState(saved.form);
