@@ -654,6 +654,29 @@ def _iso(date_str: str, time_str: str) -> str:
     return utc.strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def _validation_window_metadata(from_iso: str, to_iso: str) -> dict[str, Any]:
+    """Return display-safe validation boundaries while preserving legacy fields."""
+
+    def boundary(value: str) -> tuple[str, str]:
+        utc = datetime.fromisoformat(value).replace(tzinfo=UTC_TZ)
+        explicit_utc = utc.isoformat(timespec="seconds").replace("+00:00", "Z")
+        local = utc.astimezone(LOCAL_TZ).isoformat(timespec="seconds")
+        return explicit_utc, local
+
+    from_utc, from_local = boundary(from_iso)
+    to_utc, to_local = boundary(to_iso)
+    return {
+        "from": from_iso,
+        "to": to_iso,
+        "from_utc": from_utc,
+        "to_utc": to_utc,
+        "from_local": from_local,
+        "to_local": to_local,
+        "timezone": str(LOCAL_TZ),
+        "end_exclusive": True,
+    }
+
+
 def _output_url(path: Path) -> str:
     return f"/outputs/{path.name}"
 
@@ -3128,8 +3151,7 @@ def _run_job(
                 "factor_driver_diagnostics"
             ),
             "window": {
-                "from": from_iso,
-                "to": to_iso,
+                **_validation_window_metadata(from_iso, to_iso),
                 "interval_seconds": interval_seconds,
                 "backtrack": req.backtrack,
                 "solaredge_inverter_efficiency": req.solaredge_inverter_efficiency,

@@ -462,6 +462,92 @@
             font-size: 14px;
         }
 
+        .validation-run-context {
+            margin: 0 0 20px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+            color: var(--muted);
+        }
+
+        .validation-run-context[hidden] {
+            display: none;
+        }
+
+        .validation-run-context-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            align-items: stretch;
+        }
+
+        .validation-run-context-item {
+            display: grid;
+            align-content: center;
+            gap: 8px;
+            min-width: 0;
+            padding: 18px 22px;
+        }
+
+        .validation-run-context-item + .validation-run-context-item {
+            border-left: 1px solid var(--border);
+        }
+
+        .validation-run-context-title {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 820;
+            line-height: 1.25;
+        }
+
+        .validation-run-context-title .system-dot {
+            width: 10px;
+            height: 10px;
+            margin: 0;
+            flex: 0 0 auto;
+        }
+
+        .validation-run-context-range {
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 720;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.4;
+        }
+
+        .validation-run-context-timezone {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 650;
+        }
+
+        .validation-run-context-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin: 0;
+        }
+
+        .validation-run-context-metrics div {
+            min-width: 0;
+        }
+
+        .validation-run-context-metrics dt {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .validation-run-context-metrics dd {
+            margin: 3px 0 0;
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 820;
+            font-variant-numeric: tabular-nums;
+        }
+
         .quality-panel,
         .runtime-warning {
             margin-bottom: 20px;
@@ -3194,6 +3280,19 @@
                 grid-template-columns: 1fr;
             }
 
+            .validation-run-context-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .validation-run-context-item {
+                padding: 16px 18px;
+            }
+
+            .validation-run-context-item + .validation-run-context-item {
+                border-top: 1px solid var(--border);
+                border-left: 0;
+            }
+
             .validation-comparison-strip {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
@@ -5412,6 +5511,57 @@
                     <span class="annual-results-note" id="validationResultsNote">Physics model</span>
                 </div>
 
+                <section class="validation-run-context" id="validationRunContext"
+                    aria-label="Completed model run context" aria-live="polite" hidden>
+                    <div class="validation-run-context-grid">
+                        <div class="validation-run-context-item">
+                            <div class="validation-run-context-title">Measured-data window</div>
+                            <div class="validation-run-context-range" id="validationRunContextRange">--</div>
+                            <div class="validation-run-context-timezone" id="validationRunContextTimezone">--</div>
+                        </div>
+                        <div class="validation-run-context-item">
+                            <div class="validation-run-context-title">
+                                <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                                <span>SolarEdge efficiency</span>
+                            </div>
+                            <dl class="validation-run-context-metrics">
+                                <div>
+                                    <dt>Inverter</dt>
+                                    <dd id="validationRunContextSeInverter">--</dd>
+                                </div>
+                                <div>
+                                    <dt>BOS</dt>
+                                    <dd id="validationRunContextSeBos">--</dd>
+                                </div>
+                                <div>
+                                    <dt>Total</dt>
+                                    <dd id="validationRunContextSeTotal">--</dd>
+                                </div>
+                            </dl>
+                        </div>
+                        <div class="validation-run-context-item">
+                            <div class="validation-run-context-title">
+                                <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                                <span>Solectria efficiency</span>
+                            </div>
+                            <dl class="validation-run-context-metrics">
+                                <div>
+                                    <dt>Inverter</dt>
+                                    <dd id="validationRunContextSolInverter">--</dd>
+                                </div>
+                                <div>
+                                    <dt>BOS</dt>
+                                    <dd id="validationRunContextSolBos">--</dd>
+                                </div>
+                                <div>
+                                    <dt>Total</dt>
+                                    <dd id="validationRunContextSolTotal">--</dd>
+                                </div>
+                            </dl>
+                        </div>
+                    </div>
+                </section>
+
                 <section class="calibration-factor-panel hidden" id="calibrationFactorPanel" aria-labelledby="calibrationFactorHeading">
                     <div class="calibration-factor-heading">
                         <div>
@@ -5837,6 +5987,17 @@
         const validationResultsHeading = document.getElementById('validationResultsHeading');
         const validationResultsDescription = document.getElementById('validationResultsDescription');
         const validationResultsNote = document.getElementById('validationResultsNote');
+        const validationRunContext = document.getElementById('validationRunContext');
+        const validationRunContextRange = document.getElementById('validationRunContextRange');
+        const validationRunContextTimezone = document.getElementById('validationRunContextTimezone');
+        const validationRunContextEfficiencyValues = {
+            solaredge_inverter_efficiency: document.getElementById('validationRunContextSeInverter'),
+            solaredge_bos_efficiency: document.getElementById('validationRunContextSeBos'),
+            solaredge_total_efficiency: document.getElementById('validationRunContextSeTotal'),
+            solectria_inverter_efficiency: document.getElementById('validationRunContextSolInverter'),
+            solectria_bos_efficiency: document.getElementById('validationRunContextSolBos'),
+            solectria_total_efficiency: document.getElementById('validationRunContextSolTotal'),
+        };
         const validationEnergyChartTitle = document.getElementById('validationEnergyChartTitle');
         const validationAcChartTitle = document.getElementById('validationAcChartTitle');
         const uncalibratedChartCards = [
@@ -6976,7 +7137,93 @@
                 formatDelta(available ? uncalibrated.sol_pct : null);
         }
 
+        function formatValidationRunTimestamp(value, timezone) {
+            if (!value) return 'n/a';
+            const text = String(value).trim();
+            const explicitTimestamp = /(?:Z|[+-]\d{2}:\d{2})$/i.test(text)
+                ? text
+                : text + 'Z';
+            const date = new Date(explicitTimestamp);
+            if (Number.isNaN(date.getTime())) return text.replace('T', ' ');
+            let parts;
+            try {
+                parts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: timezone || 'America/Denver',
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hourCycle: 'h23',
+                }).formatToParts(date);
+            } catch (_) {
+                parts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/Denver',
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hourCycle: 'h23',
+                }).formatToParts(date);
+            }
+            const values = Object.fromEntries(
+                parts.filter((part) => part.type !== 'literal')
+                    .map((part) => [part.type, part.value])
+            );
+            const hour = values.hour === '24' ? '00' : values.hour;
+            return values.month + ' ' + values.day + ', ' + values.year +
+                ' ' + hour + ':' + values.minute;
+        }
+
+        function formatValidationRunEfficiency(value) {
+            if (value === null || value === undefined || value === '') return 'n/a';
+            const number = Number(value);
+            return Number.isFinite(number) ? (number * 100).toFixed(1) + '%' : 'n/a';
+        }
+
+        function renderValidationRunContext(result) {
+            const windowData = result?.window;
+            if (!windowData) {
+                validationRunContextRange.textContent = '--';
+                validationRunContextTimezone.textContent = '--';
+                Object.values(validationRunContextEfficiencyValues).forEach((node) => {
+                    node.textContent = '--';
+                });
+                validationRunContextRange.removeAttribute('title');
+                validationRunContext.hidden = true;
+                return;
+            }
+
+            const stats = result?.stats || {};
+            const fromValue = windowData.from_local ?? windowData.from;
+            const toValue = windowData.to_local ?? windowData.to;
+            const timezone = windowData.timezone || 'America/Denver';
+            const fromLabel = formatValidationRunTimestamp(fromValue, timezone);
+            const toLabel = formatValidationRunTimestamp(toValue, timezone);
+            validationRunContextRange.textContent = fromLabel + ' – ' + toLabel;
+            validationRunContextRange.title = windowData.end_exclusive === false
+                ? 'The ending boundary is included.'
+                : 'The ending boundary is excluded.';
+            validationRunContextTimezone.textContent = timezone;
+
+            const efficiencyValues = {
+                solaredge_inverter_efficiency: windowData.solaredge_inverter_efficiency ?? stats.solaredge_inverter_efficiency,
+                solaredge_bos_efficiency: windowData.solaredge_bos_efficiency ?? stats.solaredge_bos_efficiency,
+                solaredge_total_efficiency: windowData.solaredge_total_efficiency ?? stats.solaredge_total_efficiency,
+                solectria_inverter_efficiency: windowData.solectria_inverter_efficiency ?? stats.solectria_inverter_efficiency,
+                solectria_bos_efficiency: windowData.solectria_bos_efficiency ?? stats.solectria_bos_efficiency,
+                solectria_total_efficiency: windowData.solectria_total_efficiency ?? stats.solectria_total_efficiency,
+            };
+            Object.entries(efficiencyValues).forEach(([field, value]) => {
+                validationRunContextEfficiencyValues[field].textContent =
+                    formatValidationRunEfficiency(value);
+            });
+            validationRunContext.hidden = false;
+        }
+
         function applyResult(result, cacheBust = true) {
+            renderValidationRunContext(result);
             if (!result || !result.stats) return;
             const s = result.stats;
             const calibrated = s.calibration_enabled === true || !!s.calibration_factors;
@@ -7116,6 +7363,7 @@
             calibrationReviewPanel.classList.add('hidden');
             calibrationFactorPanel.classList.add('hidden');
             renderUncalibratedComparison(null, false);
+            renderValidationRunContext(null);
             clearRunImages();
             clearAnnualImages();
             setExcelLink(null);
@@ -7202,6 +7450,7 @@
             clearCalibrationReview();
             calibrationFactorPanel.classList.add('hidden');
             renderUncalibratedComparison(null, false);
+            renderValidationRunContext(null);
             syncValidationResultsMode(calibrationRequested);
             latestInputPlots = null;
             latestResult = null;
@@ -10945,6 +11194,7 @@
                     clearRunImages();
                     calibrationFactorPanel.classList.add('hidden');
                     renderUncalibratedComparison(null, false);
+                    renderValidationRunContext(null);
                     setExcelLink(null);
                 }
                 if (agentActivitySelection === 'job:' + jobId) agentActivitySelection = null;
