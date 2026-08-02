@@ -930,7 +930,10 @@ def tilt_summary() -> pd.DataFrame:
 
 
 def plot_results(
-    df: pd.DataFrame, out_prefix: str, annual_mode: bool = False
+    df: pd.DataFrame,
+    out_prefix: str,
+    annual_mode: bool = False,
+    calibrated: bool = False,
 ) -> None:
     """Save AC-power and cumulative-energy charts for the selected run mode."""
     # AC power
@@ -943,11 +946,14 @@ def plot_results(
     if not annual_mode:
         ax1.plot(df.index, df["se_measured_power_w"] / 1000.0, "r--", label="SolarEdge measured")
         ax1.plot(df.index, df["sol_measured_power_w"] / 1000.0, "b--", label="Solectria measured")
-    ax1.set_title(
-        f"Seasonally Calibrated AC Power (kW) — sbe_pv_model v{__version__}"
-    )
     if annual_mode:
         ax1.set_title("Predicted AC Power (kW) - Annual Simulation")
+    elif calibrated:
+        ax1.set_title("Calibrated AC Power")
+    else:
+        ax1.set_title(
+            f"Physics-Model AC Power (kW) — sbe_pv_model v{__version__}"
+        )
     ax1.set_xlabel(f"Time ({df.index.tz})")
     ax1.set_ylabel("AC Power (kW)")
     ax1.grid(True, alpha=0.25)
@@ -999,9 +1005,14 @@ def plot_results(
     if not annual_mode:
         ax2.plot(df.index, df["se_measured_energy_kwh"], "r--", label="SolarEdge measured")
         ax2.plot(df.index, df["sol_measured_energy_kwh"], "b--", label="Solectria measured")
-    ax2.set_title(f"Cumulative Energy (kWh) — sbe_pv_model v{__version__}")
     if annual_mode:
         ax2.set_title("Cumulative Predicted Energy (kWh) - Annual Simulation")
+    elif calibrated:
+        ax2.set_title("Calibrated Cumulative Energy")
+    else:
+        ax2.set_title(
+            f"Physics-Model Cumulative Energy (kWh) — sbe_pv_model v{__version__}"
+        )
     ax2.set_xlabel(f"Time ({df.index.tz})")
     ax2.set_ylabel("Cumulative Energy (kWh)")
     ax2.grid(True, alpha=0.25)
@@ -1153,9 +1164,35 @@ def write_excel(
         "dt_hours",
     ]
     cols = [column for column in cols if column in out.columns]
+    time_series = out[cols].copy()
+    if meta.get("calibration_enabled") is True:
+        time_series = time_series.rename(
+            columns={
+                "se_predicted_power_w": "se_calibrated_power_w",
+                "sol_predicted_power_w": "sol_calibrated_power_w",
+                "se_predicted_energy_kwh": "se_calibrated_energy_kwh",
+                "sol_predicted_energy_kwh": "sol_calibrated_energy_kwh",
+            }
+        )
 
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        out[cols].to_excel(writer, sheet_name="time_series", index=False)
+        time_series.to_excel(writer, sheet_name="time_series", index=False)
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        time_series_sheet = writer.sheets["time_series"]
+        time_series_sheet.freeze_panes = "A2"
+        time_series_sheet.auto_filter.ref = time_series_sheet.dimensions
+        header_fill = PatternFill(fill_type="solid", fgColor="DDEFEA")
+        for cell in time_series_sheet[1]:
+            cell.font = Font(bold=True, color="0B4F46")
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+        for column_index, column_name in enumerate(time_series.columns, start=1):
+            width = min(max(len(str(column_name)) + 2, 14), 34)
+            time_series_sheet.column_dimensions[
+                get_column_letter(column_index)
+            ].width = width
         tilt_summary().to_excel(writer, sheet_name="tilts_and_strings", index=False)
         if calibration_factors:
             factor_rows: list[dict] = []
@@ -1266,6 +1303,7 @@ def run_model(
     data_quality_context: dict | None = None,
     expected_interval_seconds: int | None = None,
     calibration_profile: dict | None = None,
+    calibrate_model: bool = True,
 ) -> dict:
     """Run the full model on input_csv, write PNGs + Excel, return a stats dict.
 
@@ -1315,7 +1353,10 @@ def run_model(
         curtailment_limit_kw = DEFAULT_CURTAILMENT_LIMIT_KW
     calibration_factors: dict | None = None
     factor_driver_diagnostics: dict | None = None
-    if input_kind == "historian" and not annual_mode:
+    calibration_enabled = bool(
+        calibrate_model and input_kind == "historian" and not annual_mode
+    )
+    if calibration_enabled:
         if calibration_profile is not None:
             if progress_cb:
                 progress_cb(
@@ -1376,7 +1417,27 @@ def run_model(
 
     if progress_cb:
         progress_cb(0.89, "Rendering power and energy charts")
-    plot_results(df, out_prefix=output_base, annual_mode=annual_mode)
+    plot_results(
+        df,
+        out_prefix=output_base,
+        annual_mode=annual_mode,
+        calibrated=calibration_enabled,
+    )
+    if calibration_enabled:
+        if progress_cb:
+            progress_cb(0.92, "Rendering uncalibrated comparison charts")
+        uncalibrated_plot_df = df.copy()
+        for system in ("se", "sol"):
+            uncalibrated_plot_df[f"{system}_predicted_power_w"] = df[
+                f"{system}_uncalibrated_power_w"
+            ]
+            uncalibrated_plot_df[f"{system}_predicted_energy_kwh"] = df[
+                f"{system}_uncalibrated_energy_kwh"
+            ]
+        plot_results(
+            uncalibrated_plot_df,
+            out_prefix=f"{output_base}_uncalibrated",
+        )
     if annual_mode:
         if progress_cb:
             progress_cb(0.93, "Rendering monthly energy chart")
@@ -1430,6 +1491,7 @@ def run_model(
             if calibration_factors
             else "not_applied"
         ),
+        "calibration_enabled": calibration_enabled,
         "calibration_factors": (
             json.dumps(calibration_factors, sort_keys=True)
             if calibration_factors
@@ -1448,7 +1510,11 @@ def run_model(
             1.0,
             "Annual model predictions ready"
             if annual_mode
-            else "Calibrated Model Predictions ready",
+            else (
+                "Calibrated model predictions ready"
+                if calibration_enabled
+                else "Uncalibrated model predictions ready"
+            ),
         )
 
     se_meas = float(df["se_measured_energy_kwh"].iloc[-1])
@@ -1505,6 +1571,7 @@ def run_model(
             }
         ),
         "calibration_factors": calibration_factors,
+        "calibration_enabled": calibration_enabled,
         "factor_driver_diagnostics": factor_driver_diagnostics,
         "data_quality_review": data_quality_context,
         "predicted_difference_kwh": _safe(predicted_difference),
@@ -1535,6 +1602,16 @@ def run_model(
         "n_rows": int(len(df)),
         "ac_png": f"{output_base}_ac_power.png",
         "energy_png": f"{output_base}_cumulative_energy.png",
+        "uncalibrated_ac_png": (
+            f"{output_base}_uncalibrated_ac_power.png"
+            if calibration_enabled
+            else None
+        ),
+        "uncalibrated_energy_png": (
+            f"{output_base}_uncalibrated_cumulative_energy.png"
+            if calibration_enabled
+            else None
+        ),
         "monthly_png": (
             f"{output_base}_monthly_energy.png" if annual_mode else None
         ),

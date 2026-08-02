@@ -45,6 +45,7 @@ from calibration_workflow import (
     apply_quality_decisions,
     inspect_historian_csv,
     public_quality_report,
+    quality_issue_rows,
     season_name,
     validate_seasonal_calibration_profile,
 )
@@ -209,6 +210,7 @@ class RunRequest(StrictRequest):
     iam_a_r: float | None = model.A_R
     curtailment_enabled: bool = False
     curtailment_limit_kw: float | None = None
+    calibrate_model: bool = True
 
 
 class CalibrationDecisionRequest(StrictRequest):
@@ -257,6 +259,7 @@ class ProposalEditRequest(StrictRequest):
 SOLAR_AGENT_INSTRUCTIONS = """You are Solar Agent, a concise PV performance analyst for a local SB Energy dashboard.
 Use the supplied dashboard run context as the source of truth for run-specific questions.
 Explain model behavior in plain engineering terms: measured vs predicted energy, percent deltas, DHI source, IAM, backtracking, clipping/curtailment, and efficiency assumptions.
+Validation-view runs may be calibrated or physics-model-only. Treat request.calibrate_model and result.stats.calibration_enabled as authoritative, and never describe a run as calibrated when calibration_enabled is false.
 Calibration runs first review Bazefield quality and record the user's retain/exclude decisions. Treat data_quality, calibration_factors, uncalibrated, and factor_driver_diagnostics in the run result as authoritative. Explain that each per-system meteorological-season factor is measured energy divided by the uncalibrated physics-model energy over accepted daylight samples; factors may be above 1. Driver diagnostics are associations, not causal proof, and soiling cannot be isolated without dedicated soiling, rainfall, cleaning, or maintenance data.
 Solar Agent may start a calibration scenario only when it reuses the exact hash-verified source and frozen calibration profile of a reviewed baseline. A new date, time, interval, missing reviewed baseline, changed source, or other cross-run calibration request requires the visible Calibration form: the user must retrieve Bazefield data, review every flagged irregularity, choose Retain or Exclude where offered, and then apply the reviewed run. If the tool returns data_review_required, say clearly that no proposal or model job was created and direct the user to that visible review flow.
 Treat visible_iam_selection as the authoritative IAM state for the visible dashboard form. Physical IAM is an active IAM selection, even though iam_a_r is null because that coefficient applies only to Martin-Ruiz. Never describe Physical IAM as disabled, off, or not selected.
@@ -653,6 +656,31 @@ def _iso(date_str: str, time_str: str) -> str:
 
 def _output_url(path: Path) -> str:
     return f"/outputs/{path.name}"
+
+
+def _workbook_download_name(
+    req: RunRequest | AnnualRunRequest,
+    *,
+    calibrated: bool = False,
+) -> str:
+    """Return a readable, filesystem-safe name for a model workbook download."""
+
+    def safe_part(value: Any) -> str:
+        normalized = "".join(
+            character if character.isalnum() or character in "-_" else "-"
+            for character in str(value).strip()
+        )
+        return normalized.strip("-_") or "unknown"
+
+    if isinstance(req, AnnualRunRequest):
+        run_label = "Annual_Simulation"
+        start = safe_part(req.from_date)
+        end = safe_part(req.to_date)
+    else:
+        run_label = "Calibrated_Model" if calibrated else "Physics_Model"
+        start = safe_part(f"{req.from_date}_{req.from_time}")
+        end = safe_part(f"{req.to_date}_{req.to_time}")
+    return f"SB_Energy_{run_label}_{start}_to_{end}.xlsx"
 
 
 def _public_source_url(path: Path) -> str | None:
@@ -2900,7 +2928,11 @@ def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
         artifacts["input_plots"] = JOBS[job_id]["input_plots"]
     artifacts.setdefault(
         "model_workbook",
-        {"path": str(_artifact_file(result, "excel")), "url": result.get("excel")},
+        {
+            "path": str(_artifact_file(result, "excel")),
+            "url": result.get("excel"),
+            "filename": result.get("excel_filename"),
+        },
     )
 
     comparison = None
@@ -2954,7 +2986,16 @@ def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
         error=None,
     )
     completed = _get_job_record(job_id)
-    if completed and completed.get("kind") in {"baseline", "manual"}:
+    request = (completed or {}).get("request") or {}
+    should_promote = (
+        (completed or {}).get("mode") == "annual"
+        or bool(request.get("calibrate_model", True))
+    )
+    if (
+        completed
+        and completed.get("kind") in {"baseline", "manual"}
+        and should_promote
+    ):
         try:
             AGENT_STORE.promote_job(job_id)
         except AgentStoreError:
@@ -3056,6 +3097,7 @@ def _run_job(
             data_quality_context=data_quality_context,
             expected_interval_seconds=interval_seconds,
             calibration_profile=calibration_profile,
+            calibrate_model=req.calibrate_model,
         )
         set_progress(95, "Finalizing model artifacts")
         result = {
@@ -3063,7 +3105,21 @@ def _run_job(
             "stats": stats,
             "ac_png": _output_url(Path(stats["ac_png"])),
             "energy_png": _output_url(Path(stats["energy_png"])),
+            "uncalibrated_ac_png": (
+                _output_url(Path(stats["uncalibrated_ac_png"]))
+                if stats.get("uncalibrated_ac_png")
+                else None
+            ),
+            "uncalibrated_energy_png": (
+                _output_url(Path(stats["uncalibrated_energy_png"]))
+                if stats.get("uncalibrated_energy_png")
+                else None
+            ),
             "excel": _output_url(Path(stats["excel"])),
+            "excel_filename": _workbook_download_name(
+                req,
+                calibrated=stats.get("calibration_enabled") is True,
+            ),
             "input_plots": JOBS[job_id].get("input_plots"),
             "source_csv": _public_source_url(csv_path),
             "data_quality": data_quality_context,
@@ -3093,6 +3149,7 @@ def _run_job(
                     if req.curtailment_enabled
                     else None
                 ),
+                "calibrate_model": req.calibrate_model,
             },
         }
         _finish_model_job(job_id, result)
@@ -3207,6 +3264,7 @@ def _run_annual_job(
             "energy_png": _output_url(Path(stats["energy_png"])),
             "monthly_png": _output_url(Path(stats["monthly_png"])),
             "excel": _output_url(Path(stats["excel"])),
+            "excel_filename": _workbook_download_name(req),
             "input_plots": JOBS[job_id].get("input_plots"),
             "source_csv": _public_source_url(csv_path),
             "warnings": warnings,
@@ -3292,6 +3350,14 @@ def _enqueue_baseline_job(
 def create_calibration_review(req: RunRequest) -> JSONResponse:
     """Retrieve Bazefield data and return issues before model calibration."""
 
+    if not req.calibrate_model:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Data-quality decisions are only required when model calibration "
+                "is selected. Use POST /api/run for an uncalibrated model run."
+            ),
+        )
     _validate_run_request(req)
     _validate_curtailment(req)
     with _ORCHESTRATION_LOCK:
@@ -3543,7 +3609,7 @@ def _legacy_unreviewed_run_enabled() -> bool:
 
 @app.post("/api/run")
 def start_run(req: RunRequest) -> JSONResponse:
-    if not _legacy_unreviewed_run_enabled():
+    if req.calibrate_model and not _legacy_unreviewed_run_enabled():
         raise HTTPException(
             status_code=410,
             detail=(
@@ -3556,6 +3622,36 @@ def start_run(req: RunRequest) -> JSONResponse:
     _validate_curtailment(req)
     job = _enqueue_baseline_job("validation", _run_request_context(req))
     return JSONResponse({"job_id": job["id"]})
+
+
+@app.get("/api/calibration-reviews/{review_id}/rows")
+def calibration_review_rows(
+    review_id: str,
+    issue_id: str,
+    offset: int = 0,
+    limit: int = 50,
+) -> JSONResponse:
+    """Return one bounded page of hash-verified rows for an issue."""
+
+    with _ORCHESTRATION_LOCK:
+        record = _load_calibration_review(review_id)
+        try:
+            verify_source_sha256(record["source_path"], record["source_hash"])
+            page = quality_issue_rows(
+                record["source_path"],
+                record["report"],
+                issue_id,
+                offset=offset,
+                limit=limit,
+            )
+        except SourceFingerprintMismatch as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="The reviewed Bazefield source changed; retrieve it again.",
+            ) from exc
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(page)
 
 
 @app.post("/api/annual-run")

@@ -27,6 +27,7 @@ import pandas as pd
 REPORT_VERSION = 1
 CALIBRATION_PROFILE_SCHEMA_VERSION = 1
 LOCAL_TIMEZONE = "America/Denver"
+BAD_ROW_PREVIEW_LIMIT = 50
 
 HISTORIAN_COLUMNS = (
     "timestamp",
@@ -228,6 +229,48 @@ def _json_scalar(value: Any) -> Any:
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
     return value
+
+
+def _json_cell(value: Any) -> Any:
+    """Return a JSON-safe scalar from one source-data cell."""
+
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    converted = _json_scalar(value)
+    if converted is None or isinstance(
+        converted, (str, int, float, bool)
+    ):
+        return converted
+    return str(converted)
+
+
+def _affected_row_preview(
+    raw: pd.DataFrame,
+    positions: list[int],
+    *,
+    limit: int = BAD_ROW_PREVIEW_LIMIT,
+) -> list[dict[str, Any]]:
+    """Return a bounded source-row preview for an issue decision."""
+
+    columns = [column for column in HISTORIAN_COLUMNS if column in raw.columns]
+    rows: list[dict[str, Any]] = []
+    for position in positions[: max(int(limit), 0)]:
+        if position < 0 or position >= len(raw):
+            continue
+        source_row = raw.iloc[position]
+        rows.append(
+            {
+                "source_row": int(position) + 2,
+                **{
+                    column: _json_cell(source_row[column])
+                    for column in columns
+                },
+            }
+        )
+    return rows
 
 
 def _positions(mask: pd.Series | np.ndarray) -> list[int]:
@@ -1009,6 +1052,9 @@ def public_quality_report(report: Mapping[str, Any]) -> dict[str, Any]:
 
     output = deepcopy(dict(report))
     for issue in output.get("issues", []):
+        issue["affected_rows_available"] = bool(
+            issue.get("_row_positions")
+        )
         for key in list(issue):
             if str(key).startswith("_"):
                 issue.pop(key, None)
@@ -1016,6 +1062,56 @@ def public_quality_report(report: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(source, dict):
         source.pop("path", None)
     return output
+
+
+def quality_issue_rows(
+    source_csv: str | Path,
+    report: Mapping[str, Any],
+    issue_id: str,
+    *,
+    offset: int = 0,
+    limit: int = BAD_ROW_PREVIEW_LIMIT,
+) -> dict[str, Any]:
+    """Return a bounded page of source rows affected by one review issue."""
+
+    normalized_issue_id = str(issue_id or "").strip()
+    issues = {
+        str(issue.get("id")): issue
+        for issue in report.get("issues", [])
+        if isinstance(issue, Mapping) and issue.get("id")
+    }
+    issue = issues.get(normalized_issue_id)
+    if issue is None:
+        raise ValueError("Unknown data-quality issue ID.")
+    start = int(offset)
+    page_size = int(limit)
+    if start < 0:
+        raise ValueError("Row offset must be zero or greater.")
+    if page_size < 1 or page_size > 200:
+        raise ValueError("Row page size must be between 1 and 200.")
+
+    positions = sorted(
+        {
+            int(position)
+            for position in issue.get("_row_positions", [])
+        }
+    )
+    selected_positions = positions[start : start + page_size]
+    raw = pd.read_csv(source_csv)
+    rows = _affected_row_preview(
+        raw,
+        selected_positions,
+        limit=len(selected_positions),
+    )
+    next_offset = start + len(selected_positions)
+    return {
+        "issue_id": normalized_issue_id,
+        "offset": start,
+        "limit": page_size,
+        "total_rows": len(positions),
+        "rows": rows,
+        "next_offset": next_offset if next_offset < len(positions) else None,
+    }
 
 
 def apply_quality_decisions(

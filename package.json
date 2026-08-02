@@ -10,7 +10,7 @@
     "build": "vinext build",
     "start": "vinext start",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern outputs --ignore-pattern build --ignore-pattern .wrangler",
-    "test:browser": "python -m unittest -v test_agent_frontend.py"
+    "test:browser": "python -m unittest -v tests.test_agent_frontend"
   },
   "dependencies": {
     "next": "16.2.6",

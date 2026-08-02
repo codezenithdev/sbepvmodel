@@ -1,35 +1,63 @@
 # Calibration workflow
 
-The validation workflow calculates calibration factors for the exact
-user-selected Bazefield period. It deliberately separates source-data review
-from model execution so no flagged historian data is silently removed.
+The validation screen supports two paths for the exact user-selected Bazefield
+period:
+
+- an uncalibrated physics-model run; or
+- an opt-in, reviewed seasonal calibration.
+
+The **Calibrate the model** checkbox selects the path. Calibration deliberately
+separates source-data review from model execution so no flagged historian data
+is silently removed. An unchecked run skips factor fitting and returns the
+physics-model predictions directly.
 
 ## User flow
 
 1. The user selects the date range, interval, model efficiencies, IAM settings,
-   backtracking, and optional curtailment limit.
-2. `POST /api/calibration-reviews` retrieves a private Bazefield snapshot and
-   profiles it without starting the PV model.
-3. The dashboard reports the source coverage, seasons, and every detected issue.
-   Where both actions are technically valid, the user explicitly chooses
-   **Retain** or **Exclude** for the affected rows. Invalid timestamps are a
-   required exclusion; gaps are informational because a missing row cannot
-   itself be removed.
-4. `POST /api/calibration-reviews/{review_id}/run` applies the recorded
+   backtracking, optional curtailment limit, and whether to calibrate.
+2. When calibration is unchecked, the dashboard sends `POST /api/run` with
+   `calibrate_model=false`. The job retrieves the selected Bazefield data, runs
+   the physics model without fitting or applying seasonal factors, and returns
+   the normal plots, statistics, and workbook.
+3. When calibration is checked, `POST /api/calibration-reviews` retrieves a
+   private Bazefield snapshot and profiles it without starting the PV model.
+4. The dashboard reports source coverage, the meteorological seasons present,
+   and every detected issue. **Show affected rows** loads hash-verified source
+   rows lazily from
+   `GET /api/calibration-reviews/{review_id}/rows?issue_id=...&offset=...&limit=...`.
+   The table is paginated rather than placing source values in the public review
+   summary.
+5. Where both actions are technically valid, the user chooses **Retain** or
+   **Exclude** for an issue. A choice applies to every source row affected by
+   that issue; the row table is decision evidence, not a set of independent
+   row-level controls. Invalid timestamps are a required exclusion, while gaps
+   are informational because a missing row cannot itself be removed.
+6. Selecting **Apply decisions & calibrate** opens the **Source-data decision
+   gate**. The model is not queued until the user acknowledges that the flagged
+   rows and Retain/Exclude choices were reviewed and selects **Confirm decisions
+   & calibrate**.
+7. `POST /api/calibration-reviews/{review_id}/run` then applies the recorded
    decisions to the hash-verified snapshot and queues the model against that
-   reviewed CSV.
-5. Results show each applied seasonal factor, valid fitting hours, confidence,
-   before-calibration error, excluded-row audit, and physical-driver diagnostics.
+   reviewed CSV. The gate becomes a persistent receipt showing the reviewed and
+   excluded row counts and the bound job ID; it remains visible while the run is
+   active and when dashboard state is restored.
+8. Calibrated results show each applied seasonal factor, valid fitting hours,
+   confidence, before-calibration error, excluded-row audit, and physical-driver
+   diagnostics.
 
 Review receipts and raw snapshots expire after 24 hours. A reviewed snapshot
 that is bound to a durable model job is retained for reproducible same-input
 scenarios; unbound orphans are removed. All review artifacts stay under the
 private output area and are not served as downloads.
 
-The legacy `POST /api/run` path is disabled by default so a client cannot skip
-the review. An administrator may enable it temporarily with
-`PV_DASHBOARD_ENABLE_LEGACY_RUN`, but reviewed calibration endpoints are the
-production contract.
+`POST /api/run` is the production path for an explicitly uncalibrated request
+with `calibrate_model=false`. A direct request with `calibrate_model=true` (or
+with the field omitted, because the API default remains `true`) is rejected by
+default so a client cannot bypass calibration review. An administrator may
+temporarily permit legacy unreviewed calibration with
+`PV_DASHBOARD_ENABLE_LEGACY_RUN`, but the reviewed calibration endpoints remain
+the production contract. Conversely, `POST /api/calibration-reviews` accepts
+only requests with calibration enabled.
 
 ## Data-quality checks
 
@@ -47,6 +75,10 @@ The review detects:
 
 Every issue has a stable ID, severity, affected columns and row count, sample
 timestamps where applicable, an allowed-action list, and a recommended action.
+The public report exposes only whether affected source rows are available. The
+row endpoint verifies the private snapshot hash and returns bounded pages (50
+rows per dashboard request, with an API maximum of 200), so large reviews do not
+inflate the initial response or browser storage.
 The cleaned-row counts, decisions, raw-source SHA-256, and reviewed-source
 SHA-256 are carried into the result and Excel workbook for auditability.
 Nonexistent or repeated `America/Denver` boundary times at daylight-saving
@@ -54,7 +86,7 @@ transitions are rejected rather than silently shifting the selected period.
 
 ## Seasonal factor method
 
-Meteorological seasons are used:
+Meteorological seasons are assigned in `America/Denver` local civil time:
 
 | Season | Months |
 | --- | --- |
@@ -62,6 +94,11 @@ Meteorological seasons are used:
 | Spring | March–May |
 | Summer | June–August |
 | Fall | September–November |
+
+These are the standard DJF/MAM/JJA/SON groupings. The selected range is not
+expanded automatically to a complete three-month season: a partial-season
+request uses only the timestamps in that exact range, while a range crossing a
+boundary calculates an independent factor for each season present.
 
 For each system and each season present in the selected range:
 
@@ -97,6 +134,11 @@ backtracking, or other model changes; recalculating the factor for every
 candidate would otherwise cancel much of the requested change. A scenario must
 contain every local season required by its frozen profile, and no candidate
 measurement is used to derive a replacement factor.
+
+An uncalibrated `calibrate_model=false` validation job provides direct model
+results but does not create or qualify as a reviewed calibration baseline.
+Calibration promotion and same-input calibration scenarios therefore remain
+limited to jobs carrying the hash-verified review lineage described above.
 
 Solar Agent can queue only these reviewed, same-input scenarios. A request that
 changes the calibration date, time, interval, or source is a new data period,

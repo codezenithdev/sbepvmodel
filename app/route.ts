@@ -2,7 +2,7 @@ import dashboardHtml from "../sb_energy_dashboard_modern.html?raw";
 
 const TITLE = "SB Energy Operations Dashboard";
 const DESCRIPTION =
-  "Review Bazefield data quality, fit seasonal PV calibration factors, compare measured and modeled performance, and export audited results.";
+  "Run the PV physics model, optionally review Bazefield data and fit seasonal calibration factors, compare performance, and export audited results.";
 
 function escapeAttribute(value: string): string {
   return value

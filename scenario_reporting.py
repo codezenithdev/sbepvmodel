@@ -43,6 +43,12 @@ PREDICTED_POWER_COLUMNS = (
     "se_predicted_power_w",
     "sol_predicted_power_w",
 )
+CALIBRATED_EXPORT_COLUMN_ALIASES = {
+    "se_calibrated_power_w": "se_predicted_power_w",
+    "sol_calibrated_power_w": "sol_predicted_power_w",
+    "se_calibrated_energy_kwh": "se_predicted_energy_kwh",
+    "sol_calibrated_energy_kwh": "sol_predicted_energy_kwh",
+}
 MEASURED_POWER_COLUMNS = (
     "se_measured_power_w",
     "sol_measured_power_w",
@@ -134,6 +140,30 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
+def _normalize_exported_time_series_columns(
+    frame: pd.DataFrame,
+    *,
+    workbook_name: str,
+) -> pd.DataFrame:
+    """Restore user-facing calibrated headers to the comparison schema."""
+
+    normalized = frame.copy()
+    rename: dict[str, str] = {}
+    for exported, canonical in CALIBRATED_EXPORT_COLUMN_ALIASES.items():
+        if exported not in normalized:
+            continue
+        if canonical in normalized:
+            if not normalized[exported].equals(normalized[canonical]):
+                raise ValueError(
+                    f"{workbook_name} contains conflicting {exported} and "
+                    f"{canonical} columns."
+                )
+            normalized = normalized.drop(columns=[exported])
+            continue
+        rename[exported] = canonical
+    return normalized.rename(columns=rename)
+
+
 def load_model_workbook(path: str | Path) -> ModelWorkbook:
     """Load and validate a workbook written by ``sbe_pv_model.write_excel``."""
 
@@ -144,7 +174,10 @@ def load_model_workbook(path: str | Path) -> ModelWorkbook:
     with pd.ExcelFile(workbook_path) as workbook:
         if "time_series" not in workbook.sheet_names:
             raise ValueError(f"{workbook_path.name} has no time_series sheet.")
-        time_series = pd.read_excel(workbook, sheet_name="time_series")
+        time_series = _normalize_exported_time_series_columns(
+            pd.read_excel(workbook, sheet_name="time_series"),
+            workbook_name=workbook_path.name,
+        )
         run_info: dict[str, Any] = {}
         if "run_info" in workbook.sheet_names:
             raw_info = pd.read_excel(workbook, sheet_name="run_info")

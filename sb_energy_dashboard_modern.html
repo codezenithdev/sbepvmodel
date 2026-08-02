@@ -500,6 +500,15 @@
             display: none;
         }
 
+        .calibration-review-panel [hidden] {
+            display: none !important;
+        }
+
+        .calibration-review-content {
+            display: grid;
+            gap: 16px;
+        }
+
         .calibration-review-heading,
         .calibration-factor-heading,
         .calibration-review-actions {
@@ -523,6 +532,47 @@
             margin-top: 3px;
             color: var(--text);
             font-size: 18px;
+        }
+
+        .calibration-review-heading > div {
+            min-width: 0;
+        }
+
+        .calibration-review-toggle {
+            width: 40px;
+            height: 40px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border: 1px solid var(--border-strong);
+            border-radius: 9px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            cursor: pointer;
+            transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+        }
+
+        .calibration-review-toggle:hover {
+            border-color: rgba(15, 118, 110, 0.42);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+        }
+
+        .calibration-review-toggle:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.24);
+            outline-offset: 2px;
+        }
+
+        .calibration-review-chevron {
+            display: block;
+            font-size: 20px;
+            font-weight: 800;
+            line-height: 1;
+            transition: transform 0.16s ease;
+        }
+
+        .calibration-review-toggle[aria-expanded="false"] .calibration-review-chevron {
+            transform: rotate(180deg);
         }
 
         .calibration-review-heading p,
@@ -646,6 +696,70 @@
             font-size: 11px;
         }
 
+        .calibration-row-toggle {
+            margin-top: 9px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: var(--accent-strong);
+            cursor: pointer;
+            font: inherit;
+            font-size: 12px;
+            font-weight: 800;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        .calibration-row-preview {
+            grid-column: 1 / -1;
+            min-width: 0;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .calibration-row-preview.hidden,
+        .calibration-decision-gate.hidden {
+            display: none;
+        }
+
+        .calibration-row-preview-note {
+            margin-bottom: 8px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .calibration-row-table-wrap {
+            max-height: 280px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+        }
+
+        .calibration-row-table {
+            width: max-content;
+            min-width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+
+        .calibration-row-table th,
+        .calibration-row-table td {
+            padding: 7px 9px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        .calibration-row-table th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: var(--surface-strong);
+            color: var(--muted-strong);
+            font-weight: 800;
+        }
+
         .calibration-decision-label {
             display: grid;
             gap: 5px;
@@ -685,6 +799,52 @@
             gap: 8px;
             flex-wrap: wrap;
             justify-content: flex-end;
+        }
+
+        .calibration-decision-gate {
+            display: grid;
+            grid-column: 1 / -1;
+            gap: 12px;
+            width: 100%;
+            margin-top: 4px;
+            padding: 14px;
+            border: 1px solid #d7a332;
+            border-left: 4px solid var(--warning);
+            border-radius: 8px;
+            background: #fffaf0;
+        }
+
+        .calibration-decision-gate.applied {
+            border-color: #8fc6bc;
+            border-left-color: var(--accent);
+            background: #edf8f3;
+        }
+
+        .calibration-decision-gate h4 {
+            color: var(--text);
+            font-size: 15px;
+        }
+
+        .calibration-decision-gate p {
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .source-decision-acknowledgement {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .source-decision-acknowledgement input {
+            width: 16px;
+            height: 16px;
+            margin-top: 1px;
+            accent-color: var(--accent);
         }
 
         .calibration-secondary-btn {
@@ -778,7 +938,6 @@
             }
 
             .calibration-review-actions,
-            .calibration-review-heading,
             .calibration-factor-heading {
                 flex-direction: column;
             }
@@ -1207,60 +1366,120 @@
 
         .validation-system-summaries {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 14px;
-            margin-bottom: 14px;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 18px;
+            margin-bottom: 18px;
         }
 
         .validation-system-summary {
+            display: grid;
+            grid-template-columns: minmax(160px, 0.72fr) minmax(360px, 1.55fr) minmax(210px, 0.82fr);
+            align-items: stretch;
             min-width: 0;
-            padding: 18px;
+            padding: 32px 26px;
             border: 1px solid var(--border);
             border-radius: 10px;
             background: var(--surface);
-            box-shadow: var(--shadow);
+            box-shadow: 0 8px 22px rgba(22, 34, 29, 0.04);
+        }
+
+        .validation-system-summary.has-calibration-baseline {
+            grid-template-columns: minmax(160px, 0.72fr) minmax(250px, 1.08fr) minmax(310px, 1.34fr) minmax(190px, 0.82fr);
         }
 
         .validation-system-summary.solaredge-summary {
-            border-top: 3px solid var(--accent);
+            border-left: 4px solid var(--accent);
         }
 
         .validation-system-summary.solectria-summary {
-            border-top: 3px solid var(--info);
+            border-left: 4px solid var(--info);
         }
 
         .validation-system-summary-heading {
             display: flex;
-            align-items: flex-start;
+            align-items: center;
             gap: 10px;
+            min-width: 0;
+            padding-right: 24px;
+            border-right: 1px solid var(--border);
+        }
+
+        .validation-system-summary-heading .system-dot {
+            width: 11px;
+            height: 11px;
+            margin-top: 0;
         }
 
         .validation-system-summary-heading h3 {
             color: var(--text);
-            font-size: 17px;
+            font-size: 19px;
             font-weight: 840;
             line-height: 1.2;
         }
 
         .validation-system-summary-heading p {
-            margin-top: 3px;
+            margin-top: 5px;
             color: var(--muted);
-            font-size: 12px;
+            font-size: 13px;
         }
 
-        .validation-system-metrics {
+        .validation-calibrated-stage,
+        .validation-uncalibrated-comparison,
+        .validation-measured-metric {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
-            margin-top: 16px;
+            align-content: center;
+            min-width: 0;
+        }
+
+        .validation-uncalibrated-comparison {
+            grid-column: 2;
+            gap: 14px;
+            margin: 0;
+            padding: 0 26px;
+            border: 0;
+            border-right: 1px solid var(--border);
+            border-radius: 0;
+            background: transparent;
+        }
+
+        .validation-calibrated-stage {
+            grid-column: 2;
+            gap: 14px;
+            padding: 0 26px;
+            border-right: 1px solid var(--border);
+        }
+
+        .validation-system-summary.has-calibration-baseline .validation-calibrated-stage {
+            grid-column: 3;
+        }
+
+        .validation-measured-metric {
+            grid-column: 3;
+            padding-left: 26px;
+        }
+
+        .validation-system-summary.has-calibration-baseline .validation-measured-metric {
+            grid-column: 4;
+        }
+
+        .validation-stage-label {
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 820;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .validation-calibrated-values {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(96px, 0.72fr) auto;
+            align-items: end;
+            gap: 22px;
+            min-width: 0;
         }
 
         .validation-system-metric {
             min-width: 0;
-            padding: 13px 14px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: var(--surface-muted);
         }
 
         .validation-metric-label,
@@ -1276,28 +1495,32 @@
         .validation-metric-value {
             margin-top: 6px;
             color: var(--text);
-            font-size: 26px;
+            font-size: clamp(23px, 2vw, 30px);
             font-weight: 850;
             line-height: 1.08;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
         }
 
-        .solaredge-summary .validation-metric-value {
+        .solaredge-summary .validation-metric-value,
+        .solaredge-summary .validation-delta-value,
+        .solaredge-summary .validation-uncalibrated-value {
             color: var(--accent-strong);
         }
 
-        .solectria-summary .validation-metric-value {
+        .solectria-summary .validation-metric-value,
+        .solectria-summary .validation-delta-value,
+        .solectria-summary .validation-uncalibrated-value {
             color: var(--info);
         }
 
         .validation-delta-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-            margin-top: 10px;
-            padding: 11px 14px;
-            border-radius: 8px;
-            background: var(--surface-strong);
+            display: grid;
+            align-content: end;
+            gap: 6px;
+            min-width: 0;
+            padding-left: 22px;
+            border-left: 1px solid var(--border);
         }
 
         .validation-delta-copy {
@@ -1317,12 +1540,70 @@
             font-size: 11px;
         }
 
+        .validation-calibrated-stage .validation-delta-copy span {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
         .validation-delta-value {
-            flex: 0 0 auto;
             color: var(--text);
-            font-size: 23px;
+            font-size: clamp(21px, 1.7vw, 27px);
             font-weight: 850;
             line-height: 1;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .validation-flow-marker {
+            align-self: end;
+            padding-bottom: 1px;
+            color: var(--muted);
+            font-size: 28px;
+            font-weight: 500;
+            line-height: 1;
+        }
+
+        .validation-uncalibrated-comparison[hidden] {
+            display: none !important;
+        }
+
+        .validation-uncalibrated-values {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: flex-end;
+            gap: 24px;
+            min-width: 0;
+        }
+
+        .validation-uncalibrated-metric {
+            display: grid;
+            justify-items: start;
+            gap: 3px;
+            min-width: 0;
+        }
+
+        .validation-uncalibrated-label {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .validation-uncalibrated-value {
+            color: var(--muted-strong);
+            font-size: clamp(19px, 1.6vw, 25px);
+            font-weight: 820;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
         }
 
         .validation-comparison-strip {
@@ -1331,11 +1612,11 @@
             align-items: center;
             gap: 18px;
             margin-bottom: 20px;
-            padding: 15px 18px;
+            padding: 28px 26px;
             border: 1px solid var(--border);
             border-radius: 10px;
-            background: linear-gradient(120deg, var(--surface) 0%, var(--surface-muted) 100%);
-            box-shadow: var(--shadow);
+            background: var(--surface);
+            box-shadow: 0 8px 22px rgba(22, 34, 29, 0.04);
         }
 
         .validation-comparison-intro {
@@ -1346,8 +1627,8 @@
         }
 
         .validation-comparison-symbol {
-            width: 34px;
-            height: 34px;
+            width: 42px;
+            height: 42px;
             flex: 0 0 auto;
             display: grid;
             place-items: center;
@@ -1360,7 +1641,7 @@
 
         .validation-comparison-intro h3 {
             color: var(--text);
-            font-size: 14px;
+            font-size: 16px;
             font-weight: 830;
         }
 
@@ -1368,7 +1649,7 @@
         .validation-comparison-helper {
             margin-top: 3px;
             color: var(--muted);
-            font-size: 11px;
+            font-size: 12px;
         }
 
         .validation-comparison-metric {
@@ -1379,10 +1660,12 @@
 
         .validation-comparison-value {
             margin-top: 5px;
-            color: var(--info);
-            font-size: 24px;
+            color: var(--accent-strong);
+            font-size: clamp(25px, 2vw, 32px);
             font-weight: 850;
             line-height: 1.08;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
         }
 
         .annual-results-heading {
@@ -1695,6 +1978,37 @@
             box-shadow: inset 3px 0 0 var(--accent);
         }
 
+        .calibration-mode-toggle {
+            align-items: flex-start;
+        }
+
+        .calibration-mode-toggle span {
+            display: grid;
+            gap: 2px;
+        }
+
+        .calibration-mode-toggle small {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1.35;
+        }
+
+        .calibration-mode-note {
+            display: none;
+            padding: 9px 10px;
+            border-left: 3px solid var(--accent);
+            border-radius: 0 6px 6px 0;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .calibration-mode-note.visible {
+            display: block;
+        }
+
         .curtailment-limit,
         .iam-ar {
             display: none;
@@ -1882,6 +2196,10 @@
         .chart-card {
             overflow: hidden;
             box-shadow: var(--shadow);
+        }
+
+        .calibration-chart-card[hidden] {
+            display: none !important;
         }
 
         .chart-header {
@@ -2746,6 +3064,53 @@
             background: var(--accent-strong);
         }
 
+        @media (max-width: 1450px) {
+            .validation-system-summary,
+            .validation-system-summary.has-calibration-baseline {
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 0.9fr);
+                row-gap: 22px;
+                padding: 20px 22px;
+            }
+
+            .validation-system-summary-heading {
+                grid-column: 1 / -1;
+                padding-right: 0;
+                padding-bottom: 18px;
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .validation-uncalibrated-comparison {
+                grid-column: 1;
+                padding: 0 20px 0 0;
+            }
+
+            .validation-calibrated-stage,
+            .validation-system-summary.has-calibration-baseline .validation-calibrated-stage {
+                grid-column: 2;
+                padding: 0 20px;
+            }
+
+            .validation-system-summary:not(.has-calibration-baseline) .validation-calibrated-stage {
+                grid-column: 1 / 3;
+                padding-left: 0;
+            }
+
+            .validation-measured-metric,
+            .validation-system-summary.has-calibration-baseline .validation-measured-metric {
+                grid-column: 3;
+                padding-left: 20px;
+            }
+
+            .validation-calibrated-values {
+                gap: 16px;
+            }
+
+            .validation-uncalibrated-values {
+                gap: 18px;
+            }
+        }
+
         @media (max-width: 1180px) {
             .app-shell {
                 grid-template-columns: 1fr;
@@ -2838,6 +3203,50 @@
             }
         }
 
+        @media (max-width: 760px) {
+            .validation-system-summary,
+            .validation-system-summary.has-calibration-baseline {
+                grid-template-columns: minmax(0, 1fr);
+                row-gap: 0;
+                padding: 18px 20px;
+            }
+
+            .validation-system-summary-heading,
+            .validation-uncalibrated-comparison,
+            .validation-calibrated-stage,
+            .validation-system-summary.has-calibration-baseline .validation-calibrated-stage,
+            .validation-system-summary:not(.has-calibration-baseline) .validation-calibrated-stage,
+            .validation-measured-metric,
+            .validation-system-summary.has-calibration-baseline .validation-measured-metric {
+                grid-column: 1;
+            }
+
+            .validation-system-summary-heading {
+                padding: 0 0 18px;
+            }
+
+            .validation-uncalibrated-comparison,
+            .validation-calibrated-stage,
+            .validation-system-summary:not(.has-calibration-baseline) .validation-calibrated-stage {
+                padding: 18px 0;
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .validation-measured-metric,
+            .validation-system-summary.has-calibration-baseline .validation-measured-metric {
+                padding: 18px 0 0;
+            }
+
+            .validation-flow-marker {
+                display: none;
+            }
+
+            .validation-calibrated-values {
+                grid-template-columns: minmax(0, 1fr) auto;
+            }
+        }
+
         @media (max-width: 560px) {
             .workspace {
                 padding: 14px;
@@ -2907,6 +3316,20 @@
             .validation-system-metrics,
             .validation-comparison-strip {
                 grid-template-columns: 1fr;
+            }
+
+            .validation-uncalibrated-comparison {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .validation-uncalibrated-values {
+                justify-content: space-between;
+                width: 100%;
+            }
+
+            .validation-uncalibrated-metric {
+                justify-items: start;
             }
 
             .validation-comparison-intro {
@@ -4467,11 +4890,11 @@
                         <h1 class="header-title" id="dashboardTitle">SolarEdge &amp; Solectria Performance Analysis</h1>
                         <span class="help-tip-wrap">
                             <button class="help-tip" type="button" aria-label="Dashboard overview help" aria-describedby="dashboardHelpTooltip" aria-expanded="false">?</button>
-                            <span class="help-tooltip" id="dashboardHelpTooltip" role="tooltip">Use Model Calibration to review Bazefield data and fit seasonal factors. Use Annual Simulation for long-range weather-based production forecasts.</span>
+                            <span class="help-tooltip" id="dashboardHelpTooltip" role="tooltip">Run the Bazefield-backed physics model directly, or select Calibrate the model to review source rows and fit meteorological-season factors. Use Annual Simulation for long-range weather-based production forecasts.</span>
                         </span>
                     </div>
                     <p class="header-subtitle">
-                        Compare measured power, irradiance, calibrated model predictions, and export-ready run artifacts for the SBE
+                        Compare measured power, irradiance, physics-model predictions, and export-ready run artifacts for the SBE
                         Innovation Site.
                     </p>
                 </div>
@@ -4712,7 +5135,7 @@
                 <section class="analysis-layout" aria-label="Annual simulation charts">
                     <div class="annual-charts-grid" id="annualChartGrid">
                         <article class="chart-card">
-                            <div class="chart-header"><div><div class="chart-title">Irradiance Input</div><div class="chart-meta">DNI, GHI, and DHI from the hourly MIDC source - W/m2</div></div><span class="chart-badge">Weather</span></div>
+                            <div class="chart-header"><div><div class="chart-title">Measured Irradiance </div><div class="chart-meta">DNI, GHI, and DHI from the hourly MIDC source - W/m2</div></div><span class="chart-badge">Weather</span></div>
                             <div class="chart-placeholder" id="annualIrradianceChartBox"><div class="chart-icon" id="annualIrradianceIcon">W/m2</div><img class="chart-image" id="annualIrradianceImg" alt="Annual DNI, GHI, and DHI irradiance input chart" style="display:none;"></div>
                         </article>
                         <article class="chart-card">
@@ -4737,8 +5160,8 @@
                 <div class="controls-header">
                     <div class="validation-heading-copy">
                         <p class="validation-kicker">Measured vs modeled</p>
-                        <h2 class="section-title">Calibration configuration</h2>
-                        <p class="section-subtitle">Configure the calibration window and both PV model paths, then compare predictions against measured site performance.</p>
+                        <h2 class="section-title">Model configuration</h2>
+                        <p class="section-subtitle">Configure the measured-data window and both PV model paths, then choose whether to fit seasonal calibration factors.</p>
                     </div>
                 </div>
 
@@ -4748,10 +5171,10 @@
                             <span class="annual-step" aria-hidden="true">1</span>
                             <div>
                                 <div class="heading-with-help">
-                                    <h3 id="validationWindowHeading">Calibration window</h3>
+                                    <h3 id="validationWindowHeading">Measured-data window</h3>
                                     <span class="help-tip-wrap card-corner-help">
-                                        <button class="help-tip" type="button" aria-label="Explain model calibration fields" aria-describedby="calibrationHelpTooltip" aria-expanded="false">?</button>
-                                        <span class="help-tooltip" id="calibrationHelpTooltip" role="tooltip">Choose the measured-data start and end in Mountain time, set the sampling interval, then adjust backtracking or curtailment if needed. Select Run calibration to compare predictions with Bazefield measurements.</span>
+                                        <button class="help-tip" type="button" aria-label="Explain model analysis fields" aria-describedby="calibrationHelpTooltip" aria-expanded="false">?</button>
+                                        <span class="help-tooltip" id="calibrationHelpTooltip" role="tooltip">Choose the measured-data start and end in Mountain time, set the sampling interval, then adjust backtracking or curtailment if needed. Leave calibration off for physics-model results, or select it to review source data and fit seasonal factors.</span>
                                     </span>
                                 </div>
                                 <p>Select the measured-data period in Mountain time.</p>
@@ -4811,6 +5234,16 @@
                                 </span>
                                 <input type="number" class="date-input" id="curtailmentLimitKw" min="0.1" step="0.1" value="125" placeholder="125" disabled>
                             </label>
+                            <label class="checkbox-control calibration-mode-toggle">
+                                <input type="checkbox" id="calibrateModel">
+                                <span>
+                                    <strong>Calibrate the model</strong>
+                                    <small>Review flagged Bazefield rows and fit seasonal factors before producing results.</small>
+                                </span>
+                            </label>
+                            <p class="calibration-mode-note" id="calibrationSeasonNote" role="note">
+                                Meteorological windows: Winter Dec&ndash;Feb, Spring Mar&ndash;May, Summer Jun&ndash;Aug, Fall Sep&ndash;Nov.
+                            </p>
                         </div>
                     </section>
 
@@ -4904,12 +5337,12 @@
                 </div>
                 <div class="configuration-actions">
                     <p class="configuration-actions-copy">
-                        <strong>Ready to calibrate?</strong>
-                        Retrieve and review Bazefield quality first; calibration begins only after your retain/exclude decisions.
+                        <strong id="validationActionTitle">Ready to run?</strong>
+                        <span id="validationActionCopy">Run the physics model with the selected Bazefield data without fitting calibration factors.</span>
                     </p>
                     <div class="control-actions">
                         <a class="download-link hidden" id="excelLink" href="#" download>Export workbook</a>
-                        <button class="run-btn" id="runBtn">Run calibration</button>
+                        <button class="run-btn" id="runBtn">Run model</button>
                     </div>
                 </div>
             </section>
@@ -4918,25 +5351,48 @@
                 role="region" aria-labelledby="calibrationReviewHeading" aria-live="polite">
                 <div class="calibration-review-heading">
                     <div>
-                        <div class="calibration-review-eyebrow">Source-data decision gate</div>
+                        <div class="calibration-review-eyebrow">Bazefield data review</div>
                         <h3 id="calibrationReviewHeading" tabindex="-1">Review Bazefield irregularities</h3>
-                        <p id="calibrationReviewDescription">Choose whether each detected issue should be retained or excluded before the model calculates calibration factors.</p>
+                        <p id="calibrationReviewDescription">Open the affected source rows, then choose whether each detected issue should be retained or excluded.</p>
                     </div>
+                    <button class="calibration-review-toggle" id="calibrationReviewToggle" type="button"
+                        aria-expanded="true" aria-controls="calibrationReviewContent"
+                        aria-label="Collapse Bazefield data review" title="Collapse Bazefield data review">
+                        <span class="calibration-review-chevron" aria-hidden="true">&uarr;</span>
+                    </button>
                 </div>
-                <div class="calibration-review-summary" id="calibrationReviewSummary"></div>
-                <div class="calibration-season-list" id="calibrationReviewSeasons" aria-label="Seasons in selected range"></div>
-                <div class="calibration-issue-list" id="calibrationIssueList"></div>
-                <div class="calibration-review-actions">
-                    <p id="calibrationReviewActionNote">Recommended decisions are selected by default. Review them before continuing.</p>
-                    <div class="calibration-review-button-row">
-                        <button class="calibration-secondary-btn" id="cancelCalibrationReviewBtn" type="button">Change configuration</button>
-                        <button class="run-btn" id="applyCalibrationReviewBtn" type="button">Apply decisions &amp; calibrate</button>
+                <div class="calibration-review-content" id="calibrationReviewContent">
+                    <div class="calibration-review-summary" id="calibrationReviewSummary"></div>
+                    <div class="calibration-season-list" id="calibrationReviewSeasons" aria-label="Seasons in selected range"></div>
+                    <div class="calibration-issue-list" id="calibrationIssueList"></div>
+                    <div class="calibration-review-actions" id="calibrationReviewActions">
+                        <p id="calibrationReviewActionNote">Recommended decisions are selected by default. Review them before continuing.</p>
+                        <div class="calibration-review-button-row">
+                            <button class="calibration-secondary-btn" id="cancelCalibrationReviewBtn" type="button">Change configuration</button>
+                            <button class="run-btn" id="applyCalibrationReviewBtn" type="button">Apply decisions &amp; calibrate</button>
+                        </div>
                     </div>
+                    <section class="calibration-decision-gate hidden" id="calibrationDecisionGate"
+                        role="region" aria-labelledby="calibrationDecisionGateHeading" aria-live="polite">
+                        <div>
+                            <div class="calibration-review-eyebrow">Source-data decision gate</div>
+                            <h4 id="calibrationDecisionGateHeading" tabindex="-1">Confirm the source rows used for calibration</h4>
+                        </div>
+                        <p id="calibrationDecisionGateSummary"></p>
+                        <label class="source-decision-acknowledgement" id="sourceDecisionAcknowledgementLabel">
+                            <input type="checkbox" id="sourceDecisionAcknowledgement">
+                            <span>I reviewed the flagged rows and confirm the retain/exclude decisions above.</span>
+                        </label>
+                        <div class="calibration-review-button-row" id="calibrationDecisionGateActions">
+                            <button class="calibration-secondary-btn" id="backToCalibrationDecisionsBtn" type="button">Back to decisions</button>
+                            <button class="run-btn" id="confirmCalibrationReviewBtn" type="button" disabled>Confirm decisions &amp; calibrate</button>
+                        </div>
+                    </section>
                 </div>
             </section>
 
             <div class="progress-wrap validation-only" id="progressWrap" role="progressbar" tabindex="-1"
-                aria-label="Calibration progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                aria-label="Model progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                 <div class="progress-head">
                     <span id="progressStage">Starting...</span>
                     <span id="progressPct">0%</span>
@@ -4950,10 +5406,10 @@
             <section class="validation-results-shell validation-only" aria-labelledby="validationResultsHeading">
                 <div class="annual-results-heading">
                     <div>
-                        <h2 id="validationResultsHeading">Calibration results</h2>
-                        <p>Measured energy, predicted performance, and model deltas over the selected window.</p>
+                        <h2 id="validationResultsHeading">Model results</h2>
+                        <p id="validationResultsDescription">Measured energy, uncalibrated physics-model performance, and deltas over the selected window.</p>
                     </div>
-                    <span class="annual-results-note">Measured vs predicted</span>
+                    <span class="annual-results-note" id="validationResultsNote">Physics model</span>
                 </div>
 
                 <section class="calibration-factor-panel hidden" id="calibrationFactorPanel" aria-labelledby="calibrationFactorHeading">
@@ -4991,22 +5447,42 @@
                                 <p>Module-level inverter model</p>
                             </div>
                         </div>
-                        <div class="validation-system-metrics">
-                            <div class="validation-system-metric">
-                                <span class="validation-metric-label">Measured energy</span>
-                                <div class="validation-metric-value"><span id="statSeMeasured">--</span> <span class="stat-unit">kWh</span></div>
+                        <div class="validation-uncalibrated-comparison" id="seUncalibratedComparison" hidden>
+                            <div class="validation-delta-copy">
+                                <strong>Before calibration</strong>
+                                <span>Original physics-model result</span>
                             </div>
-                            <div class="validation-system-metric">
-                                <span class="validation-metric-label">Predicted energy</span>
-                                <div class="validation-metric-value"><span id="statSePred">--</span> <span class="stat-unit">kWh</span></div>
+                            <div class="validation-uncalibrated-values">
+                                <div class="validation-uncalibrated-metric">
+                                    <span class="validation-uncalibrated-label">Predicted</span>
+                                    <span class="validation-uncalibrated-value"><span id="statSeUncalibratedPred">--</span> <span class="stat-unit">kWh</span></span>
+                                </div>
+                                <div class="validation-uncalibrated-metric">
+                                    <span class="validation-uncalibrated-label">Delta</span>
+                                    <span class="validation-uncalibrated-value" id="statSeUncalibratedPct">--</span>
+                                </div>
                             </div>
                         </div>
-                        <div class="validation-delta-row">
-                            <div class="validation-delta-copy">
-                                <strong>Model delta</strong>
-                                <span>Predicted minus measured, relative to measured energy</span>
+                        <div class="validation-calibrated-stage">
+                            <strong class="validation-stage-label validation-prediction-stage-label">Physics-model prediction</strong>
+                            <div class="validation-calibrated-values">
+                                <div class="validation-system-metric validation-predicted-metric">
+                                    <span class="validation-metric-label">Predicted</span>
+                                    <div class="validation-metric-value"><span id="statSePred">--</span> <span class="stat-unit">kWh</span></div>
+                                </div>
+                                <div class="validation-delta-row">
+                                    <div class="validation-delta-copy">
+                                        <strong>Model delta</strong>
+                                        <span>Predicted minus measured, relative to measured energy</span>
+                                    </div>
+                                    <div class="validation-delta-value" id="statSePct">--</div>
+                                </div>
+                                <span class="validation-flow-marker" aria-hidden="true">&rarr;</span>
                             </div>
-                            <div class="validation-delta-value" id="statSePct">--</div>
+                        </div>
+                        <div class="validation-system-metric validation-measured-metric">
+                            <span class="validation-stage-label">Measured energy</span>
+                            <div class="validation-metric-value"><span id="statSeMeasured">--</span> <span class="stat-unit">kWh</span></div>
                         </div>
                     </article>
 
@@ -5018,22 +5494,42 @@
                                 <p>String-level model</p>
                             </div>
                         </div>
-                        <div class="validation-system-metrics">
-                            <div class="validation-system-metric">
-                                <span class="validation-metric-label">Measured energy</span>
-                                <div class="validation-metric-value"><span id="statSolMeasured">--</span> <span class="stat-unit">kWh</span></div>
+                        <div class="validation-uncalibrated-comparison" id="solUncalibratedComparison" hidden>
+                            <div class="validation-delta-copy">
+                                <strong>Before calibration</strong>
+                                <span>Original physics-model result</span>
                             </div>
-                            <div class="validation-system-metric">
-                                <span class="validation-metric-label">Predicted energy</span>
-                                <div class="validation-metric-value"><span id="statSolPred">--</span> <span class="stat-unit">kWh</span></div>
+                            <div class="validation-uncalibrated-values">
+                                <div class="validation-uncalibrated-metric">
+                                    <span class="validation-uncalibrated-label">Predicted</span>
+                                    <span class="validation-uncalibrated-value"><span id="statSolUncalibratedPred">--</span> <span class="stat-unit">kWh</span></span>
+                                </div>
+                                <div class="validation-uncalibrated-metric">
+                                    <span class="validation-uncalibrated-label">Delta</span>
+                                    <span class="validation-uncalibrated-value" id="statSolUncalibratedPct">--</span>
+                                </div>
                             </div>
                         </div>
-                        <div class="validation-delta-row">
-                            <div class="validation-delta-copy">
-                                <strong>Model delta</strong>
-                                <span>Predicted minus measured, relative to measured energy</span>
+                        <div class="validation-calibrated-stage">
+                            <strong class="validation-stage-label validation-prediction-stage-label">Physics-model prediction</strong>
+                            <div class="validation-calibrated-values">
+                                <div class="validation-system-metric validation-predicted-metric">
+                                    <span class="validation-metric-label">Predicted</span>
+                                    <div class="validation-metric-value"><span id="statSolPred">--</span> <span class="stat-unit">kWh</span></div>
+                                </div>
+                                <div class="validation-delta-row">
+                                    <div class="validation-delta-copy">
+                                        <strong>Model delta</strong>
+                                        <span>Predicted minus measured, relative to measured energy</span>
+                                    </div>
+                                    <div class="validation-delta-value" id="statSolPct">--</div>
+                                </div>
+                                <span class="validation-flow-marker" aria-hidden="true">&rarr;</span>
                             </div>
-                            <div class="validation-delta-value" id="statSolPct">--</div>
+                        </div>
+                        <div class="validation-system-metric validation-measured-metric">
+                            <span class="validation-stage-label">Measured energy</span>
+                            <div class="validation-metric-value"><span id="statSolMeasured">--</span> <span class="stat-unit">kWh</span></div>
                         </div>
                     </article>
                 </section>
@@ -5062,7 +5558,7 @@
                     <article class="chart-card">
                         <div class="chart-header">
                             <div>
-                                <div class="chart-title">Measured Power Input</div>
+                                <div class="chart-title">Measured Power </div>
                                 <div class="chart-meta">SolarEdge and Solectria measured AC power - kW</div>
                             </div>
                             <span class="chart-badge">Input</span>
@@ -5076,7 +5572,7 @@
                     <article class="chart-card">
                         <div class="chart-header">
                             <div>
-                                <div class="chart-title">Irradiance Input</div>
+                                <div class="chart-title">Measured Irradiance </div>
                                 <div class="chart-meta">DNI, GHI, and DHI from Bazefield - W/m2</div>
                             </div>
                             <span class="chart-badge">Weather</span>
@@ -5087,10 +5583,38 @@
                         </div>
                     </article>
 
+                    <article class="chart-card calibration-chart-card" id="uncalibratedEnergyChartCard" hidden>
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">Uncalibrated Cumulative Energy</div>
+                                <div class="chart-meta">Measured vs physics-model prediction before seasonal calibration</div>
+                            </div>
+                            <span class="chart-badge">Before calibration</span>
+                        </div>
+                        <div class="chart-placeholder" id="uncalibratedEnergyChartBox">
+                            <div class="chart-icon" id="uncalibratedEnergyIcon">kWh</div>
+                            <img class="chart-image" id="uncalibratedEnergyImg" alt="Uncalibrated cumulative energy chart" style="display:none;">
+                        </div>
+                    </article>
+
+                    <article class="chart-card calibration-chart-card" id="uncalibratedAcChartCard" hidden>
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">Uncalibrated AC Power</div>
+                                <div class="chart-meta">SolarEdge and Solectria physics-model predictions before seasonal calibration</div>
+                            </div>
+                            <span class="chart-badge">Before calibration</span>
+                        </div>
+                        <div class="chart-placeholder" id="uncalibratedAcChartBox">
+                            <div class="chart-icon" id="uncalibratedAcIcon">AC</div>
+                            <img class="chart-image" id="uncalibratedAcImg" alt="Uncalibrated AC power chart" style="display:none;">
+                        </div>
+                    </article>
+
                     <article class="chart-card">
                         <div class="chart-header">
                             <div>
-                                <div class="chart-title">Cumulative Energy</div>
+                                <div class="chart-title" id="validationEnergyChartTitle">Physics-Model Cumulative Energy</div>
                                 <div class="chart-meta">Measured vs predicted - kWh over the selected window</div>
                             </div>
                             <span class="chart-badge">Energy</span>
@@ -5104,7 +5628,7 @@
                     <article class="chart-card">
                         <div class="chart-header">
                             <div>
-                                <div class="chart-title">Calibrated Model Predictions</div>
+                                <div class="chart-title" id="validationAcChartTitle">Physics-Model AC Power</div>
                                 <div class="chart-meta">SolarEdge vs Solectria - predicted and measured AC power</div>
                             </div>
                             <span class="chart-badge">Power</span>
@@ -5282,12 +5806,23 @@
         const progressFill = document.getElementById('progressFill');
         const errorBanner = document.getElementById('errorBanner');
         const calibrationReviewPanel = document.getElementById('calibrationReviewPanel');
+        const calibrationReviewToggle = document.getElementById('calibrationReviewToggle');
+        const calibrationReviewContent = document.getElementById('calibrationReviewContent');
         const calibrationReviewSummary = document.getElementById('calibrationReviewSummary');
         const calibrationReviewSeasons = document.getElementById('calibrationReviewSeasons');
         const calibrationIssueList = document.getElementById('calibrationIssueList');
+        const calibrationReviewActions = document.getElementById('calibrationReviewActions');
         const calibrationReviewActionNote = document.getElementById('calibrationReviewActionNote');
         const applyCalibrationReviewBtn = document.getElementById('applyCalibrationReviewBtn');
         const cancelCalibrationReviewBtn = document.getElementById('cancelCalibrationReviewBtn');
+        const calibrationDecisionGate = document.getElementById('calibrationDecisionGate');
+        const calibrationDecisionGateHeading = document.getElementById('calibrationDecisionGateHeading');
+        const calibrationDecisionGateSummary = document.getElementById('calibrationDecisionGateSummary');
+        const calibrationDecisionGateActions = document.getElementById('calibrationDecisionGateActions');
+        const sourceDecisionAcknowledgementLabel = document.getElementById('sourceDecisionAcknowledgementLabel');
+        const sourceDecisionAcknowledgement = document.getElementById('sourceDecisionAcknowledgement');
+        const backToCalibrationDecisionsBtn = document.getElementById('backToCalibrationDecisionsBtn');
+        const confirmCalibrationReviewBtn = document.getElementById('confirmCalibrationReviewBtn');
         const calibrationFactorPanel = document.getElementById('calibrationFactorPanel');
         const calibrationAuditLine = document.getElementById('calibrationAuditLine');
         const calibrationFactorRows = document.getElementById('calibrationFactorRows');
@@ -5295,6 +5830,19 @@
         const curtailmentEnabled = document.getElementById('curtailmentEnabled');
         const curtailmentLimitKw = document.getElementById('curtailmentLimitKw');
         const curtailmentLimitGroup = document.getElementById('curtailmentLimitGroup');
+        const calibrateModel = document.getElementById('calibrateModel');
+        const calibrationSeasonNote = document.getElementById('calibrationSeasonNote');
+        const validationActionTitle = document.getElementById('validationActionTitle');
+        const validationActionCopy = document.getElementById('validationActionCopy');
+        const validationResultsHeading = document.getElementById('validationResultsHeading');
+        const validationResultsDescription = document.getElementById('validationResultsDescription');
+        const validationResultsNote = document.getElementById('validationResultsNote');
+        const validationEnergyChartTitle = document.getElementById('validationEnergyChartTitle');
+        const validationAcChartTitle = document.getElementById('validationAcChartTitle');
+        const uncalibratedChartCards = [
+            document.getElementById('uncalibratedEnergyChartCard'),
+            document.getElementById('uncalibratedAcChartCard'),
+        ];
         const iamModelRadios = document.querySelectorAll('input[name="iamModel"]');
         const iamAr = document.getElementById('iamAr');
         const iamArGroup = document.getElementById('iamArGroup');
@@ -5323,6 +5871,7 @@
         let latestResult = null;
         let currentRunState = null;
         let pendingCalibrationReview = null;
+        let calibrationReviewCollapsed = false;
         let calibrationWorkflowRevision = 0;
         let calibrationReviewAbortController = null;
         let reviewedCalibrationAbortController = null;
@@ -5414,6 +5963,33 @@
             curtailmentLimitKw.disabled = !enabled;
             curtailmentLimitGroup.classList.toggle('visible', enabled);
             if (enabled && !curtailmentLimitKw.value.trim()) curtailmentLimitKw.value = '125';
+        }
+
+        function syncValidationResultsMode(calibrated) {
+            validationResultsHeading.textContent = calibrated ? 'Calibration results' : 'Model results';
+            validationResultsDescription.textContent = calibrated
+                ? 'Measured energy, seasonally calibrated predictions, and model deltas over the selected window.'
+                : 'Measured energy, uncalibrated physics-model performance, and deltas over the selected window.';
+            validationResultsNote.textContent = calibrated ? 'Seasonally calibrated' : 'Physics model';
+            validationEnergyChartTitle.textContent = calibrated
+                ? 'Calibrated Cumulative Energy'
+                : 'Physics-Model Cumulative Energy';
+            validationAcChartTitle.textContent = calibrated ? 'Calibrated AC Power' : 'Physics-Model AC Power';
+            document.querySelectorAll('.validation-prediction-stage-label').forEach((label) => {
+                label.textContent = calibrated ? 'Calibrated prediction' : 'Physics-model prediction';
+            });
+        }
+
+        function syncCalibrationMode() {
+            const enabled = calibrateModel.checked;
+            calibrationSeasonNote.classList.toggle('visible', enabled);
+            validationActionTitle.textContent = enabled ? 'Ready to calibrate?' : 'Ready to run?';
+            validationActionCopy.textContent = enabled
+                ? 'Retrieve and review Bazefield quality first; calibration begins only after your retain/exclude decisions pass the source-data gate.'
+                : 'Run the physics model with the selected Bazefield data without fitting calibration factors.';
+            if (!currentRunState || !['reviewing', 'starting', 'applying_review', 'queued', 'running'].includes(currentRunState.state)) {
+                runBtn.textContent = enabled ? 'Run calibration' : 'Run model';
+            }
         }
 
         function getSelectedIamModel(radios) {
@@ -5519,11 +6095,45 @@
             box.style.background = '';
         }
 
+        function clearUncalibratedPlots() {
+            clearImage('uncalibratedEnergyImg', 'uncalibratedEnergyIcon', 'uncalibratedEnergyChartBox');
+            clearImage('uncalibratedAcImg', 'uncalibratedAcIcon', 'uncalibratedAcChartBox');
+            uncalibratedChartCards.forEach((card) => {
+                card.hidden = true;
+            });
+        }
+
+        function renderUncalibratedPlots(result, calibrated, cacheBust = true) {
+            const available = calibrated &&
+                typeof result?.uncalibrated_energy_png === 'string' &&
+                typeof result?.uncalibrated_ac_png === 'string';
+            clearUncalibratedPlots();
+            if (!available) return;
+            uncalibratedChartCards.forEach((card) => {
+                card.hidden = false;
+            });
+            showImage(
+                'uncalibratedEnergyImg',
+                'uncalibratedEnergyIcon',
+                'uncalibratedEnergyChartBox',
+                result.uncalibrated_energy_png,
+                cacheBust,
+            );
+            showImage(
+                'uncalibratedAcImg',
+                'uncalibratedAcIcon',
+                'uncalibratedAcChartBox',
+                result.uncalibrated_ac_png,
+                cacheBust,
+            );
+        }
+
         function clearRunImages() {
             clearImage('measuredPowerImg', 'measuredPowerIcon', 'measuredPowerChartBox');
             clearImage('irradianceImg', 'irradianceIcon', 'irradianceChartBox');
             clearImage('energyImg', 'energyIcon', 'energyChartBox');
             clearImage('acImg', 'acIcon', 'acChartBox');
+            clearUncalibratedPlots();
         }
 
         function clearAnnualImages() {
@@ -5549,6 +6159,7 @@
                 backtrack: document.getElementById('backtrack').checked,
                 curtailmentEnabled: curtailmentEnabled.checked,
                 curtailmentLimitKw: curtailmentLimitKw.value,
+                calibrateModel: calibrateModel.checked,
                 solaredgeInverterEfficiency: document.getElementById('solaredgeInverterEfficiency').value,
                 solaredgeBosEfficiency: document.getElementById('solaredgeBosEfficiency').value,
                 solectriaInverterEfficiency: document.getElementById('solectriaInverterEfficiency').value,
@@ -5579,9 +6190,11 @@
             setValue('iamAr', form.iamAr);
             if (form.backtrack !== undefined) document.getElementById('backtrack').checked = !!form.backtrack;
             if (form.curtailmentEnabled !== undefined) curtailmentEnabled.checked = !!form.curtailmentEnabled;
+            if (form.calibrateModel !== undefined) calibrateModel.checked = !!form.calibrateModel;
             setSelectedIamModel(iamModelRadios, resolveSavedIamModel(form));
             syncCurtailmentLimit();
             syncIamAr();
+            syncCalibrationMode();
         }
 
         function getAnnualFormState() {
@@ -5645,6 +6258,7 @@
                 iam_a_r: iamModel === 'martin_ruiz' ? finiteOrNull(form.iamAr) : null,
             };
             if (!annual) {
+                config.calibrate_model = !!form.calibrateModel;
                 config.from_time = form.fromTime;
                 config.to_time = form.toTime;
                 config.interval_value = finiteOrNull(form.intervalValue);
@@ -5668,6 +6282,7 @@
                 backtrack: requestValue(request, 'backtrack', 'backtrack'),
                 curtailmentEnabled: requestValue(request, 'curtailment_enabled', 'curtailmentEnabled'),
                 curtailmentLimitKw: requestValue(request, 'curtailment_limit_kw', 'curtailmentLimitKw'),
+                calibrateModel: requestValue(request, 'calibrate_model', 'calibrateModel'),
                 solaredgeInverterEfficiency: requestValue(request, 'solaredge_inverter_efficiency', 'solaredgeInverterEfficiency'),
                 solaredgeBosEfficiency: requestValue(request, 'solaredge_bos_efficiency', 'solaredgeBosEfficiency'),
                 solectriaInverterEfficiency: requestValue(request, 'solectria_inverter_efficiency', 'solectriaInverterEfficiency'),
@@ -5683,26 +6298,31 @@
             mapped.toTime = requestValue(request, 'to_time', 'toTime');
             mapped.intervalValue = requestValue(request, 'interval_value', 'intervalValue');
             mapped.intervalUnit = requestValue(request, 'interval_unit', 'intervalUnit');
+            if (mapped.calibrateModel === undefined) mapped.calibrateModel = true;
             applyFormState(mapped);
         }
 
-        function setExcelLink(url) {
+        function setExcelLink(url, filename) {
             if (!url) {
                 excelLink.classList.add('hidden');
                 excelLink.removeAttribute('href');
+                excelLink.removeAttribute('download');
                 return;
             }
             excelLink.href = url;
+            excelLink.download = filename || 'SB_Energy_Model_Results.xlsx';
             excelLink.classList.remove('hidden');
         }
 
-        function setAnnualExcelLink(url) {
+        function setAnnualExcelLink(url, filename) {
             if (!url) {
                 annualExcelLink.classList.add('hidden');
                 annualExcelLink.removeAttribute('href');
+                annualExcelLink.removeAttribute('download');
                 return;
             }
             annualExcelLink.href = url;
+            annualExcelLink.download = filename || 'SB_Energy_Annual_Simulation.xlsx';
             annualExcelLink.classList.remove('hidden');
         }
 
@@ -5753,6 +6373,155 @@
             return new Date(expiresAt).toLocaleString();
         }
 
+        function calibrationRowColumnLabel(column) {
+            const labels = {
+                source_row: 'CSV row',
+                timestamp: 'Timestamp',
+                solaredge_measured_power: 'SolarEdge power',
+                solectria_measured_power: 'Solectria power',
+                dni: 'DNI',
+                ghi: 'GHI',
+                dhi: 'DHI',
+                temp_air: 'Temperature',
+                wind_speed: 'Wind speed',
+            };
+            return labels[column] || String(column).replaceAll('_', ' ');
+        }
+
+        function calibrationRowCellText(value) {
+            if (value === null || value === undefined || value === '') return '—';
+            if (typeof value === 'number') return value.toLocaleString();
+            return String(value);
+        }
+
+        function buildCalibrationRowDisclosure(issue, issueIndex) {
+            const issueId = String(issue.id || 'issue-' + issueIndex);
+            const disclosureId = 'calibrationIssueRows-' + issueIndex;
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'calibration-row-toggle';
+            toggle.textContent = 'Show affected rows (' + Number(issue.row_count || 0).toLocaleString() + ')';
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.setAttribute('aria-controls', disclosureId);
+
+            const panel = document.createElement('div');
+            panel.className = 'calibration-row-preview hidden';
+            panel.id = disclosureId;
+            const note = document.createElement('p');
+            note.className = 'calibration-row-preview-note';
+            note.textContent = 'Rows load from the private, hash-verified review snapshot.';
+            const wrap = document.createElement('div');
+            wrap.className = 'calibration-row-table-wrap';
+            const table = document.createElement('table');
+            table.className = 'calibration-row-table';
+            const head = document.createElement('thead');
+            const body = document.createElement('tbody');
+            table.append(head, body);
+            wrap.appendChild(table);
+            const loadMore = document.createElement('button');
+            loadMore.type = 'button';
+            loadMore.className = 'calibration-row-toggle';
+            loadMore.textContent = 'Load more rows';
+            loadMore.hidden = true;
+            panel.append(note, wrap, loadMore);
+
+            let nextOffset = 0;
+            let totalRows = Number(issue.row_count || 0);
+            let loading = false;
+            let initialized = false;
+
+            const loadPage = async () => {
+                if (loading || nextOffset === null || !pendingCalibrationReview?.review_id) return;
+                loading = true;
+                toggle.disabled = true;
+                loadMore.disabled = true;
+                note.textContent = 'Loading affected rows…';
+                try {
+                    const query = new URLSearchParams({
+                        issue_id: issueId,
+                        offset: String(nextOffset),
+                        limit: '50',
+                    });
+                    const response = await fetch(
+                        '/api/calibration-reviews/' + encodeURIComponent(pendingCalibrationReview.review_id) + '/rows?' + query.toString()
+                    );
+                    if (!response.ok) {
+                        let message = 'Could not load affected rows (' + response.status + ')';
+                        try {
+                            const error = await response.json();
+                            if (error.detail) message = String(error.detail);
+                        } catch (_) {}
+                        throw new Error(message);
+                    }
+                    const page = await response.json();
+                    const rows = Array.isArray(page.rows) ? page.rows : [];
+                    if (!initialized && rows.length) {
+                        const headerRow = document.createElement('tr');
+                        Object.keys(rows[0]).forEach((column) => {
+                            const cell = document.createElement('th');
+                            cell.scope = 'col';
+                            cell.textContent = calibrationRowColumnLabel(column);
+                            headerRow.appendChild(cell);
+                        });
+                        head.appendChild(headerRow);
+                    }
+                    rows.forEach((rowData) => {
+                        const row = document.createElement('tr');
+                        Object.values(rowData).forEach((value) => {
+                            const cell = document.createElement('td');
+                            cell.textContent = calibrationRowCellText(value);
+                            row.appendChild(cell);
+                        });
+                        body.appendChild(row);
+                    });
+                    initialized = true;
+                    totalRows = Number(page.total_rows || totalRows);
+                    nextOffset = page.next_offset === null || page.next_offset === undefined
+                        ? null
+                        : Number(page.next_offset);
+                    note.textContent = 'Showing ' + body.children.length.toLocaleString() + ' of ' + totalRows.toLocaleString() +
+                        ' affected source rows. The decision applies to every affected row.';
+                    loadMore.hidden = nextOffset === null;
+                } catch (error) {
+                    note.textContent = error.message || 'Could not load affected rows.';
+                    loadMore.hidden = false;
+                    loadMore.textContent = 'Retry loading rows';
+                } finally {
+                    loading = false;
+                    toggle.disabled = false;
+                    loadMore.disabled = false;
+                }
+            };
+
+            toggle.addEventListener('click', async () => {
+                const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+                toggle.setAttribute('aria-expanded', String(expanded));
+                toggle.textContent = (expanded ? 'Hide' : 'Show') + ' affected rows (' + totalRows.toLocaleString() + ')';
+                panel.classList.toggle('hidden', !expanded);
+                if (expanded && !initialized) await loadPage();
+            });
+            loadMore.addEventListener('click', loadPage);
+            return { toggle, panel };
+        }
+
+        function setCalibrationReviewCollapsed(collapsed, { persist = true } = {}) {
+            calibrationReviewCollapsed = !!collapsed;
+            if (
+                calibrationReviewCollapsed &&
+                calibrationReviewContent.contains(document.activeElement)
+            ) {
+                calibrationReviewToggle.focus({ preventScroll: true });
+            }
+            calibrationReviewContent.hidden = calibrationReviewCollapsed;
+            calibrationReviewPanel.classList.toggle('collapsed', calibrationReviewCollapsed);
+            calibrationReviewToggle.setAttribute('aria-expanded', String(!calibrationReviewCollapsed));
+            const action = calibrationReviewCollapsed ? 'Expand' : 'Collapse';
+            const label = action + ' Bazefield data review';
+            calibrationReviewToggle.setAttribute('aria-label', label);
+            calibrationReviewToggle.title = label;
+            if (persist) saveDashboardState();
+        }
+
         function renderCalibrationReview(reviewPayload, { focusPanel = true } = {}) {
             pendingCalibrationReview = {
                 ...reviewPayload,
@@ -5786,7 +6555,7 @@
                 clean.textContent = 'No discrepancies, missing values, outliers, gaps, or irregular patterns were detected. Continue to calculate the calibration factors.';
                 calibrationIssueList.appendChild(clean);
             }
-            issues.forEach((issue) => {
+            issues.forEach((issue, issueIndex) => {
                 const card = document.createElement('article');
                 card.className = 'calibration-issue';
 
@@ -5814,6 +6583,10 @@
                     evidence.textContent = 'Examples: ' + samples.slice(0, 3).join(', ');
                     copy.appendChild(evidence);
                 }
+                const rowDisclosure = issue.affected_rows_available
+                    ? buildCalibrationRowDisclosure(issue, issueIndex)
+                    : null;
+                if (rowDisclosure) copy.appendChild(rowDisclosure.toggle);
 
                 const decision = document.createElement('div');
                 const actions = Array.isArray(issue.allowed_actions) ? issue.allowed_actions : [];
@@ -5841,9 +6614,11 @@
                         select.appendChild(option);
                     });
                     pendingCalibrationReview.decisions[issueId] = select.value;
+                    select.disabled = !!pendingCalibrationReview.applied;
                     select.addEventListener('change', () => {
                         if (!pendingCalibrationReview) return;
                         pendingCalibrationReview.decisions[issueId] = select.value;
+                        closeCalibrationDecisionGate();
                         saveDashboardState();
                     });
                     label.appendChild(select);
@@ -5860,41 +6635,59 @@
                     decision.appendChild(fixed);
                 }
                 card.append(copy, decision);
+                if (rowDisclosure) card.appendChild(rowDisclosure.panel);
                 calibrationIssueList.appendChild(card);
             });
 
             const expired = calibrationReviewIsExpired(pendingCalibrationReview);
+            const applied = !!pendingCalibrationReview.applied;
             const blocked = !!summary.blocking || expired;
             const expiresText = calibrationReviewExpiryText(pendingCalibrationReview);
-            cancelCalibrationReviewBtn.disabled = false;
-            applyCalibrationReviewBtn.disabled = blocked;
-            applyCalibrationReviewBtn.textContent = expired
-                ? 'Review expired'
-                : blocked
-                ? 'Calibration blocked'
-                : 'Apply decisions & calibrate';
-            calibrationReviewActionNote.textContent = expired
-                ? 'This private review snapshot expired. Start a new review before calibrating.'
-                : summary.blocking
-                ? 'A critical source issue prevents calibration. Change the date range or repair the Bazefield export.'
-                : summary.actionable_issue_count
-                    ? 'Recommended decisions are selected by default. Change any choice, then continue.'
-                    : 'No retain/exclude choices are needed. Continue to apply any required cleanup and calculate seasonal factors.';
-            if (!expired && expiresText) {
-                calibrationReviewActionNote.textContent += ' Review expires ' + expiresText + '.';
+            calibrationReviewActions.hidden = applied;
+            cancelCalibrationReviewBtn.hidden = applied;
+            applyCalibrationReviewBtn.hidden = applied;
+            if (applied) {
+                renderAppliedCalibrationDecisionGate(pendingCalibrationReview);
+                calibrationReviewActionNote.textContent = 'Source-data decisions were applied to the hash-verified snapshot. The receipt remains visible with this run.';
+            } else {
+                closeCalibrationDecisionGate();
+                cancelCalibrationReviewBtn.disabled = false;
+                applyCalibrationReviewBtn.disabled = blocked;
+                applyCalibrationReviewBtn.textContent = expired
+                    ? 'Review expired'
+                    : blocked
+                    ? 'Calibration blocked'
+                    : 'Apply decisions & calibrate';
+                calibrationReviewActionNote.textContent = expired
+                    ? 'This private review snapshot expired. Start a new review before calibrating.'
+                    : summary.blocking
+                    ? 'A critical source issue prevents calibration. Change the date range or repair the Bazefield export.'
+                    : summary.actionable_issue_count
+                        ? 'Recommended decisions are selected by default. Open the affected rows, change any choice, then continue.'
+                        : 'No retain/exclude choices are needed. Continue to apply any required cleanup and calculate seasonal factors.';
+                if (!expired && expiresText) {
+                    calibrationReviewActionNote.textContent += ' Review expires ' + expiresText + '.';
+                }
             }
             calibrationReviewPanel.classList.remove('hidden');
-            progressWrap.classList.remove('visible');
-            runBtn.textContent = expired ? 'Review expired' : 'Review ready';
-            currentRunState = {
-                state: 'review_required',
-                progress: 20,
-                stage: expired ? 'Data-quality review expired' : 'Data-quality decision required',
-            };
+            if (focusPanel && calibrationReviewCollapsed) {
+                setCalibrationReviewCollapsed(false, { persist: false });
+            } else {
+                setCalibrationReviewCollapsed(calibrationReviewCollapsed, { persist: false });
+            }
+            if (!applied) {
+                progressWrap.classList.remove('visible');
+                runBtn.textContent = expired ? 'Review expired' : 'Review ready';
+                currentRunState = {
+                    state: 'review_required',
+                    progress: 20,
+                    stage: expired ? 'Data-quality review expired' : 'Data-quality decision required',
+                };
+            }
             saveDashboardState();
             if (focusPanel) {
                 requestAnimationFrame(() => {
-                    document.getElementById('calibrationReviewHeading').focus({ preventScroll: true });
+                    (applied ? calibrationDecisionGateHeading : document.getElementById('calibrationReviewHeading')).focus({ preventScroll: true });
                     calibrationReviewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 });
             }
@@ -5902,14 +6695,19 @@
 
         function clearCalibrationReview() {
             pendingCalibrationReview = null;
+            setCalibrationReviewCollapsed(false, { persist: false });
             calibrationReviewPanel.classList.add('hidden');
             calibrationReviewSummary.replaceChildren();
             calibrationReviewSeasons.replaceChildren();
             calibrationIssueList.replaceChildren();
+            closeCalibrationDecisionGate();
+            calibrationReviewActions.hidden = false;
+            cancelCalibrationReviewBtn.hidden = false;
+            applyCalibrationReviewBtn.hidden = false;
         }
 
         function calibrationReviewWorkflowIsActive() {
-            return ['reviewing', 'review_required', 'applying_review'].includes(
+            return ['reviewing', 'starting', 'review_required', 'applying_review'].includes(
                 currentRunState?.state
             );
         }
@@ -5952,6 +6750,92 @@
                 decisions[select.dataset.issueId] = select.value;
             });
             return decisions;
+        }
+
+        function calibrationDecisionBreakdown(decisions = calibrationReviewDecisions()) {
+            const issues = pendingCalibrationReview?.report?.issues || [];
+            let retainedIssues = 0;
+            let excludedIssues = 0;
+            let requiredExclusions = 0;
+            issues.forEach((issue) => {
+                const actions = Array.isArray(issue.allowed_actions) ? issue.allowed_actions : [];
+                const action = actions.length > 1
+                    ? decisions[String(issue.id)]
+                    : actions[0] || issue.recommended_action;
+                if (action === 'exclude') {
+                    if (actions.length > 1) excludedIssues += 1;
+                    else requiredExclusions += 1;
+                } else if (action === 'retain' && actions.length > 1) {
+                    retainedIssues += 1;
+                }
+            });
+            return { retainedIssues, excludedIssues, requiredExclusions };
+        }
+
+        function closeCalibrationDecisionGate() {
+            calibrationDecisionGate.classList.add('hidden');
+            calibrationDecisionGate.classList.remove('applied');
+            calibrationDecisionGateHeading.textContent = 'Confirm the source rows used for calibration';
+            calibrationDecisionGateSummary.textContent = '';
+            sourceDecisionAcknowledgement.checked = false;
+            sourceDecisionAcknowledgement.disabled = false;
+            backToCalibrationDecisionsBtn.disabled = false;
+            sourceDecisionAcknowledgementLabel.hidden = false;
+            calibrationDecisionGateActions.hidden = false;
+            confirmCalibrationReviewBtn.disabled = true;
+            confirmCalibrationReviewBtn.textContent = 'Confirm decisions & calibrate';
+        }
+
+        function openCalibrationDecisionGate() {
+            if (!pendingCalibrationReview?.review_id) {
+                showError('Start a new Bazefield data review before calibrating.');
+                return;
+            }
+            if (calibrationReviewIsExpired(pendingCalibrationReview)) {
+                showError('This data review expired. Start a new review before calibrating.');
+                cancelCalibrationReview({ focusRunButton: true });
+                return;
+            }
+            const summary = pendingCalibrationReview?.report?.summary || {};
+            if (summary.blocking) {
+                showError('A critical source issue blocks calibration.');
+                return;
+            }
+            const decisions = calibrationReviewDecisions();
+            pendingCalibrationReview.decisions = { ...decisions };
+            const breakdown = calibrationDecisionBreakdown(decisions);
+            calibrationDecisionGate.classList.remove('hidden', 'applied');
+            calibrationDecisionGateHeading.textContent = 'Confirm the source rows used for calibration';
+            calibrationDecisionGateSummary.textContent =
+                breakdown.retainedIssues.toLocaleString() + ' issue decision(s) retain affected rows · ' +
+                breakdown.excludedIssues.toLocaleString() + ' issue decision(s) exclude affected rows · ' +
+                breakdown.requiredExclusions.toLocaleString() + ' required exclusion(s). ' +
+                'Confirm before the reviewed snapshot is queued for meteorological-season calibration.';
+            sourceDecisionAcknowledgementLabel.hidden = false;
+            calibrationDecisionGateActions.hidden = false;
+            sourceDecisionAcknowledgement.checked = false;
+            confirmCalibrationReviewBtn.disabled = true;
+            calibrationDecisionGateHeading.focus({ preventScroll: true });
+            calibrationDecisionGate.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            saveDashboardState();
+        }
+
+        function renderAppliedCalibrationDecisionGate(receipt) {
+            const quality = receipt?.data_quality || {};
+            const cleaning = quality.cleaning || {};
+            const breakdown = calibrationDecisionBreakdown(receipt?.decisions || {});
+            const excludedRows = Number(cleaning.excluded_rows || 0);
+            const finalRows = Number(cleaning.final_rows || 0);
+            calibrationDecisionGate.classList.remove('hidden');
+            calibrationDecisionGate.classList.add('applied');
+            calibrationDecisionGateHeading.textContent = 'Source-data decision gate passed';
+            calibrationDecisionGateSummary.textContent =
+                excludedRows.toLocaleString() + ' source row(s) excluded · ' +
+                finalRows.toLocaleString() + ' reviewed row(s) sent to the model · ' +
+                breakdown.retainedIssues.toLocaleString() + ' retained issue decision(s). ' +
+                (receipt?.job_id ? 'Calibration job ' + String(receipt.job_id) + ' is bound to this decision receipt.' : 'This decision receipt is bound to the reviewed calibration run.');
+            sourceDecisionAcknowledgementLabel.hidden = true;
+            calibrationDecisionGateActions.hidden = true;
         }
 
         function factorValue(value) {
@@ -6059,9 +6943,44 @@
             calibrationFactorPanel.classList.remove('hidden');
         }
 
+        function renderUncalibratedComparison(stats, calibrated) {
+            const uncalibrated = stats?.uncalibrated;
+            const available = calibrated && !!uncalibrated &&
+                typeof uncalibrated === 'object' && !Array.isArray(uncalibrated);
+            const solarEdgeComparison = document.getElementById('seUncalibratedComparison');
+            const solectriaComparison = document.getElementById('solUncalibratedComparison');
+            solarEdgeComparison.hidden = !available;
+            solectriaComparison.hidden = !available;
+            [solarEdgeComparison, solectriaComparison].forEach((comparison) => {
+                comparison.closest('.validation-system-summary')?.classList.toggle('has-calibration-baseline', available);
+            });
+
+            const finiteNumber = (value) => {
+                if (value === null || value === undefined || value === '') return null;
+                const number = Number(value);
+                return Number.isFinite(number) ? number : null;
+            };
+            const formatEnergy = (value) => {
+                const number = finiteNumber(value);
+                return number === null ? 'n/a' : number.toLocaleString();
+            };
+            const formatDelta = (value) => fmtPct(finiteNumber(value));
+
+            document.getElementById('statSeUncalibratedPred').textContent =
+                formatEnergy(available ? uncalibrated.se_predicted_kwh : null);
+            document.getElementById('statSolUncalibratedPred').textContent =
+                formatEnergy(available ? uncalibrated.sol_predicted_kwh : null);
+            document.getElementById('statSeUncalibratedPct').textContent =
+                formatDelta(available ? uncalibrated.se_pct : null);
+            document.getElementById('statSolUncalibratedPct').textContent =
+                formatDelta(available ? uncalibrated.sol_pct : null);
+        }
+
         function applyResult(result, cacheBust = true) {
             if (!result || !result.stats) return;
             const s = result.stats;
+            const calibrated = s.calibration_enabled === true || !!s.calibration_factors;
+            syncValidationResultsMode(calibrated);
             const fmtNum = (v) => (v === null || v === undefined) ? 'n/a' : v.toLocaleString();
             const finiteNumber = (v) => {
                 if (v === null || v === undefined || v === '') return null;
@@ -6084,11 +7003,13 @@
             document.getElementById('statSolPred').textContent = fmtNum(s.sol_predicted_kwh);
             document.getElementById('statSePct').textContent = fmtPct(s.se_pct);
             document.getElementById('statSolPct').textContent = fmtPct(s.sol_pct);
+            renderUncalibratedComparison(s, calibrated);
             renderCalibrationFactors(result);
             if (result.input_plots) applyInputPlots(result.input_plots, cacheBust);
             if (result.ac_png) showImage('acImg', 'acIcon', 'acChartBox', result.ac_png, cacheBust);
             if (result.energy_png) showImage('energyImg', 'energyIcon', 'energyChartBox', result.energy_png, cacheBust);
-            setExcelLink(result.excel);
+            renderUncalibratedPlots(result, calibrated, cacheBust);
+            setExcelLink(result.excel, result.excel_filename);
         }
 
         function renderAnnualQuality(warnings) {
@@ -6127,7 +7048,7 @@
             if (result.ac_png) showImage('annualAcImg', 'annualAcIcon', 'annualAcChartBox', result.ac_png, cacheBust);
             if (result.energy_png) showImage('annualEnergyImg', 'annualEnergyIcon', 'annualEnergyChartBox', result.energy_png, cacheBust);
             if (result.monthly_png) showImage('annualMonthlyImg', 'annualMonthlyIcon', 'annualMonthlyChartBox', result.monthly_png, cacheBust);
-            setAnnualExcelLink(result.excel);
+            setAnnualExcelLink(result.excel, result.excel_filename);
         }
 
         function readSavedState() {
@@ -6166,6 +7087,8 @@
             latestResult = null;
             currentRunState = null;
             pendingCalibrationReview = null;
+            calibrationReviewCollapsed = false;
+            setCalibrationReviewCollapsed(false, { persist: false });
             annualLatestJobId = null;
             annualLatestResult = null;
             annualRunState = null;
@@ -6192,6 +7115,7 @@
             errorBanner.classList.remove('visible');
             calibrationReviewPanel.classList.add('hidden');
             calibrationFactorPanel.classList.add('hidden');
+            renderUncalibratedComparison(null, false);
             clearRunImages();
             clearAnnualImages();
             setExcelLink(null);
@@ -6212,6 +7136,7 @@
                     latestResult,
                     currentRunState,
                     pendingCalibrationReview,
+                    calibrationReviewCollapsed,
                     form: getFormState(),
                     annualLatestJobId,
                     annualLatestResult,
@@ -6237,6 +7162,7 @@
             if (fromTime === null) return;
             const toTime = read24HourTime('toTime', 'End time');
             if (toTime === null) return;
+            const calibrationRequested = calibrateModel.checked;
             const curtailmentOn = curtailmentEnabled.checked;
             const curtailmentLimit = parseFloat(curtailmentLimitKw.value);
             if (curtailmentOn && (!Number.isFinite(curtailmentLimit) || curtailmentLimit <= 0)) {
@@ -6266,13 +7192,24 @@
             const reviewController = new AbortController();
             calibrationReviewAbortController = reviewController;
             runBtn.disabled = true;
-            runBtn.textContent = 'Reviewing data...';
-            setProgress(5, 'Retrieving Bazefield data for quality review...');
+            runBtn.textContent = calibrationRequested ? 'Reviewing data...' : 'Starting model...';
+            setProgress(
+                5,
+                calibrationRequested
+                    ? 'Retrieving Bazefield data for quality review...'
+                    : 'Queuing uncalibrated physics-model run...'
+            );
             clearCalibrationReview();
             calibrationFactorPanel.classList.add('hidden');
+            renderUncalibratedComparison(null, false);
+            syncValidationResultsMode(calibrationRequested);
             latestInputPlots = null;
             latestResult = null;
-            currentRunState = { state: 'reviewing', progress: 5, stage: 'Retrieving Bazefield data...' };
+            currentRunState = {
+                state: calibrationRequested ? 'reviewing' : 'starting',
+                progress: 5,
+                stage: calibrationRequested ? 'Retrieving Bazefield data...' : 'Queuing model run...',
+            };
             clearRunImages();
             ['statSeMeasured', 'statSolMeasured', 'statMeasuredDiff', 'statMeasuredDiffPct',
                 'statSePred', 'statSolPred', 'statSePct', 'statSolPct'].forEach((id) => {
@@ -6296,18 +7233,22 @@
                 iam_model: iamModel,
                 curtailment_enabled: curtailmentOn,
                 curtailment_limit_kw: curtailmentOn ? curtailmentLimit : null,
+                calibrate_model: calibrationRequested,
             };
             if (iamModel === 'martin_ruiz') body.iam_a_r = iamArValue;
 
             try {
-                const res = await fetch('/api/calibration-reviews', {
+                const endpoint = calibrationRequested ? '/api/calibration-reviews' : '/api/run';
+                const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
                     signal: reviewController.signal,
                 });
                 if (!res.ok) {
-                    let msg = 'Failed to review Bazefield data (' + res.status + ')';
+                    let msg = (calibrationRequested
+                        ? 'Failed to review Bazefield data ('
+                        : 'Failed to start model run (') + res.status + ')';
                     try {
                         const err = await res.json();
                         if (err.detail) {
@@ -6318,14 +7259,25 @@
                     }
                     throw new Error(msg);
                 }
-                const reviewPayload = await res.json();
+                const payload = await res.json();
                 if (workflowRevision !== calibrationWorkflowRevision) return;
-                renderCalibrationReview(reviewPayload);
+                if (calibrationRequested) {
+                    renderCalibrationReview(payload);
+                } else {
+                    latestJobId = payload.job_id;
+                    currentRunState = { state: 'queued', progress: 5, stage: 'Uncalibrated model queued' };
+                    runBtn.textContent = 'Running...';
+                    saveDashboardState();
+                    progressWrap.focus({ preventScroll: true });
+                    pollStatus(payload.job_id);
+                }
             } catch (e) {
                 if (e?.name === 'AbortError' || workflowRevision !== calibrationWorkflowRevision) {
                     return;
                 }
-                showError(e.message || 'Could not review Bazefield data.');
+                showError(e.message || (calibrationRequested
+                    ? 'Could not review Bazefield data.'
+                    : 'Could not start the model run.'));
                 currentRunState = null;
                 resetRunBtn();
                 progressWrap.classList.remove('visible');
@@ -6347,6 +7299,18 @@
                 cancelCalibrationReview({ focusRunButton: true });
                 return;
             }
+            if (!sourceDecisionAcknowledgement.checked) {
+                showError('Confirm that you reviewed the flagged rows and decisions before calibrating.');
+                sourceDecisionAcknowledgement.focus();
+                return;
+            }
+            const submittedDecisions = { ...calibrationReviewDecisions() };
+            pendingCalibrationReview.decisions = { ...submittedDecisions };
+            calibrationIssueList.querySelectorAll('.calibration-decision-select').forEach((select) => {
+                select.disabled = true;
+            });
+            backToCalibrationDecisionsBtn.disabled = true;
+            sourceDecisionAcknowledgement.disabled = true;
             if (reviewedCalibrationAbortController) {
                 reviewedCalibrationAbortController.abort();
             }
@@ -6355,7 +7319,8 @@
             reviewedCalibrationAbortController = runController;
             let responseStatus = null;
             applyCalibrationReviewBtn.disabled = true;
-            applyCalibrationReviewBtn.textContent = 'Queuing calibration...';
+            confirmCalibrationReviewBtn.disabled = true;
+            confirmCalibrationReviewBtn.textContent = 'Queuing calibration...';
             setProgress(22, 'Applying data-quality decisions...');
             currentRunState = {
                 state: 'applying_review',
@@ -6371,7 +7336,7 @@
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ decisions: calibrationReviewDecisions() }),
+                        body: JSON.stringify({ decisions: submittedDecisions }),
                         signal: runController.signal,
                     }
                 );
@@ -6392,7 +7357,15 @@
                 currentRunState = { state: 'queued', progress: 22, stage: 'Reviewed calibration queued' };
                 setCalibrationControlsLocked(false);
                 cancelCalibrationReviewBtn.disabled = false;
-                clearCalibrationReview();
+                pendingCalibrationReview = {
+                    ...pendingCalibrationReview,
+                    decisions: { ...submittedDecisions },
+                    applied: true,
+                    applied_at: new Date().toISOString(),
+                    job_id: data.job_id,
+                    data_quality: data.data_quality || null,
+                };
+                renderCalibrationReview(pendingCalibrationReview, { focusPanel: false });
                 runBtn.textContent = 'Running...';
                 saveDashboardState();
                 progressWrap.focus({ preventScroll: true });
@@ -6408,6 +7381,11 @@
                 }
                 setCalibrationControlsLocked(false);
                 cancelCalibrationReviewBtn.disabled = false;
+                calibrationIssueList.querySelectorAll('.calibration-decision-select').forEach((select) => {
+                    select.disabled = false;
+                });
+                backToCalibrationDecisionsBtn.disabled = false;
+                sourceDecisionAcknowledgement.disabled = false;
                 currentRunState = {
                     state: 'review_required',
                     progress: 20,
@@ -6416,8 +7394,10 @@
                 progressWrap.classList.remove('visible');
                 applyCalibrationReviewBtn.disabled = false;
                 applyCalibrationReviewBtn.textContent = 'Apply decisions & calibrate';
+                confirmCalibrationReviewBtn.disabled = false;
+                confirmCalibrationReviewBtn.textContent = 'Confirm decisions & calibrate';
                 saveDashboardState();
-                applyCalibrationReviewBtn.focus();
+                confirmCalibrationReviewBtn.focus();
             } finally {
                 if (reviewedCalibrationAbortController === runController) {
                     reviewedCalibrationAbortController = null;
@@ -6442,7 +7422,7 @@
 
         function resetRunBtn() {
             runBtn.disabled = false;
-            runBtn.textContent = 'Run calibration';
+            runBtn.textContent = calibrateModel.checked ? 'Run calibration' : 'Run model';
         }
 
         async function pollStatus(jobId) {
@@ -6662,11 +7642,23 @@
         }
 
         runBtn.addEventListener('click', runAnalysis);
-        applyCalibrationReviewBtn.addEventListener('click', applyCalibrationReview);
+        calibrationReviewToggle.addEventListener('click', () => {
+            setCalibrationReviewCollapsed(!calibrationReviewCollapsed);
+        });
+        applyCalibrationReviewBtn.addEventListener('click', openCalibrationDecisionGate);
+        confirmCalibrationReviewBtn.addEventListener('click', applyCalibrationReview);
+        backToCalibrationDecisionsBtn.addEventListener('click', () => {
+            closeCalibrationDecisionGate();
+            applyCalibrationReviewBtn.focus();
+        });
+        sourceDecisionAcknowledgement.addEventListener('change', () => {
+            confirmCalibrationReviewBtn.disabled = !sourceDecisionAcknowledgement.checked;
+        });
         cancelCalibrationReviewBtn.addEventListener('click', () => {
             cancelCalibrationReview({ focusRunButton: true });
         });
         curtailmentEnabled.addEventListener('change', syncCurtailmentLimit);
+        calibrateModel.addEventListener('change', syncCalibrationMode);
         iamModelRadios.forEach((radio) => radio.addEventListener('change', syncIamAr));
         annualRunBtn.addEventListener('click', runAnnualAnalysis);
         validationTab.addEventListener('click', () => switchMode('validation'));
@@ -6678,6 +7670,7 @@
         document.getElementById('annualFromDate').addEventListener('change', updateAnnualRuntimeWarning);
         document.getElementById('annualToDate').addEventListener('change', updateAnnualRuntimeWarning);
         syncCurtailmentLimit();
+        syncCalibrationMode();
         syncIamAr();
         syncAnnualCurtailmentLimit();
         syncAnnualIamAr();
@@ -9197,7 +10190,11 @@
             }
             if (typeof value === 'object') {
                 if (typeof value.url === 'string') {
-                    links.push(...collectArtifactLinks(value.url, prefix || 'Report'));
+                    links.push({
+                        label: prefix || 'Report',
+                        url: value.url,
+                        filename: typeof value.filename === 'string' ? value.filename : null,
+                    });
                     return links;
                 }
                 Object.entries(value).forEach(([name, item]) => links.push(...collectArtifactLinks(item, humanizeAgentField(name))));
@@ -9330,6 +10327,7 @@
                     link.href = href;
                     link.target = '_blank';
                     link.rel = 'noopener noreferrer';
+                    if (item.filename) link.download = item.filename;
                     link.textContent = item.label;
                     linkWrap.appendChild(link);
                 });
@@ -9348,6 +10346,7 @@
                 actions.appendChild(makeAgentButton('Retry', '', () => retryAgentJob(job)));
             }
             const isPromoted = agentServerState.promoted_baselines?.[job.mode] === job.job_id;
+            const canPromote = job.mode === 'annual' || job.request?.calibrate_model !== false;
             if (job.state === 'done' && job.comparison) {
                 const explainButton = makeAgentButton('Explain results', '', () => requestAgentCompletionExplanation(job));
                 if (agentExplainedJobs.has(job.job_id)) {
@@ -9356,7 +10355,7 @@
                 }
                 actions.appendChild(explainButton);
             }
-            if (job.state === 'done' && !isPromoted) {
+            if (job.state === 'done' && !isPromoted && canPromote) {
                 actions.appendChild(makeAgentButton('Promote to baseline', 'primary', () => promoteAgentJob(job.job_id)));
             }
             if (isPromoted) {
@@ -9945,6 +10944,7 @@
                     currentRunState = null;
                     clearRunImages();
                     calibrationFactorPanel.classList.add('hidden');
+                    renderUncalibratedComparison(null, false);
                     setExcelLink(null);
                 }
                 if (agentActivitySelection === 'job:' + jobId) agentActivitySelection = null;
@@ -10224,6 +11224,7 @@
             latestResult = saved.latestResult || null;
             currentRunState = saved.currentRunState || null;
             pendingCalibrationReview = saved.pendingCalibrationReview || null;
+            calibrationReviewCollapsed = saved.calibrationReviewCollapsed === true;
             annualLatestJobId = saved.annualLatestJobId || null;
             annualLatestResult = saved.annualLatestResult || null;
             annualRunState = saved.annualRunState || null;
@@ -10286,16 +11287,21 @@
             }
             if (
                 pendingCalibrationReview &&
-                ['review_required', 'applying_review'].includes(currentRunState?.state)
+                (
+                    pendingCalibrationReview.applied ||
+                    ['review_required', 'applying_review'].includes(currentRunState?.state)
+                )
             ) {
-                runBtn.disabled = true;
-                currentRunState = {
-                    state: 'review_required',
-                    progress: 20,
-                    stage: 'Data-quality decision required',
-                };
+                if (!pendingCalibrationReview.applied) {
+                    runBtn.disabled = true;
+                    currentRunState = {
+                        state: 'review_required',
+                        progress: 20,
+                        stage: 'Data-quality decision required',
+                    };
+                }
                 renderCalibrationReview(pendingCalibrationReview, { focusPanel: false });
-            } else if (currentRunState?.state === 'reviewing') {
+            } else if (['reviewing', 'starting'].includes(currentRunState?.state)) {
                 currentRunState = null;
                 resetRunBtn();
             }
@@ -10317,7 +11323,7 @@
             await refreshAgentState(false);
         }
 
-        document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, .iam-model-input, .annual-input').forEach((el) => {
+        document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, #calibrateModel, .iam-model-input, .annual-input').forEach((el) => {
             el.addEventListener('input', () => {
                 if (calibrationReviewWorkflowIsActive()) {
                     cancelCalibrationReview();
