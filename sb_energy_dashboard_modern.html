@@ -986,8 +986,7 @@
             white-space: normal;
         }
 
-        .calibration-factor-evidence,
-        .calibration-factor-source {
+        .calibration-factor-evidence {
             display: block;
             margin-top: 3px;
             color: var(--muted);
@@ -5567,7 +5566,7 @@
                         <div>
                             <div class="calibration-factor-eyebrow">Applied model calibration</div>
                             <h3 id="calibrationFactorHeading">Seasonal calibration factors</h3>
-                            <p>Each season uses accepted daylight samples when evidence is sufficient; any overall-period or neutral fallback is shown explicitly.</p>
+                            <p>Factors use all rows kept during review.</p>
                         </div>
                     </div>
                     <div class="calibration-audit-line" id="calibrationAuditLine"></div>
@@ -5600,7 +5599,7 @@
                         <div class="validation-uncalibrated-comparison" id="seUncalibratedComparison" hidden>
                             <div class="validation-delta-copy">
                                 <strong>Before calibration</strong>
-                                <span>Original physics-model result</span>
+                                <!-- <span>Original physics-model result</span> -->
                             </div>
                             <div class="validation-uncalibrated-values">
                                 <div class="validation-uncalibrated-metric">
@@ -5647,7 +5646,7 @@
                         <div class="validation-uncalibrated-comparison" id="solUncalibratedComparison" hidden>
                             <div class="validation-delta-copy">
                                 <strong>Before calibration</strong>
-                                <span>Original physics-model result</span>
+                                <!-- <span>Original physics-model result</span> -->
                             </div>
                             <div class="validation-uncalibrated-values">
                                 <div class="validation-uncalibrated-metric">
@@ -6780,6 +6779,7 @@
                         if (!pendingCalibrationReview) return;
                         pendingCalibrationReview.decisions[issueId] = select.value;
                         closeCalibrationDecisionGate();
+                        updateCalibrationReviewActionState();
                         saveDashboardState();
                     });
                     label.appendChild(select);
@@ -6802,8 +6802,6 @@
 
             const expired = calibrationReviewIsExpired(pendingCalibrationReview);
             const applied = !!pendingCalibrationReview.applied;
-            const blocked = !!summary.blocking || expired;
-            const expiresText = calibrationReviewExpiryText(pendingCalibrationReview);
             calibrationReviewActions.hidden = applied;
             cancelCalibrationReviewBtn.hidden = applied;
             applyCalibrationReviewBtn.hidden = applied;
@@ -6813,22 +6811,7 @@
             } else {
                 closeCalibrationDecisionGate();
                 cancelCalibrationReviewBtn.disabled = false;
-                applyCalibrationReviewBtn.disabled = blocked;
-                applyCalibrationReviewBtn.textContent = expired
-                    ? 'Review expired'
-                    : blocked
-                    ? 'Calibration blocked'
-                    : 'Apply decisions & calibrate';
-                calibrationReviewActionNote.textContent = expired
-                    ? 'This private review snapshot expired. Start a new review before calibrating.'
-                    : summary.blocking
-                    ? 'A critical source issue prevents calibration. Change the date range or repair the Bazefield export.'
-                    : summary.actionable_issue_count
-                        ? 'Recommended decisions are selected by default. Open the affected rows, change any choice, then continue.'
-                        : 'No retain/exclude choices are needed. Continue to apply any required cleanup and calculate seasonal factors.';
-                if (!expired && expiresText) {
-                    calibrationReviewActionNote.textContent += ' Review expires ' + expiresText + '.';
-                }
+                updateCalibrationReviewActionState();
             }
             calibrationReviewPanel.classList.remove('hidden');
             if (focusPanel && calibrationReviewCollapsed) {
@@ -6911,6 +6894,30 @@
                 decisions[select.dataset.issueId] = select.value;
             });
             return decisions;
+        }
+
+        function updateCalibrationReviewActionState() {
+            if (!pendingCalibrationReview || pendingCalibrationReview.applied) return;
+            const summary = pendingCalibrationReview?.report?.summary || {};
+            const expired = calibrationReviewIsExpired(pendingCalibrationReview);
+            const blocked = !!summary.blocking || expired;
+            const expiresText = calibrationReviewExpiryText(pendingCalibrationReview);
+            applyCalibrationReviewBtn.disabled = blocked;
+            applyCalibrationReviewBtn.textContent = expired
+                ? 'Review expired'
+                : summary.blocking
+                    ? 'Calibration blocked'
+                    : 'Apply decisions & calibrate';
+            calibrationReviewActionNote.textContent = expired
+                ? 'This private review snapshot expired. Start a new review before calibrating.'
+                : summary.blocking
+                    ? 'A critical source issue prevents calibration. Change the date range or repair the Bazefield export.'
+                    : summary.actionable_issue_count
+                        ? 'Recommended decisions are selected by default. Open the affected rows, change any choice, then continue.'
+                        : 'No retain/exclude choices are needed. Continue to apply any required cleanup and calculate seasonal factors.';
+            if (!expired && expiresText) {
+                calibrationReviewActionNote.textContent += ' Review expires ' + expiresText + '.';
+            }
         }
 
         function calibrationDecisionBreakdown(decisions = calibrationReviewDecisions()) {
@@ -7007,23 +7014,10 @@
             return Number.isFinite(number) ? number.toFixed(4) : 'n/a';
         }
 
-        function factorSourceLabel(source) {
-            if (source === 'season') return 'Season fit';
-            if (source === 'overall_period_fallback') return 'Overall-period fallback';
-            if (source === 'neutral_fallback') return 'Neutral fallback';
-            return String(source || 'Source unavailable');
-        }
-
         function appendFactorValue(cell, observation) {
             const value = document.createElement('span');
             value.textContent = factorValue(observation?.factor);
-            const source = document.createElement('span');
-            source.className = 'calibration-factor-source';
-            source.textContent = factorSourceLabel(observation?.source);
-            if (observation?.fallback_reason) {
-                source.textContent += ' · ' + String(observation.fallback_reason);
-            }
-            cell.append(value, source);
+            cell.appendChild(value);
         }
 
         function appendFactorEvidence(cell, label, observation) {
@@ -7074,10 +7068,11 @@
             const cleaning = quality.cleaning || {};
             const uncalibrated = stats.uncalibrated || {};
             calibrationAuditLine.textContent =
-                Number(cleaning.excluded_rows || 0).toLocaleString() + ' source rows excluded · ' +
-                Number(cleaning.final_rows || stats.n_rows || 0).toLocaleString() + ' rows modeled · ' +
-                'Before calibration delta: SolarEdge ' + fmtPct(uncalibrated.se_pct) +
-                ', Solectria ' + fmtPct(uncalibrated.sol_pct);
+                'Rows: ' + Number(cleaning.excluded_rows || 0).toLocaleString() + ' excluded · ' +
+                Number(cleaning.final_rows || stats.n_rows || 0).toLocaleString() + ' modeled · ' +
+                'Before calibration: SolarEdge ' + fmtPct(uncalibrated.se_pct) +
+                ', Solectria ' + fmtPct(uncalibrated.sol_pct) +
+                ' (+ above measured, - below measured)';
 
             calibrationDriverInsights.replaceChildren();
             /*

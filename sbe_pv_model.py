@@ -318,11 +318,6 @@ def parse_input_csv(path: str) -> pd.DataFrame:
             + "."
         )
 
-    # Rows using a retained required-weather fallback remain modelable but do
-    # not influence the measured/model calibration ratio.
-    df["calibration_fit_eligible"] = df[
-        ["dni_wm2", "ghi_wm2", "temp_air_c"]
-    ].notna().all(axis=1)
     df["dni_wm2"] = df["dni_wm2"].fillna(0.0)
     df["ghi_wm2"] = df["ghi_wm2"].fillna(0.0)
     df["temp_air_c"] = _bounded_temperature_interpolation(df["temp_air_c"])
@@ -875,6 +870,54 @@ def add_energy(
     return out
 
 
+def calibrated_energy_balance_summary(
+    df: pd.DataFrame,
+    *,
+    absolute_tolerance_kwh: float = 0.01,
+    relative_tolerance: float = 1e-9,
+) -> dict[str, object]:
+    """Verify that a newly fitted baseline reconciles reported energy totals."""
+
+    systems: dict[str, dict[str, float | str]] = {}
+    for system, label in (("se", "solaredge"), ("sol", "solectria")):
+        measured_column = f"{system}_measured_energy_kwh"
+        predicted_column = f"{system}_predicted_energy_kwh"
+        if measured_column not in df or predicted_column not in df or df.empty:
+            raise ValueError(
+                "Calibrated energy reconciliation requires measured and "
+                "predicted cumulative energy for both systems."
+            )
+        measured_kwh = float(df[measured_column].iloc[-1])
+        predicted_kwh = float(df[predicted_column].iloc[-1])
+        if not np.isfinite(measured_kwh) or not np.isfinite(predicted_kwh):
+            raise ValueError(
+                "Calibrated measured and predicted energy must be finite."
+            )
+        residual_kwh = predicted_kwh - measured_kwh
+        tolerance_kwh = max(
+            float(absolute_tolerance_kwh),
+            abs(measured_kwh) * float(relative_tolerance),
+        )
+        if abs(residual_kwh) > tolerance_kwh:
+            raise ValueError(
+                f"{label.title()} calibrated energy differs from measured "
+                f"energy by {residual_kwh:.6f} kWh; expected no more than "
+                f"{tolerance_kwh:.6f} kWh."
+            )
+        systems[label] = {
+            "measured_kwh": measured_kwh,
+            "predicted_kwh": predicted_kwh,
+            "residual_kwh": residual_kwh,
+            "tolerance_kwh": tolerance_kwh,
+            "status": "balanced",
+        }
+    return {
+        "scope": "all reviewed rows in the baseline calibration window",
+        "status": "balanced",
+        "systems": systems,
+    }
+
+
 def apply_curtailment(df: pd.DataFrame, limit_kw: float | None) -> pd.DataFrame:
     """Clip predicted AC power only to a per-system kW limit.
 
@@ -1414,6 +1457,14 @@ def run_model(
         df,
         expected_interval_seconds=expected_interval_seconds,
     )
+    if (
+        calibration_enabled
+        and calibration_profile is None
+        and calibration_factors is not None
+    ):
+        calibration_factors["energy_balance"] = (
+            calibrated_energy_balance_summary(df)
+        )
 
     if progress_cb:
         progress_cb(0.89, "Rendering power and energy charts")

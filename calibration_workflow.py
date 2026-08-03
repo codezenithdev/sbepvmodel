@@ -1252,7 +1252,32 @@ def _bounded_interval_hours(
     return raw.fillna(nominal).clip(lower=0.0, upper=nominal)
 
 
-def _factor_observation(
+def _integrated_energy_kwh(
+    power: pd.Series,
+    *,
+    row_mask: pd.Series,
+    dt_hours: pd.Series,
+    factor: float = 1.0,
+    maximum_power_w: float | None = None,
+) -> float:
+    """Integrate power with the same missing-value semantics as ``add_energy``."""
+
+    selected = row_mask.fillna(False).astype(bool)
+    numeric_power = pd.to_numeric(power, errors="coerce").replace(
+        [np.inf, -np.inf], np.nan
+    )
+    scaled_power = numeric_power * float(factor)
+    if maximum_power_w is not None:
+        scaled_power = scaled_power.clip(upper=float(maximum_power_w))
+    step_energy = (
+        scaled_power.loc[selected]
+        * pd.to_numeric(dt_hours.loc[selected], errors="coerce")
+        / 1_000.0
+    )
+    return float(step_energy.replace([np.inf, -np.inf], np.nan).fillna(0.0).sum())
+
+
+def _energy_balance_observation(
     frame: pd.DataFrame,
     *,
     system: str,
@@ -1260,53 +1285,128 @@ def _factor_observation(
     dt_hours: pd.Series,
     maximum_predicted_power_w: float | None = None,
 ) -> dict[str, Any]:
-    measured_column = f"{system}_measured_power_w"
-    predicted_column = f"{system}_uncalibrated_power_w"
-    measured = pd.to_numeric(frame[measured_column], errors="coerce")
-    predicted = pd.to_numeric(frame[predicted_column], errors="coerce")
-    ghi = pd.to_numeric(frame["ghi_wm2"], errors="coerce")
-    valid = (
-        row_mask
-        & measured.notna()
-        & predicted.notna()
-        & np.isfinite(measured)
-        & np.isfinite(predicted)
-        & np.isfinite(ghi)
-        & np.isfinite(dt_hours)
-        & (measured >= 0.0)
-        & (predicted >= 1_000.0)
-        & (ghi >= 20.0)
-        & (dt_hours > 0.0)
+    """Return the all-reviewed-row energy-ratio factor for one season.
+
+    Without a curtailment cap this is the direct measured-energy divided by
+    uncalibrated-modeled-energy ratio. With a cap, solve the equivalent clipped
+    energy equation so the reported measured and predicted totals still match.
+    """
+
+    measured = frame[f"{system}_measured_power_w"]
+    uncalibrated = pd.to_numeric(
+        frame[f"{system}_uncalibrated_power_w"], errors="coerce"
+    ).replace([np.inf, -np.inf], np.nan)
+    selected = row_mask.fillna(False).astype(bool)
+    numeric_dt_hours = pd.to_numeric(dt_hours, errors="coerce").replace(
+        [np.inf, -np.inf], np.nan
     )
-    if "calibration_fit_eligible" in frame:
-        fit_eligible = (
-            frame["calibration_fit_eligible"].fillna(False).astype(bool)
+    covered = selected & numeric_dt_hours.notna() & (numeric_dt_hours > 0.0)
+    finite_modeled = uncalibrated.loc[selected].dropna()
+    if bool((finite_modeled < 0.0).any()):
+        raise ValueError(
+            "Energy balancing requires non-negative uncalibrated model power."
         )
-        valid &= fit_eligible
-    if (
-        maximum_predicted_power_w is not None
-        and np.isfinite(float(maximum_predicted_power_w))
-        and float(maximum_predicted_power_w) > 0
-    ):
-        curtailment_threshold_w = float(maximum_predicted_power_w) * 0.98
-        valid &= (
-            (predicted < curtailment_threshold_w)
-            & (measured < curtailment_threshold_w)
+
+    target_kwh = _integrated_energy_kwh(
+        measured,
+        row_mask=selected,
+        dt_hours=dt_hours,
+    )
+    unscaled_modeled_kwh = _integrated_energy_kwh(
+        uncalibrated,
+        row_mask=selected,
+        dt_hours=dt_hours,
+    )
+    tolerance_kwh = max(1e-6, abs(target_kwh) * 1e-10)
+    if target_kwh < -tolerance_kwh:
+        raise ValueError(
+            "Reviewed measured energy is negative; exclude the affected rows "
+            "before calibration."
         )
-    measured_kwh = float(
-        (measured.loc[valid] * dt_hours.loc[valid] / 1_000.0).sum()
+
+    if abs(target_kwh) <= tolerance_kwh:
+        final_factor = 0.0
+    elif unscaled_modeled_kwh <= 0.0:
+        raise ValueError(
+            "Measured energy is positive but the physics model produced no "
+            "energy for the reviewed rows. Calibration cannot reconcile this "
+            "season."
+        )
+    elif maximum_predicted_power_w is None:
+        final_factor = target_kwh / unscaled_modeled_kwh
+    else:
+        cap_w = float(maximum_predicted_power_w)
+        if not np.isfinite(cap_w) or cap_w <= 0.0:
+            raise ValueError(
+                "The curtailment limit must be finite and positive during "
+                "energy balancing."
+            )
+        positive_modeled = finite_modeled[finite_modeled > 0.0]
+        if positive_modeled.empty:
+            raise ValueError(
+                "Measured energy is positive but the physics model produced no "
+                "positive power for the reviewed rows."
+            )
+        maximum_factor = float((cap_w / positive_modeled).max())
+        upper_factor = maximum_factor * (1.0 + 1e-12)
+        maximum_kwh = _integrated_energy_kwh(
+            uncalibrated,
+            row_mask=selected,
+            dt_hours=dt_hours,
+            factor=upper_factor,
+            maximum_power_w=cap_w,
+        )
+        if target_kwh > maximum_kwh + tolerance_kwh:
+            raise ValueError(
+                "Measured energy cannot be matched within the selected "
+                f"{cap_w / 1_000.0:g} kW curtailment limit. Increase or disable "
+                "the limit, or review the affected source rows."
+            )
+        if abs(target_kwh - maximum_kwh) <= tolerance_kwh:
+            final_factor = upper_factor
+        else:
+            lower_factor = 0.0
+            for _ in range(120):
+                candidate = (lower_factor + upper_factor) / 2.0
+                candidate_kwh = _integrated_energy_kwh(
+                    uncalibrated,
+                    row_mask=selected,
+                    dt_hours=dt_hours,
+                    factor=candidate,
+                    maximum_power_w=cap_w,
+                )
+                if candidate_kwh < target_kwh:
+                    lower_factor = candidate
+                else:
+                    upper_factor = candidate
+            final_factor = (lower_factor + upper_factor) / 2.0
+
+    predicted_kwh = _integrated_energy_kwh(
+        uncalibrated,
+        row_mask=selected,
+        dt_hours=dt_hours,
+        factor=final_factor,
+        maximum_power_w=maximum_predicted_power_w,
     )
-    modeled_kwh = float(
-        (predicted.loc[valid] * dt_hours.loc[valid] / 1_000.0).sum()
-    )
-    factor = measured_kwh / modeled_kwh if modeled_kwh > 0 else np.nan
+    residual_kwh = predicted_kwh - target_kwh
+    if abs(residual_kwh) > tolerance_kwh:
+        raise ValueError(
+            "Calibration could not reconcile measured and predicted energy "
+            f"within {tolerance_kwh:.6g} kWh."
+        )
+
     return {
-        "factor": float(factor) if np.isfinite(factor) else None,
-        "sample_count": int(valid.sum()),
-        "valid_hours": float(dt_hours.loc[valid].sum()),
-        "measured_kwh": measured_kwh,
-        "uncalibrated_modeled_kwh": modeled_kwh,
-        "_mask": valid,
+        "factor": float(final_factor),
+        "sample_count": int(covered.sum()),
+        "valid_hours": float(numeric_dt_hours.loc[covered].sum()),
+        "measured_kwh": target_kwh,
+        "uncalibrated_modeled_kwh": unscaled_modeled_kwh,
+        "energy_balance_target_kwh": target_kwh,
+        "energy_balance_predicted_kwh": predicted_kwh,
+        "energy_balance_residual_kwh": residual_kwh,
+        "energy_balance_scope": "all_reviewed_rows_in_season",
+        "energy_balance_status": "balanced",
+        "curtailment_aware": maximum_predicted_power_w is not None,
     }
 
 
@@ -1335,7 +1435,7 @@ def _round_factor_observation(
         factor = None
     sample_count = int(observation.get("sample_count") or 0)
     valid_hours = float(observation.get("valid_hours") or 0.0)
-    return {
+    result = {
         # This value is also the durable application input for scenario jobs.
         # Keep the exact float used above; presentation layers may round it.
         "factor": float(factor) if factor is not None else 1.0,
@@ -1363,6 +1463,27 @@ def _round_factor_observation(
         ),
         "fallback_reason": fallback_reason,
     }
+    for key, digits in (
+        ("energy_balance_target_kwh", 6),
+        ("energy_balance_predicted_kwh", 6),
+        ("energy_balance_residual_kwh", 9),
+    ):
+        if key not in observation:
+            continue
+        raw_value = observation.get(key)
+        result[key] = (
+            round(float(raw_value), digits)
+            if raw_value is not None and np.isfinite(float(raw_value))
+            else None
+        )
+    for key in (
+        "energy_balance_scope",
+        "energy_balance_status",
+        "curtailment_aware",
+    ):
+        if key in observation:
+            result[key] = observation.get(key)
+    return result
 
 
 def _driver_diagnostics(
@@ -1407,7 +1528,7 @@ def _driver_diagnostics(
             "status": "insufficient_data",
             "sample_count": int(len(selected)),
             "message": (
-                "At least 30 valid daylight samples are needed for "
+                "At least 30 comparable measured/model samples are needed for "
                 "physical-driver diagnostics."
             ),
         }
@@ -1697,14 +1818,18 @@ def apply_seasonal_calibration(
     expected_interval_seconds: int | None = None,
     maximum_uncurtailed_power_w: float | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
-    """Calculate and apply per-season, per-system energy-ratio factors."""
+    """Calculate and apply per-season, per-system all-row energy factors.
+
+    ``minimum_season_samples`` and ``minimum_season_hours`` remain accepted for
+    compatibility with older callers. They no longer filter or replace a
+    seasonal factor: every reviewed row in each season contributes.
+    """
 
     required = {
         "se_measured_power_w",
         "sol_measured_power_w",
         "se_predicted_power_w",
         "sol_predicted_power_w",
-        "ghi_wm2",
     }
     missing = sorted(required.difference(frame.columns))
     if missing:
@@ -1727,16 +1852,6 @@ def apply_seasonal_calibration(
         expected_interval_seconds=expected_interval_seconds,
     )
     all_rows = pd.Series(True, index=output.index)
-    overall_observations = {
-        system: _factor_observation(
-            output,
-            system=system,
-            row_mask=all_rows,
-            dt_hours=dt_hours,
-            maximum_predicted_power_w=maximum_uncurtailed_power_w,
-        )
-        for system in ("se", "sol")
-    }
 
     season_labels = pd.Series(
         [season_name(value) for value in output.index],
@@ -1752,7 +1867,7 @@ def apply_seasonal_calibration(
         diagnostics[system] = _driver_diagnostics(
             output,
             system=system,
-            valid_mask=overall_observations[system]["_mask"],
+            valid_mask=all_rows,
         )
 
     for label in ordered_seasons:
@@ -1766,64 +1881,17 @@ def apply_seasonal_calibration(
             "systems": {},
         }
         for system in ("se", "sol"):
-            seasonal = _factor_observation(
+            balance = _energy_balance_observation(
                 output,
                 system=system,
                 row_mask=season_mask,
                 dt_hours=dt_hours,
                 maximum_predicted_power_w=maximum_uncurtailed_power_w,
             )
-            source = "season"
-            fallback_reason: str | None = None
-            selected = seasonal
-            if (
-                seasonal["factor"] is None
-                or int(seasonal["sample_count"]) < int(minimum_season_samples)
-                or float(seasonal["valid_hours"]) < float(minimum_season_hours)
-            ):
-                overall = overall_observations[system]
-                if (
-                    overall["factor"] is not None
-                    and int(overall["sample_count"]) >= minimum_season_samples
-                    and float(overall["valid_hours"]) >= minimum_season_hours
-                ):
-                    selected = overall
-                    source = "overall_period_fallback"
-                    fallback_reason = (
-                        f"{label} had fewer than {minimum_season_samples} "
-                        f"valid daylight samples or {minimum_season_hours:g} "
-                        "valid hour(s)"
-                    )
-                else:
-                    selected = {
-                        "factor": 1.0,
-                        "sample_count": int(seasonal["sample_count"]),
-                        "valid_hours": float(seasonal["valid_hours"]),
-                        "measured_kwh": seasonal["measured_kwh"],
-                        "uncalibrated_modeled_kwh": seasonal[
-                            "uncalibrated_modeled_kwh"
-                        ],
-                    }
-                    source = "neutral_fallback"
-                    fallback_reason = "insufficient valid measured/model energy"
-                warnings.append(
-                    f"{label.title()} {system.upper()} factor used {source}: "
-                    f"{fallback_reason}."
-                )
-
-            selected_factor = selected.get("factor")
-            factor = (
-                1.0
-                if selected_factor is None
-                else float(selected_factor)
-            )
-            if not np.isfinite(factor) or factor < 0:
-                factor = 1.0
-                source = "neutral_fallback"
-                fallback_reason = "calculated factor was negative or non-finite"
+            factor = float(balance["factor"])
             if factor < 0.5 or factor > 1.5:
                 warnings.append(
-                    f"{label.title()} {system.upper()} factor {factor:.3f} is "
+                    f"{label.title()} {system.upper()} applied factor {factor:.3f} is "
                     "outside the typical 0.5-1.5 review range."
                 )
 
@@ -1837,40 +1905,19 @@ def apply_seasonal_calibration(
                 ]
                 * factor
             )
-            public_selected = {**selected, "factor": factor}
             record["systems"][
                 "solaredge" if system == "se" else "solectria"
             ] = _round_factor_observation(
-                public_selected,
-                source=source,
-                fallback_reason=fallback_reason,
+                balance,
+                source="all_reviewed_rows_in_season",
             )
         season_records.append(record)
 
-    overall_public = {
-        "solaredge": _round_factor_observation(
-            overall_observations["se"], source="overall_period"
-        ),
-        "solectria": _round_factor_observation(
-            overall_observations["sol"], source="overall_period"
-        ),
-    }
     calibration = {
         "method": "measured_energy_divided_by_uncalibrated_modeled_energy",
+        "application_method": "curtailment_aware_all_reviewed_row_energy_ratio",
+        "energy_balance_scope": "all reviewed rows, independently by season and system",
         "season_definition": "meteorological: winter Dec-Feb, spring Mar-May, summer Jun-Aug, fall Sep-Nov",
-        "daylight_filter": (
-            "GHI >= 20 W/m2 and uncalibrated modeled power >= 1 kW"
-            + (
-                "; rows whose measured or uncalibrated modeled power is at or "
-                f"above 98% of the {maximum_uncurtailed_power_w / 1_000.0:g} kW "
-                "curtailment limit excluded from fitting"
-                if maximum_uncurtailed_power_w is not None
-                else ""
-            )
-        ),
-        "minimum_season_samples": int(minimum_season_samples),
-        "minimum_season_hours": float(minimum_season_hours),
-        "overall_period": overall_public,
         "seasons": season_records,
         "season_count": len(season_records),
         "warnings": warnings,

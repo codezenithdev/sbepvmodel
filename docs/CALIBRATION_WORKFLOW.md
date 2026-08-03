@@ -27,11 +27,12 @@ physics-model predictions directly.
    `GET /api/calibration-reviews/{review_id}/rows?issue_id=...&offset=...&limit=...`.
    The table is paginated rather than placing source values in the public review
    summary.
-5. Where both actions are technically valid, the user chooses **Retain** or
-   **Exclude** for an issue. A choice applies to every source row affected by
-   that issue; the row table is decision evidence, not a set of independent
-   row-level controls. Invalid timestamps are a required exclusion, while gaps
-   are informational because a missing row cannot itself be removed.
+5. Where both actions are technically valid, the recommended **Retain** or
+   **Exclude** action is selected in the dropdown by default. The user can review
+   the affected-row sample and change that choice. A choice applies to every
+   source row affected by that issue, including rows beyond the displayed
+   sample. Invalid timestamps remain a required exclusion, while gaps are
+   informational because a missing row cannot itself be removed.
 6. Selecting **Apply decisions & calibrate** opens the **Source-data decision
    gate**. The model is not queued until the user acknowledges that the flagged
    rows and Retain/Exclude choices were reviewed and selects **Confirm decisions
@@ -41,9 +42,11 @@ physics-model predictions directly.
    reviewed CSV. The gate becomes a persistent receipt showing the reviewed and
    excluded row counts and the bound job ID; it remains visible while the run is
    active and when dashboard state is restored.
-8. Calibrated results show each applied seasonal factor, valid fitting hours,
-   confidence, before-calibration error, excluded-row audit, and physical-driver
-   diagnostics.
+8. Calibrated baseline results show each final seasonal factor, reviewed sample
+   coverage, confidence, before-calibration error, excluded-row audit, and
+   physical-driver diagnostics. Every reviewed row in the season contributes,
+   so each system's final measured and predicted energy totals reconcile within
+   0.01 kWh.
 
 Review receipts and raw snapshots expire after 24 hours. A reviewed snapshot
 that is bound to a durable model job is retained for reproducible same-input
@@ -100,25 +103,35 @@ expanded automatically to a complete three-month season: a partial-season
 request uses only the timestamps in that exact range, while a range crossing a
 boundary calculates an independent factor for each season present.
 
-For each system and each season present in the selected range:
+After the review decisions have been applied, each system and season uses every
+remaining reviewed row to calculate one auditable energy-ratio factor:
 
 ```text
-factor = valid measured AC energy / uncalibrated modeled AC energy
-calibrated AC power = uncalibrated modeled AC power × factor
+applied factor = measured AC energy / uncalibrated modeled AC energy
 ```
 
-Only daylight samples with `GHI >= 20 W/m²`, uncalibrated modeled power of at
-least 1 kW, finite non-negative measured/model power, and a positive bounded
-interval are used for fitting. When curtailment is enabled, rows whose
-uncalibrated prediction is at or above 98% of the limit are excluded from the
-fit so a clipped operating ceiling is not mistaken for model bias.
+When curtailment is enabled, direct division alone would not account for the
+clipped operating ceiling. The workflow therefore solves the equivalent
+whole-season equation:
+
+```text
+sum(final predicted AC power × interval) = sum(measured AC power × interval)
+final predicted AC power = min(uncalibrated AC power × applied factor, curtailment limit)
+```
+
+Without curtailment this reduces to the direct all-row measured/model energy
+ratio. With curtailment, the workflow solves the monotonic clipped-energy
+equation. Calibration stops with an actionable error if the measured target is
+physically unreachable under the selected cap or the model produces no positive
+energy. The result records the final factor, reviewed sample and hour coverage,
+target energy, predicted energy, and residual.
 
 The factor is applied timestamp by timestamp according to the local
-`America/Denver` season. A season with insufficient valid data falls back to
-the overall selected-period factor for that system. If the full period is also
-insufficient, a neutral factor of `1.0` is used and surfaced as a low-confidence
-warning. Factors are not artificially capped; values outside the typical
-`0.5–1.5` range are retained and flagged for review.
+`America/Denver` season. There is no daylight-only sample filter or cross-season
+fallback: retained nighttime, low-output, and weather-fallback rows contribute
+to the same seasonal energy calculation as every other reviewed row.
+Factors are not artificially capped; values outside the typical `0.5–1.5`
+range are retained and flagged for review.
 
 Energy integration is bounded to the requested sampling interval. Therefore an
 excluded row or source gap cannot cause the following row to represent several
@@ -156,11 +169,11 @@ first passing through the visible review workflow.
 
 ## Data-driven diagnostic extension
 
-For periods with at least 30 valid daylight samples, the workflow estimates a
-small diagnostic regression of the measured-to-uncalibrated power ratio against
-available temperature, wind speed, GHI, DNI, DHI, and elapsed time. It reports
-the strongest standardized associations and fit quality separately for
-SolarEdge and Solectria.
+For periods with at least 30 comparable measured/model samples, the workflow
+estimates a small diagnostic regression of the measured-to-uncalibrated power
+ratio against available temperature, wind speed, GHI, DNI, DHI, and elapsed
+time. It reports the strongest standardized associations and fit quality
+separately for SolarEdge and Solectria.
 
 These diagnostics explain residual variation but do **not** change the applied
 prediction and must not be interpreted as causal. Soiling cannot be separated
