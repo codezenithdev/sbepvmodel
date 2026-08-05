@@ -13,4 +13,3 @@ dist/
 .wrangler/
 *.tgz
 
-tests/

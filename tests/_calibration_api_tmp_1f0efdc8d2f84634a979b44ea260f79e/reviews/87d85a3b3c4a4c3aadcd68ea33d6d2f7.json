@@ -1,0 +1,300 @@
+{
+  "cleaned_source_hash": "9c40a7133e9af8303f9fbf69f4ce11a104d3326b32618390e841321080a2d778",
+  "cleaned_source_path": "C:\\Users\\Angushylesh(Shylesh)\\Desktop\\usecase1\\pvmismatch_Ho_v8\\dashboard\\tests\\_calibration_api_tmp_1f0efdc8d2f84634a979b44ea260f79e\\reviews\\87d85a3b3c4a4c3aadcd68ea33d6d2f7.2cfd6144a712b03d.reviewed.csv",
+  "consumed_at": "2026-08-03T19:46:18.764592+00:00",
+  "created_at": "2026-08-03T19:46:18.657701+00:00",
+  "decisions": {
+    "missing.dhi": "retain",
+    "pattern.low_power_high_irradiance.solaredge_measured_power": "exclude",
+    "range.temp_air": "exclude"
+  },
+  "expires_at": "2026-08-04T19:46:18.657701+00:00",
+  "job_id": "review-87d85a3b3c4a4c3aadcd68ea33d6d2f7",
+  "quality_context": {
+    "cleaning": {
+      "decisions": [
+        {
+          "action": "retain",
+          "affected_rows": 1,
+          "issue_id": "missing.dhi"
+        },
+        {
+          "action": "exclude",
+          "affected_rows": 1,
+          "issue_id": "range.temp_air"
+        },
+        {
+          "action": "exclude",
+          "affected_rows": 1,
+          "issue_id": "pattern.low_power_high_irradiance.solaredge_measured_power"
+        }
+      ],
+      "excluded_issue_ids": [
+        "range.temp_air",
+        "pattern.low_power_high_irradiance.solaredge_measured_power"
+      ],
+      "excluded_row_pct": 33.333,
+      "excluded_rows": 2,
+      "final_rows": 4,
+      "original_rows": 6,
+      "retained_issue_ids": [
+        "missing.dhi"
+      ]
+    },
+    "report": {
+      "issues": [
+        {
+          "affected_rows_available": true,
+          "allowed_actions": [
+            "retain",
+            "exclude"
+          ],
+          "category": "missing_value",
+          "columns": [
+            "dhi"
+          ],
+          "description": "The model has a documented fallback for this field, but retained values do not contribute directly to factor fitting.",
+          "evidence": {},
+          "id": "missing.dhi",
+          "recommended_action": "retain",
+          "row_count": 1,
+          "sample_timestamps": [
+            "2026-06-01T16:00:00+00:00"
+          ],
+          "severity": "medium",
+          "title": "Missing DHI values"
+        },
+        {
+          "affected_rows_available": true,
+          "allowed_actions": [
+            "retain",
+            "exclude"
+          ],
+          "category": "out_of_range",
+          "columns": [
+            "temp_air"
+          ],
+          "description": "Values outside -40 to 60 were detected. These broad bounds are intended to catch unit, sign, and sensor failures rather than ordinary weather extremes.",
+          "evidence": {
+            "allowed_maximum": 60.0,
+            "allowed_minimum": -40.0,
+            "maximum_observed": 100.0,
+            "minimum_observed": 20.0
+          },
+          "id": "range.temp_air",
+          "recommended_action": "exclude",
+          "row_count": 1,
+          "sample_timestamps": [
+            "2026-06-01T18:00:00+00:00"
+          ],
+          "severity": "high",
+          "title": "Ambient temperature outside physical bounds"
+        },
+        {
+          "affected_rows_available": true,
+          "allowed_actions": [
+            "retain",
+            "exclude"
+          ],
+          "category": "irregular_pattern",
+          "columns": [
+            "solaredge_measured_power",
+            "ghi",
+            "dni"
+          ],
+          "description": "This pattern may indicate an outage, curtailment, telemetry freeze, or a valid operating event. Exclusion is recommended when the goal is a normal-operation calibration factor.",
+          "evidence": {},
+          "id": "pattern.low_power_high_irradiance.solaredge_measured_power",
+          "recommended_action": "exclude",
+          "row_count": 1,
+          "sample_timestamps": [
+            "2026-06-01T16:00:00+00:00"
+          ],
+          "severity": "high",
+          "title": "Solaredge measured power near zero in strong sun"
+        }
+      ],
+      "seasons": [
+        {
+          "first_timestamp": "2026-06-01T09:00:00-06:00",
+          "last_timestamp": "2026-06-01T14:00:00-06:00",
+          "months": "Jun-Aug",
+          "name": "summer",
+          "row_count": 6
+        }
+      ],
+      "source": {
+        "expected_interval_seconds": 3600,
+        "first_timestamp": "2026-06-01T15:00:00+00:00",
+        "last_timestamp": "2026-06-01T20:00:00+00:00",
+        "requested_end": "2026-06-01T21:00:00+00:00",
+        "requested_start": "2026-06-01T15:00:00+00:00",
+        "row_count": 6,
+        "sha256": "ad40913b67c8f81e43f8443564090b71024e33204fd43fa32dbc2fef1c4a3d69"
+      },
+      "summary": {
+        "actionable_issue_count": 3,
+        "affected_row_pct": 33.333,
+        "affected_rows": 2,
+        "blocking": false,
+        "issue_count": 3,
+        "missing_intervals": 0,
+        "severity_counts": {
+          "critical": 0,
+          "high": 2,
+          "low": 0,
+          "medium": 1
+        },
+        "status": "action_required"
+      },
+      "version": 1
+    },
+    "review_id": "87d85a3b3c4a4c3aadcd68ea33d6d2f7",
+    "reviewed_at": "2026-08-03T19:46:18.689249+00:00",
+    "reviewed_source_sha256": "9c40a7133e9af8303f9fbf69f4ce11a104d3326b32618390e841321080a2d778",
+    "source_sha256": "ad40913b67c8f81e43f8443564090b71024e33204fd43fa32dbc2fef1c4a3d69",
+    "submitted_decisions": {
+      "missing.dhi": "retain",
+      "pattern.low_power_high_irradiance.solaredge_measured_power": "exclude",
+      "range.temp_air": "exclude"
+    }
+  },
+  "report": {
+    "issues": [
+      {
+        "_row_positions": [
+          1
+        ],
+        "allowed_actions": [
+          "retain",
+          "exclude"
+        ],
+        "category": "missing_value",
+        "columns": [
+          "dhi"
+        ],
+        "description": "The model has a documented fallback for this field, but retained values do not contribute directly to factor fitting.",
+        "evidence": {},
+        "id": "missing.dhi",
+        "recommended_action": "retain",
+        "row_count": 1,
+        "sample_timestamps": [
+          "2026-06-01T16:00:00+00:00"
+        ],
+        "severity": "medium",
+        "title": "Missing DHI values"
+      },
+      {
+        "_row_positions": [
+          3
+        ],
+        "allowed_actions": [
+          "retain",
+          "exclude"
+        ],
+        "category": "out_of_range",
+        "columns": [
+          "temp_air"
+        ],
+        "description": "Values outside -40 to 60 were detected. These broad bounds are intended to catch unit, sign, and sensor failures rather than ordinary weather extremes.",
+        "evidence": {
+          "allowed_maximum": 60.0,
+          "allowed_minimum": -40.0,
+          "maximum_observed": 100.0,
+          "minimum_observed": 20.0
+        },
+        "id": "range.temp_air",
+        "recommended_action": "exclude",
+        "row_count": 1,
+        "sample_timestamps": [
+          "2026-06-01T18:00:00+00:00"
+        ],
+        "severity": "high",
+        "title": "Ambient temperature outside physical bounds"
+      },
+      {
+        "_row_positions": [
+          1
+        ],
+        "allowed_actions": [
+          "retain",
+          "exclude"
+        ],
+        "category": "irregular_pattern",
+        "columns": [
+          "solaredge_measured_power",
+          "ghi",
+          "dni"
+        ],
+        "description": "This pattern may indicate an outage, curtailment, telemetry freeze, or a valid operating event. Exclusion is recommended when the goal is a normal-operation calibration factor.",
+        "evidence": {},
+        "id": "pattern.low_power_high_irradiance.solaredge_measured_power",
+        "recommended_action": "exclude",
+        "row_count": 1,
+        "sample_timestamps": [
+          "2026-06-01T16:00:00+00:00"
+        ],
+        "severity": "high",
+        "title": "Solaredge measured power near zero in strong sun"
+      }
+    ],
+    "seasons": [
+      {
+        "first_timestamp": "2026-06-01T09:00:00-06:00",
+        "last_timestamp": "2026-06-01T14:00:00-06:00",
+        "months": "Jun-Aug",
+        "name": "summer",
+        "row_count": 6
+      }
+    ],
+    "source": {
+      "expected_interval_seconds": 3600,
+      "first_timestamp": "2026-06-01T15:00:00+00:00",
+      "last_timestamp": "2026-06-01T20:00:00+00:00",
+      "path": "C:\\Users\\Angushylesh(Shylesh)\\Desktop\\usecase1\\pvmismatch_Ho_v8\\dashboard\\tests\\_calibration_api_tmp_1f0efdc8d2f84634a979b44ea260f79e\\reviews\\87d85a3b3c4a4c3aadcd68ea33d6d2f7.raw.csv",
+      "requested_end": "2026-06-01T21:00:00+00:00",
+      "requested_start": "2026-06-01T15:00:00+00:00",
+      "row_count": 6,
+      "sha256": "ad40913b67c8f81e43f8443564090b71024e33204fd43fa32dbc2fef1c4a3d69"
+    },
+    "summary": {
+      "actionable_issue_count": 3,
+      "affected_row_pct": 33.333,
+      "affected_rows": 2,
+      "blocking": false,
+      "issue_count": 3,
+      "missing_intervals": 0,
+      "severity_counts": {
+        "critical": 0,
+        "high": 2,
+        "low": 0,
+        "medium": 1
+      },
+      "status": "action_required"
+    },
+    "version": 1
+  },
+  "request": {
+    "backtrack": true,
+    "calibrate_model": true,
+    "curtailment_enabled": false,
+    "curtailment_limit_kw": null,
+    "from_date": "2026-06-01",
+    "from_time": "09:00",
+    "iam_a_r": null,
+    "iam_model": "physical",
+    "interval_unit": "hours",
+    "interval_value": 1,
+    "solaredge_bos_efficiency": 1.0,
+    "solaredge_inverter_efficiency": 1.0,
+    "solectria_bos_efficiency": 1.0,
+    "solectria_inverter_efficiency": 1.0,
+    "to_date": "2026-06-01",
+    "to_time": "15:00"
+  },
+  "review_id": "87d85a3b3c4a4c3aadcd68ea33d6d2f7",
+  "source_hash": "ad40913b67c8f81e43f8443564090b71024e33204fd43fa32dbc2fef1c4a3d69",
+  "source_path": "C:\\Users\\Angushylesh(Shylesh)\\Desktop\\usecase1\\pvmismatch_Ho_v8\\dashboard\\tests\\_calibration_api_tmp_1f0efdc8d2f84634a979b44ea260f79e\\reviews\\87d85a3b3c4a4c3aadcd68ea33d6d2f7.raw.csv",
+  "source_row_count": 6,
+  "state": "consumed"
+}
