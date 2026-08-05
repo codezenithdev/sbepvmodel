@@ -119,15 +119,235 @@ class AgentFrontendContractTests(unittest.TestCase):
         )
 
     def test_errors_are_system_notices_and_are_not_saved_as_assistant_history(self):
+        send_message = self.html.split(
+            "async function sendMessage()",
+            1,
+        )[1].split("\n        function clearCachedCompletedRun", 1)[0]
         catch_block = re.search(
-            r"catch \(e\) \{\s*const msg = e\.message.*?\n\s*\} finally",
-            self.html,
+            r"catch \(e\) \{.*?\n\s*\} finally",
+            send_message,
             flags=re.DOTALL,
         )
         self.assertIsNotNone(catch_block)
         self.assertIn("loadingBubble.parentElement.remove()", catch_block.group(0))
         self.assertIn("appendSystemNotice(msg, 'error')", catch_block.group(0))
+        self.assertIn("e?.name === 'AbortError'", catch_block.group(0))
+        self.assertIn("chatRequestTimedOut", catch_block.group(0))
         self.assertNotIn("chatMessages.push", catch_block.group(0))
+
+    def test_ordinary_chat_job_context_is_not_misclassified_as_an_action(self):
+        normalizer = self.html.split(
+            "function normalizeAgentAction(data)",
+            1,
+        )[1].split("\n        function boundedChatCardString", 1)[0]
+        for public_job_field in ("'state'", "'kind'", "'request'"):
+            self.assertIn(
+                f"Object.prototype.hasOwnProperty.call(data, {public_job_field})",
+                normalizer,
+            )
+        self.assertNotRegex(
+            normalizer,
+            r"if\s*\(\s*data\.job_id\s*\)\s*return",
+        )
+        send_message = self.html.split(
+            "async function sendMessage()",
+            1,
+        )[1].split("\n        function clearCachedCompletedRun", 1)[0]
+        self.assertIn(
+            "const startedJob = action?.type === 'job_started' ? action.job : null",
+            send_message,
+        )
+        self.assertIn("if (startedJob?.job_id)", send_message)
+        self.assertNotIn("if (data.job_id)", send_message)
+
+    def test_direct_runs_register_immediately_and_poll_with_bounded_retries(self):
+        for registration in (
+            "registerDirectRun(payload.job_id, 'validation'",
+            "registerDirectRun(data.job_id, 'validation'",
+            "registerDirectRun(job_id, 'annual'",
+        ):
+            self.assertIn(registration, self.html)
+
+        validation_poll = self.html.split(
+            "async function pollStatus(jobId",
+            1,
+        )[1].split("\n        function resetAnnualRunBtn", 1)[0]
+        annual_poll = self.html.split(
+            "async function pollAnnualStatus(jobId",
+            1,
+        )[1].split("\n        runBtn.addEventListener", 1)[0]
+        for poll, revision_name, current_id in (
+            (validation_poll, "validationPollRevision", "latestJobId"),
+            (annual_poll, "annualPollRevision", "annualLatestJobId"),
+        ):
+            self.assertIn(f"pollRevision !== {revision_name}", poll)
+            self.assertIn(f"jobId !== {current_id}", poll)
+            self.assertIn("res.status === 404", poll)
+            self.assertIn("STATUS_POLL_MAX_FAILURES", poll)
+            self.assertIn("statusPollRetryDelay(nextFailureCount)", poll)
+            self.assertIn("cache: 'no-store'", poll)
+
+    def test_agent_polling_stops_ghost_jobs_and_reconciles_restored_cards(self):
+        poll = self.html.split(
+            "async function pollAgentJob(jobId",
+            1,
+        )[1].split("\n        function trackedChatCardForJob", 1)[0]
+        not_found = poll.split("if (response.status === 404)", 1)[1].split(
+            "const data = await readAgentResponse",
+            1,
+        )[0]
+        self.assertIn("forgetUnavailableAgentJob(jobId)", not_found)
+        self.assertNotIn("scheduleAgentJobPoll", not_found)
+        self.assertIn("AGENT_POLL_MAX_FAILURES", poll)
+
+        reconcile = self.html.split(
+            "function reconcileTerminalAgentCards()",
+            1,
+        )[1].split("\n        async function refreshAgentState", 1)[0]
+        self.assertIn("updateStoredChatActionCardStatus", reconcile)
+        self.assertIn("announceAgentCompletion", reconcile)
+        self.assertIn("getAgentParameterSweepGroups()", reconcile)
+        refresh = self.html.split(
+            "async function refreshAgentState",
+            1,
+        )[1].split("\n        function handleAgentAction", 1)[0]
+        self.assertIn("reconcileTerminalAgentCards()", refresh)
+
+    def test_saved_nonterminal_action_cards_outside_recent_state_are_recovered(self):
+        collector = self.html.split(
+            "function savedNonterminalActionJobIds()",
+            1,
+        )[1].split("\n        function chatActionSweepMetadata", 1)[0]
+        self.assertIn("['job_started', 'sweep_started'].includes(card.kind)", collector)
+        self.assertIn("TERMINAL_CHAT_ACTION_STATUSES.has", collector)
+        self.assertIn("card.job_id", collector)
+        self.assertIn("...(card.job_ids || [])", collector)
+        self.assertNotIn("baseline_job_id", collector)
+
+        recovery = self.html.split(
+            "async function recoverSavedNonterminalActionJobs()",
+            1,
+        )[1].split("\n        async function refreshAgentState", 1)[0]
+        self.assertIn("!agentJobSnapshots.has(jobId)", recovery)
+        self.assertIn("/api/status/", recovery)
+        self.assertIn("response.status === 404", recovery)
+        self.assertIn("forgetUnavailableAgentJob(jobId)", recovery)
+        self.assertIn("putAgentJob", recovery)
+
+        forget = self.html.split(
+            "function forgetUnavailableAgentJob(jobId)",
+            1,
+        )[1].split("\n        async function pollAgentJob", 1)[0]
+        self.assertIn("agentJobPollTimers.delete(jobId)", forget)
+        self.assertIn("agentJobSnapshots.delete(jobId)", forget)
+        self.assertIn("agentJobStartedAt.delete(jobId)", forget)
+        self.assertIn(
+            "updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable')",
+            forget,
+        )
+
+        refresh = self.html.split(
+            "async function refreshAgentState",
+            1,
+        )[1].split("\n        function handleAgentAction", 1)[0]
+        self.assertLess(
+            refresh.index("await recoverSavedNonterminalActionJobs()"),
+            refresh.index("reconcileTerminalAgentCards()"),
+        )
+        self.assertIn("Array.from(agentJobSnapshots.values())", refresh)
+
+    def test_cached_results_are_revalidated_before_restore(self):
+        restore = self.html.split(
+            "async function restoreDashboardState()",
+            1,
+        )[1].split("\n        document.querySelectorAll", 1)[0]
+        validation_check = "await revalidateCachedCompletedRun('validation')"
+        annual_check = "await revalidateCachedCompletedRun('annual')"
+        self.assertIn(validation_check, restore)
+        self.assertIn(annual_check, restore)
+        self.assertLess(restore.index(validation_check), restore.index("applyResult(latestResult, false)"))
+        self.assertLess(restore.index(annual_check), restore.index("applyAnnualResult(annualLatestResult, false)"))
+        self.assertIn("['queued', 'running', 'monitoring_error']", restore)
+        self.assertIn("markCachedRunUnverified(mode)", self.html)
+        self.assertIn("saveDashboardState();", restore)
+
+    def test_chat_requests_are_cancelable_and_external_sources_persist(self):
+        send_message = self.html.split(
+            "async function sendMessage()",
+            1,
+        )[1].split("\n        function clearCachedCompletedRun", 1)[0]
+        for marker in (
+            "new AbortController()",
+            "CHAT_REQUEST_TIMEOUT_MS",
+            "signal: chatController.signal",
+            "activeChatAbortController",
+            "chatController.abort()",
+        ):
+            self.assertIn(marker, send_message)
+        self.assertIn("function cancelChatRequest()", self.html)
+        self.assertIn("chatIsSending ? 'Cancel' : 'Send'", self.html)
+        self.assertIn("collectExternalEvidence(content, data)", self.html)
+        self.assertIn("message.web_sources = webSources", self.html)
+        self.assertIn("restored.web_sources = restoredSources", self.html)
+        self.assertIn("renderExternalEvidence(content, options)", self.html)
+
+    def test_validation_happens_before_results_are_cleared_and_modes_are_isolated(self):
+        for element_id in ("fromDate", "toDate", "annualFromDate", "annualToDate"):
+            self.assertRegex(
+                self.html,
+                rf'<input(?=[^>]*\bid="{element_id}")(?=[^>]*\brequired\b)[^>]*>',
+            )
+        self.assertRegex(
+            self.html,
+            r'<input(?=[^>]*\bid="intervalValue")(?=[^>]*\bstep="1")'
+            r'(?=[^>]*\binputmode="numeric")[^>]*>',
+        )
+        validation_run = self.html.split(
+            "async function runAnalysis()",
+            1,
+        )[1].split("\n        async function applyCalibrationReview", 1)[0]
+        self.assertLess(
+            validation_run.index("readValidationWindow(fromTime, toTime)"),
+            validation_run.index("latestResult = null"),
+        )
+        self.assertLess(
+            validation_run.index("readPositiveInteger('intervalValue'"),
+            validation_run.index("latestResult = null"),
+        )
+        annual_run = self.html.split(
+            "async function runAnnualAnalysis()",
+            1,
+        )[1].split("\n        async function pollAnnualStatus", 1)[0]
+        self.assertLess(
+            annual_run.index("if (!fromDate || !toDate)"),
+            annual_run.index("annualLatestResult = null"),
+        )
+        self.assertNotIn("parseInt(document.getElementById('intervalValue')", self.html)
+
+        annual_controls = self.html.split(
+            "document.querySelectorAll('#annualControls input, #annualControls select')",
+            1,
+        )[1].split("\n        restoreDashboardState();", 1)[0]
+        self.assertNotIn("cancelCalibrationReview", annual_controls)
+
+    def test_promotion_invalidates_stale_polls_and_retry_resets_elapsed_clock(self):
+        promotion = self.html.split(
+            "async function promoteAgentJob(jobId)",
+            1,
+        )[1].split("\n        function setChatOpen", 1)[0]
+        self.assertLess(
+            promotion.index("invalidateAnnualStatusPoll()"),
+            promotion.index("applyPromotedRequest"),
+        )
+        self.assertLess(
+            promotion.index("invalidateValidationStatusPoll()"),
+            promotion.index("applyPromotedRequest"),
+        )
+        retry = self.html.split(
+            "async function retryAgentJob(job)",
+            1,
+        )[1].split("\n        async function requestAgentCompletionExplanation", 1)[0]
+        self.assertIn("agentJobStartedAt.set(retried.job_id, Date.now())", retry)
 
     def test_agent_state_restores_and_active_jobs_resume_polling(self):
         self.assertIn("await refreshAgentState(false)", self.html)
@@ -171,6 +391,13 @@ class AgentFrontendContractTests(unittest.TestCase):
             self.assertIn(hook, self.html)
         self.assertIn("const completionKey = 'sweep:' + group.sweep_id", self.html)
         self.assertIn("agentCompletionCards.has(completionKey)", self.html)
+        confirm_sweep = self.html.split(
+            "async function confirmAgentSweep",
+            1,
+        )[1].split("\n        async function dismissAgentSweep", 1)[0]
+        self.assertIn("'/api/agent/sweeps/'", confirm_sweep)
+        self.assertIn("{ proposal_ids: proposalIds }", confirm_sweep)
+        self.assertNotIn("for (const proposalId of proposalIds)", confirm_sweep)
 
     def test_action_replies_are_deterministic_compact_cards(self):
         for hook in (
@@ -445,9 +672,19 @@ class AgentFrontendContractTests(unittest.TestCase):
         self.assertIn("saveDashboardState()", self.html)
 
     def test_visible_context_names_physical_iam_explicitly(self):
-        self.assertIn("const visibleIamModel = getCanonicalCurrentConfig(activeMode).iam_model", self.html)
+        context = self.html.split(
+            "function updateAgentContext()",
+            1,
+        )[1].split("\n        function putAgentProposal", 1)[0]
+        self.assertIn("const currentRequest = getCanonicalCurrentConfig(activeMode)", context)
+        self.assertIn(
+            "const contextIamModel = baselineId ? baselineRequest?.iam_model : currentRequest.iam_model",
+            context,
+        )
+        self.assertNotIn("baselineId ? baselineRequest?.iam_model : getCanonicalCurrentConfig", context)
         self.assertIn("'Physical IAM'", self.html)
         self.assertIn("'Martin–Ruiz IAM'", self.html)
+        self.assertIn("'IAM not loaded'", context)
 
     def test_guided_prompts_new_conversation_and_draft_persistence_are_wired(self):
         self.assertIn("data-chat-prompt", self.html)

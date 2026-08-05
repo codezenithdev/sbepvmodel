@@ -21,8 +21,8 @@ def raw_csv(rows):
     return pd.DataFrame(rows, columns=RAW_HEADER).to_csv(index=False)
 
 
-def raw_row(day_of_year, mst, value):
-    return [2025, day_of_year, mst, value, value, value, value, value]
+def raw_row(day_of_year, mst, value, year=2025):
+    return [year, day_of_year, mst, value, value, value, value, value]
 
 
 class MidcReferenceHourTests(unittest.TestCase):
@@ -74,6 +74,9 @@ class MidcReferenceHourTests(unittest.TestCase):
 
     def test_sequential_chunks_are_aggregated_across_midnight_once(self):
         responses = {
+            date(2024, 12, 31): raw_csv(
+                [raw_row(366, 2359, 5.0, year=2024)]
+            ),
             date(2025, 1, 1): raw_csv([raw_row(1, 2359, 10.0)]),
             date(2025, 1, 2): raw_csv([raw_row(2, 0, 30.0)]),
         }
@@ -91,9 +94,28 @@ class MidcReferenceHourTests(unittest.TestCase):
             (result.hourly[midc.DATE_COLUMN] == "01/02/2025")
             & (result.hourly[midc.HOUR_COLUMN] == 0)
         ].iloc[0]
-        self.assertEqual(result.chunk_count, 2)
+        first_midnight = result.hourly[
+            (result.hourly[midc.DATE_COLUMN] == "01/01/2025")
+            & (result.hourly[midc.HOUR_COLUMN] == 0)
+        ].iloc[0]
+        self.assertEqual(result.chunk_count, 3)
+        self.assertEqual(result.raw_rows, 3)
+        self.assertEqual(first_midnight["Avg Global Horizontal [W/m^2]"], 5.0)
         self.assertEqual(midnight["Avg Global Horizontal [W/m^2]"], 20.0)
         self.assertFalse(result.hourly.duplicated([midc.DATE_COLUMN, midc.HOUR_COLUMN]).any())
+
+    def test_interval_must_map_to_integer_daily_hour_labels(self):
+        csv_text = raw_csv([raw_row(1, 0, 10.0)])
+
+        for interval_seconds in (0, 1_800, 5 * 3_600):
+            with self.subTest(interval_seconds=interval_seconds):
+                with self.assertRaises(midc.MidcError):
+                    midc.aggregate_interval(
+                        csv_text,
+                        date(2025, 1, 1),
+                        date(2025, 1, 1),
+                        interval_seconds,
+                    )
 
     def test_2025_generated_keys_match_reference_with_known_tolerance(self):
         reference_path = Path("2025_MIDC_hourly.csv")

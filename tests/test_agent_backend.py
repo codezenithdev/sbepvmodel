@@ -12,7 +12,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 import app
-from agent_store import AgentStore
+from agent_store import AgentStore, LeaseOwnershipLost
 from scenario_reporting import sha256_file
 
 
@@ -177,6 +177,38 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         app.AGENT_STORE.promote_job(job_id)
         return completed
 
+    def completed_physics_baseline(self, *, job_id: str) -> dict:
+        _, canonical = app._canonical_request(
+            "validation",
+            self.validation_config(calibrate_model=False),
+        )
+        source = self.root / f"{job_id}.csv"
+        self.generated_files.append(source)
+        source.write_text(
+            "timestamp,solaredge_measured_power,solectria_measured_power,dni,ghi,dhi,temp_air,wind_speed\n"
+            "2026-06-20 14:00:00,1000,900,700,500,100,25,2\n",
+            encoding="utf-8",
+        )
+        source_hash = sha256_file(source)
+        created = app.AGENT_STORE.create_job(
+            job_id=job_id,
+            kind="baseline",
+            mode="validation",
+            request=canonical,
+        )
+        claimed = app.AGENT_STORE.claim_next_queued_job()
+        self.assertEqual(created["id"], claimed["id"])
+        return app.AGENT_STORE.update_job(
+            job_id,
+            state="done",
+            source_path=str(source.resolve()),
+            source_hash=source_hash,
+            result={
+                "mode": "validation",
+                "stats": {"calibration_enabled": False},
+            },
+        )
+
     def test_delete_scenario_endpoint_removes_record_and_output_files(self) -> None:
         job_id = "candidate-delete"
         job = app.AGENT_STORE.create_job(
@@ -218,6 +250,244 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertFalse(workbook.exists())
         self.assertFalse(comparison.exists())
 
+    def test_expired_runner_stops_before_mutating_reclaimed_job(self) -> None:
+        _, canonical = app._canonical_request(
+            "validation", self.validation_config(calibrate_model=False)
+        )
+        app.AGENT_STORE.create_job(
+            job_id="lease-race",
+            kind="manual",
+            mode="validation",
+            request=canonical,
+        )
+        first = app.AGENT_STORE.claim_next_queued_job(
+            worker_id=app.SERVER_SESSION_ID
+        )
+        first_token = first["lease_token"]
+        app.AGENT_STORE.mark_stale_running_jobs_interrupted()
+        app.AGENT_STORE.retry_job("lease-race")
+        second = app.AGENT_STORE.claim_next_queued_job(
+            worker_id=app.SERVER_SESSION_ID
+        )
+        app._cache_job_record(second)
+
+        with (
+            patch.object(app.historian, "run_historian") as historian_call,
+            patch.object(app.model, "run_model") as model_call,
+        ):
+            app._run_job(
+                "lease-race",
+                app.RunRequest(**canonical),
+                worker_id=app.SERVER_SESSION_ID,
+                lease_token=first_token,
+            )
+
+        historian_call.assert_not_called()
+        model_call.assert_not_called()
+        current = app.AGENT_STORE.get_job("lease-race")
+        self.assertEqual("running", current["state"])
+        self.assertEqual(second["lease_token"], current["lease_token"])
+        self.assertEqual(0, current["progress"])
+        self.assertEqual(0, app.JOBS["lease-race"]["progress"])
+
+    def test_owned_attempt_uses_lease_token_specific_output_prefix(self) -> None:
+        _, canonical = app._canonical_request(
+            "validation", self.validation_config(calibrate_model=False)
+        )
+        source = self.root / "lease-output-source.csv"
+        source.write_text(
+            "timestamp,dni,ghi,dhi,temp_air,wind_speed\n"
+            "2026-06-20 14:00:00,700,500,100,25,2\n",
+            encoding="utf-8",
+        )
+        self.generated_files.append(source)
+        source_hash = sha256_file(source)
+        app.AGENT_STORE.create_job(
+            job_id="lease-output",
+            kind="manual",
+            mode="validation",
+            request=canonical,
+            source_path=str(source.resolve()),
+            source_hash=source_hash,
+        )
+        claimed = app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+
+        with (
+            patch.object(app, "_render_input_data_plots", return_value={}),
+            patch.object(
+                app.model,
+                "run_model",
+                return_value={
+                    "ac_png": str(self.root / "lease-output-ac.png"),
+                    "energy_png": str(self.root / "lease-output-energy.png"),
+                    "excel": str(self.root / "lease-output.xlsx"),
+                },
+            ) as model_call,
+            patch.object(app, "_finish_model_job") as finish_call,
+        ):
+            app._run_job(
+                "lease-output",
+                app.RunRequest(**canonical),
+                source_path=str(source.resolve()),
+                expected_source_hash=source_hash,
+                worker_id="worker-a",
+                lease_token=claimed["lease_token"],
+            )
+
+        expected_prefix = app._job_attempt_prefix(
+            "lease-output", claimed["lease_token"]
+        )
+        self.assertEqual(
+            expected_prefix,
+            Path(model_call.call_args.kwargs["output_base"]).name,
+        )
+        self.assertEqual("worker-a", finish_call.call_args.kwargs["worker_id"])
+        self.assertEqual(
+            claimed["lease_token"], finish_call.call_args.kwargs["lease_token"]
+        )
+
+    def test_delete_removes_artifacts_from_every_lease_attempt(self) -> None:
+        job_id = "candidate-attempt-cleanup"
+        app.AGENT_STORE.create_job(
+            job_id=job_id,
+            kind="candidate",
+            mode="validation",
+            baseline_id="baseline-validation",
+            request=self.validation_config(),
+        )
+        first = app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        first_prefix = app._job_attempt_prefix(job_id, first["lease_token"])
+        stale_artifact = self.root / f"{first_prefix}_stale.xlsx"
+        stale_artifact.write_text("stale attempt", encoding="utf-8")
+        self.generated_files.append(stale_artifact)
+
+        app.AGENT_STORE.mark_stale_running_jobs_interrupted()
+        app.AGENT_STORE.retry_job(job_id)
+        second = app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        second_prefix = app._job_attempt_prefix(job_id, second["lease_token"])
+        accepted_artifact = self.root / f"{second_prefix}.xlsx"
+        accepted_artifact.write_text("accepted attempt", encoding="utf-8")
+        self.generated_files.append(accepted_artifact)
+        self.assertNotEqual(first_prefix, second_prefix)
+        app.AGENT_STORE.update_job(
+            job_id,
+            expected_worker_id="worker-a",
+            expected_lease_token=second["lease_token"],
+            state="done",
+            result={"excel": f"/outputs/{accepted_artifact.name}"},
+        )
+
+        with patch.object(app, "OUTPUT_DIR", self.root):
+            response = app.delete_model_job(job_id)
+
+        self.assertEqual(200, response.status_code)
+        self.assertFalse(stale_artifact.exists())
+        self.assertFalse(accepted_artifact.exists())
+
+    def test_lost_attempt_cleanup_preserves_source_reused_by_retry(self) -> None:
+        job_id = "attempt-source-reuse"
+        app.AGENT_STORE.create_job(
+            job_id=job_id,
+            kind="manual",
+            mode="validation",
+            request=self.validation_config(),
+        )
+        first = app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        first_prefix = app._job_attempt_prefix(job_id, first["lease_token"])
+        source = self.root / f"{first_prefix}.csv"
+        stale_plot = self.root / f"{first_prefix}_ac.png"
+        source.write_text("timestamp,dni\n2026-06-20,700\n", encoding="utf-8")
+        stale_plot.write_text("stale plot", encoding="utf-8")
+        self.generated_files.extend([source, stale_plot])
+        app.AGENT_STORE.update_job(
+            job_id,
+            expected_worker_id="worker-a",
+            expected_lease_token=first["lease_token"],
+            source_path=str(source.resolve()),
+            source_hash=sha256_file(source),
+        )
+
+        app.AGENT_STORE.mark_stale_running_jobs_interrupted()
+        app.AGENT_STORE.retry_job(job_id)
+        app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        with patch.object(app, "OUTPUT_DIR", self.root):
+            removed = app._delete_job_attempt_artifacts(
+                job_id, first["lease_token"]
+            )
+
+        self.assertEqual(1, removed)
+        self.assertTrue(source.exists())
+        self.assertFalse(stale_plot.exists())
+
+    def test_delete_same_input_scenario_preserves_baseline_source(self) -> None:
+        baseline = self.completed_physics_baseline(job_id="baseline-shared-source")
+        baseline_source = Path(baseline["source_path"])
+        baseline_hash = str(baseline["source_hash"])
+        candidate_id = "candidate-shared-source"
+        workbook = self.root / f"{candidate_id}.xlsx"
+        workbook.write_text("candidate workbook", encoding="utf-8")
+        self.generated_files.append(workbook)
+
+        app.AGENT_STORE.create_job(
+            job_id=candidate_id,
+            kind="candidate",
+            mode="validation",
+            baseline_id=baseline["id"],
+            request=self.validation_config(calibrate_model=False),
+            source_path=str(baseline_source),
+            source_hash=baseline_hash,
+        )
+        claimed = app.AGENT_STORE.claim_next_queued_job()
+        self.assertEqual(candidate_id, claimed["id"])
+        app.AGENT_STORE.update_job(
+            candidate_id,
+            state="done",
+            result={
+                "source_csv": f"/outputs/{baseline_source.name}",
+                "excel": f"/outputs/{workbook.name}",
+            },
+            artifacts={"model_workbook": {"path": str(workbook)}},
+        )
+
+        with patch.object(app, "OUTPUT_DIR", self.root):
+            response = app.delete_model_job(candidate_id)
+
+        self.assertEqual(200, response.status_code)
+        self.assertIsNone(app.AGENT_STORE.get_job(candidate_id))
+        self.assertFalse(workbook.exists())
+        self.assertTrue(baseline_source.exists())
+        self.assertEqual(baseline_hash, sha256_file(baseline_source))
+        verified_path, verified_hash = app._verified_baseline_source(
+            app.AGENT_STORE.get_job(baseline["id"])
+        )
+        self.assertEqual(str(baseline_source.resolve()), verified_path)
+        self.assertEqual(baseline_hash, verified_hash)
+
+    def test_chat_fallback_prefers_promoted_baseline_over_newer_scenario(self) -> None:
+        baseline = self.completed_physics_baseline(job_id="promoted-chat-baseline")
+        app.AGENT_STORE.promote_job(baseline["id"])
+        candidate = app.AGENT_STORE.create_job(
+            job_id="newer-unpromoted-scenario",
+            kind="candidate",
+            mode="validation",
+            baseline_id=baseline["id"],
+            request=self.validation_config(calibrate_model=False),
+            source_path=baseline["source_path"],
+            source_hash=baseline["source_hash"],
+        )
+        claimed = app.AGENT_STORE.claim_next_queued_job()
+        self.assertEqual(candidate["id"], claimed["id"])
+        app.AGENT_STORE.update_job(
+            candidate["id"],
+            state="done",
+            result={"mode": "validation", "stats": {"calibration_enabled": False}},
+        )
+
+        resolved_job_id, context = app._chat_run_context(None, "validation")
+
+        self.assertEqual(baseline["id"], resolved_job_id)
+        self.assertEqual(baseline["id"], context["job_id"])
+
     def test_numeric_iam_is_clarified_without_openai_or_state_change(self) -> None:
         fake_openai = types.ModuleType("openai")
 
@@ -240,6 +510,174 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertIn("`a_r`", response["reply"])
         self.assertEqual(app.AGENT_STORE.list_proposals(), [])
         self.assertEqual(app.AGENT_STORE.list_jobs(), [])
+
+    def test_iam_dates_years_and_percentages_are_not_numeric_iam_values(self) -> None:
+        self.assertFalse(app._ambiguous_numeric_iam("Explain IAM results for 2026."))
+        self.assertFalse(
+            app._ambiguous_numeric_iam("Compare IAM on 2026-06-20 at 97% efficiency.")
+        )
+        self.assertTrue(app._ambiguous_numeric_iam("Set IAM to 0.8 and run it."))
+
+    def test_visible_physics_run_is_used_instead_of_older_promoted_calibration(self) -> None:
+        self.completed_baseline(job_id="older-calibrated")
+        physics = self.completed_physics_baseline(job_id="visible-physics")
+
+        _, action = app._handle_scenario_tool(
+            app.ChatRequest(
+                message="Run this physics model with backtracking off.",
+                job_id=physics["id"],
+                active_mode="validation",
+                current_config=physics["request"],
+            ),
+            self.tool_arguments(backtrack=False),
+        )
+
+        candidate = app.AGENT_STORE.get_job(action["job"]["job_id"])
+        self.assertEqual("visible-physics", candidate["baseline_id"])
+        self.assertFalse(candidate["request"]["calibrate_model"])
+        self.assertIsNone(
+            (candidate.get("provenance") or {}).get("calibration_profile")
+        )
+
+    def test_physics_baseline_can_be_promoted_without_calibration_review(self) -> None:
+        physics = self.completed_physics_baseline(job_id="physics-promote")
+
+        response = app.promote_model_job(physics["id"])
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(
+            physics["id"],
+            app.AGENT_STORE.get_current_baseline("validation")["job_id"],
+        )
+
+    def test_physics_worker_passes_exact_request_boundaries_to_model(self) -> None:
+        physics = self.completed_physics_baseline(job_id="physics-boundaries")
+        proposal = app._create_candidate_proposal(
+            mode="validation",
+            baseline=physics,
+            candidate={**physics["request"], "backtrack": False},
+            changes=[
+                {
+                    "field": "backtrack",
+                    "label": "Backtracking",
+                    "from": True,
+                    "to": False,
+                }
+            ],
+        )
+        candidate = app._confirm_durable_proposal(proposal, automatic=True)
+        claimed = app.AGENT_STORE.claim_next_queued_job()
+        self.assertEqual(candidate["id"], claimed["id"])
+
+        with (
+            patch.object(app, "_render_input_data_plots", return_value={}),
+            patch.object(
+                app.model,
+                "run_model",
+                return_value={
+                    "ac_png": str(self.root / "physics_ac.png"),
+                    "energy_png": str(self.root / "physics_energy.png"),
+                    "excel": str(self.root / "physics.xlsx"),
+                },
+            ) as model_call,
+            patch.object(app, "_finish_model_job"),
+        ):
+            request = app.RunRequest(**candidate["request"])
+            app._run_job(
+                candidate["id"],
+                request,
+                source_path=candidate["source_path"],
+                expected_source_hash=candidate["source_hash"],
+            )
+
+        self.assertEqual(
+            app._iso(request.from_date, request.from_time),
+            model_call.call_args.kwargs["requested_start"],
+        )
+        self.assertEqual(
+            app._iso(request.to_date, request.to_time),
+            model_call.call_args.kwargs["requested_end"],
+        )
+
+    def test_multiple_model_actions_are_rejected_without_mutating_state(self) -> None:
+        baseline = self.completed_baseline()
+        calls = [
+            {
+                "type": "function_call",
+                "name": "propose_model_scenario",
+                "call_id": f"call-{index}",
+                "arguments": json.dumps(self.tool_arguments(backtrack=False)),
+            }
+            for index in (1, 2)
+        ]
+        api_calls = []
+        constructor_calls = []
+
+        def create_response(**kwargs):
+            api_calls.append(kwargs)
+            return types.SimpleNamespace(output=calls, output_text="")
+
+        fake_client = types.SimpleNamespace(
+            responses=types.SimpleNamespace(create=create_response)
+        )
+        fake_openai = types.ModuleType("openai")
+        fake_openai.OpenAI = lambda **kwargs: (
+            constructor_calls.append(kwargs) or fake_client
+        )
+
+        with patch.dict(sys.modules, {"openai": fake_openai}):
+            result = app._openai_agent_response(
+                app.ChatRequest(
+                    message="Run one scenario.",
+                    job_id=baseline["id"],
+                    active_mode="validation",
+                    current_config=baseline["request"],
+                )
+            )
+
+        self.assertIn("did not start", result["reply"])
+        self.assertIsNone(result["action"])
+        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
+        self.assertEqual([], app.AGENT_STORE.list_proposals())
+        self.assertEqual(app.OPENAI_TIMEOUT_SECONDS, constructor_calls[0]["timeout"])
+        self.assertEqual(app.OPENAI_MAX_RETRIES, constructor_calls[0]["max_retries"])
+        self.assertEqual(1, api_calls[0]["max_tool_calls"])
+        self.assertFalse(api_calls[0]["parallel_tool_calls"])
+
+    def test_run_ranges_and_active_queue_are_bounded(self) -> None:
+        with self.assertRaises(HTTPException) as validation_error:
+            app._validate_run_request(
+                app.RunRequest(
+                    from_date="2020-01-01",
+                    to_date="2022-01-01",
+                    calibrate_model=False,
+                )
+            )
+        self.assertEqual(422, validation_error.exception.status_code)
+
+        with self.assertRaises(HTTPException) as annual_error:
+            app._annual_dates(
+                app.AnnualRunRequest(
+                    from_date="2000-01-01",
+                    to_date="2020-01-01",
+                )
+            )
+        self.assertEqual(422, annual_error.exception.status_code)
+
+        with patch.object(app, "MAX_ACTIVE_MODEL_JOBS", 1):
+            app._enqueue_baseline_job(
+                "validation",
+                self.validation_config(calibrate_model=False),
+                job_id="queue-first",
+            )
+            with self.assertRaises(HTTPException) as queue_error:
+                app._enqueue_baseline_job(
+                    "validation",
+                    self.validation_config(calibrate_model=False),
+                    job_id="queue-overflow",
+                )
+        self.assertEqual(429, queue_error.exception.status_code)
+        self.assertIsNone(app.AGENT_STORE.get_job("queue-overflow"))
 
     def test_strict_tool_schema_and_single_step_deterministic_action_response(self) -> None:
         baseline = self.completed_baseline()
@@ -290,26 +728,33 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
     def test_iam_ar_sweep_queues_exact_controlled_values(self) -> None:
         baseline = self.completed_baseline()
 
-        tool_result, action = app._handle_iam_ar_sweep_tool(
-            app.ChatRequest(
-                message=(
-                    "Run the model with different iam a_r values from 0.1 to "
-                    "0.5 with an increment of 0.1 and show me the comparison."
+        with patch.object(
+            app.AGENT_STORE,
+            "confirm_proposals_batch",
+            wraps=app.AGENT_STORE.confirm_proposals_batch,
+        ) as batch_confirm:
+            tool_result, action = app._handle_iam_ar_sweep_tool(
+                app.ChatRequest(
+                    message=(
+                        "Run the model with different iam a_r values from 0.1 to "
+                        "0.5 with an increment of 0.1 and show me the comparison."
+                    ),
+                    job_id=baseline["id"],
+                    active_mode="validation",
+                    current_config=self.validation_config(),
                 ),
-                job_id=baseline["id"],
-                active_mode="validation",
-                current_config=self.validation_config(),
-            ),
-            {
-                "mode": None,
-                "start_a_r": 0.1,
-                "stop_a_r": 0.5,
-                "increment": 0.1,
-            },
-        )
+                {
+                    "mode": None,
+                    "start_a_r": 0.1,
+                    "stop_a_r": 0.5,
+                    "increment": 0.1,
+                },
+            )
 
         self.assertEqual("batch_started", tool_result["status"])
         self.assertEqual("job_batch_started", action["type"])
+        batch_confirm.assert_called_once()
+        self.assertEqual(5, len(batch_confirm.call_args.args[0]))
         self.assertEqual([0.1, 0.2, 0.3, 0.4, 0.5], action["sweep"]["values"])
         self.assertEqual(5, len(action["jobs"]))
         jobs = sorted(
@@ -527,6 +972,62 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                     for proposal in action["proposals"]
                 }
             ),
+        )
+
+    def test_annual_sweep_confirmation_is_all_or_nothing_near_capacity(self) -> None:
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+        _, action = app._handle_iam_ar_sweep_tool(
+            app.ChatRequest(
+                message="Compare annual Martin-Ruiz a_r 0.1 to 0.3 by 0.1.",
+                job_id=baseline["id"],
+                active_mode="annual",
+                current_config=baseline["request"],
+            ),
+            {
+                "mode": "annual",
+                "start_a_r": 0.1,
+                "stop_a_r": 0.3,
+                "increment": 0.1,
+            },
+        )
+        sweep_id = action["sweep"]["sweep_id"]
+        proposal_ids = [item["proposal_id"] for item in action["proposals"]]
+        active = app.AGENT_STORE.create_job(
+            job_id="annual-sweep-active",
+            kind="manual",
+            mode="annual",
+            request=baseline["request"],
+        )
+        request = app.ProposalSweepConfirmRequest(proposal_ids=proposal_ids)
+
+        with patch.object(app, "MAX_ACTIVE_MODEL_JOBS", 3):
+            with self.assertRaises(HTTPException) as capacity_error:
+                app.confirm_agent_sweep(sweep_id, request)
+        self.assertEqual(429, capacity_error.exception.status_code)
+        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
+        self.assertTrue(
+            all(
+                app.AGENT_STORE.get_proposal(proposal_id)["state"] == "pending"
+                for proposal_id in proposal_ids
+            )
+        )
+
+        with self.assertRaises(HTTPException) as single_error:
+            app.confirm_agent_proposal(proposal_ids[0])
+        self.assertEqual(409, single_error.exception.status_code)
+        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
+
+        app.AGENT_STORE.cancel_job(active["id"])
+        with patch.object(app, "MAX_ACTIVE_MODEL_JOBS", 3):
+            response = app.confirm_agent_sweep(sweep_id, request)
+        payload = json.loads(response.body)
+        self.assertEqual("job_batch_started", payload["action"]["type"])
+        self.assertEqual(3, len(payload["action"]["jobs"]))
+        self.assertTrue(
+            all(
+                app.AGENT_STORE.get_proposal(proposal_id)["state"] == "confirmed"
+                for proposal_id in proposal_ids
+            )
         )
 
     def test_missing_validation_baseline_requires_visible_data_review(self) -> None:

@@ -5034,11 +5034,11 @@
                             <div class="annual-date-grid">
                                 <label class="control-field">
                                     <span class="date-label">Start date</span>
-                                    <input type="date" class="date-input annual-input" id="annualFromDate" value="2025-01-01">
+                                    <input type="date" class="date-input annual-input" id="annualFromDate" value="2025-01-01" required>
                                 </label>
                                 <label class="control-field">
                                     <span class="date-label">End date</span>
-                                    <input type="date" class="date-input annual-input" id="annualToDate" value="2025-12-31">
+                                    <input type="date" class="date-input annual-input" id="annualToDate" value="2025-12-31" required>
                                 </label>
                             </div>
                             <div class="annual-time-note">
@@ -5281,7 +5281,7 @@
                         <div class="validation-window-grid">
                             <label class="control-field">
                                 <span class="date-label">Start date</span>
-                                <input type="date" class="date-input" id="fromDate" value="2026-06-20">
+                                <input type="date" class="date-input" id="fromDate" value="2026-06-20" required>
                             </label>
                             <label class="control-field">
                                 <span class="date-label">Start time (24-hour)</span>
@@ -5289,7 +5289,7 @@
                             </label>
                             <label class="control-field">
                                 <span class="date-label">End date</span>
-                                <input type="date" class="date-input" id="toDate" value="2026-06-27">
+                                <input type="date" class="date-input" id="toDate" value="2026-06-27" required>
                             </label>
                             <label class="control-field">
                                 <span class="date-label">End time (24-hour)</span>
@@ -5307,7 +5307,7 @@
                             <label class="control-field">
                                 <span class="date-label">Time interval</span>
                                 <span class="interval-row">
-                                    <input type="number" class="date-input" id="intervalValue" value="1" min="1">
+                                    <input type="number" class="date-input" id="intervalValue" value="1" min="1" step="1" inputmode="numeric">
                                     <select class="date-input" id="intervalUnit">
                                         <option value="minutes">minutes</option>
                                         <option value="hours" selected>hours</option>
@@ -6037,11 +6037,15 @@
         let reviewedCalibrationAbortController = null;
         let calibrationControlDisabledState = null;
         let pollTimer = null;
+        let validationPollRevision = 0;
         let activeMode = 'validation';
         let annualLatestJobId = null;
         let annualLatestResult = null;
         let annualRunState = null;
         let annualPollTimer = null;
+        let annualPollRevision = 0;
+        const STATUS_POLL_MAX_FAILURES = 5;
+        const STATUS_POLL_MAX_DELAY_MS = 8000;
         let chatMessages = [{
             role: 'assistant',
             content: DEFAULT_ASSISTANT_MESSAGE,
@@ -6057,10 +6061,23 @@
         const agentCompletionCards = new Set();
         let chatDraft = '';
         let chatIsSending = false;
+        let activeChatAbortController = null;
         let chatDraftSaveTimer = null;
         let agentActivityExpanded = false;
         let agentActivityFilter = 'all';
         let agentActivitySelection = null;
+        const CHAT_REQUEST_TIMEOUT_MS = 60000;
+        const AGENT_POLL_MAX_FAILURES = 5;
+        const TERMINAL_CHAT_ACTION_STATUSES = new Set([
+            'done',
+            'error',
+            'cancelled',
+            'interrupted',
+            'deleted',
+            'unavailable',
+            'dismissed',
+            'expired',
+        ]);
 
         function setProgress(pct, stage) {
             const bounded = Math.min(100, Math.max(0, Number(pct) || 0));
@@ -6228,6 +6245,41 @@
                 return null;
             }
             return value;
+        }
+
+        function readPositiveInteger(id, label) {
+            const input = document.getElementById(id);
+            const value = Number(input.value);
+            if (!Number.isInteger(value) || value < 1) {
+                showError(label + ' must be a whole number of at least 1.');
+                input.focus();
+                return null;
+            }
+            return value;
+        }
+
+        function readValidationWindow(fromTime, toTime) {
+            const fromInput = document.getElementById('fromDate');
+            const toInput = document.getElementById('toDate');
+            const fromDate = fromInput.value.trim();
+            const toDate = toInput.value.trim();
+            const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+            if (!datePattern.test(fromDate)) {
+                showError('Choose a valid start date.');
+                fromInput.focus();
+                return null;
+            }
+            if (!datePattern.test(toDate)) {
+                showError('Choose a valid end date.');
+                toInput.focus();
+                return null;
+            }
+            if (fromDate + 'T' + fromTime >= toDate + 'T' + toTime) {
+                showError('Start date/time must be before end date/time.');
+                toInput.focus();
+                return null;
+            }
+            return { fromDate, toDate };
         }
 
         function showImage(imgId, iconId, boxId, url, cacheBust = true) {
@@ -6400,6 +6452,11 @@
             return Number.isFinite(number) ? number : null;
         }
 
+        function positiveIntegerOrNull(value) {
+            const number = finiteOrNull(value);
+            return Number.isInteger(number) && number >= 1 ? number : null;
+        }
+
         function getCanonicalCurrentConfig(mode = activeMode) {
             const annual = mode === 'annual';
             const form = annual ? getAnnualFormState() : getFormState();
@@ -6421,7 +6478,7 @@
                 config.calibrate_model = !!form.calibrateModel;
                 config.from_time = form.fromTime;
                 config.to_time = form.toTime;
-                config.interval_value = finiteOrNull(form.intervalValue);
+                config.interval_value = positiveIntegerOrNull(form.intervalValue);
                 config.interval_unit = form.intervalUnit;
             }
             return config;
@@ -7322,6 +7379,8 @@
 
         function resetClientState() {
             calibrationWorkflowRevision += 1;
+            invalidateValidationStatusPoll();
+            invalidateAnnualStatusPoll();
             abortCalibrationReviewRequests();
             setCalibrationControlsLocked(false);
             latestJobId = null;
@@ -7399,12 +7458,55 @@
             }
         }
 
+        function invalidateValidationStatusPoll() {
+            validationPollRevision += 1;
+            if (pollTimer) {
+                clearTimeout(pollTimer);
+                pollTimer = null;
+            }
+            return validationPollRevision;
+        }
+
+        function invalidateAnnualStatusPoll() {
+            annualPollRevision += 1;
+            if (annualPollTimer) {
+                clearTimeout(annualPollTimer);
+                annualPollTimer = null;
+            }
+            return annualPollRevision;
+        }
+
+        function statusPollRetryDelay(failureCount) {
+            return Math.min(STATUS_POLL_MAX_DELAY_MS, 600 * (2 ** Math.max(0, failureCount - 1)));
+        }
+
+        function registerDirectRun(jobId, mode, request, progress, stage) {
+            if (!jobId) return;
+            putAgentJob({
+                job_id: jobId,
+                kind: 'baseline',
+                mode,
+                state: 'queued',
+                progress,
+                stage,
+                cancel_requested: false,
+                request: { ...request },
+                created_at: new Date().toISOString(),
+            });
+            agentActivityFilter = 'active';
+            renderAgentActivity();
+        }
+
         async function runAnalysis() {
             errorBanner.classList.remove('visible');
             const fromTime = read24HourTime('fromTime', 'Start time');
             if (fromTime === null) return;
             const toTime = read24HourTime('toTime', 'End time');
             if (toTime === null) return;
+            const validationWindow = readValidationWindow(fromTime, toTime);
+            if (validationWindow === null) return;
+            const intervalValue = readPositiveInteger('intervalValue', 'Time interval');
+            if (intervalValue === null) return;
             const calibrationRequested = calibrateModel.checked;
             const curtailmentOn = curtailmentEnabled.checked;
             const curtailmentLimit = parseFloat(curtailmentLimitKw.value);
@@ -7429,6 +7531,8 @@
                 return;
             }
 
+            const statusPollRevision = invalidateValidationStatusPoll();
+            latestJobId = null;
             abortCalibrationReviewRequests();
             calibrationWorkflowRevision += 1;
             const workflowRevision = calibrationWorkflowRevision;
@@ -7463,11 +7567,11 @@
             saveDashboardState();
 
             const body = {
-                from_date: document.getElementById('fromDate').value,
+                from_date: validationWindow.fromDate,
                 from_time: fromTime,
-                to_date: document.getElementById('toDate').value,
+                to_date: validationWindow.toDate,
                 to_time: toTime,
-                interval_value: parseInt(document.getElementById('intervalValue').value, 10) || 1,
+                interval_value: intervalValue,
                 interval_unit: document.getElementById('intervalUnit').value,
                 backtrack: document.getElementById('backtrack').checked,
                 solaredge_inverter_efficiency: solaredgeInverterEfficiency,
@@ -7504,16 +7608,20 @@
                     throw new Error(msg);
                 }
                 const payload = await res.json();
-                if (workflowRevision !== calibrationWorkflowRevision) return;
+                if (
+                    workflowRevision !== calibrationWorkflowRevision ||
+                    statusPollRevision !== validationPollRevision
+                ) return;
                 if (calibrationRequested) {
                     renderCalibrationReview(payload);
                 } else {
                     latestJobId = payload.job_id;
                     currentRunState = { state: 'queued', progress: 5, stage: 'Uncalibrated model queued' };
                     runBtn.textContent = 'Running...';
+                    registerDirectRun(payload.job_id, 'validation', body, 5, 'Uncalibrated model queued');
                     saveDashboardState();
                     progressWrap.focus({ preventScroll: true });
-                    pollStatus(payload.job_id);
+                    pollStatus(payload.job_id, statusPollRevision);
                 }
             } catch (e) {
                 if (e?.name === 'AbortError' || workflowRevision !== calibrationWorkflowRevision) {
@@ -7550,6 +7658,10 @@
             }
             const submittedDecisions = { ...calibrationReviewDecisions() };
             pendingCalibrationReview.decisions = { ...submittedDecisions };
+            const reviewedRequest = getCanonicalCurrentConfig('validation');
+            reviewedRequest.calibrate_model = true;
+            const statusPollRevision = invalidateValidationStatusPoll();
+            latestJobId = null;
             calibrationIssueList.querySelectorAll('.calibration-decision-select').forEach((select) => {
                 select.disabled = true;
             });
@@ -7596,7 +7708,10 @@
                     throw new Error(message);
                 }
                 const data = await res.json();
-                if (workflowRevision !== calibrationWorkflowRevision) return;
+                if (
+                    workflowRevision !== calibrationWorkflowRevision ||
+                    statusPollRevision !== validationPollRevision
+                ) return;
                 latestJobId = data.job_id;
                 currentRunState = { state: 'queued', progress: 22, stage: 'Reviewed calibration queued' };
                 setCalibrationControlsLocked(false);
@@ -7611,9 +7726,10 @@
                 };
                 renderCalibrationReview(pendingCalibrationReview, { focusPanel: false });
                 runBtn.textContent = 'Running...';
+                registerDirectRun(data.job_id, 'validation', reviewedRequest, 22, 'Reviewed calibration queued');
                 saveDashboardState();
                 progressWrap.focus({ preventScroll: true });
-                pollStatus(data.job_id);
+                pollStatus(data.job_id, statusPollRevision);
             } catch (error) {
                 if (error?.name === 'AbortError' || workflowRevision !== calibrationWorkflowRevision) {
                     return;
@@ -7669,31 +7785,44 @@
             runBtn.textContent = calibrateModel.checked ? 'Run calibration' : 'Run model';
         }
 
-        async function pollStatus(jobId) {
+        async function pollStatus(jobId, pollRevision = validationPollRevision, failureCount = 0) {
+            if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
             if (pollTimer) {
                 clearTimeout(pollTimer);
                 pollTimer = null;
             }
             try {
-                const res = await fetch('/api/status/' + jobId);
+                const res = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
                 if (!res.ok) {
-                    if (res.status === 404 && latestResult) {
-                        currentRunState = { state: 'missing', progress: 0, stage: 'Cached result restored locally' };
+                    if (res.status === 404) {
+                        currentRunState = { state: 'missing', progress: 0, stage: 'Run is no longer available' };
+                        latestJobId = null;
+                        latestResult = null;
+                        latestInputPlots = null;
+                        agentJobSnapshots.delete(jobId);
+                        updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable');
+                        renderAgentActivity();
                         progressWrap.classList.remove('visible');
+                        showError('This run is no longer available on the server.');
                         resetRunBtn();
                         saveDashboardState();
                         return;
                     }
-                    throw new Error('Status request failed (' + res.status + ')');
+                    const statusError = new Error('Status request failed (' + res.status + ')');
+                    statusError.retryable = res.status === 408 || res.status === 429 || res.status >= 500;
+                    throw statusError;
                 }
                 const data = await res.json();
+                if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
                 setProgress(data.progress, data.stage);
-                latestJobId = jobId;
                 currentRunState = {
                     state: data.state,
                     progress: data.progress,
                     stage: data.stage || '',
                 };
+                putAgentJob(data);
+                renderAgentJobUpdate(data);
                 if (data.input_plots) {
                     latestInputPlots = data.input_plots;
                     applyInputPlots(data.input_plots);
@@ -7717,6 +7846,7 @@
                     progressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
                 if (data.state === 'cancelled' || data.state === 'interrupted') {
@@ -7724,12 +7854,49 @@
                     progressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
-                pollTimer = setTimeout(() => pollStatus(jobId), 600);
+                pollTimer = setTimeout(() => pollStatus(jobId, pollRevision, 0), 600);
             } catch (e) {
-                showError(e.message || 'Lost connection to the server.');
-                resetRunBtn();
+                if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
+                const nextFailureCount = failureCount + 1;
+                const retryable = e?.retryable !== false;
+                if (retryable && nextFailureCount <= STATUS_POLL_MAX_FAILURES) {
+                    const retryDelay = statusPollRetryDelay(nextFailureCount);
+                    const reconnectStage = 'Status unavailable; retrying (' + nextFailureCount + '/' + STATUS_POLL_MAX_FAILURES + ')...';
+                    currentRunState = {
+                        state: currentRunState?.state || 'running',
+                        progress: currentRunState?.progress || 0,
+                        stage: reconnectStage,
+                    };
+                    setProgress(currentRunState.progress, reconnectStage);
+                    putAgentJob({
+                        ...(agentJobSnapshots.get(jobId) || { job_id: jobId }),
+                        stage: reconnectStage,
+                    });
+                    renderAgentJobUpdate(agentJobSnapshots.get(jobId));
+                    saveDashboardState();
+                    pollTimer = setTimeout(
+                        () => pollStatus(jobId, pollRevision, nextFailureCount),
+                        retryDelay
+                    );
+                    return;
+                }
+                const message = retryable
+                    ? 'Status monitoring paused after repeated connection failures. Open Solar Agent Runs to refresh or cancel this job.'
+                    : (e.message || 'The server rejected the status request.');
+                showError(message);
+                currentRunState = {
+                    state: 'monitoring_error',
+                    progress: currentRunState?.progress || 0,
+                    stage: 'Status monitoring paused',
+                };
+                setProgress(currentRunState.progress, currentRunState.stage);
+                runBtn.disabled = true;
+                runBtn.textContent = 'Monitoring paused';
+                saveDashboardState();
+                await refreshAgentState(false);
             }
         }
 
@@ -7784,6 +7951,8 @@
                 return;
             }
 
+            const statusPollRevision = invalidateAnnualStatusPoll();
+            annualLatestJobId = null;
             annualRunBtn.disabled = true;
             annualRunBtn.textContent = 'Running...';
             setAnnualProgress(0, 'Starting...');
@@ -7822,37 +7991,51 @@
                     throw new Error(msg);
                 }
                 const { job_id } = await res.json();
+                if (statusPollRevision !== annualPollRevision) return;
                 annualLatestJobId = job_id;
                 annualRunState = { state: 'running', progress: 0, stage: 'Queued...' };
+                registerDirectRun(job_id, 'annual', body, 0, 'Annual simulation queued');
                 saveDashboardState();
-                pollAnnualStatus(job_id);
+                pollAnnualStatus(job_id, statusPollRevision);
             } catch (e) {
                 showAnnualError(e.message || 'Could not start annual simulation.');
                 resetAnnualRunBtn();
             }
         }
 
-        async function pollAnnualStatus(jobId) {
+        async function pollAnnualStatus(jobId, pollRevision = annualPollRevision, failureCount = 0) {
+            if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
             if (annualPollTimer) {
                 clearTimeout(annualPollTimer);
                 annualPollTimer = null;
             }
             try {
-                const res = await fetch('/api/status/' + jobId);
+                const res = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
                 if (!res.ok) {
-                    if (res.status === 404 && annualLatestResult) {
-                        annualRunState = { state: 'missing', progress: 0, stage: 'Cached result restored locally' };
+                    if (res.status === 404) {
+                        annualRunState = { state: 'missing', progress: 0, stage: 'Run is no longer available' };
+                        annualLatestJobId = null;
+                        annualLatestResult = null;
+                        agentJobSnapshots.delete(jobId);
+                        updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable');
+                        renderAgentActivity();
                         annualProgressWrap.classList.remove('visible');
+                        showAnnualError('This annual run is no longer available on the server.');
                         resetAnnualRunBtn();
                         saveDashboardState();
                         return;
                     }
-                    throw new Error('Annual status request failed (' + res.status + ')');
+                    const statusError = new Error('Annual status request failed (' + res.status + ')');
+                    statusError.retryable = res.status === 408 || res.status === 429 || res.status >= 500;
+                    throw statusError;
                 }
                 const data = await res.json();
+                if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
                 setAnnualProgress(data.progress, data.stage);
-                annualLatestJobId = jobId;
                 annualRunState = { state: data.state, progress: data.progress, stage: data.stage || '' };
+                putAgentJob(data);
+                renderAgentJobUpdate(data);
                 if (data.input_plots) applyAnnualInputPlots(data.input_plots);
                 saveDashboardState();
                 if (data.state === 'done') {
@@ -7869,6 +8052,7 @@
                     annualProgressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetAnnualRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
                 if (data.state === 'cancelled' || data.state === 'interrupted') {
@@ -7876,12 +8060,49 @@
                     annualProgressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetAnnualRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
-                annualPollTimer = setTimeout(() => pollAnnualStatus(jobId), 600);
+                annualPollTimer = setTimeout(() => pollAnnualStatus(jobId, pollRevision, 0), 600);
             } catch (e) {
-                showAnnualError(e.message || 'Lost connection to the server.');
-                resetAnnualRunBtn();
+                if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
+                const nextFailureCount = failureCount + 1;
+                const retryable = e?.retryable !== false;
+                if (retryable && nextFailureCount <= STATUS_POLL_MAX_FAILURES) {
+                    const retryDelay = statusPollRetryDelay(nextFailureCount);
+                    const reconnectStage = 'Status unavailable; retrying (' + nextFailureCount + '/' + STATUS_POLL_MAX_FAILURES + ')...';
+                    annualRunState = {
+                        state: annualRunState?.state || 'running',
+                        progress: annualRunState?.progress || 0,
+                        stage: reconnectStage,
+                    };
+                    setAnnualProgress(annualRunState.progress, reconnectStage);
+                    putAgentJob({
+                        ...(agentJobSnapshots.get(jobId) || { job_id: jobId }),
+                        stage: reconnectStage,
+                    });
+                    renderAgentJobUpdate(agentJobSnapshots.get(jobId));
+                    saveDashboardState();
+                    annualPollTimer = setTimeout(
+                        () => pollAnnualStatus(jobId, pollRevision, nextFailureCount),
+                        retryDelay
+                    );
+                    return;
+                }
+                const message = retryable
+                    ? 'Annual status monitoring paused after repeated connection failures. Open Solar Agent Runs to refresh or cancel this job.'
+                    : (e.message || 'The server rejected the annual status request.');
+                showAnnualError(message);
+                annualRunState = {
+                    state: 'monitoring_error',
+                    progress: annualRunState?.progress || 0,
+                    stage: 'Status monitoring paused',
+                };
+                setAnnualProgress(annualRunState.progress, annualRunState.stage);
+                annualRunBtn.disabled = true;
+                annualRunBtn.textContent = 'Monitoring paused';
+                saveDashboardState();
+                await refreshAgentState(false);
             }
         }
 
@@ -7967,12 +8188,12 @@
         }
 
         function syncChatComposerState() {
-            sendBtn.disabled = chatIsSending || !chatInput.value.trim();
+            sendBtn.disabled = !chatIsSending && !chatInput.value.trim();
             newChatBtn.disabled = chatIsSending;
             messagesContainer.setAttribute('aria-busy', String(chatIsSending));
-            sendBtn.setAttribute('aria-label', chatIsSending ? 'Solar Agent is responding' : 'Send message');
+            sendBtn.setAttribute('aria-label', chatIsSending ? 'Cancel Solar Agent response' : 'Send message');
             chatComposerStatus.textContent = chatIsSending
-                ? 'Reviewing the active ' + (activeMode === 'annual' ? 'annual simulation' : 'calibration run') + '...'
+                ? 'Reviewing the active ' + (activeMode === 'annual' ? 'annual simulation' : 'calibration run') + '... Select Cancel to stop waiting.'
                 : isChatMobile()
                     ? 'Tap Send · Enter adds a new line'
                     : 'Enter to send · Shift+Enter for a new line';
@@ -8241,7 +8462,10 @@
         restoreChatTogglePosition();
         restoreChatWindowPosition();
 
-        sendBtn.addEventListener('click', sendMessage);
+        sendBtn.addEventListener('click', () => {
+            if (chatIsSending) cancelChatRequest();
+            else sendMessage();
+        });
         newChatBtn.addEventListener('click', startNewChat);
         agentRefreshBtn.addEventListener('click', () => refreshAgentState(true));
         agentActivityToggle.addEventListener('click', () => {
@@ -8529,6 +8753,11 @@
                 model_run_status: timing.model_run_status || 'not_run',
                 automated: data.automated === true,
             };
+            const webSources = collectExternalEvidence(content, data);
+            if (data.web_search_enabled === true || webSources.length) {
+                message.web_search_enabled = true;
+                message.web_sources = webSources;
+            }
             const actionCard = normalizeChatActionCard(data.action_card);
             if (actionCard) message.action_card = actionCard;
             return message;
@@ -8604,6 +8833,9 @@
             msg.appendChild(bubble);
             applyMessageMeta(msg, role, options);
             messagesContainer.appendChild(msg);
+            if (role === 'assistant' && !options.loading) {
+                renderExternalEvidence(content, options);
+            }
             if (shouldStick) scrollChatToBottom(true);
             return bubble;
         }
@@ -8620,16 +8852,18 @@
             return /\?/.test(text) && /\b(iam|a_r|coefficient|interval|unit|clarif|do you mean|which)\b/i.test(text);
         }
 
-        function renderExternalEvidence(reply, data) {
-            if (!data || !data.web_search_enabled) return;
+        function collectExternalEvidence(reply, data) {
+            if (!data || (!data.web_search_enabled && !Array.isArray(data.web_sources) && !Array.isArray(data.citations))) {
+                return [];
+            }
             const candidates = [];
-            const supplied = data.web_sources || data.citations || [];
-            if (Array.isArray(supplied)) {
+            [data.web_sources, data.citations].forEach((supplied) => {
+                if (!Array.isArray(supplied)) return;
                 supplied.forEach((item) => {
                     if (typeof item === 'string') candidates.push({ label: item, url: item });
                     else if (item && item.url) candidates.push({ label: item.title || item.label || item.url, url: item.url });
                 });
-            }
+            });
             const markdownLink = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
             let match;
             while ((match = markdownLink.exec(String(reply || ''))) !== null) {
@@ -8638,11 +8872,20 @@
             const unique = [];
             const seen = new Set();
             candidates.forEach((item) => {
-                if (!/^https?:\/\//i.test(String(item.url || '')) || seen.has(item.url)) return;
-                seen.add(item.url);
-                unique.push(item);
+                const url = String(item.url || '').slice(0, 2048);
+                if (!/^https?:\/\//i.test(url) || seen.has(url)) return;
+                seen.add(url);
+                unique.push({
+                    label: String(item.label || item.url).slice(0, 240),
+                    url,
+                });
             });
-            if (!unique.length) return;
+            return unique.slice(0, 12);
+        }
+
+        function renderExternalEvidence(reply, data) {
+            const unique = collectExternalEvidence(reply, data);
+            if (!unique.length) return null;
             const evidence = document.createElement('div');
             evidence.className = 'message-evidence';
             const title = document.createElement('strong');
@@ -8658,7 +8901,7 @@
                 evidence.appendChild(link);
             });
             messagesContainer.appendChild(evidence);
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            return evidence;
         }
 
         function shortAgentId(value) {
@@ -8959,13 +9202,16 @@
         function updateAgentContext() {
             if (!agentContextText || !agentContextBadge) return;
             const modeLabel = activeMode === 'annual' ? 'Annual' : 'Calibration';
-            const visibleIamModel = getCanonicalCurrentConfig(activeMode).iam_model;
-            const iamLabel = visibleIamModel === 'martin_ruiz' ? 'Martin–Ruiz IAM' : 'Physical IAM';
             const baselineId = agentServerState.promoted_baselines?.[activeMode] || null;
             const baselineJob = baselineId ? agentJobSnapshots.get(baselineId) : null;
             const state = baselineJob?.state || (baselineId ? 'done' : 'not run');
             const stateLabel = state === 'done' ? 'ready' : humanizeAgentField(state);
             const baselineRequest = baselineJob?.request || baselineJob?.provenance?.request || baselineJob?.provenance?.request_snapshot || baselineJob?.provenance?.candidate_request || null;
+            const currentRequest = getCanonicalCurrentConfig(activeMode);
+            const contextIamModel = baselineId ? baselineRequest?.iam_model : currentRequest.iam_model;
+            const iamLabel = contextIamModel === 'martin_ruiz'
+                ? 'Martin–Ruiz IAM'
+                : (contextIamModel === 'physical' ? 'Physical IAM' : 'IAM not loaded');
             agentContextBadge.classList.toggle('ready', !!baselineId);
             agentContextText.textContent = baselineId
                 ? modeLabel + ' · ' + iamLabel + ' · ' + compactAgentContextWindow(baselineRequest) + ' · Baseline ' + shortAgentId(baselineId) + ' ' + stateLabel
@@ -9002,7 +9248,12 @@
             if (Array.isArray(data.proposals)) return { type: 'proposal_batch', proposals: data.proposals, sweep: data.sweep };
             if (data.proposal) return { type: 'proposal', proposal: data.proposal };
             if (data.proposal_id) return { type: 'proposal', proposal: data };
-            if (data.job_id) return { type: 'job_started', job: data };
+            if (
+                data.job_id &&
+                Object.prototype.hasOwnProperty.call(data, 'state') &&
+                Object.prototype.hasOwnProperty.call(data, 'kind') &&
+                Object.prototype.hasOwnProperty.call(data, 'request')
+            ) return { type: 'job_started', job: data };
             return null;
         }
 
@@ -9053,6 +9304,7 @@
                 'window',
                 'run_kind',
                 'error',
+                'expires_at',
             ].forEach((field) => {
                 const value = boundedChatCardString(card[field], field === 'error' ? 300 : 180);
                 if (value !== null) normalized[field] = value;
@@ -9114,6 +9366,19 @@
             return normalized;
         }
 
+        function savedNonterminalActionJobIds() {
+            const jobIds = new Set();
+            chatMessages.forEach((message) => {
+                const card = normalizeChatActionCard(message.action_card);
+                if (!card || !['job_started', 'sweep_started'].includes(card.kind)) return;
+                if (TERMINAL_CHAT_ACTION_STATUSES.has(String(card.status || '').toLowerCase())) return;
+                [card.job_id, ...(card.job_ids || [])].filter(Boolean).forEach((jobId) => {
+                    jobIds.add(String(jobId));
+                });
+            });
+            return Array.from(jobIds);
+        }
+
         function chatActionSweepMetadata(action) {
             if (action?.sweep && typeof action.sweep === 'object') return action.sweep;
             const member = action?.jobs?.[0] || action?.proposals?.[0] || action?.job || action?.proposal;
@@ -9148,6 +9413,7 @@
                     values: sweep.values,
                     count: sweep.count,
                     candidate_count: sweep.candidate_count,
+                    expires_at: action.proposals?.[0]?.expires_at,
                 });
             }
             if (action.type === 'job_batch_started') {
@@ -9182,6 +9448,7 @@
                     run_kind: proposal.kind,
                     window: compactAgentRunWindow(request, proposal.mode),
                     changes: proposal.changes,
+                    expires_at: proposal.expires_at,
                 });
             }
             if (action.type === 'job_started' && action.job) {
@@ -9514,6 +9781,7 @@
                     (match.sweep_id && card.sweep_id === match.sweep_id)
                 );
                 if (!matches || card.status === status) return;
+                if (['deleted', 'unavailable'].includes(card.status) && !['deleted', 'unavailable'].includes(status)) return;
                 message.action_card = { ...card, status };
                 changed = true;
             });
@@ -9538,7 +9806,10 @@
                     makeAgentButton('Open review', '', () => openAgentActivityFromChat(card)),
                     makeAgentButton('Dismiss', 'danger', () => dismissAgentSweep(card.sweep_id, card.proposal_ids))
                 );
-            } else if (['proposal_review', 'sweep_review'].includes(card.kind) && card.status !== 'dismissed') {
+            } else if (
+                ['proposal_review', 'sweep_review'].includes(card.kind) &&
+                !['dismissed', 'expired', 'unavailable'].includes(card.status)
+            ) {
                 actions.appendChild(makeAgentButton('Open runs', 'primary', () => openAgentActivityFromChat(card)));
             } else if (card.kind === 'data_review_required') {
                 actions.appendChild(makeAgentButton('Open calibration form', 'primary', openCalibrationFromChat));
@@ -9570,8 +9841,16 @@
         }
 
         function renderChatActionCard(rawCard) {
-            const card = normalizeChatActionCard(rawCard);
+            let card = normalizeChatActionCard(rawCard);
             if (!card) return null;
+            const expiresAt = card.expires_at ? Date.parse(card.expires_at) : NaN;
+            if (
+                card.status === 'needs review' &&
+                Number.isFinite(expiresAt) &&
+                expiresAt <= Date.now()
+            ) {
+                card = { ...card, status: 'expired' };
+            }
             const section = document.createElement('section');
             section.className = 'chat-action-card';
             section.dataset.chatCardKind = card.kind;
@@ -10917,21 +11196,88 @@
             });
         }
 
-        function scheduleAgentJobPoll(jobId, delay = 800) {
+        function syncTrackedMainRunFromAgentJob(job) {
+            if (!job || !isAgentJobTerminal(job)) return;
+            if (job.job_id === latestJobId) {
+                invalidateValidationStatusPoll();
+                currentRunState = { state: job.state, progress: job.progress || 0, stage: job.stage || '' };
+                if (job.state === 'done' && job.result) {
+                    latestResult = job.result;
+                    latestInputPlots = job.input_plots || job.result.input_plots || null;
+                    applyResult(job.result);
+                } else {
+                    showError(job.error || (job.state === 'cancelled' ? 'Run was cancelled.' : 'Run did not complete.'));
+                    progressWrap.classList.remove('visible');
+                }
+                resetRunBtn();
+                saveDashboardState();
+            }
+            if (job.job_id === annualLatestJobId) {
+                invalidateAnnualStatusPoll();
+                annualRunState = { state: job.state, progress: job.progress || 0, stage: job.stage || '' };
+                if (job.state === 'done' && job.result) {
+                    annualLatestResult = job.result;
+                    applyAnnualResult(job.result);
+                } else {
+                    showAnnualError(job.error || (job.state === 'cancelled' ? 'Annual run was cancelled.' : 'Annual run did not complete.'));
+                    annualProgressWrap.classList.remove('visible');
+                }
+                resetAnnualRunBtn();
+                saveDashboardState();
+            }
+        }
+
+        function scheduleAgentJobPoll(jobId, delay = 800, failureCount = 0) {
             const current = agentJobSnapshots.get(jobId);
             if (!jobId || isAgentJobTerminal(current)) return;
             const existing = agentJobPollTimers.get(jobId);
             if (existing) clearTimeout(existing);
-            agentJobPollTimers.set(jobId, setTimeout(() => pollAgentJob(jobId), delay));
+            agentJobPollTimers.set(jobId, setTimeout(() => pollAgentJob(jobId, failureCount), delay));
         }
 
-        async function pollAgentJob(jobId) {
+        function forgetUnavailableAgentJob(jobId) {
+            const timer = agentJobPollTimers.get(jobId);
+            if (timer) clearTimeout(timer);
+            agentJobPollTimers.delete(jobId);
+            agentJobSnapshots.delete(jobId);
+            agentJobStartedAt.delete(jobId);
+            updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable');
+            if (latestJobId === jobId) {
+                invalidateValidationStatusPoll();
+                latestJobId = null;
+                latestInputPlots = null;
+                latestResult = null;
+                currentRunState = null;
+                clearRunImages();
+                setExcelLink(null);
+                renderValidationRunContext(null);
+                resetRunBtn();
+            }
+            if (annualLatestJobId === jobId) {
+                invalidateAnnualStatusPoll();
+                annualLatestJobId = null;
+                annualLatestResult = null;
+                annualRunState = null;
+                clearAnnualImages();
+                setAnnualExcelLink(null);
+                resetAnnualRunBtn();
+            }
+            renderAgentActivity();
+            saveDashboardState();
+        }
+
+        async function pollAgentJob(jobId, failureCount = 0) {
             agentJobPollTimers.delete(jobId);
             try {
                 const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                if (response.status === 404) {
+                    forgetUnavailableAgentJob(jobId);
+                    return;
+                }
                 const data = await readAgentResponse(response, 'Scenario status is temporarily unavailable.');
                 const previous = agentJobSnapshots.get(jobId);
                 putAgentJob(data);
+                syncTrackedMainRunFromAgentJob(data);
                 if (isAgentParameterSweepJob(data) && agentActivityFilter === 'active') {
                     const sweepId = agentParameterSweepMetadata(data)?.sweep_id;
                     const group = getAgentParameterSweepGroups().find((item) => item.sweep_id === sweepId);
@@ -10947,13 +11293,92 @@
                     announceAgentCompletion(data);
                 }
                 if (isAgentJobTerminal(data)) await refreshAgentState(false);
-                else scheduleAgentJobPoll(jobId);
-            } catch (_) {
+                else scheduleAgentJobPoll(jobId, 800, 0);
+            } catch (error) {
                 const current = agentJobSnapshots.get(jobId) || { job_id: jobId };
-                putAgentJob({ ...current, stage: 'Reconnecting to model worker…' });
+                const nextFailureCount = failureCount + 1;
+                const reconnecting = nextFailureCount <= AGENT_POLL_MAX_FAILURES;
+                putAgentJob({
+                    ...current,
+                    stage: reconnecting
+                        ? 'Reconnecting to model worker (' + nextFailureCount + '/' + AGENT_POLL_MAX_FAILURES + ')...'
+                        : 'Status unavailable after repeated attempts',
+                });
                 renderAgentJobUpdate(agentJobSnapshots.get(jobId));
-                scheduleAgentJobPoll(jobId, 1800);
+                if (reconnecting) {
+                    scheduleAgentJobPoll(
+                        jobId,
+                        Math.min(STATUS_POLL_MAX_DELAY_MS, 900 * (2 ** Math.max(0, nextFailureCount - 1))),
+                        nextFailureCount
+                    );
+                }
             }
+        }
+
+        function trackedChatCardForJob(job) {
+            const sweepId = agentParameterSweepMetadata(job)?.sweep_id;
+            return chatMessages.some((message) => {
+                const card = normalizeChatActionCard(message.action_card);
+                if (!card) return false;
+                if (sweepId && card.sweep_id === sweepId) return true;
+                return card.job_id === job.job_id ||
+                    card.job_ids?.includes(job.job_id) ||
+                    (!!job.proposal_id && (
+                        card.proposal_id === job.proposal_id ||
+                        card.proposal_ids?.includes(job.proposal_id)
+                    ));
+            });
+        }
+
+        function reconcileTerminalAgentCards() {
+            Array.from(agentJobSnapshots.values()).forEach((job) => {
+                if (job.proposal_id) {
+                    updateStoredChatActionCardStatus(
+                        { proposal_id: job.proposal_id },
+                        job.state || 'queued'
+                    );
+                }
+                if (agentParameterSweepMetadata(job) || !trackedChatCardForJob(job)) return;
+                updateStoredChatActionCardStatus({ job_id: job.job_id }, job.state || 'queued');
+                if (!isAgentJobTerminal(job)) return;
+                const completionKey = 'job:' + job.job_id;
+                if (agentCompletionCards.has(completionKey)) {
+                    return;
+                }
+                announceAgentCompletion(job);
+            });
+            getAgentParameterSweepGroups().forEach((group) => {
+                const tracked = group.jobs.some(trackedChatCardForJob);
+                if (!tracked || !group.jobs.length) return;
+                const expected = Number(group.metadata?.candidate_count || 0);
+                const complete = !group.proposals.length && expected > 0 &&
+                    group.jobs.length >= expected && group.jobs.every(isAgentJobTerminal);
+                const status = complete
+                    ? (group.jobs.some((job) => job.state !== 'done') ? 'error' : 'done')
+                    : (group.jobs.some((job) => job.state === 'running') ? 'running' : 'queued');
+                updateStoredChatActionCardStatus({ sweep_id: group.sweep_id }, status);
+                const completionKey = 'sweep:' + group.sweep_id;
+                if (complete && !agentCompletionCards.has(completionKey)) {
+                    announceAgentCompletion(group.jobs[0]);
+                }
+            });
+        }
+
+        async function recoverSavedNonterminalActionJobs() {
+            const missingJobIds = savedNonterminalActionJobIds()
+                .filter((jobId) => !agentJobSnapshots.has(jobId));
+            await Promise.all(missingJobIds.map(async (jobId) => {
+                try {
+                    const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                    if (response.status === 404) {
+                        forgetUnavailableAgentJob(jobId);
+                        return;
+                    }
+                    putAgentJob(await readAgentResponse(response, 'Could not restore this scenario run.'));
+                } catch (_) {
+                    // Preserve the saved card so a later manual refresh can retry it.
+                }
+            }));
         }
 
         async function refreshAgentState(showFeedback = false) {
@@ -10976,8 +11401,10 @@
                         // The context badge falls back gracefully if an old baseline is unavailable.
                     }
                 }));
+                await recoverSavedNonterminalActionJobs();
+                reconcileTerminalAgentCards();
                 renderAgentActivity();
-                agentServerState.jobs.forEach((job) => {
+                Array.from(agentJobSnapshots.values()).forEach((job) => {
                     if (!isAgentJobTerminal(job)) scheduleAgentJobPoll(job.job_id, 250);
                 });
                 if (showFeedback) appendSystemNotice('Scenario runs refreshed.');
@@ -11055,23 +11482,19 @@
                 proposalIds.push(...fallbackProposalIds.filter(Boolean));
             }
             if (!proposalIds.length) return;
-            let failures = 0;
-            for (const proposalId of proposalIds) {
-                try {
-                    const data = await postAgentAction('/api/agent/proposals/' + encodeURIComponent(proposalId) + '/confirm');
-                    agentProposalSnapshots.delete(proposalId);
-                    handleAgentAction(data);
-                } catch (_) {
-                    failures += 1;
-                }
-            }
-            await refreshAgentState(false);
-            if (failures) {
-                appendSystemNotice(failures + ' sweep run' + (failures === 1 ? '' : 's') + ' could not be queued.', 'error');
-            } else {
+            try {
+                const data = await postAgentAction(
+                    '/api/agent/sweeps/' + encodeURIComponent(sweepId) + '/confirm',
+                    { proposal_ids: proposalIds }
+                );
+                proposalIds.forEach((proposalId) => agentProposalSnapshots.delete(proposalId));
+                handleAgentAction(data);
                 const cardUpdated = updateStoredChatActionCardStatus({ sweep_id: sweepId }, 'queued');
                 if (!cardUpdated) appendSystemNotice('Parameter sweep queued against the selected baseline.', 'success');
+            } catch (error) {
+                appendSystemNotice(error.message || 'The parameter sweep could not be queued.', 'error');
             }
+            await refreshAgentState(false);
         }
 
         async function dismissAgentSweep(sweepId, fallbackProposalIds = []) {
@@ -11174,6 +11597,7 @@
                 agentCompletionCards.delete('job:' + jobId);
                 updateStoredChatActionCardStatus({ job_id: jobId }, 'deleted');
                 if (job.mode === 'annual' && annualLatestJobId === jobId) {
+                    invalidateAnnualStatusPoll();
                     annualLatestJobId = null;
                     annualLatestResult = null;
                     annualRunState = null;
@@ -11182,6 +11606,7 @@
                     setAnnualExcelLink(null);
                 }
                 if (job.mode !== 'annual' && latestJobId === jobId) {
+                    invalidateValidationStatusPoll();
                     latestJobId = null;
                     latestInputPlots = null;
                     latestResult = null;
@@ -11213,6 +11638,7 @@
                     sweepId ? { sweep_id: sweepId } : { job_id: retried.job_id },
                     retried.state || 'queued'
                 );
+                agentJobStartedAt.set(retried.job_id, Date.now());
                 putAgentJob(retried);
                 renderAgentJobUpdate(agentJobSnapshots.get(retried.job_id));
                 scheduleAgentJobPoll(retried.job_id, 150);
@@ -11252,7 +11678,6 @@
                 if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
                 renderChatMessages();
                 renderAgentActivity();
-                renderExternalEvidence(reply, data);
                 renderChatFollowups();
                 saveDashboardState();
             } catch (error) {
@@ -11276,6 +11701,8 @@
                 const previous = agentJobSnapshots.get(jobId) || {};
                 const mode = data.mode === 'annual' ? 'annual' : (previous.mode === 'annual' ? 'annual' : 'validation');
                 const promoted = { ...previous, ...data, job_id: jobId, mode, state: 'done', progress: 100 };
+                if (mode === 'annual') invalidateAnnualStatusPoll();
+                else invalidateValidationStatusPoll();
                 putAgentJob(promoted);
                 agentServerState.promoted_baselines[mode] = jobId;
                 if (mode === 'validation' && calibrationReviewWorkflowIsActive()) {
@@ -11353,8 +11780,13 @@
         function setSending(isSending) {
             chatIsSending = !!isSending;
             sendBtn.classList.toggle('is-sending', chatIsSending);
-            sendBtn.querySelector('.send-label').textContent = chatIsSending ? 'Working' : 'Send';
+            sendBtn.querySelector('.send-label').textContent = chatIsSending ? 'Cancel' : 'Send';
             syncChatComposerState();
+        }
+
+        function cancelChatRequest() {
+            if (!activeChatAbortController) return;
+            activeChatAbortController.abort();
         }
 
         async function sendMessage() {
@@ -11376,6 +11808,13 @@
             saveDashboardState();
 
             const loadingBubble = appendMessage('assistant', '', { loading: true });
+            const chatController = new AbortController();
+            activeChatAbortController = chatController;
+            let chatRequestTimedOut = false;
+            const chatTimeout = window.setTimeout(() => {
+                chatRequestTimedOut = true;
+                chatController.abort();
+            }, CHAT_REQUEST_TIMEOUT_MS);
             setSending(true);
             try {
                 const history = chatMessages.slice(-10, -1).map((item) => ({
@@ -11392,6 +11831,7 @@
                         active_mode: activeMode,
                         current_config: getCanonicalCurrentConfig(activeMode),
                     }),
+                    signal: chatController.signal,
                 });
                 let data = {};
                 try {
@@ -11419,25 +11859,122 @@
                 chatMessages.push(assistantMessage);
                 handleAgentAction(data);
                 if (!action) renderExternalEvidence(reply, data);
-                if (data.job_id) {
-                    if (activeMode === 'annual') {
-                        annualLatestJobId = data.job_id;
+                const startedJob = action?.type === 'job_started' ? action.job : null;
+                if (startedJob?.job_id) {
+                    if (startedJob.mode === 'annual') {
+                        annualLatestJobId = startedJob.job_id;
                     } else {
-                        latestJobId = data.job_id;
+                        latestJobId = startedJob.job_id;
                     }
                 }
                 if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
                 saveDashboardState();
                 scrollChatToBottom();
             } catch (e) {
-                const msg = e.message || 'The solar agent could not answer right now.';
+                const msg = e?.name === 'AbortError'
+                    ? (chatRequestTimedOut
+                        ? 'Solar Agent took too long to respond. The wait was stopped after 60 seconds; you can retry.'
+                        : 'Solar Agent response canceled.')
+                    : (e.message || 'The solar agent could not answer right now.');
                 loadingBubble.parentElement.remove();
                 appendSystemNotice(msg, 'error');
             } finally {
+                clearTimeout(chatTimeout);
+                if (activeChatAbortController === chatController) {
+                    activeChatAbortController = null;
+                }
                 setSending(false);
                 renderChatFollowups();
                 if (!isChatMobile() && (document.activeElement === chatInput || document.activeElement === document.body)) {
                     chatInput.focus();
+                }
+            }
+        }
+
+        function clearCachedCompletedRun(mode) {
+            if (mode === 'annual') {
+                annualLatestJobId = null;
+                annualLatestResult = null;
+                annualRunState = null;
+                setAnnualExcelLink(null);
+                clearAnnualImages();
+                return;
+            }
+            latestJobId = null;
+            latestInputPlots = null;
+            latestResult = null;
+            currentRunState = null;
+            setExcelLink(null);
+            clearRunImages();
+            renderValidationRunContext(null);
+        }
+
+        function markCachedRunUnverified(mode) {
+            if (mode === 'annual') {
+                annualLatestResult = null;
+                annualRunState = {
+                    state: 'monitoring_error',
+                    progress: annualRunState?.progress || 0,
+                    stage: 'Revalidating cached annual run',
+                };
+                setAnnualExcelLink(null);
+                clearAnnualImages();
+                return;
+            }
+            latestInputPlots = null;
+            latestResult = null;
+            currentRunState = {
+                state: 'monitoring_error',
+                progress: currentRunState?.progress || 0,
+                stage: 'Revalidating cached run',
+            };
+            setExcelLink(null);
+            clearRunImages();
+            renderValidationRunContext(null);
+        }
+
+        async function revalidateCachedCompletedRun(mode) {
+            const annual = mode === 'annual';
+            const jobId = annual ? annualLatestJobId : latestJobId;
+            const cachedResult = annual ? annualLatestResult : latestResult;
+            if (!jobId || !cachedResult) return;
+            try {
+                const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                if (response.status === 404) {
+                    clearCachedCompletedRun(mode);
+                    updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable');
+                    if (annual) showAnnualError('The cached annual run was deleted or is no longer available.');
+                    else showError('The cached run was deleted or is no longer available.');
+                    return;
+                }
+                const data = await readAgentResponse(response, 'Could not verify the cached run.');
+                putAgentJob(data);
+                if (data.state === 'done' && data.result) {
+                    if (annual) {
+                        annualLatestResult = data.result;
+                        annualRunState = { state: 'done', progress: 100, stage: data.stage || 'Done' };
+                    } else {
+                        latestResult = data.result;
+                        latestInputPlots = data.input_plots || data.result.input_plots || null;
+                        currentRunState = { state: 'done', progress: 100, stage: data.stage || 'Done' };
+                    }
+                    return;
+                }
+
+                if (annual) {
+                    annualLatestResult = null;
+                    annualRunState = { state: data.state, progress: data.progress || 0, stage: data.stage || '' };
+                } else {
+                    latestResult = null;
+                    latestInputPlots = data.input_plots || null;
+                    currentRunState = { state: data.state, progress: data.progress || 0, stage: data.stage || '' };
+                }
+            } catch (error) {
+                markCachedRunUnverified(mode);
+                if (annual) {
+                    showAnnualError(error.message || 'The cached annual run could not be verified yet; status monitoring will retry.');
+                } else {
+                    showError(error.message || 'The cached run could not be verified yet; status monitoring will retry.');
                 }
             }
         }
@@ -11505,6 +12042,11 @@
                             ),
                             automated: item.automated === true,
                         };
+                        const restoredSources = collectExternalEvidence(item.content, item);
+                        if (item.web_search_enabled === true || restoredSources.length) {
+                            restored.web_search_enabled = true;
+                            restored.web_sources = restoredSources;
+                        }
                         const actionCard = normalizeChatActionCard(item.action_card);
                         if (actionCard) restored.action_card = actionCard;
                         return restored;
@@ -11517,6 +12059,9 @@
             if (Array.isArray(saved.agentCompletionCards)) {
                 saved.agentCompletionCards.filter(Boolean).slice(-100).forEach((key) => agentCompletionCards.add(String(key)));
             }
+
+            await revalidateCachedCompletedRun('validation');
+            await revalidateCachedCompletedRun('annual');
 
             applyFormState(saved.form);
             applyAnnualFormState(saved.annualForm);
@@ -11553,22 +12098,23 @@
             renderChatMessages();
             setChatOpen(!!saved.chatOpen, { focus: false, persist: false });
 
-            if (currentRunState && ['queued', 'running'].includes(currentRunState.state) && latestJobId) {
+            if (currentRunState && ['queued', 'running', 'monitoring_error'].includes(currentRunState.state) && latestJobId) {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Running...';
                 setProgress(currentRunState.progress || 0, currentRunState.stage || 'Restoring run...');
                 pollStatus(latestJobId);
             }
-            if (annualRunState && ['queued', 'running'].includes(annualRunState.state) && annualLatestJobId) {
+            if (annualRunState && ['queued', 'running', 'monitoring_error'].includes(annualRunState.state) && annualLatestJobId) {
                 annualRunBtn.disabled = true;
                 annualRunBtn.textContent = 'Running...';
                 setAnnualProgress(annualRunState.progress || 0, annualRunState.stage || 'Restoring annual run...');
                 pollAnnualStatus(annualLatestJobId);
             }
             await refreshAgentState(false);
+            saveDashboardState();
         }
 
-        document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, #calibrateModel, .iam-model-input, .annual-input').forEach((el) => {
+        document.querySelectorAll('#analysisControls input, #analysisControls select').forEach((el) => {
             el.addEventListener('input', () => {
                 if (calibrationReviewWorkflowIsActive()) {
                     cancelCalibrationReview();
@@ -11580,6 +12126,16 @@
                 if (calibrationReviewWorkflowIsActive()) {
                     cancelCalibrationReview();
                 }
+                saveDashboardState();
+                updateAgentContext();
+            });
+        });
+        document.querySelectorAll('#annualControls input, #annualControls select').forEach((el) => {
+            el.addEventListener('input', () => {
+                saveDashboardState();
+                updateAgentContext();
+            });
+            el.addEventListener('change', () => {
                 saveDashboardState();
                 updateAgentContext();
             });

@@ -529,6 +529,77 @@ class CalibrationWorkflowTests(unittest.TestCase):
                         4.0,
                     )
 
+    def test_add_energy_clips_partial_boundary_intervals(self) -> None:
+        index = pd.DatetimeIndex(
+            ["2026-06-01T00:00:00Z", "2026-06-01T01:00:00Z"]
+        )
+        frame = pd.DataFrame(index=index)
+        for system in ("se", "sol"):
+            for kind in ("measured", "predicted", "uncalibrated"):
+                frame[f"{system}_{kind}_power_w"] = [1_000.0, 2_000.0]
+
+        result = add_energy(
+            frame,
+            expected_interval_seconds=3_600,
+            requested_start="2026-06-01T00:30:00Z",
+            requested_end="2026-06-01T01:30:00Z",
+        )
+
+        self.assertEqual(result["dt_hours"].tolist(), [0.5, 0.5])
+        for system in ("se", "sol"):
+            for kind in ("measured", "predicted", "uncalibrated"):
+                with self.subTest(system=system, kind=kind):
+                    self.assertEqual(
+                        result[f"{system}_{kind}_energy_kwh"].iloc[-1],
+                        1.5,
+                    )
+
+    def test_calibration_and_energy_share_requested_window_weights(self) -> None:
+        index = pd.date_range(
+            "2026-06-01T00:00:00Z",
+            periods=3,
+            freq="h",
+        )
+        frame = pd.DataFrame(
+            {
+                "se_measured_power_w": [1_000.0, 1_000.0, 10_000.0],
+                "sol_measured_power_w": [1_000.0, 1_000.0, 10_000.0],
+                "se_predicted_power_w": [1_000.0, 1_000.0, 1_000.0],
+                "sol_predicted_power_w": [1_000.0, 1_000.0, 1_000.0],
+            },
+            index=index,
+        )
+        window = {
+            "requested_start": "2026-06-01T00:30:00Z",
+            "requested_end": "2026-06-01T02:00:00Z",
+        }
+
+        calibrated, calibration, _ = apply_seasonal_calibration(
+            frame,
+            minimum_season_samples=1,
+            expected_interval_seconds=3_600,
+            **window,
+        )
+        integrated = add_energy(
+            calibrated,
+            expected_interval_seconds=3_600,
+            **window,
+        )
+
+        self.assertEqual(integrated["dt_hours"].tolist(), [0.5, 1.0, 0.0])
+        for system, short_name in (("solaredge", "se"), ("solectria", "sol")):
+            with self.subTest(system=system):
+                observation = calibration["seasons"][0]["systems"][system]
+                self.assertEqual(observation["factor"], 1.0)
+                self.assertEqual(
+                    integrated[f"{short_name}_predicted_energy_kwh"].iloc[-1],
+                    1.5,
+                )
+                self.assertEqual(
+                    integrated[f"{short_name}_measured_energy_kwh"].iloc[-1],
+                    1.5,
+                )
+
     def test_season_name_uses_exact_meteorological_boundaries(self) -> None:
         expected = {
             "2026-02-28T23:59:59-07:00": "winter",

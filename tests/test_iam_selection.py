@@ -1,7 +1,9 @@
 import re
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -45,7 +47,7 @@ class IamModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             model.resolve_iam_settings(iam_model="unknown", iam_a_r=0.2)
 
-    def test_reference_parity_physical_and_martin_ruiz_outputs(self):
+    def test_physical_baseline_and_martin_ruiz_dc_outputs(self):
         location = model.pvl.location.Location(
             model.LAT,
             model.LON,
@@ -94,11 +96,110 @@ class IamModelTests(unittest.TestCase):
             martin_ruiz_custom["Ee_suns"], [0.1595056972], rtol=1e-6
         )
         np.testing.assert_allclose(
-            martin_ruiz_default["p_mp_w"], [222.0529305], rtol=1e-6
+            martin_ruiz_default["p_mp_w"], [132.6612334702], rtol=1e-6
         )
         np.testing.assert_allclose(
-            martin_ruiz_custom["p_mp_w"], martin_ruiz_default["p_mp_w"]
+            martin_ruiz_custom["p_mp_w"], [86.8114581711], rtol=1e-6
         )
+        self.assertLess(
+            martin_ruiz_custom["p_mp_w"][0],
+            martin_ruiz_default["p_mp_w"][0],
+        )
+
+    def test_solectria_consumes_martin_ruiz_effective_irradiance_once(self):
+        index = pd.DatetimeIndex(["2026-06-21 12:00:00"], tz=model.TIMEZONE)
+        frame = pd.DataFrame(index=index)
+        observed_irradiance: list[float] = []
+
+        def tilt_outputs(tilts, *_args, **_kwargs):
+            return {
+                float(tilt): {
+                    "Ee_suns": np.array([0.37]),
+                    "Tk": np.array([300.0]),
+                    "p_mp_w": np.array([50.0]),
+                }
+                for tilt in tilts
+            }
+
+        def record_module_curve(*args):
+            observed_irradiance.append(float(args[5]))
+            return np.array([0.0, 1.0]), np.array([1.0, 0.0]), 1.0
+
+        fake_module = SimpleNamespace(pvcells=[object()], pvconst=object())
+        with (
+            patch.object(
+                model,
+                "build_weather",
+                return_value=(pd.DataFrame(index=index), "test"),
+            ),
+            patch.object(
+                model,
+                "run_modelchain_for_axis_tilts",
+                side_effect=tilt_outputs,
+            ) as modelchain,
+            patch.object(model, "build_pvmismatch_module", return_value=fake_module),
+            patch.object(
+                model,
+                "_uniform_series_topology",
+                return_value=(24, 3, -0.5),
+            ),
+            patch.object(
+                model,
+                "_uniform_module_curve",
+                side_effect=record_module_curve,
+            ),
+            patch.object(model, "_uniform_string_max_power", return_value=1.0),
+        ):
+            model.predict_ac_power(
+                frame,
+                iam_model=model.IAM_MODEL_MARTIN_RUIZ,
+                iam_a_r=0.4,
+            )
+
+        self.assertTrue(observed_irradiance)
+        np.testing.assert_allclose(observed_irradiance, 0.37, rtol=0, atol=0)
+        self.assertEqual(
+            modelchain.call_args.kwargs["iam_model"],
+            model.IAM_MODEL_MARTIN_RUIZ,
+        )
+        self.assertEqual(modelchain.call_args.kwargs["iam_a_r"], 0.4)
+
+    def test_martin_ruiz_dc_solver_skips_zero_and_preserves_nan_fallback(self):
+        index = pd.date_range(
+            "2026-06-21 10:00:00",
+            periods=3,
+            freq="h",
+            tz=model.TIMEZONE,
+        )
+        effective = pd.Series([0.0, np.nan, 800.0], index=index)
+        temperature = pd.Series([20.0, 25.0, 35.0], index=index)
+        fallback = pd.Series([10.0, 20.0, 30.0], index=index)
+        actual_singlediode = model.pvl.pvsystem.singlediode
+        observed_solver_rows: list[int] = []
+
+        def record_solver_rows(*args, **kwargs):
+            observed_solver_rows.append(len(args[0]))
+            return actual_singlediode(*args, **kwargs)
+
+        with (
+            patch.object(
+                model.pvl.pvsystem,
+                "singlediode",
+                side_effect=record_solver_rows,
+            ),
+            warnings.catch_warnings(),
+        ):
+            warnings.simplefilter("error", RuntimeWarning)
+            result = model._cec_p_mp_from_effective_irradiance(
+                effective,
+                temperature,
+                fallback,
+            )
+
+        self.assertEqual(observed_solver_rows, [1])
+        self.assertEqual(result.iloc[0], 0.0)
+        self.assertEqual(result.iloc[1], 20.0)
+        self.assertGreater(result.iloc[2], 0.0)
 
     def test_multi_array_modelchain_matches_individual_tilts(self):
         location = model.pvl.location.Location(

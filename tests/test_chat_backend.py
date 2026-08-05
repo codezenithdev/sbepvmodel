@@ -74,6 +74,7 @@ class ChatBackendTests(unittest.TestCase):
         self.assertIn("SolarEdge", self.calls[0]["instructions"])
         self.assertIn("Solectria", self.calls[0]["instructions"])
         self.assertIn("stay under 90 words", self.calls[0]["instructions"])
+        self.assertEqual(1_200, self.calls[0]["max_output_tokens"])
 
     def test_reference_question_enables_web_search(self):
         app.JOBS["job123"] = {"state": "done", "result": {"stats": {}}}
@@ -85,6 +86,22 @@ class ChatBackendTests(unittest.TestCase):
         self.assertTrue(web_enabled)
         self.assertIn({"type": "web_search"}, self.calls[0]["tools"])
         self.assertIn(app.SCENARIO_TOOL, self.calls[0]["tools"])
+
+    def test_dashboard_prediction_wording_does_not_enable_web_search(self):
+        app.JOBS["job123"] = {"state": "done", "result": {"stats": {}}}
+
+        for message in (
+            "Summarize the current run.",
+            "Why did this prediction differ from measured energy?",
+            "Predict the effect of backtracking from this dashboard result.",
+        ):
+            with self.subTest(message=message):
+                self.calls.clear()
+                _, _, web_enabled = app._openai_chat_response(
+                    app.ChatRequest(message=message, job_id="job123")
+                )
+                self.assertFalse(web_enabled)
+                self.assertNotIn({"type": "web_search"}, self.calls[0]["tools"])
 
     def test_missing_run_still_returns_answerable_context(self):
         reply, job_id, web_enabled = app._openai_chat_response(
@@ -148,8 +165,25 @@ class ChatBackendTests(unittest.TestCase):
         self.assertIn('"iam_a_r_status": "not applicable to Physical IAM"', input_text)
         self.assertIn("Never describe Physical IAM as disabled", self.calls[0]["instructions"])
 
+    def test_current_question_is_not_duplicated_in_recent_history(self):
+        app._openai_chat_response(
+            app.ChatRequest(
+                message="Summarize this run.",
+                history=[
+                    app.ChatMessage(role="user", content="Summarize this run.")
+                ],
+            )
+        )
+
+        input_text = self.calls[0]["input"][0]["content"]
+        self.assertEqual(1, input_text.count("Summarize this run."))
+
     def test_input_data_plots_are_rendered_from_historian_csv(self):
         csv_path = app.OUTPUT_DIR / "_test_input_plot.csv"
+        measured_path = app.OUTPUT_DIR / "_test_job123_measured_power.png"
+        irradiance_path = app.OUTPUT_DIR / "_test_job123_irradiance.png"
+        for generated_path in (csv_path, measured_path, irradiance_path):
+            self.addCleanup(generated_path.unlink, missing_ok=True)
         csv_path.write_text(
             "\n".join(
                 [
@@ -165,8 +199,8 @@ class ChatBackendTests(unittest.TestCase):
 
         self.assertEqual(plots["measured_power_png"], "/outputs/_test_job123_measured_power.png")
         self.assertEqual(plots["irradiance_png"], "/outputs/_test_job123_irradiance.png")
-        self.assertTrue((app.OUTPUT_DIR / "_test_job123_measured_power.png").is_file())
-        self.assertTrue((app.OUTPUT_DIR / "_test_job123_irradiance.png").is_file())
+        self.assertTrue(measured_path.is_file())
+        self.assertTrue(irradiance_path.is_file())
 
 
 class DashboardDeploymentTests(unittest.TestCase):
@@ -212,6 +246,67 @@ class DashboardDeploymentTests(unittest.TestCase):
             response = TestClient(app.app).get("/")
 
         self.assertEqual(response.status_code, 200)
+
+    def test_partial_basic_auth_configuration_fails_closed(self):
+        with patch.dict(
+            os.environ,
+            {
+                "DASHBOARD_BASIC_USER": "cliff",
+                "DASHBOARD_BASIC_PASSWORD": "",
+            },
+        ):
+            root = TestClient(app.app).get("/")
+            health = TestClient(app.app).get("/healthz")
+
+        self.assertEqual(root.status_code, 503)
+        self.assertEqual(health.status_code, 503)
+        self.assertIn("authentication configuration", health.json()["failed_checks"])
+
+    def test_private_output_directories_are_blocked_case_insensitively(self):
+        marker = app.OUTPUT_DIR / ".agent_state" / "private-case-test.txt"
+        private_root_marker = app.OUTPUT_DIR / "private-root-test.sqlite3"
+        public_marker = app.OUTPUT_DIR / "public-output-test.csv"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("private", encoding="utf-8")
+        private_root_marker.write_text("private-root", encoding="utf-8")
+        public_marker.write_text("timestamp,value\n2025-01-01,1\n", encoding="utf-8")
+        self.addCleanup(marker.unlink, missing_ok=True)
+        self.addCleanup(private_root_marker.unlink, missing_ok=True)
+        self.addCleanup(public_marker.unlink, missing_ok=True)
+        with patch.dict(
+            os.environ,
+            {
+                "DASHBOARD_BASIC_USER": "",
+                "DASHBOARD_BASIC_PASSWORD": "",
+            },
+        ):
+            client = TestClient(app.app)
+            responses = [
+                client.get("/outputs/.AGENT_STATE/private-case-test.txt"),
+                client.get("/outputs/.AGENT_STATE./private-case-test.txt"),
+                client.get("/outputs//.AGENT_STATE/private-case-test.txt"),
+                client.get("/outputs/public/../.AGENT_STATE/private-case-test.txt"),
+                client.get("/outputs/AGENT_~1/solar_agent.sqlite3"),
+                client.get("/outputs/CALIBR~1/"),
+                client.get("/outputs/private-root-test.sqlite3"),
+            ]
+            public_response = client.get("/outputs/public-output-test.csv")
+
+        for response in responses:
+            self.assertEqual(response.status_code, 404)
+            self.assertNotIn("private", response.text)
+
+        self.assertEqual(public_response.status_code, 200)
+        self.assertIn("timestamp,value", public_response.text)
+
+        static_route = next(
+            route for route in app.app.routes if getattr(route, "name", None) == "outputs"
+        )
+        resolved_path, stat_result = static_route.app.lookup_path(
+            ".agent_state/private-case-test.txt"
+        )
+        self.assertEqual("", resolved_path)
+        self.assertIsNone(stat_result)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,19 @@ outputs/
 
 analysis/
 
+# Test-generated databases, review workspaces, and exported artifacts
+tests/__pycache__/
+tests/_calibration_api_tmp_*/
+tests/_calibration_tmp_*/
+tests/outputs/
+tests/agent-backend-test-*.sqlite3*
+tests/agent-store-test-*.sqlite3*
+tests/annual-api-test-*.sqlite3*
+tests/dashboard-api-test-*.sqlite3*
+tests/iam-api-test-*.sqlite3*
+tests/baseline-*.csv
+tests/annual-other-*.csv
+
 # Sites / vinext frontend build artifacts
 node_modules/
 .next/

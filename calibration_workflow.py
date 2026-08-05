@@ -1238,18 +1238,74 @@ def apply_quality_decisions(
 def _bounded_interval_hours(
     index: pd.DatetimeIndex,
     expected_interval_seconds: int | None = None,
+    *,
+    requested_start: Any | None = None,
+    requested_end: Any | None = None,
 ) -> pd.Series:
-    raw = index.to_series().diff().dt.total_seconds() / 3600.0
-    if expected_interval_seconds is not None:
-        nominal = max(float(expected_interval_seconds) / 3600.0, 0.0)
+    """Return non-overlapping row durations clipped to a requested window.
+
+    Historian timestamps label the start of each aggregated interval.  Forward
+    spacing therefore bounds the row that precedes a short/irregular step.  A
+    long gap is still capped at one nominal interval so missing rows never add
+    energy.  When the selected end is not interval-aligned, the final row gets
+    only its actual overlap with the end-exclusive requested window.
+    """
+
+    timestamps = pd.DatetimeIndex(index)
+    if timestamps.hasnans:
+        raise ValueError("Energy integration index cannot contain invalid timestamps.")
+    if requested_start is not None or requested_end is not None:
+        if timestamps.tz is None:
+            raise ValueError(
+                "Requested-window energy integration requires timezone-aware timestamps."
+            )
+        requested_window = _requested_utc_window(requested_start, requested_end)
     else:
-        positive = raw[(raw > 0) & np.isfinite(raw)]
-        nominal = float(positive.median()) if not positive.empty else 0.0
-    if nominal <= 0:
-        return pd.Series(0.0, index=index, dtype=float)
+        requested_window = None
+
+    # DatetimeIndex may use microsecond storage (notably on pandas/Python 3.13),
+    # while Timestamp.value and the overlap math below are nanoseconds.
+    timestamp_ns = timestamps.as_unit("ns").asi8
+    forward_seconds = pd.Series(index=timestamps, dtype=float)
+    if len(timestamps) > 1:
+        forward_seconds.iloc[:-1] = (
+            np.diff(timestamp_ns).astype(float) / 1_000_000_000.0
+        )
+    if expected_interval_seconds is not None:
+        nominal_seconds = max(float(expected_interval_seconds), 0.0)
+    else:
+        positive = forward_seconds[
+            (forward_seconds > 0) & np.isfinite(forward_seconds)
+        ]
+        nominal_seconds = float(positive.median()) if not positive.empty else 0.0
+    if nominal_seconds <= 0:
+        return pd.Series(0.0, index=timestamps, dtype=float)
+
     # Each aggregated historian row represents one nominal interval.  A gap
     # must not cause the next row to stand in for several missing intervals.
-    return raw.fillna(nominal).clip(lower=0.0, upper=nominal)
+    bounded_seconds = forward_seconds.fillna(nominal_seconds).clip(
+        lower=0.0,
+        upper=nominal_seconds,
+    )
+
+    if requested_window is not None:
+        requested_start_utc, requested_end_utc = requested_window
+        starts_ns = timestamps.tz_convert("UTC").as_unit("ns").asi8
+        durations_ns = np.rint(
+            bounded_seconds.to_numpy(dtype=float) * 1_000_000_000.0
+        ).astype(np.int64)
+        overlap_ns = np.maximum(
+            0,
+            np.minimum(starts_ns + durations_ns, requested_end_utc.value)
+            - np.maximum(starts_ns, requested_start_utc.value),
+        )
+        bounded_seconds = pd.Series(
+            np.minimum(durations_ns, overlap_ns) / 1_000_000_000.0,
+            index=timestamps,
+            dtype=float,
+        )
+
+    return bounded_seconds / 3600.0
 
 
 def _integrated_energy_kwh(
@@ -1816,6 +1872,8 @@ def apply_seasonal_calibration(
     minimum_season_samples: int = 6,
     minimum_season_hours: float = 1.0,
     expected_interval_seconds: int | None = None,
+    requested_start: Any | None = None,
+    requested_end: Any | None = None,
     maximum_uncurtailed_power_w: float | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
     """Calculate and apply per-season, per-system all-row energy factors.
@@ -1850,6 +1908,8 @@ def apply_seasonal_calibration(
     dt_hours = _bounded_interval_hours(
         output.index,
         expected_interval_seconds=expected_interval_seconds,
+        requested_start=requested_start,
+        requested_end=requested_end,
     )
     all_rows = pd.Series(True, index=output.index)
 

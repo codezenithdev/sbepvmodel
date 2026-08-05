@@ -12,6 +12,8 @@ from pathlib import Path
 from agent_store import (
     AgentStore,
     InvalidStateTransition,
+    LeaseOwnershipLost,
+    QueueCapacityExceeded,
     RecordNotFound,
     SCHEMA_VERSION,
     SchemaVersionError,
@@ -110,7 +112,7 @@ class AgentStoreTests(unittest.TestCase):
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
         self.assertEqual(SCHEMA_VERSION, version)
-        self.assertEqual([(1,)], migrations)
+        self.assertEqual([(1,), (2,), (3,)], migrations)
 
     def test_newer_schema_is_rejected(self) -> None:
         other_path = self.db_path.with_name(f"{self.db_path.stem}-future.sqlite3")
@@ -334,6 +336,208 @@ class AgentStoreTests(unittest.TestCase):
             0, self.store.mark_stale_running_jobs_interrupted(before=cutoff)
         )
         self.assertEqual("running", self.store.get_job("recent")["state"])
+
+    def test_worker_heartbeat_protects_live_job_until_lease_expires(self) -> None:
+        self.store.create_job(
+            job_id="leased", kind="manual", mode="validation", request={}
+        )
+        claimed = self.store.claim_next_queued_job(worker_id="worker-a")
+        self.assertEqual("worker-a", claimed["worker_id"])
+        lease_token = claimed["lease_token"]
+        self.assertTrue(lease_token)
+
+        self.clock.advance(minutes=5)
+        self.assertFalse(
+            self.store.heartbeat_job(
+                "leased", worker_id="worker-b", lease_token=lease_token
+            )
+        )
+        self.assertTrue(
+            self.store.heartbeat_job(
+                "leased", worker_id="worker-a", lease_token=lease_token
+            )
+        )
+        cutoff = self.clock.value - timedelta(minutes=1)
+        self.assertEqual(
+            0, self.store.mark_stale_running_jobs_interrupted(before=cutoff)
+        )
+
+        self.clock.advance(minutes=2)
+        cutoff = self.clock.value - timedelta(minutes=1)
+        self.assertEqual(
+            1, self.store.mark_stale_running_jobs_interrupted(before=cutoff)
+        )
+        self.assertEqual("interrupted", self.store.get_job("leased")["state"])
+
+    def test_reclaimed_job_rejects_writes_from_expired_lease(self) -> None:
+        self.store.create_job(
+            job_id="reclaimed", kind="manual", mode="validation", request={}
+        )
+        first = self.store.claim_next_queued_job(worker_id="worker-a")
+        first_token = first["lease_token"]
+
+        self.clock.advance(minutes=2)
+        cutoff = self.clock.value - timedelta(minutes=1)
+        self.assertEqual(
+            1, self.store.mark_stale_running_jobs_interrupted(before=cutoff)
+        )
+        self.store.retry_job("reclaimed")
+        second = self.store.claim_next_queued_job(worker_id="worker-a")
+        second_token = second["lease_token"]
+        self.assertNotEqual(first_token, second_token)
+
+        self.assertFalse(
+            self.store.heartbeat_job(
+                "reclaimed", worker_id="worker-a", lease_token=first_token
+            )
+        )
+        with self.assertRaises(LeaseOwnershipLost):
+            self.store.update_job(
+                "reclaimed",
+                expected_worker_id="worker-a",
+                expected_lease_token=first_token,
+                progress=99,
+                stage="Stale worker write",
+            )
+        with self.assertRaises(LeaseOwnershipLost):
+            self.store.is_cancel_requested(
+                "reclaimed",
+                expected_worker_id="worker-a",
+                expected_lease_token=first_token,
+            )
+
+        current = self.store.get_job("reclaimed")
+        self.assertEqual("running", current["state"])
+        self.assertEqual(0, current["progress"])
+        self.assertEqual(second_token, current["lease_token"])
+
+    def test_owned_running_job_requires_lease_for_completion(self) -> None:
+        self.store.create_job(
+            job_id="owned", kind="manual", mode="validation", request={}
+        )
+        claimed = self.store.claim_next_queued_job(worker_id="worker-a")
+
+        with self.assertRaises(LeaseOwnershipLost):
+            self.store.update_job("owned", state="done")
+        with self.assertRaises(LeaseOwnershipLost):
+            self.store.update_job(
+                "owned",
+                expected_worker_id="worker-a",
+                expected_lease_token="wrong-token",
+                state="done",
+            )
+
+        completed = self.store.update_job(
+            "owned",
+            expected_worker_id="worker-a",
+            expected_lease_token=claimed["lease_token"],
+            state="done",
+        )
+        self.assertEqual("done", completed["state"])
+        self.assertIsNone(completed["worker_id"])
+        self.assertIsNone(completed["lease_token"])
+        self.assertIsNone(completed["heartbeat_at"])
+
+    def test_active_queue_capacity_is_checked_transactionally(self) -> None:
+        self.store.create_job(
+            job_id="capacity-1",
+            kind="manual",
+            mode="validation",
+            request={},
+            max_active_jobs=2,
+        )
+        self.store.create_job(
+            job_id="capacity-2",
+            kind="manual",
+            mode="validation",
+            request={},
+            max_active_jobs=2,
+        )
+
+        with self.assertRaises(QueueCapacityExceeded):
+            self.store.create_job(
+                job_id="capacity-3",
+                kind="manual",
+                mode="validation",
+                request={},
+                max_active_jobs=2,
+            )
+        self.assertIsNone(self.store.get_job("capacity-3"))
+
+        retryable = self.store.create_job(
+            job_id="capacity-retry",
+            kind="manual",
+            mode="validation",
+            request={},
+        )
+        self.store.cancel_job(retryable["id"])
+        with self.assertRaises(QueueCapacityExceeded):
+            self.store.retry_job(retryable["id"], max_active_jobs=2)
+        self.assertEqual(
+            "cancelled", self.store.get_job(retryable["id"])["state"]
+        )
+
+    def test_batch_confirmation_never_partially_enqueues_at_capacity(self) -> None:
+        proposals = [
+            self.proposal(
+                proposal_id=f"batch-proposal-{index}",
+                effective_request={"iam_a_r": index / 10},
+            )
+            for index in range(1, 4)
+        ]
+        active = self.store.create_job(
+            job_id="batch-capacity-active",
+            kind="manual",
+            mode="validation",
+            request={},
+        )
+        confirmations = [
+            {
+                "proposal_id": proposal["id"],
+                "job_id": f"batch-job-{index}",
+            }
+            for index, proposal in enumerate(proposals, start=1)
+        ]
+
+        with self.assertRaises(QueueCapacityExceeded):
+            self.store.confirm_proposals_batch(
+                confirmations, max_active_jobs=3
+            )
+
+        self.assertEqual(
+            [active["id"]],
+            [job["id"] for job in self.store.list_jobs()],
+        )
+        self.assertTrue(
+            all(
+                self.store.get_proposal(proposal["id"])["state"] == "pending"
+                for proposal in proposals
+            )
+        )
+
+        self.store.cancel_job(active["id"])
+        jobs = self.store.confirm_proposals_batch(
+            confirmations, max_active_jobs=3
+        )
+        self.assertEqual(
+            ["batch-job-1", "batch-job-2", "batch-job-3"],
+            [job["id"] for job in jobs],
+        )
+        self.assertTrue(
+            all(
+                self.store.get_proposal(proposal["id"])["state"] == "confirmed"
+                for proposal in proposals
+            )
+        )
+        self.assertEqual(
+            [job["id"] for job in jobs],
+            [
+                job["id"]
+                for job in self.store.confirm_proposals_batch(
+                    confirmations, max_active_jobs=3
+                )
+            ],
+        )
 
     def test_job_update_persists_structured_outputs_and_validates_state(self) -> None:
         job = self.store.create_job(
