@@ -99,6 +99,71 @@ def season_name(value: Any) -> str:
     return "fall"
 
 
+def _validated_seasonal_substitution(
+    profile: Mapping[str, Any],
+    seasonal_factors: Mapping[str, Mapping[str, float]],
+) -> dict[str, Any] | None:
+    """Validate the sole supported cross-season annual substitution.
+
+    The API resolves the profile before model execution.  This layer only
+    verifies that an annotated Fall <- Spring profile really contains exact
+    copies of the Spring factors; it never fills or mutates profile factors.
+    """
+
+    raw = profile.get("seasonal_substitution")
+    if raw is None:
+        # Accept the older internal name while returning one canonical shape.
+        raw = profile.get("seasonal_fallback")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            "Calibration profile seasonal_substitution must be an object."
+        )
+
+    source = str(
+        raw.get("from_season") or raw.get("source_season") or ""
+    ).strip().lower()
+    target = str(
+        raw.get("to_season") or raw.get("target_season") or ""
+    ).strip().lower()
+    mapping = str(raw.get("mapping") or "").strip().lower().replace(" ", "")
+    if not source and not target and mapping in {
+        "fall<-spring",
+        "fall←spring",
+    }:
+        source, target = "spring", "fall"
+    if (source, target) != ("spring", "fall"):
+        raise ValueError(
+            "Only an explicitly resolved Fall <- Spring seasonal "
+            "substitution is supported."
+        )
+
+    spring = seasonal_factors.get("spring")
+    fall = seasonal_factors.get("fall")
+    if not isinstance(spring, Mapping) or not isinstance(fall, Mapping):
+        raise ValueError(
+            "A resolved Fall <- Spring profile must contain both Spring and "
+            "Fall factors."
+        )
+    for system in ("solaredge", "solectria"):
+        if fall.get(system) != spring.get(system):
+            raise ValueError(
+                "A resolved Fall <- Spring profile must copy the exact Spring "
+                f"{system} factor into Fall."
+            )
+
+    canonical = deepcopy(dict(raw))
+    canonical.update(
+        {
+            "from_season": "spring",
+            "to_season": "fall",
+            "mapping": "fall<-spring",
+        }
+    )
+    return canonical
+
+
 def validate_seasonal_calibration_profile(
     profile: Mapping[str, Any],
     *,
@@ -184,6 +249,9 @@ def validate_seasonal_calibration_profile(
             + "."
         )
     canonical["seasonal_factors"] = factors
+    substitution = _validated_seasonal_substitution(canonical, factors)
+    if substitution is not None:
+        canonical["seasonal_substitution"] = substitution
     return canonical
 
 
@@ -1718,6 +1786,7 @@ def apply_frozen_seasonal_calibration(
         required_seasons=ordered_seasons,
     )
     seasonal_factors = profile["seasonal_factors"]
+    seasonal_substitution = profile.get("seasonal_substitution")
 
     for system in ("se", "sol"):
         output[f"{system}_uncalibrated_power_w"] = pd.to_numeric(
@@ -1772,6 +1841,17 @@ def apply_frozen_seasonal_calibration(
                 "source": "frozen_baseline_profile",
                 "fit_source": fit_source,
             }
+            if label == "fall" and seasonal_substitution is not None:
+                record["systems"][public_system].update(
+                    {
+                        "factor_source_season": "spring",
+                        "seasonal_substitution": "fall<-spring",
+                    }
+                )
+        if label == "fall" and seasonal_substitution is not None:
+            record["seasonal_substitution"] = deepcopy(
+                seasonal_substitution
+            )
         season_records.append(record)
 
     calibration = {
@@ -1788,7 +1868,15 @@ def apply_frozen_seasonal_calibration(
         "applied_seasons": ordered_seasons,
         "seasons": season_records,
         "season_count": len(season_records),
-        "warnings": [],
+        "warnings": (
+            [
+                "Fall used the explicitly approved Spring seasonal factors "
+                "for this annual simulation."
+            ]
+            if seasonal_substitution is not None
+            else []
+        ),
+        "seasonal_substitution": deepcopy(seasonal_substitution),
         "fit_metadata": deepcopy(dict(fit_metadata))
         if isinstance(fit_metadata, Mapping)
         else {},
@@ -1805,6 +1893,7 @@ def apply_frozen_seasonal_calibration(
             "applied_to_prediction": False,
             "origin_job_id": profile["origin_job_id"],
             "origin_review_id": profile["origin_review_id"],
+            "seasonal_substitution": deepcopy(seasonal_substitution),
         }
     )
     return output, calibration, diagnostics

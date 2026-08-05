@@ -13,4 +13,7 @@ dist/
 .wrangler/
 *.tgz
 
-tests/
+tests/*
+!tests/test_annual_calibration_api.py
+!tests/test_annual_calibration_model.py
+!tests/test_annual_calibration_ui.py

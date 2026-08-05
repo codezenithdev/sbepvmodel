@@ -25,7 +25,8 @@ OUTPUT:
 
 from __future__ import annotations
 
-from copy import copy
+from collections.abc import Mapping
+from copy import copy, deepcopy
 import json
 
 import numpy as np
@@ -979,18 +980,33 @@ def plot_results(
     calibrated: bool = False,
 ) -> None:
     """Save AC-power and cumulative-energy charts for the selected run mode."""
+    prediction_label = "calibrated" if calibrated else "predicted"
     # AC power
     # Reserve a header band for the energy summary and series legend so neither
     # obscures the power curves. The extra figure height keeps the data axes at
     # approximately the same height as the previous 14 x 6 rendering.
     fig1, ax1 = plt.subplots(figsize=(14, 7.25))
-    ax1.plot(df.index, df["se_predicted_power_w"] / 1000.0, "r-", label="SolarEdge predicted")
-    ax1.plot(df.index, df["sol_predicted_power_w"] / 1000.0, "b-", label="Solectria predicted")
+    ax1.plot(
+        df.index,
+        df["se_predicted_power_w"] / 1000.0,
+        "r-",
+        label=f"SolarEdge {prediction_label}",
+    )
+    ax1.plot(
+        df.index,
+        df["sol_predicted_power_w"] / 1000.0,
+        "b-",
+        label=f"Solectria {prediction_label}",
+    )
     if not annual_mode:
         ax1.plot(df.index, df["se_measured_power_w"] / 1000.0, "r--", label="SolarEdge measured")
         ax1.plot(df.index, df["sol_measured_power_w"] / 1000.0, "b--", label="Solectria measured")
     if annual_mode:
-        ax1.set_title("Predicted AC Power (kW) - Annual Simulation")
+        ax1.set_title(
+            "Calibration-Adjusted AC Power (kW) - Annual Simulation"
+            if calibrated
+            else "Predicted AC Power (kW) - Annual Simulation"
+        )
     elif calibrated:
         ax1.set_title("Calibrated AC Power")
     else:
@@ -1043,13 +1059,27 @@ def plot_results(
 
     # Cumulative energy
     fig2, ax2 = plt.subplots(figsize=(14, 6))
-    ax2.plot(df.index, df["se_predicted_energy_kwh"], "r-", label="SolarEdge predicted")
-    ax2.plot(df.index, df["sol_predicted_energy_kwh"], "b-", label="Solectria predicted")
+    ax2.plot(
+        df.index,
+        df["se_predicted_energy_kwh"],
+        "r-",
+        label=f"SolarEdge {prediction_label}",
+    )
+    ax2.plot(
+        df.index,
+        df["sol_predicted_energy_kwh"],
+        "b-",
+        label=f"Solectria {prediction_label}",
+    )
     if not annual_mode:
         ax2.plot(df.index, df["se_measured_energy_kwh"], "r--", label="SolarEdge measured")
         ax2.plot(df.index, df["sol_measured_energy_kwh"], "b--", label="Solectria measured")
     if annual_mode:
-        ax2.set_title("Cumulative Predicted Energy (kWh) - Annual Simulation")
+        ax2.set_title(
+            "Cumulative Calibration-Adjusted Energy (kWh) - Annual Simulation"
+            if calibrated
+            else "Cumulative Predicted Energy (kWh) - Annual Simulation"
+        )
     elif calibrated:
         ax2.set_title("Calibrated Cumulative Energy")
     else:
@@ -1082,45 +1112,84 @@ def plot_results(
     plt.close("all")
 
 
-def monthly_energy_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Return one predicted-energy summary row per local calendar month."""
+def monthly_energy_table(
+    df: pd.DataFrame,
+    *,
+    calibrated: bool = False,
+) -> pd.DataFrame:
+    """Return one annual energy summary row per local calendar month."""
     se_monthly = df["se_predicted_energy_step_kwh"].resample("MS").sum()
     sol_monthly = df["sol_predicted_energy_step_kwh"].resample("MS").sum()
     sol_monthly = sol_monthly.reindex(se_monthly.index)
+    energy_label = "calibrated" if calibrated else "predicted"
+    se_column = f"SolarEdge_{energy_label}_kWh"
+    sol_column = f"Solectria_{energy_label}_kWh"
     result = pd.DataFrame(
         {
             "month": se_monthly.index.strftime("%b %Y"),
             "month_start": se_monthly.index.tz_localize(None),
-            "SolarEdge_predicted_kWh": se_monthly.to_numpy(),
-            "Solectria_predicted_kWh": sol_monthly.to_numpy(),
+            se_column: se_monthly.to_numpy(),
+            sol_column: sol_monthly.to_numpy(),
         }
     )
-    result["difference_kWh"] = (
-        result["SolarEdge_predicted_kWh"] - result["Solectria_predicted_kWh"]
-    )
+    result["difference_kWh"] = result[se_column] - result[sol_column]
     result["difference_pct"] = np.where(
-        result["Solectria_predicted_kWh"] != 0,
-        result["difference_kWh"] / result["Solectria_predicted_kWh"] * 100.0,
+        result[sol_column] != 0,
+        result["difference_kWh"] / result[sol_column] * 100.0,
         np.nan,
     )
+    if calibrated and {
+        "se_uncalibrated_energy_step_kwh",
+        "sol_uncalibrated_energy_step_kwh",
+    }.issubset(df.columns):
+        result["SolarEdge_physics_only_kWh"] = (
+            df["se_uncalibrated_energy_step_kwh"]
+            .resample("MS")
+            .sum()
+            .reindex(se_monthly.index)
+            .to_numpy()
+        )
+        result["Solectria_physics_only_kWh"] = (
+            df["sol_uncalibrated_energy_step_kwh"]
+            .resample("MS")
+            .sum()
+            .reindex(se_monthly.index)
+            .to_numpy()
+        )
     return result
 
 
-def plot_monthly_energy(df: pd.DataFrame, out_prefix: str) -> None:
-    """Save the annual-result monthly predicted-energy comparison chart."""
-    monthly = monthly_energy_table(df)
+def plot_monthly_energy(
+    df: pd.DataFrame,
+    out_prefix: str,
+    *,
+    calibrated: bool = False,
+) -> None:
+    """Save the annual-result monthly energy comparison chart."""
+    monthly = monthly_energy_table(df, calibrated=calibrated)
     x = np.arange(len(monthly))
     width = 0.38
     fig, ax = plt.subplots(figsize=(14, 6))
-    se_values = monthly["SolarEdge_predicted_kWh"].to_numpy(dtype=float)
-    sol_values = monthly["Solectria_predicted_kWh"].to_numpy(dtype=float)
+    energy_label = "calibrated" if calibrated else "predicted"
+    se_column = f"SolarEdge_{energy_label}_kWh"
+    sol_column = f"Solectria_{energy_label}_kWh"
+    se_values = monthly[se_column].to_numpy(dtype=float)
+    sol_values = monthly[sol_column].to_numpy(dtype=float)
     ax.bar(x - width / 2, se_values, width=width, color="red", label="SolarEdge (kWh)")
     ax.bar(x + width / 2, sol_values, width=width, color="blue", label="Solectria (kWh)")
     ax.set_xticks(x)
     ax.set_xticklabels(monthly["month"], rotation=35, ha="right")
     ax.set_xlabel("Month")
-    ax.set_ylabel("Predicted Energy (kWh)")
-    ax.set_title("Monthly Predicted Energy - Annual Simulation")
+    ax.set_ylabel(
+        "Calibration-Adjusted Energy (kWh)"
+        if calibrated
+        else "Predicted Energy (kWh)"
+    )
+    ax.set_title(
+        "Monthly Calibration-Adjusted Energy - Annual Simulation"
+        if calibrated
+        else "Monthly Predicted Energy - Annual Simulation"
+    )
     ax.grid(True, axis="y", alpha=0.25)
     ax.legend(loc="best")
 
@@ -1131,7 +1200,7 @@ def plot_monthly_energy(df: pd.DataFrame, out_prefix: str) -> None:
         label = "n/a" if not np.isfinite(pct_value) else f"{pct_value:+.1f}%"
         ax.text(
             x[index],
-            max(row["SolarEdge_predicted_kWh"], row["Solectria_predicted_kWh"]) + pad,
+            max(row[se_column], row[sol_column]) + pad,
             label,
             ha="center",
             va="bottom",
@@ -1159,6 +1228,207 @@ def plot_monthly_energy(df: pd.DataFrame, out_prefix: str) -> None:
     plt.close(fig)
 
 
+def _audit_value(value: object) -> object:
+    """Return an Excel-safe scalar while retaining structured audit data."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    try:
+        return json.dumps(value, sort_keys=True, default=str, allow_nan=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _first_present(mapping: Mapping[str, object], names: tuple[str, ...]) -> object:
+    for name in names:
+        if name in mapping:
+            return mapping[name]
+    return None
+
+
+def _settings_delta_rows(application: Mapping[str, object]) -> list[dict]:
+    raw = _first_present(
+        application,
+        (
+            "settings_delta",
+            "settings_deltas",
+            "setting_differences",
+            "settings_differences",
+        ),
+    )
+    rows: list[dict] = []
+    if isinstance(raw, Mapping):
+        items = raw.items()
+    elif isinstance(raw, list):
+        items = enumerate(raw)
+    else:
+        items = ()
+    for key, raw_details in items:
+        if isinstance(raw_details, Mapping):
+            details = dict(raw_details)
+            setting = _first_present(
+                details,
+                ("setting", "field", "name", "parameter"),
+            ) or key
+            inherited = _first_present(
+                details,
+                (
+                    "calibrated_value",
+                    "inherited_value",
+                    "baseline_value",
+                    "original_value",
+                    "from",
+                    "before",
+                ),
+            )
+            annual = _first_present(
+                details,
+                (
+                    "annual_value",
+                    "requested_value",
+                    "current_value",
+                    "resolved_value",
+                    "to",
+                    "after",
+                    "value",
+                ),
+            )
+            changed = details.get("changed")
+            extra = {
+                name: _audit_value(value)
+                for name, value in details.items()
+                if name
+                not in {
+                    "setting",
+                    "field",
+                    "name",
+                    "parameter",
+                    "calibrated_value",
+                    "inherited_value",
+                    "baseline_value",
+                    "original_value",
+                    "from",
+                    "before",
+                    "annual_value",
+                    "requested_value",
+                    "current_value",
+                    "resolved_value",
+                    "to",
+                    "after",
+                    "value",
+                    "changed",
+                }
+            }
+            rows.append(
+                {
+                    "setting": setting,
+                    "calibrated_value": _audit_value(inherited),
+                    "annual_value": _audit_value(annual),
+                    "changed": (
+                        bool(changed)
+                        if changed is not None
+                        else inherited != annual
+                    ),
+                    **extra,
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "setting": key,
+                    "calibrated_value": None,
+                    "annual_value": _audit_value(raw_details),
+                    "changed": True,
+                }
+            )
+    if not rows:
+        rows.append(
+            {
+                "setting": "(none)",
+                "calibrated_value": None,
+                "annual_value": None,
+                "changed": False,
+            }
+        )
+    return rows
+
+
+def _substitution_audit_rows(
+    application: Mapping[str, object],
+    calibration_factors: Mapping[str, object] | None,
+) -> list[dict]:
+    raw = _first_present(
+        application,
+        ("seasonal_substitution", "seasonal_fallback", "substitution"),
+    )
+    if raw is None and isinstance(calibration_factors, Mapping):
+        raw = calibration_factors.get("seasonal_substitution")
+    if isinstance(raw, Mapping):
+        return [
+            {
+                "status": "used",
+                **{
+                    str(key): _audit_value(value)
+                    for key, value in raw.items()
+                },
+            }
+        ]
+    if isinstance(raw, list):
+        rows = []
+        for item in raw:
+            if isinstance(item, Mapping):
+                rows.append(
+                    {
+                        "status": "used",
+                        **{
+                            str(key): _audit_value(value)
+                            for key, value in item.items()
+                        },
+                    }
+                )
+        if rows:
+            return rows
+    return [{"status": "not_used"}]
+
+
+def _calibration_lineage_rows(
+    application: Mapping[str, object],
+    calibration_factors: Mapping[str, object] | None,
+) -> list[dict[str, object]]:
+    values: dict[str, object] = {}
+    if isinstance(calibration_factors, Mapping):
+        for key in (
+            "method",
+            "application_mode",
+            "profile_schema_version",
+            "origin_job_id",
+            "origin_review_id",
+            "origin_source_sha256",
+        ):
+            if key in calibration_factors:
+                values[key] = calibration_factors[key]
+    excluded = {
+        "settings_delta",
+        "settings_deltas",
+        "setting_differences",
+        "settings_differences",
+        "seasonal_substitution",
+        "seasonal_fallback",
+        "substitution",
+        "origin_profile",
+        "resolved_profile",
+    }
+    for key, value in application.items():
+        if key not in excluded:
+            values[str(key)] = value
+    return [
+        {"parameter": key, "value": _audit_value(value)}
+        for key, value in values.items()
+    ] or [{"parameter": "status", "value": "applied"}]
+
+
 def write_excel(
     df: pd.DataFrame,
     excel_path: str,
@@ -1167,6 +1437,7 @@ def write_excel(
     calibration_factors: dict | None = None,
     factor_driver_diagnostics: dict | None = None,
     data_quality_context: dict | None = None,
+    calibration_application_context: dict | None = None,
 ) -> None:
     """Write time series, calibration audit tables, layout, and metadata."""
     calibration_factors = (
@@ -1178,6 +1449,13 @@ def write_excel(
     data_quality_context = (
         data_quality_context or meta.get("_data_quality_context")
     )
+    calibration_application_context = (
+        calibration_application_context
+        or meta.get("_calibration_application_context")
+        or {}
+    )
+    if not isinstance(calibration_application_context, Mapping):
+        calibration_application_context = {}
     out = df.copy()
     out["timestamp_local_naive"] = out.index.tz_localize(None)
     out["timestamp_utc_naive"] = out["timestamp_utc"].dt.tz_localize(None)
@@ -1309,9 +1587,28 @@ def write_excel(
                 writer, sheet_name="data_quality_review", index=False
             )
         if annual_mode:
-            monthly_energy_table(df).to_excel(
+            monthly_energy_table(
+                df,
+                calibrated=meta.get("calibration_enabled") is True,
+            ).to_excel(
                 writer, sheet_name="monthly_energy", index=False
             )
+        if meta.get("calibration_enabled") is True:
+            pd.DataFrame(
+                _calibration_lineage_rows(
+                    calibration_application_context,
+                    calibration_factors,
+                )
+            ).to_excel(writer, sheet_name="calibration_lineage", index=False)
+            pd.DataFrame(
+                _settings_delta_rows(calibration_application_context)
+            ).to_excel(writer, sheet_name="settings_delta", index=False)
+            pd.DataFrame(
+                _substitution_audit_rows(
+                    calibration_application_context,
+                    calibration_factors,
+                )
+            ).to_excel(writer, sheet_name="substitution_audit", index=False)
         public_meta = {
             key: value
             for key, value in meta.items()
@@ -1346,6 +1643,7 @@ def run_model(
     data_quality_context: dict | None = None,
     expected_interval_seconds: int | None = None,
     calibration_profile: dict | None = None,
+    calibration_application_context: dict | None = None,
     calibrate_model: bool = True,
 ) -> dict:
     """Run the full model on input_csv, write PNGs + Excel, return a stats dict.
@@ -1370,6 +1668,15 @@ def run_model(
         and effective_iam_a_r is not None
         and not np.isclose(effective_iam_a_r, A_R)
     )
+    application_context_supplied = calibration_application_context is not None
+    if calibration_application_context is None:
+        calibration_application: dict = {}
+    elif isinstance(calibration_application_context, Mapping):
+        calibration_application = deepcopy(
+            dict(calibration_application_context)
+        )
+    else:
+        raise ValueError("calibration_application_context must be an object.")
 
     data_quality_warnings: list[str] = []
     if input_kind == "midc":
@@ -1396,15 +1703,34 @@ def run_model(
         curtailment_limit_kw = DEFAULT_CURTAILMENT_LIMIT_KW
     calibration_factors: dict | None = None
     factor_driver_diagnostics: dict | None = None
-    calibration_enabled = bool(
-        calibrate_model and input_kind == "historian" and not annual_mode
+    fitting_enabled = bool(
+        calibrate_model
+        and calibration_profile is None
+        and input_kind == "historian"
+        and not annual_mode
     )
+    frozen_profile_enabled = calibration_profile is not None
+    calibration_enabled = fitting_enabled or frozen_profile_enabled
     if calibration_enabled:
-        if calibration_profile is not None:
+        if frozen_profile_enabled:
             if progress_cb:
                 progress_cb(
                     0.85,
                     "Applying frozen baseline seasonal calibration factors",
+                )
+            profile_for_application = deepcopy(calibration_profile)
+            context_substitution = calibration_application.get(
+                "seasonal_substitution"
+            )
+            if (
+                context_substitution is not None
+                and "seasonal_substitution" not in profile_for_application
+            ):
+                # The backend keeps the resolved factor profile and consent
+                # audit as separate immutable provenance objects. Join copies
+                # only for model application so neither source is mutated.
+                profile_for_application["seasonal_substitution"] = deepcopy(
+                    context_substitution
                 )
             (
                 df,
@@ -1412,7 +1738,7 @@ def run_model(
                 factor_driver_diagnostics,
             ) = apply_frozen_seasonal_calibration(
                 df,
-                calibration_profile=calibration_profile,
+                calibration_profile=profile_for_application,
             )
         else:
             if progress_cb:
@@ -1458,8 +1784,7 @@ def run_model(
         expected_interval_seconds=expected_interval_seconds,
     )
     if (
-        calibration_enabled
-        and calibration_profile is None
+        fitting_enabled
         and calibration_factors is not None
     ):
         calibration_factors["energy_balance"] = (
@@ -1488,11 +1813,44 @@ def run_model(
         plot_results(
             uncalibrated_plot_df,
             out_prefix=f"{output_base}_uncalibrated",
+            annual_mode=annual_mode,
         )
     if annual_mode:
         if progress_cb:
             progress_cb(0.93, "Rendering monthly energy chart")
-        plot_monthly_energy(df, out_prefix=output_base)
+        plot_monthly_energy(
+            df,
+            out_prefix=output_base,
+            calibrated=calibration_enabled,
+        )
+
+    seasonal_substitution = (
+        deepcopy(calibration_factors.get("seasonal_substitution"))
+        if calibration_factors
+        and calibration_factors.get("seasonal_substitution") is not None
+        else None
+    )
+    calibration_source = (
+        {
+            "origin_job_id": calibration_factors.get("origin_job_id"),
+            "origin_review_id": calibration_factors.get("origin_review_id"),
+            "origin_source_sha256": calibration_factors.get(
+                "origin_source_sha256"
+            ),
+            "profile_fingerprint": _first_present(
+                calibration_application,
+                (
+                    "resolved_profile_fingerprint",
+                    "resolved_profile_sha256",
+                    "profile_fingerprint",
+                    "origin_profile_fingerprint",
+                    "origin_profile_sha256",
+                ),
+            ),
+        }
+        if calibration_factors
+        else None
+    )
 
     meta = {
         "script": "sbe_pv_model.py",
@@ -1543,15 +1901,60 @@ def run_model(
             else "not_applied"
         ),
         "calibration_enabled": calibration_enabled,
+        "calibration_kind": (
+            "frozen_profile"
+            if frozen_profile_enabled
+            else "fitted_profile"
+            if fitting_enabled
+            else "not_applied"
+        ),
         "calibration_factors": (
             json.dumps(calibration_factors, sort_keys=True)
             if calibration_factors
+            else "None"
+        ),
+        "calibration_application": (
+            json.dumps(
+                {
+                    key: value
+                    for key, value in calibration_application.items()
+                    if key not in {"origin_profile", "resolved_profile"}
+                },
+                sort_keys=True,
+                default=str,
+                allow_nan=False,
+            )
+            if application_context_supplied
+            else "None"
+        ),
+        "calibration_source": (
+            json.dumps(
+                calibration_source,
+                sort_keys=True,
+                default=str,
+                allow_nan=False,
+            )
+            if calibration_source
+            else "None"
+        ),
+        "seasonal_substitution": (
+            json.dumps(
+                seasonal_substitution,
+                sort_keys=True,
+                default=str,
+                allow_nan=False,
+            )
+            if seasonal_substitution
             else "None"
         ),
         "data_quality_reviewed": bool(data_quality_context),
         "_calibration_factors": calibration_factors,
         "_factor_driver_diagnostics": factor_driver_diagnostics,
         "_data_quality_context": data_quality_context,
+        "_calibration_profile": deepcopy(calibration_profile),
+        "_calibration_application_context": deepcopy(
+            calibration_application
+        ),
     }
     if progress_cb:
         progress_cb(0.97, "Creating Excel workbook")
@@ -1559,7 +1962,9 @@ def run_model(
     if progress_cb:
         progress_cb(
             1.0,
-            "Annual model predictions ready"
+            "Calibrated annual model predictions ready"
+            if annual_mode and calibration_enabled
+            else "Annual model predictions ready"
             if annual_mode
             else (
                 "Calibrated model predictions ready"
@@ -1612,17 +2017,70 @@ def run_model(
         "se_pct": None if annual_mode else _pct(se_pred, se_meas),
         "sol_pct": None if annual_mode else _pct(sol_pred, sol_meas),
         "uncalibrated": (
-            None
-            if annual_mode
-            else {
+            {
                 "se_predicted_kwh": _safe(se_uncalibrated),
                 "sol_predicted_kwh": _safe(sol_uncalibrated),
-                "se_pct": _pct(se_uncalibrated, se_meas),
-                "sol_pct": _pct(sol_uncalibrated, sol_meas),
+                "se_pct": (
+                    None
+                    if annual_mode
+                    else _pct(se_uncalibrated, se_meas)
+                ),
+                "sol_pct": (
+                    None
+                    if annual_mode
+                    else _pct(sol_uncalibrated, sol_meas)
+                ),
             }
+            if calibration_enabled or not annual_mode
+            else None
+        ),
+        "physics_only": (
+            {
+                "se_predicted_kwh": _safe(se_uncalibrated),
+                "sol_predicted_kwh": _safe(sol_uncalibrated),
+            }
+            if calibration_enabled
+            else None
+        ),
+        "calibration_adjusted": (
+            {
+                "se_predicted_kwh": _safe(se_pred),
+                "sol_predicted_kwh": _safe(sol_pred),
+            }
+            if calibration_enabled
+            else None
         ),
         "calibration_factors": calibration_factors,
         "calibration_enabled": calibration_enabled,
+        "calibration_kind": (
+            "frozen_profile"
+            if frozen_profile_enabled
+            else "fitted_profile"
+            if fitting_enabled
+            else "not_applied"
+        ),
+        "calibration_application": (
+            deepcopy(calibration_application)
+            if application_context_supplied
+            else None
+        ),
+        "calibration_source": calibration_source,
+        "calibration_profile_fingerprint": (
+            calibration_source.get("profile_fingerprint")
+            if calibration_source
+            else None
+        ),
+        "seasonal_substitution": seasonal_substitution,
+        "seasonal_substitution_warning": (
+            "Fall used Spring substitute"
+            if seasonal_substitution is not None
+            else None
+        ),
+        "energy_result_label": (
+            "calibration-adjusted"
+            if calibration_enabled
+            else "physics-only prediction"
+        ),
         "factor_driver_diagnostics": factor_driver_diagnostics,
         "data_quality_review": data_quality_context,
         "predicted_difference_kwh": _safe(predicted_difference),

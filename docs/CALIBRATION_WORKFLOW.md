@@ -127,9 +127,10 @@ energy. The result records the final factor, reviewed sample and hour coverage,
 target energy, predicted energy, and residual.
 
 The factor is applied timestamp by timestamp according to the local
-`America/Denver` season. There is no daylight-only sample filter or cross-season
-fallback: retained nighttime, low-output, and weather-fallback rows contribute
-to the same seasonal energy calculation as every other reviewed row.
+`America/Denver` season. Calibration fitting never uses a daylight-only sample
+filter or a cross-season fallback: retained nighttime, low-output, and
+weather-fallback rows contribute to the same seasonal energy calculation as
+every other reviewed row.
 Factors are not artificially capped; values outside the typical `0.5–1.5`
 range are retained and flagged for review.
 
@@ -166,6 +167,36 @@ backstop: a validation candidate must carry data-quality provenance whose
 reviewed-source SHA-256 matches the job source. Thus a legacy or cross-run
 candidate cannot be promoted into the active calibration baseline without
 first passing through the visible review workflow.
+
+### Calibrated annual simulation
+
+Annual MIDC simulations may apply the immutable seasonal profile from the
+current promoted, reviewed calibration. The annual run inherits the baseline's
+backtracking, efficiency, IAM, and curtailment settings as editable starting
+values. Any edits are recorded as explicit differences from the calibration
+settings. Annual dates remain independent of the historian calibration window.
+
+The annual weather data is never used to refit calibration factors. The model
+first produces its physics-only prediction with the submitted annual settings,
+then applies the frozen factor for each `America/Denver` meteorological season
+before curtailment and energy integration. The original physics-only columns
+remain in the result and workbook for audit and comparison.
+
+The sole supported cross-season exception is an annual-only Fall-from-Spring
+substitution. If an annual range requires Fall, the promoted profile lacks Fall,
+and Spring exists, the first run request returns a confirmation requirement
+without queuing a job or downloading MIDC data. The dashboard shows the exact
+SolarEdge and Solectria Spring factors and asks the user whether to use them for
+Fall. The server accepts only an explicit, request-bound confirmation for the
+exact `Fall <- Spring` mapping, rechecks that the promoted baseline and request
+are unchanged, and records the copied factors and server confirmation time in
+run provenance and exports. The reviewed profile itself is never modified.
+
+If a true Fall factor becomes available it always takes precedence. Missing
+Spring, a missing required season other than Fall, a changed annual request, or
+a changed promoted baseline blocks the confirmed submission and requires a new
+review. Annual requests without a calibration baseline remain physics-only for
+backward compatibility.
 
 ## Data-driven diagnostic extension
 

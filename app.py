@@ -35,7 +35,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 import bazefield_historian as historian
 import midc_stac_hourly as midc
@@ -222,6 +222,8 @@ class CalibrationDecisionRequest(StrictRequest):
 class AnnualRunRequest(StrictRequest):
     from_date: str  # YYYY-MM-DD, inclusive fixed MST date
     to_date: str
+    interval_value: int = 1
+    interval_unit: Literal["minutes", "hours", "days"] = "hours"
     backtrack: bool = model.BACKTRACK
     solaredge_inverter_efficiency: float = 1.0
     solaredge_bos_efficiency: float = 1.0
@@ -236,6 +238,22 @@ class AnnualRunRequest(StrictRequest):
     iam_a_r: float | None = model.A_R
     curtailment_enabled: bool = False
     curtailment_limit_kw: float | None = None
+
+
+class SeasonalFallbackAcknowledgement(StrictRequest):
+    """Explicit consent for the one supported annual cross-season fallback."""
+
+    accepted: StrictBool
+    source_season: Literal["spring"]
+    target_season: Literal["fall"]
+    confirmation_context_sha256: str
+
+
+class AnnualRunSubmission(AnnualRunRequest):
+    """Annual request plus API-only calibration selection and consent fields."""
+
+    calibration_baseline_job_id: str | None = None
+    seasonal_fallback_acknowledgement: SeasonalFallbackAcknowledgement | None = None
 
 
 class ChatMessage(StrictRequest):
@@ -521,6 +539,37 @@ def _request_fields_set(req: BaseModel) -> set[str]:
     return set(fields_set)
 
 
+def _annual_interval_seconds(req: AnnualRunRequest) -> int:
+    """Return a model-safe whole-hour annual interval."""
+    try:
+        interval_value = int(req.interval_value)
+        seconds = interval_value * UNIT_SECONDS[req.interval_unit]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid annual interval.") from exc
+    if interval_value < 1:
+        raise HTTPException(
+            status_code=422, detail="Interval value must be at least 1."
+        )
+    if seconds < 3_600 or seconds > 86_400 or seconds % 3_600:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Annual Simulation intervals must be whole hours between "
+                "1 hour and 1 day."
+            ),
+        )
+    interval_hours = seconds // 3_600
+    if 24 % interval_hours:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Annual Simulation intervals must divide evenly into a "
+                "24-hour day."
+            ),
+        )
+    return seconds
+
+
 def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
     req.solaredge_inverter_efficiency = _efficiency(
         req.solaredge_inverter_efficiency, "SolarEdge inverter efficiency"
@@ -550,11 +599,14 @@ def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
                 status_code=422, detail="Martin-Ruiz a_r must be positive."
             )
 
+    if int(req.interval_value) < 1:
+        raise HTTPException(
+            status_code=422, detail="Interval value must be at least 1."
+        )
+    if isinstance(req, AnnualRunRequest):
+        _annual_interval_seconds(req)
+
     if isinstance(req, RunRequest):
-        if int(req.interval_value) < 1:
-            raise HTTPException(
-                status_code=422, detail="Interval value must be at least 1."
-            )
         try:
             start = datetime.fromisoformat(_iso(req.from_date, req.from_time))
             end = datetime.fromisoformat(_iso(req.to_date, req.to_time))
@@ -934,6 +986,69 @@ def _run_request_context(req: RunRequest | AnnualRunRequest) -> dict:
     context = _model_dump(req)
     context.update(_iam_metadata(req))
     return context
+
+
+_CALIBRATION_SETTING_FIELDS = (
+    "backtrack",
+    "solaredge_inverter_efficiency",
+    "solaredge_bos_efficiency",
+    "solectria_inverter_efficiency",
+    "solectria_bos_efficiency",
+    "iam_model",
+    "iam_a_r",
+    "curtailment_enabled",
+    "curtailment_limit_kw",
+)
+_METEOROLOGICAL_SEASONS = ("winter", "spring", "summer", "fall")
+_ANNUAL_FALLBACK_MAPPING = {
+    "target_season": "fall",
+    "source_season": "spring",
+}
+
+
+def _json_sha256(value: Any) -> str:
+    """Return a stable SHA-256 fingerprint for a JSON-safe value."""
+
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _annual_submission_request(
+    submission: AnnualRunSubmission,
+    *,
+    inherited_settings: dict[str, Any] | None = None,
+) -> tuple[AnnualRunRequest, dict[str, Any]]:
+    """Return an executable annual request with API-only controls removed.
+
+    When a reviewed baseline is selected, omitted shared settings inherit from
+    that baseline. Explicitly supplied annual fields remain user-editable.
+    """
+
+    supplied_fields = _request_fields_set(submission)
+    _validate_run_request(submission)
+    _validate_curtailment(submission)
+    _annual_dates(submission)
+    values = _model_dump(submission)
+    values.pop("calibration_baseline_job_id", None)
+    values.pop("seasonal_fallback_acknowledgement", None)
+    if inherited_settings:
+        effective_fields = set(supplied_fields)
+        if "include_iam" in supplied_fields and "iam_model" not in supplied_fields:
+            effective_fields.add("iam_model")
+        for field in _CALIBRATION_SETTING_FIELDS:
+            if field not in effective_fields:
+                values[field] = deepcopy(inherited_settings[field])
+    request = AnnualRunRequest(**values)
+    _validate_run_request(request)
+    _validate_curtailment(request)
+    _annual_dates(request)
+    return request, _run_request_context(request)
 
 
 def _calibration_review_path(review_id: str, suffix: str) -> Path:
@@ -1371,7 +1486,7 @@ def _canonical_request(
     try:
         request_model: RunRequest | AnnualRunRequest
         if mode == "annual":
-            for unsupported in ("from_time", "to_time", "interval_value", "interval_unit"):
+            for unsupported in ("from_time", "to_time"):
                 values.pop(unsupported, None)
             request_model = AnnualRunRequest(**values)
         else:
@@ -1566,7 +1681,7 @@ def _same_input_context(
     mode: str, baseline: dict[str, Any], candidate: dict[str, Any]
 ) -> bool:
     if mode == "annual":
-        keys = ("from_date", "to_date")
+        keys = ("from_date", "to_date", "interval_value", "interval_unit")
     else:
         keys = (
             "from_date",
@@ -1789,6 +1904,153 @@ def _baseline_calibration_profile(
     return validate_seasonal_calibration_profile(
         profile,
         required_seasons=required_seasons,
+    )
+
+
+def _annual_request_seasons(request: dict[str, Any]) -> tuple[str, ...]:
+    """Return Denver-local meteorological seasons in an inclusive annual range."""
+
+    try:
+        start = date.fromisoformat(str(request["from_date"]))
+        end = date.fromisoformat(str(request["to_date"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Annual request dates are unavailable for calibration coverage."
+        ) from exc
+    if end < start:
+        raise ValueError("Annual request end must not be before its start.")
+    cursor = date(start.year, start.month, 1)
+    final_month = date(end.year, end.month, 1)
+    seasons: list[str] = []
+    while cursor <= final_month:
+        label = season_name(cursor)
+        if label not in seasons:
+            seasons.append(label)
+        cursor = (
+            date(cursor.year + 1, 1, 1)
+            if cursor.month == 12
+            else date(cursor.year, cursor.month + 1, 1)
+        )
+    return tuple(seasons)
+
+
+def _baseline_transferable_settings(baseline: dict[str, Any]) -> dict[str, Any]:
+    """Return the nine canonical settings shared by calibration and annual runs."""
+
+    request = RunRequest(**dict(baseline.get("request") or {}))
+    _validate_run_request(request)
+    _validate_curtailment(request)
+    canonical = _run_request_context(request)
+    return {
+        field: deepcopy(canonical.get(field))
+        for field in _CALIBRATION_SETTING_FIELDS
+    }
+
+
+def _current_calibration_bundle() -> dict[str, Any] | None:
+    """Return a verified current reviewed calibration and its safe derived data."""
+
+    promoted = AGENT_STORE.get_current_baseline("validation")
+    if not promoted or not isinstance(promoted.get("job"), dict):
+        return None
+    baseline = promoted["job"]
+    if baseline.get("state") != "done" or baseline.get("mode") != "validation":
+        return None
+    quality = _reviewed_baseline_data_quality(baseline)
+    source_path, source_hash = _verified_baseline_source(baseline)
+    if quality is None or not source_path or not source_hash:
+        return None
+    profile = _baseline_calibration_profile(
+        baseline,
+        candidate_request=dict(baseline.get("request") or {}),
+    )
+    if profile is None:
+        return None
+    canonical_profile = validate_seasonal_calibration_profile(profile)
+    return {
+        "promotion": deepcopy(promoted),
+        "baseline": deepcopy(baseline),
+        "quality": quality,
+        "profile": canonical_profile,
+        "profile_sha256": _json_sha256(canonical_profile),
+        "settings": _baseline_transferable_settings(baseline),
+    }
+
+
+def _public_current_calibration(bundle: dict[str, Any]) -> dict[str, Any]:
+    baseline = bundle["baseline"]
+    promotion = bundle["promotion"]
+    profile = bundle["profile"]
+    quality = bundle["quality"]
+    request = dict(baseline.get("request") or {})
+    factors = deepcopy(profile["seasonal_factors"])
+    return {
+        "available": True,
+        "verified": True,
+        "job_id": str(baseline["id"]),
+        "origin_job_id": str(profile["origin_job_id"]),
+        "review_id": str(quality["review_id"]),
+        "promoted_at": promotion.get("promoted_at"),
+        "receipt_url": f"/api/status/{baseline['id']}",
+        "profile_sha256": bundle["profile_sha256"],
+        "profile_fingerprint": bundle["profile_sha256"],
+        "calibration_window": {
+            "from_date": request.get("from_date"),
+            "from_time": request.get("from_time") or "00:00",
+            "to_date": request.get("to_date"),
+            "to_time": request.get("to_time") or "00:00",
+            "timezone": "America/Denver",
+            "end_exclusive": True,
+        },
+        "settings": deepcopy(bundle["settings"]),
+        "factor_coverage": {
+            season: season in factors for season in _METEOROLOGICAL_SEASONS
+        },
+        "seasonal_factors": factors,
+    }
+
+
+def _calibration_setting_deltas(
+    baseline_settings: dict[str, Any], annual_request: dict[str, Any]
+) -> list[dict[str, Any]]:
+    deltas: list[dict[str, Any]] = []
+    for field in _CALIBRATION_SETTING_FIELDS:
+        calibrated = baseline_settings.get(field)
+        annual = annual_request.get(field)
+        if annual != calibrated:
+            deltas.append(
+                {
+                    "field": field,
+                    "calibrated_value": deepcopy(calibrated),
+                    "annual_value": deepcopy(annual),
+                }
+            )
+    return deltas
+
+
+def _annual_confirmation_context(
+    *,
+    baseline_job_id: str,
+    profile_sha256: str,
+    annual_request: dict[str, Any],
+    required_seasons: tuple[str, ...],
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "baseline_job_id": baseline_job_id,
+        "profile_sha256": profile_sha256,
+        "annual_request": deepcopy(annual_request),
+        "required_seasons": list(required_seasons),
+        "mapping": deepcopy(_ANNUAL_FALLBACK_MAPPING),
+    }
+
+
+def _calibration_conflict(
+    code: str, message: str, **context: Any
+) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={"code": code, "message": message, **context},
     )
 
 
@@ -2158,11 +2420,11 @@ def _handle_scenario_tool(
     target_mode = overrides.pop("mode", req.active_mode)
     if target_mode not in {"validation", "annual"}:
         raise HTTPException(status_code=422, detail="Unsupported analysis mode.")
-    validation_only = {"from_time", "to_time", "interval_value", "interval_unit"}
+    validation_only = {"from_time", "to_time"}
     if target_mode == "annual" and validation_only.intersection(overrides):
         raise HTTPException(
             status_code=422,
-            detail="Times and intervals can only be changed for calibration runs.",
+            detail="Start and end times can only be changed for calibration runs.",
         )
     if "interval_value" in overrides and "interval_unit" not in overrides:
         raise HTTPException(
@@ -2900,11 +3162,18 @@ def _model_worker_loop() -> None:
                 _validate_run_request(req)
                 _validate_curtailment(req)
                 _annual_dates(req)
+                provenance = record.get("provenance") or {}
                 _run_annual_job(
                     job_id,
                     req,
                     source_path=record.get("source_path"),
                     expected_source_hash=record.get("source_hash"),
+                    calibration_profile=provenance.get(
+                        "calibration_profile"
+                    ),
+                    calibration_application_context=provenance.get(
+                        "calibration_application"
+                    ),
                 )
             else:
                 req = RunRequest(**record["request"])
@@ -3020,7 +3289,8 @@ def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
         and should_promote
     ):
         try:
-            AGENT_STORE.promote_job(job_id)
+            with _ORCHESTRATION_LOCK:
+                AGENT_STORE.promote_job(job_id)
         except AgentStoreError:
             logger.exception("Completed baseline %s could not be promoted", job_id)
 
@@ -3185,6 +3455,8 @@ def _run_annual_job(
     *,
     source_path: str | Path | None = None,
     expected_source_hash: str | None = None,
+    calibration_profile: dict[str, Any] | None = None,
+    calibration_application_context: dict[str, Any] | None = None,
 ) -> None:
     JOBS.setdefault(job_id, {"mode": "annual", "state": "running"})
 
@@ -3194,6 +3466,8 @@ def _run_annual_job(
 
     try:
         start_date, end_date = _annual_dates(req)
+        interval_seconds = _annual_interval_seconds(req)
+        interval_hours = interval_seconds // 3_600
         csv_path = (
             Path(source_path)
             if source_path and expected_source_hash
@@ -3208,10 +3482,12 @@ def _run_annual_job(
             source_hash = verify_source_sha256(csv_path, expected_source_hash)
             import pandas as pd
 
-            hourly_rows = int(len(pd.read_csv(csv_path)))
+            interval_rows = int(len(pd.read_csv(csv_path)))
             source_quality = {
                 "raw_rows": None,
-                "hourly_rows": hourly_rows,
+                "hourly_rows": interval_rows if interval_seconds == 3_600 else None,
+                "interval_rows": interval_rows,
+                "interval_seconds": interval_seconds,
                 "chunk_count": None,
                 "missing_value_count": None,
                 "affected_hour_count": None,
@@ -3225,16 +3501,21 @@ def _run_annual_job(
             source = midc.fetch_hourly_data(
                 start_date,
                 end_date,
+                interval_seconds=interval_seconds,
                 progress_cb=download_progress,
             )
             _check_job_cancelled(job_id)
-            set_progress(27, "Saving exact MIDC hourly source")
-            midc.write_csv_atomically(source.hourly, csv_path)
+            set_progress(27, "Saving exact MIDC interval source")
+            midc.write_csv_atomically(source.interval_data, csv_path)
             source_hash = sha256_file(csv_path)
             source_warnings = list(source.warnings)
             source_quality = {
                 "raw_rows": source.raw_rows,
-                "hourly_rows": int(len(source.hourly)),
+                "hourly_rows": (
+                    int(len(source.interval_data)) if interval_seconds == 3_600 else None
+                ),
+                "interval_rows": int(len(source.interval_data)),
+                "interval_seconds": interval_seconds,
                 "chunk_count": source.chunk_count,
                 "missing_value_count": source.missing_value_count,
                 "affected_hour_count": source.affected_hour_count,
@@ -3272,12 +3553,73 @@ def _run_annual_job(
             curtailment_limit_kw=req.curtailment_limit_kw,
             input_kind="midc",
             annual_mode=True,
-            expected_interval_seconds=3600,
+            expected_interval_seconds=interval_seconds,
+            calibration_profile=calibration_profile,
+            calibration_application_context=calibration_application_context,
         )
         warnings = list(
             dict.fromkeys([*source_warnings, *stats.get("data_quality_warnings", [])])
         )
         stats["data_quality_warnings"] = warnings
+        model_application = stats.get("calibration_application")
+        calibration_application: dict[str, Any] = (
+            {
+                key: deepcopy(value)
+                for key, value in model_application.items()
+                if key not in {"origin_profile", "resolved_profile"}
+            }
+            if isinstance(model_application, dict)
+            else {}
+        )
+        if isinstance(model_application, dict):
+            # Profiles stay in durable provenance. Results expose the hashes,
+            # factors, lineage, deltas and consent without duplicating fit details.
+            stats["calibration_application"] = deepcopy(calibration_application)
+        if calibration_profile is not None and calibration_application_context:
+            resolved_profile = calibration_application_context.get(
+                "resolved_profile"
+            )
+            calibration_application.update(
+                {
+                    "applied": True,
+                    "method": "frozen_baseline_seasonal_factors",
+                    "baseline_job_id": calibration_application_context.get(
+                        "baseline_job_id"
+                    ),
+                    "baseline_review_id": calibration_application_context.get(
+                        "baseline_review_id"
+                    ),
+                    "server_timestamp": calibration_application_context.get(
+                        "server_timestamp"
+                    ),
+                    "origin_profile_sha256": calibration_application_context.get(
+                        "origin_profile_sha256"
+                    ),
+                    "resolved_profile_sha256": calibration_application_context.get(
+                        "resolved_profile_sha256"
+                    ),
+                    "required_seasons": deepcopy(
+                        calibration_application_context.get("required_seasons") or []
+                    ),
+                    "seasonal_factors": deepcopy(
+                        (resolved_profile or {}).get("seasonal_factors") or {}
+                    ),
+                    "settings_deltas": deepcopy(
+                        calibration_application_context.get("settings_deltas") or []
+                    ),
+                    "seasonal_substitution": deepcopy(
+                        calibration_application_context.get("seasonal_substitution")
+                    ),
+                    "server_confirmation": deepcopy(
+                        calibration_application_context.get("server_confirmation")
+                    ),
+                }
+            )
+        elif not calibration_application:
+            calibration_application = {
+                "applied": False,
+                "method": "physics_only",
+            }
         set_progress(96, "Finalizing annual results")
         result = {
             "mode": "annual",
@@ -3291,9 +3633,14 @@ def _run_annual_job(
             "source_csv": _public_source_url(csv_path),
             "warnings": warnings,
             "source_quality": source_quality,
+            "calibration_application": calibration_application,
             "window": {
                 "from": req.from_date,
                 "to": req.to_date,
+                "interval_value": req.interval_value,
+                "interval_unit": req.interval_unit,
+                "interval_seconds": interval_seconds,
+                "interval_hours": interval_hours,
                 "timezone": "MST (UTC-7)",
                 "hour_convention": "right-closed, right-labeled",
                 "backtrack": req.backtrack,
@@ -3326,6 +3673,15 @@ def index() -> FileResponse:
     return FileResponse(str(HERE / "sb_energy_dashboard_modern.html"))
 
 
+@app.get("/annual-warning.png", include_in_schema=False)
+def annual_warning_icon() -> FileResponse:
+    """Serve the warning asset shared by direct FastAPI and Vinext previews."""
+
+    return FileResponse(
+        str(HERE / "public" / "annual-warning.png"), media_type="image/png"
+    )
+
+
 @app.get("/healthz")
 def healthz() -> JSONResponse:
     return JSONResponse({"status": "ok"})
@@ -3340,6 +3696,24 @@ def session() -> JSONResponse:
     return JSONResponse(
         {"session_id": SERVER_SESSION_ID, "promoted_baselines": promoted}
     )
+
+
+@app.get("/api/current-calibration")
+def current_calibration() -> JSONResponse:
+    """Return the sanitized current promoted, reviewed calibration summary."""
+
+    with _ORCHESTRATION_LOCK:
+        try:
+            bundle = _current_calibration_bundle()
+        except (AgentStoreError, HTTPException, KeyError, OSError, TypeError, ValueError):
+            logger.warning(
+                "The promoted calibration could not be verified for annual use",
+                exc_info=True,
+            )
+            bundle = None
+    if bundle is None:
+        return JSONResponse({"available": False})
+    return JSONResponse(_public_current_calibration(bundle))
 
 
 def _enqueue_baseline_job(
@@ -3677,11 +4051,213 @@ def calibration_review_rows(
 
 
 @app.post("/api/annual-run")
-def start_annual_run(req: AnnualRunRequest) -> JSONResponse:
-    _validate_run_request(req)
-    _validate_curtailment(req)
-    _annual_dates(req)
-    job = _enqueue_baseline_job("annual", _run_request_context(req))
+def start_annual_run(req: AnnualRunSubmission) -> JSONResponse:
+    selected_baseline = req.calibration_baseline_job_id
+    if selected_baseline is None:
+        if req.seasonal_fallback_acknowledgement is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "A seasonal fallback acknowledgement requires a selected "
+                    "calibration baseline."
+                ),
+            )
+        _, annual_request = _annual_submission_request(req)
+        job = _enqueue_baseline_job("annual", annual_request)
+        return JSONResponse({"job_id": job["id"]})
+
+    selected_baseline = str(selected_baseline).strip()
+    if not selected_baseline:
+        raise HTTPException(
+            status_code=422,
+            detail="calibration_baseline_job_id must not be blank.",
+        )
+    # Reject malformed annual input independently of baseline availability.
+    _annual_submission_request(deepcopy(req))
+
+    with _ORCHESTRATION_LOCK:
+        try:
+            bundle = _current_calibration_bundle()
+        except (AgentStoreError, HTTPException, KeyError, OSError, TypeError, ValueError):
+            logger.warning(
+                "The selected annual calibration baseline could not be verified",
+                exc_info=True,
+            )
+            bundle = None
+        if bundle is None:
+            raise _calibration_conflict(
+                "calibration_baseline_unavailable",
+                "No promoted, reviewed calibration is currently available.",
+            )
+
+        baseline = bundle["baseline"]
+        current_baseline_id = str(baseline["id"])
+        if not secrets.compare_digest(selected_baseline, current_baseline_id):
+            raise _calibration_conflict(
+                "calibration_baseline_changed",
+                "The promoted calibration changed. Refresh the annual configuration.",
+                requested_baseline_job_id=selected_baseline,
+                current_baseline_job_id=current_baseline_id,
+            )
+
+        _, annual_request = _annual_submission_request(
+            req,
+            inherited_settings=bundle["settings"],
+        )
+        required_seasons = _annual_request_seasons(annual_request)
+        origin_profile = deepcopy(bundle["profile"])
+        available_factors = origin_profile["seasonal_factors"]
+        missing_seasons = [
+            season for season in required_seasons if season not in available_factors
+        ]
+        settings_deltas = _calibration_setting_deltas(
+            bundle["settings"], annual_request
+        )
+        resolved_profile = deepcopy(origin_profile)
+        substitution: dict[str, Any] | None = None
+        server_confirmation: dict[str, Any] | None = None
+        server_timestamp = datetime.now(timezone.utc).isoformat()
+
+        if missing_seasons:
+            fall_from_spring_supported = (
+                set(missing_seasons) == {"fall"} and "spring" in available_factors
+            )
+            if not fall_from_spring_supported:
+                raise _calibration_conflict(
+                    "seasonal_calibration_coverage_missing",
+                    (
+                        "The selected calibration does not cover every season required "
+                        "by this annual range. Only an explicit Fall from Spring "
+                        "substitution is supported."
+                    ),
+                    required_seasons=list(required_seasons),
+                    missing_seasons=missing_seasons,
+                    available_seasons=[
+                        season
+                        for season in _METEOROLOGICAL_SEASONS
+                        if season in available_factors
+                    ],
+                )
+
+            confirmation_context = _annual_confirmation_context(
+                baseline_job_id=current_baseline_id,
+                profile_sha256=bundle["profile_sha256"],
+                annual_request=annual_request,
+                required_seasons=required_seasons,
+            )
+            confirmation_sha256 = _json_sha256(confirmation_context)
+            acknowledgement = req.seasonal_fallback_acknowledgement
+            confirmation_detail = {
+                "baseline_job_id": current_baseline_id,
+                "profile_sha256": bundle["profile_sha256"],
+                "mapping": deepcopy(_ANNUAL_FALLBACK_MAPPING),
+                "spring_factors": deepcopy(available_factors["spring"]),
+                "required_seasons": list(required_seasons),
+                "modified_settings": deepcopy(settings_deltas),
+                "confirmation_context_sha256": confirmation_sha256,
+            }
+            if acknowledgement is None:
+                raise _calibration_conflict(
+                    "seasonal_fallback_confirmation_required",
+                    (
+                        "Fall factors are unavailable. Confirm whether the exact "
+                        "reviewed Spring factors should be used for Fall."
+                    ),
+                    **confirmation_detail,
+                )
+            if acknowledgement.accepted is not True:
+                raise _calibration_conflict(
+                    "seasonal_fallback_confirmation_invalid",
+                    "The Fall from Spring substitution was not explicitly accepted.",
+                    **confirmation_detail,
+                )
+            submitted_context_sha256 = str(
+                acknowledgement.confirmation_context_sha256
+            ).strip().lower()
+            if not secrets.compare_digest(
+                submitted_context_sha256, confirmation_sha256
+            ):
+                raise _calibration_conflict(
+                    "seasonal_fallback_confirmation_context_changed",
+                    (
+                        "The calibration or annual request changed after confirmation. "
+                        "Review the current Spring factors and confirm again."
+                    ),
+                    **confirmation_detail,
+                )
+
+            resolved_profile["seasonal_factors"]["fall"] = deepcopy(
+                available_factors["spring"]
+            )
+            substitution = {
+                **deepcopy(_ANNUAL_FALLBACK_MAPPING),
+                "factors": deepcopy(available_factors["spring"]),
+                "explicitly_accepted": True,
+            }
+            server_confirmation = {
+                "accepted": True,
+                "mapping": deepcopy(_ANNUAL_FALLBACK_MAPPING),
+                "confirmation_context_sha256": confirmation_sha256,
+                "recorded_at": server_timestamp,
+            }
+        elif req.seasonal_fallback_acknowledgement is not None:
+            raise _calibration_conflict(
+                "seasonal_fallback_not_required",
+                "The selected calibration already covers every required season.",
+                required_seasons=list(required_seasons),
+            )
+
+        resolved_profile = validate_seasonal_calibration_profile(
+            resolved_profile,
+            required_seasons=required_seasons,
+        )
+        resolved_profile_sha256 = _json_sha256(resolved_profile)
+        calibration_application = {
+            "baseline_job_id": current_baseline_id,
+            "baseline_review_id": str(bundle["quality"]["review_id"]),
+            "baseline_promoted_at": bundle["promotion"].get("promoted_at"),
+            "server_timestamp": server_timestamp,
+            "origin_profile_sha256": bundle["profile_sha256"],
+            "resolved_profile_sha256": resolved_profile_sha256,
+            "origin_profile": origin_profile,
+            "resolved_profile": resolved_profile,
+            "required_seasons": list(required_seasons),
+            "seasonal_substitution": substitution,
+            "settings_deltas": settings_deltas,
+            "server_confirmation": server_confirmation,
+        }
+        provenance = {
+            "calibration_profile": resolved_profile,
+            "calibration_application": calibration_application,
+        }
+
+        # Re-read immediately before enqueueing so a promotion that occurred while
+        # resolving settings/factors cannot silently bind the job to stale state.
+        try:
+            rechecked = _current_calibration_bundle()
+        except (AgentStoreError, HTTPException, KeyError, OSError, TypeError, ValueError):
+            rechecked = None
+        if (
+            rechecked is None
+            or str(rechecked["baseline"]["id"]) != current_baseline_id
+            or not secrets.compare_digest(
+                str(rechecked["profile_sha256"]), str(bundle["profile_sha256"])
+            )
+        ):
+            raise _calibration_conflict(
+                "calibration_baseline_changed",
+                "The promoted calibration changed before the run was queued.",
+                requested_baseline_job_id=selected_baseline,
+                current_baseline_job_id=(
+                    str(rechecked["baseline"]["id"]) if rechecked else None
+                ),
+            )
+
+        job = _enqueue_baseline_job(
+            "annual",
+            annual_request,
+            provenance=provenance,
+        )
     return JSONResponse({"job_id": job["id"]})
 
 
@@ -3756,11 +4332,11 @@ def edit_agent_proposal(
             raise HTTPException(status_code=409, detail="Only a pending proposal can be edited")
         overrides = _explicit_overrides(req.overrides)
         target_mode = overrides.pop("mode", prior["mode"])
-        validation_only = {"from_time", "to_time", "interval_value", "interval_unit"}
+        validation_only = {"from_time", "to_time"}
         if target_mode == "annual" and validation_only.intersection(overrides):
             raise HTTPException(
                 status_code=422,
-                detail="Times and intervals can only be changed for calibration runs.",
+                detail="Start and end times can only be changed for calibration runs.",
             )
         if "interval_value" in overrides and "interval_unit" not in overrides:
             raise HTTPException(
@@ -3893,7 +4469,8 @@ def promote_model_job(job_id: str) -> JSONResponse:
                 ),
             )
     try:
-        promoted = AGENT_STORE.promote_job(job_id)
+        with _ORCHESTRATION_LOCK:
+            promoted = AGENT_STORE.promote_job(job_id)
     except InvalidStateTransition as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     job = promoted["job"]
