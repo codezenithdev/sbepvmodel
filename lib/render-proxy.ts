@@ -41,6 +41,7 @@ function isAllowedApiPath(path: string[]): boolean {
   if (path.length === 1) {
     return [
       "session",
+      "current-calibration",
       "run",
       "annual-run",
       "chat",

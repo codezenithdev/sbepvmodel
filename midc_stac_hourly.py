@@ -44,7 +44,7 @@ class MidcError(Exception):
 
 @dataclass
 class MidcFetchResult:
-    """Hourly MIDC data plus source-quality metadata for a completed fetch."""
+    """Aggregated MIDC data plus source-quality metadata for a completed fetch."""
 
     hourly: pd.DataFrame
     raw_rows: int
@@ -52,6 +52,12 @@ class MidcFetchResult:
     dropped_timestamp_rows: int
     missing_value_count: int
     affected_hour_count: int
+    interval_seconds: int = 3_600
+
+    @property
+    def interval_data(self) -> pd.DataFrame:
+        """Return model-ready rows; ``hourly`` remains for API compatibility."""
+        return self.hourly
 
     @property
     def warnings(self) -> list[str]:
@@ -62,9 +68,14 @@ class MidcFetchResult:
                 "date/time values."
             )
         if self.missing_value_count:
+            interval_label = (
+                "hourly"
+                if self.interval_seconds == 3_600
+                else f"{self.interval_seconds // 3_600}-hour interval"
+            )
             messages.append(
-                f"Left {self.missing_value_count} hourly measurement value(s) blank "
-                f"across {self.affected_hour_count} hour(s) because no valid source "
+                f"Left {self.missing_value_count} {interval_label} measurement value(s) blank "
+                f"across {self.affected_hour_count} interval(s) because no valid source "
                 "readings were available."
             )
         return messages
@@ -182,7 +193,6 @@ def aggregate_interval_frame(
     interval_hours = _validated_interval_hours(interval_seconds)
     if start_date > end_date:
         raise MidcError("Start date must be on or before end date.")
-
     source = source.copy()
     source.columns = source.columns.map(str).str.strip()
     missing_columns = sorted(set(RAW_REQUIRED_COLUMNS).difference(source.columns))
@@ -208,8 +218,9 @@ def aggregate_interval_frame(
     )
     dropped_timestamp_rows = int((~valid_timestamps).sum())
 
-    # Preserve the reference file's exact convention: an hour label marks the
-    # right edge of its interval. For example, hour 1 contains 00:01-01:00.
+    # Preserve the reference file's right-edge convention. For example, an
+    # hourly label of 1 contains 00:01-01:00; coarser intervals keep the final
+    # hour label in each within-day interval.
     source_timestamps = (
         source_dates
         + pd.to_timedelta(source_hours, unit="h")
@@ -251,20 +262,20 @@ def aggregate_interval_frame(
         freq=interval,
         name="_timestamp",
     )
-    hourly = grouped.reindex(full_index)
-    missing_value_count = int(hourly.isna().sum().sum())
-    affected_hour_count = int(hourly.isna().any(axis=1).sum())
+    intervals = grouped.reindex(full_index)
+    missing_value_count = int(intervals.isna().sum().sum())
+    affected_interval_count = int(intervals.isna().any(axis=1).sum())
 
-    hourly = hourly.rename(columns=MEASUREMENT_COLUMNS).reset_index()
-    hourly[DATE_COLUMN] = hourly["_timestamp"].dt.strftime("%m/%d/%Y")
-    hourly[HOUR_COLUMN] = hourly["_timestamp"].dt.hour.astype(int)
+    intervals = intervals.rename(columns=MEASUREMENT_COLUMNS).reset_index()
+    intervals[DATE_COLUMN] = intervals["_timestamp"].dt.strftime("%m/%d/%Y")
+    intervals[HOUR_COLUMN] = intervals["_timestamp"].dt.hour.astype(int)
 
     output_columns = [DATE_COLUMN, HOUR_COLUMN, *MEASUREMENT_COLUMNS.values()]
-    output = hourly.loc[:, output_columns]
+    output = intervals.loc[:, output_columns]
     output.loc[:, list(MEASUREMENT_COLUMNS.values())] = output.loc[
         :, list(MEASUREMENT_COLUMNS.values())
     ].round(4)
-    return output, dropped_timestamp_rows, missing_value_count, affected_hour_count
+    return output, dropped_timestamp_rows, missing_value_count, affected_interval_count
 
 
 def aggregate_hourly_frame(
@@ -274,26 +285,23 @@ def aggregate_hourly_frame(
     return aggregate_interval_frame(source, start_date, end_date, 3_600)
 
 
+def aggregate_hourly(
+    csv_text: str, start_date: date, end_date: date
+) -> tuple[pd.DataFrame, int, int, int]:
+    """Calculate right-closed hourly means matching the reference CSV."""
+    return aggregate_hourly_frame(parse_api_csv(csv_text), start_date, end_date)
+
+
 def aggregate_interval(
     csv_text: str,
     start_date: date,
     end_date: date,
     interval_seconds: int,
 ) -> tuple[pd.DataFrame, int, int, int]:
-    """Calculate right-closed interval means matching the reference CSV."""
+    """Calculate a supported right-closed annual interval from MIDC CSV text."""
     return aggregate_interval_frame(
-        parse_api_csv(csv_text),
-        start_date,
-        end_date,
-        interval_seconds,
+        parse_api_csv(csv_text), start_date, end_date, interval_seconds
     )
-
-
-def aggregate_hourly(
-    csv_text: str, start_date: date, end_date: date
-) -> tuple[pd.DataFrame, int, int, int]:
-    """Calculate right-closed hourly means matching the reference CSV."""
-    return aggregate_hourly_frame(parse_api_csv(csv_text), start_date, end_date)
 
 
 def _date_chunks(
@@ -313,13 +321,15 @@ def _date_chunks(
     return chunks
 
 
-def fetch_hourly_data(
+def fetch_interval_data(
     start_date: date,
     end_date: date,
+    interval_seconds: int,
     progress_cb: Callable[[float, str], None] | None = None,
     chunk_days: int = MAX_CHUNK_DAYS,
 ) -> MidcFetchResult:
     """Download any date range plus its first-bin boundary, then aggregate once."""
+    hours_per_interval = _validated_interval_hours(interval_seconds)
     if start_date > end_date:
         raise MidcError("Start date must be on or before end date.")
     # Hour 0 is right-labeled and contains 23:01-00:00, so one prior source day
@@ -340,19 +350,40 @@ def fetch_hourly_data(
 
     source = pd.concat(parsed_chunks, ignore_index=True)
     if progress_cb:
-        progress_cb(0.9, "Aggregating reference-hour MIDC data...")
-    hourly, dropped, missing, affected = aggregate_hourly_frame(
-        source, start_date, end_date
+        progress_cb(
+            0.9,
+            f"Aggregating MIDC data into {hours_per_interval}-hour intervals...",
+        )
+    interval_data, dropped, missing, affected = aggregate_interval_frame(
+        source, start_date, end_date, interval_seconds
     )
     if progress_cb:
-        progress_cb(1.0, "MIDC hourly data ready")
+        progress_cb(1.0, "MIDC interval data ready")
     return MidcFetchResult(
-        hourly=hourly,
+        hourly=interval_data,
         raw_rows=int(len(source)),
         chunk_count=len(chunks),
         dropped_timestamp_rows=dropped,
         missing_value_count=missing,
         affected_hour_count=affected,
+        interval_seconds=int(interval_seconds),
+    )
+
+
+def fetch_hourly_data(
+    start_date: date,
+    end_date: date,
+    progress_cb: Callable[[float, str], None] | None = None,
+    chunk_days: int = MAX_CHUNK_DAYS,
+    interval_seconds: int = 3_600,
+) -> MidcFetchResult:
+    """Download MIDC data; hourly remains the backwards-compatible default."""
+    return fetch_interval_data(
+        start_date,
+        end_date,
+        interval_seconds,
+        progress_cb=progress_cb,
+        chunk_days=chunk_days,
     )
 
 
