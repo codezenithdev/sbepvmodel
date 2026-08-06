@@ -94,7 +94,7 @@ class AgentFrontendContractTests(unittest.TestCase):
 
     def test_bazefield_review_collapse_state_and_receipt_survive_restore(self):
         self.assertIn("let calibrationReviewCollapsed", self.html)
-        save_block = self.html.split("function saveDashboardState()", 1)[1].split(
+        save_block = self.html.split("function saveDashboardState(options = {})", 1)[1].split(
             "\n        async function ",
             1,
         )[0]
@@ -261,15 +261,15 @@ class AgentFrontendContractTests(unittest.TestCase):
             "async function restoreDashboardState()",
             1,
         )[1].split("\n        document.querySelectorAll", 1)[0]
-        validation_check = "await revalidateCachedCompletedRun('validation')"
-        annual_check = "await revalidateCachedCompletedRun('annual')"
+        validation_check = "revalidateCachedCompletedRun('validation')"
+        annual_check = "revalidateCachedCompletedRun('annual')"
         self.assertIn(validation_check, restore)
         self.assertIn(annual_check, restore)
         self.assertLess(restore.index(validation_check), restore.index("applyResult(latestResult, false)"))
         self.assertLess(restore.index(annual_check), restore.index("applyAnnualResult(annualLatestResult, false)"))
         self.assertIn("['queued', 'running', 'monitoring_error']", restore)
         self.assertIn("markCachedRunUnverified(mode)", self.html)
-        self.assertIn("saveDashboardState();", restore)
+        self.assertIn("saveDashboardState({ allowDuringHydration: true });", restore)
 
     def test_chat_requests_are_cancelable_and_external_sources_persist(self):
         send_message = self.html.split(
@@ -411,12 +411,12 @@ class AgentFrontendContractTests(unittest.TestCase):
             "data_review_required",
             "Open calibration form",
             "Open live comparison",
-            "function updateStoredChatActionCardStatus(match, status)",
+            "function updateStoredChatActionCardStatus(match, status, options = {})",
         ):
             self.assertIn(hook, self.html)
         self.assertIn("action_card: actionCard", self.html)
         self.assertIn("item.action_card", self.html)
-        self.assertIn("saved.agentCompletionCards", self.html)
+        self.assertIn("rebuildAgentCompletionCardIndex()", self.html)
         self.assertIn("Live model update", self.html)
 
     def test_comparison_reports_and_promotion_render_without_mutating_forms_first(self):
@@ -709,6 +709,167 @@ class AgentFrontendContractTests(unittest.TestCase):
         self.assertIn("created_at: new Date().toISOString()", body)
         self.assertNotIn("agentProposalSnapshots.clear", body)
         self.assertNotIn("agentJobSnapshots.clear", body)
+
+    def test_conversation_history_archives_reopens_and_restores_chats(self):
+        for element_id in (
+            "chatHistoryBtn",
+            "chatHistoryCount",
+            "chatHistory",
+            "chatHistoryList",
+            "chatHistoryBack",
+            "chatHistoryStorageStatus",
+        ):
+            self.assertIn(f'id="{element_id}"', self.html)
+
+        for persistence_hook in (
+            "CHAT_HISTORY_STORAGE_KEY = 'sb-energy-solar-agent-conversations-v1'",
+            "MAX_SAVED_CHAT_CONVERSATIONS = 20",
+            "function saveChatConversationHistory(syncActive = true)",
+            "function restoreChatConversationHistory(",
+            "active_conversation_id: activeChatConversationId",
+            "conversations: compactionLevel",
+            "restoreChatConversationHistory(",
+            "chatConversationHasNonterminalAction(conversation)",
+            "function chatConversationIsProtected(conversation)",
+            "compactChatConversationForStorage(conversation, compactionLevel)",
+            "chatHistoryPersistenceState",
+            "chatHistoryRevision",
+            "rebuildAgentCompletionCardIndex()",
+        ):
+            self.assertIn(persistence_hook, self.html)
+
+        restore = self.html.split("async function restoreDashboardState()", 1)[1].split(
+            "document.querySelectorAll('#analysisControls", 1
+        )[0]
+        self.assertLess(
+            restore.index("restoreChatConversationHistory("),
+            restore.index("serverSessionId = await loadServerSessionId()"),
+        )
+        for immediate_render in (
+            "renderChatMessages()",
+            "setChatHistoryOpen(saved?.chatHistoryOpen === true, false)",
+            "setChatOpen(!!saved?.chatOpen, { focus: false, persist: false })",
+        ):
+            self.assertLess(
+                restore.index(immediate_render),
+                restore.index("serverSessionId = await loadServerSessionId()"),
+            )
+
+        save_history = self.html.split(
+            "function saveChatConversationHistory(syncActive = true)", 1
+        )[1].split("function restoreChatConversationHistory", 1)[0]
+        self.assertIn("!chatConversationIsProtected(conversation)", save_history)
+        self.assertIn("return false", save_history)
+        self.assertIn("persistence_state: persistenceState", save_history)
+        self.assertIn("revision: chatHistoryRevision", save_history)
+        self.assertNotIn("chatConversations = candidates", save_history)
+        self.assertNotIn(
+            "conversation.id !== activeChatConversationId\n                        );",
+            save_history,
+        )
+
+        save_dashboard = self.html.split("function saveDashboardState(options = {})", 1)[1].split(
+            "function invalidateValidationStatusPoll", 1
+        )[0]
+        self.assertIn("options.allowDuringHydration !== true", save_dashboard)
+        self.assertIn("const historySaved = saveChatConversationHistory(false)", save_dashboard)
+        self.assertIn("activeChatConversationId,", save_dashboard)
+        self.assertIn("chatHistoryRevision,", save_dashboard)
+        self.assertIn("chatHistoryPersistenceState,", save_dashboard)
+        self.assertIn("return historySaved", save_dashboard)
+
+        self.assertIn("savedRevision > storedRevision", self.html)
+        self.assertIn("legacyFailedWithoutRevision", self.html)
+        self.assertIn("stored?.persistence_state === 'possible_loss'", self.html)
+        self.assertIn("chatHistoryStickyIssue === 'possible_loss'", save_history)
+        self.assertIn("Some recent conversation updates may be missing", self.html)
+        self.assertIn('id="chatHistoryStorageStatus" role="status" hidden', self.html)
+        self.assertLess(
+            self.html.index('id="chatHistoryStorageStatus"'),
+            self.html.index('id="chatHistory"'),
+        )
+        self.assertIn("chatHistoryStorageStatus.hidden = !storageMessage", self.html)
+
+        self.assertIn("let chatHydrationPending = true", self.html)
+        self.assertIn("chatHydrationPending || (!chatIsSending", self.html)
+        self.assertIn("if (chatHydrationPending) return", self.html)
+        self.assertIn("chatHydrationPending = false", self.html)
+        self.assertIn("Restoring the saved dashboard context", self.html)
+        self.assertIn("function releaseChatHydration()", self.html)
+        self.assertIn("function fetchWithDashboardTimeout", self.html)
+        self.assertIn(".finally(releaseChatHydration)", self.html)
+        self.assertLess(
+            restore.index("releaseChatHydration()"),
+            restore.index("await refreshAgentState(false)"),
+        )
+
+        start_new = self.html.split("function startNewChat()", 1)[1].split(
+            "function prefillChatPrompt", 1
+        )[0]
+        self.assertLess(
+            start_new.index("syncActiveChatConversation()"),
+            start_new.index("chatMessages = [{"),
+        )
+        self.assertIn("chatConversationHasContent(currentConversation)", start_new)
+        self.assertIn("chatConversations.unshift(conversation)", start_new)
+        self.assertIn("setChatHistoryOpen(false, false)", start_new)
+
+        open_conversation = self.html.split(
+            "function openChatConversation(conversationId)", 1
+        )[1].split("function isChatMobile", 1)[0]
+        for hook in (
+            "syncActiveChatConversation()",
+            "activeChatConversationId = conversation.id",
+            "chatMessages = conversation.messages",
+            "chatDraft = conversation.draft",
+            "renderChatMessages()",
+            "saveDashboardState()",
+        ):
+            self.assertIn(hook, open_conversation)
+
+        clear_saved = self.html.split("function clearSavedState()", 1)[1].split(
+            "async function loadServerSessionId", 1
+        )[0]
+        self.assertIn("localStorage.removeItem(STORAGE_KEY)", clear_saved)
+        self.assertNotIn("CHAT_HISTORY_STORAGE_KEY", clear_saved)
+
+    def test_archived_conversation_action_cards_are_tracked_and_updated(self):
+        nonterminal = self.html.split(
+            "function savedNonterminalActionJobIds()", 1
+        )[1].split("function chatActionSweepMetadata", 1)[0]
+        updater = self.html.split(
+            "function updateStoredChatActionCardStatus(match, status, options = {})", 1
+        )[1].split("function appendChatCardActions", 1)[0]
+        tracker = self.html.split("function trackedChatCardForJob(job)", 1)[1].split(
+            "function reconcileTerminalAgentCards", 1
+        )[0]
+        automated = self.html.split(
+            "function appendAutomatedChatCardMessage(content, actionCard, options = {})", 1
+        )[1].split("function rememberAgentCompletionCard", 1)[0]
+
+        self.assertIn("chatConversations.forEach", nonterminal)
+        self.assertIn("chatConversations.forEach", updater)
+        self.assertIn("chatConversations.some", tracker)
+        self.assertIn("chatConversationForActionCard(actionCard)", automated)
+        self.assertIn("targetConversation.unread = true", automated)
+        self.assertIn("options.origin_conversation", automated)
+        self.assertIn("return saveDashboardState()", automated)
+        self.assertIn("const persist = options.persist !== false", updater)
+        self.assertIn("if (persist) saveDashboardState()", updater)
+        completion = self.html.split("function announceAgentCompletion(job)", 1)[1].split(
+            "function buildParameterSweepComparisonCard", 1
+        )[0]
+        self.assertIn("transientProtectedConversationIds.add", completion)
+        self.assertIn("{ persist: false }", completion)
+        self.assertIn("origin_conversation: originConversation", completion)
+        self.assertIn("rememberAgentCompletionCard(completionKey)", completion)
+        completion_rebuild = self.html.split(
+            "function rebuildAgentCompletionCardIndex()", 1
+        )[1].split("function syncChatHistoryControls", 1)[0]
+        self.assertIn("isRecordedCompletion", completion_rebuild)
+        self.assertIn("['done', 'error', 'cancelled', 'interrupted']", completion_rebuild)
+        self.assertIn("async function openAgentActivityFromChat(card)", self.html)
+        self.assertIn("'/api/status/' + encodeURIComponent(jobId)", self.html)
 
     def test_run_workspace_and_accessible_loading_state_are_wired(self):
         self.assertIn('aria-controls="agentActivity"', self.html)
