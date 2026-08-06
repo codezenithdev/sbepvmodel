@@ -164,20 +164,17 @@ def parse_api_csv(csv_text: str) -> pd.DataFrame:
     return source.loc[:, RAW_REQUIRED_COLUMNS].copy()
 
 
-def _whole_hour_interval(interval_seconds: int) -> int:
-    """Validate the annual MIDC interval and return its whole-hour length."""
+def _validated_interval_hours(interval_seconds: int) -> int:
+    """Return a whole-hour interval that maps cleanly to daily HOUR labels."""
     try:
         seconds = int(interval_seconds)
-    except (TypeError, ValueError) as exc:
-        raise MidcError("Annual interval must be a whole number of hours.") from exc
-    if seconds < 3_600 or seconds > 86_400 or seconds % 3_600:
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise MidcError("MIDC aggregation interval must be a positive whole hour.") from exc
+    if seconds <= 0 or seconds % 3_600 or 86_400 % seconds:
         raise MidcError(
-            "Annual interval must be a whole number of hours between 1 and 24."
+            "MIDC aggregation interval must be a positive whole-hour divisor of one day."
         )
-    hours_per_interval = seconds // 3_600
-    if 24 % hours_per_interval:
-        raise MidcError("Annual interval must divide evenly into a 24-hour day.")
-    return hours_per_interval
+    return seconds // 3_600
 
 
 def aggregate_interval_frame(
@@ -186,8 +183,16 @@ def aggregate_interval_frame(
     end_date: date,
     interval_seconds: int,
 ) -> tuple[pd.DataFrame, int, int, int]:
-    """Calculate fixed, right-labeled means from parsed minute-level API rows."""
-    hours_per_interval = _whole_hour_interval(interval_seconds)
+    """Calculate right-closed interval means from parsed minute-level rows.
+
+    The reference file labels each interval by its integer-hour right edge.  A
+    two-hour day is therefore labeled 1, 3, ..., 23, while the one-hour form
+    remains 0, 1, ..., 23.  Source rows immediately before ``start_date`` are
+    retained because they belong to the first requested right-edge interval.
+    """
+    interval_hours = _validated_interval_hours(interval_seconds)
+    if start_date > end_date:
+        raise MidcError("Start date must be on or before end date.")
     source = source.copy()
     source.columns = source.columns.map(str).str.strip()
     missing_columns = sorted(set(RAW_REQUIRED_COLUMNS).difference(source.columns))
@@ -227,19 +232,22 @@ def aggregate_interval_frame(
         values = pd.to_numeric(source[column], errors="coerce")
         working[column] = values.mask(values <= MISSING_SENTINEL_MAX)
 
-    requested_range = source_dates.between(
-        pd.Timestamp(start_date), pd.Timestamp(end_date)
+    interval = pd.Timedelta(hours=interval_hours)
+    label_offset = interval - pd.Timedelta(hours=1)
+    first_label = pd.Timestamp(start_date) + label_offset
+    last_label = pd.Timestamp(end_date) + pd.Timedelta(hours=23)
+    first_interval_left = first_label - interval
+    requested_range = source_timestamps.gt(first_interval_left) & source_timestamps.le(
+        last_label
     )
     working = working.loc[valid_timestamps & requested_range].copy()
     if working.empty:
         raise MidcError("MIDC API returned no valid data rows for the requested date range.")
 
-    interval_rule = f"{hours_per_interval}h"
-    label_offset = pd.Timedelta(hours=hours_per_interval - 1)
     grouped = (
         working.set_index("_timestamp")[list(MEASUREMENT_COLUMNS)]
         .resample(
-            interval_rule,
+            f"{int(interval_seconds)}s",
             closed="right",
             label="right",
             origin=pd.Timestamp(start_date),
@@ -249,9 +257,9 @@ def aggregate_interval_frame(
     )
 
     full_index = pd.date_range(
-        start=pd.Timestamp(start_date) + label_offset,
-        end=pd.Timestamp(end_date) + pd.Timedelta(hours=23),
-        freq=interval_rule,
+        start=first_label,
+        end=last_label,
+        freq=interval,
         name="_timestamp",
     )
     intervals = grouped.reindex(full_index)
@@ -320,9 +328,14 @@ def fetch_interval_data(
     progress_cb: Callable[[float, str], None] | None = None,
     chunk_days: int = MAX_CHUNK_DAYS,
 ) -> MidcFetchResult:
-    """Download any date range in bounded chunks and aggregate it once."""
-    hours_per_interval = _whole_hour_interval(interval_seconds)
-    chunks = _date_chunks(start_date, end_date, chunk_days)
+    """Download any date range plus its first-bin boundary, then aggregate once."""
+    hours_per_interval = _validated_interval_hours(interval_seconds)
+    if start_date > end_date:
+        raise MidcError("Start date must be on or before end date.")
+    # Hour 0 is right-labeled and contains 23:01-00:00, so one prior source day
+    # is required to make the first requested interval as complete as all others.
+    source_start_date = start_date - timedelta(days=1)
+    chunks = _date_chunks(source_start_date, end_date, chunk_days)
     parsed_chunks: list[pd.DataFrame] = []
     for index, (chunk_start, chunk_end) in enumerate(chunks, start=1):
         if progress_cb:

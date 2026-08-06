@@ -4723,6 +4723,7 @@
         .header-icon-btn:focus-visible,
         .close-btn:focus-visible,
         .agent-activity-toggle:focus-visible,
+        .chat-history-card:focus-visible,
         .agent-activity-back:focus-visible,
         .agent-activity-filter:focus-visible,
         .agent-run-summary:focus-visible,
@@ -4801,6 +4802,11 @@
             display: none;
         }
 
+        .agent-activity-toggle:disabled {
+            cursor: wait;
+            opacity: 0.52;
+        }
+
         .agent-activity-count {
             min-width: 20px;
             height: 20px;
@@ -4840,6 +4846,23 @@
             color: var(--accent);
         }
 
+        .chat-history-storage-status {
+            display: block;
+            margin-top: 7px;
+            padding: 7px 9px;
+            border: 1px solid #e6c466;
+            border-radius: 7px;
+            background: #fff9e8;
+            color: #694f0a;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1.4;
+        }
+
+        .chat-history-storage-status[hidden] {
+            display: none;
+        }
+
         .agent-workspace {
             flex: 1 1 auto;
             min-width: 0;
@@ -4855,6 +4878,135 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
+        }
+
+        .chat-history-pane {
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: #f7faf9;
+        }
+
+        .chat-history-pane.hidden {
+            display: none;
+        }
+
+        .sidebar.history-view .agent-chat-pane {
+            display: none;
+        }
+
+        .chat-history-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 12px;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+        }
+
+        .chat-history-list {
+            display: grid;
+            gap: 9px;
+        }
+
+        .chat-history-card {
+            width: 100%;
+            min-height: 82px;
+            display: grid;
+            gap: 7px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 13px;
+            background: #ffffff;
+            color: var(--text);
+            cursor: pointer;
+            text-align: left;
+            box-shadow: 0 4px 14px rgba(22, 34, 29, 0.04);
+            transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+        }
+
+        .chat-history-card:hover {
+            border-color: rgba(15, 118, 110, 0.42);
+            background: #fbfdfc;
+            box-shadow: 0 7px 18px rgba(22, 34, 29, 0.07);
+            transform: translateY(-1px);
+        }
+
+        .chat-history-card.active {
+            border-color: rgba(15, 118, 110, 0.5);
+            box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.08), 0 7px 18px rgba(22, 34, 29, 0.06);
+        }
+
+        .chat-history-card:disabled {
+            cursor: wait;
+            opacity: 0.62;
+            transform: none;
+        }
+
+        .chat-history-card-head,
+        .chat-history-card-meta {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .chat-history-title,
+        .chat-history-preview {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .chat-history-title {
+            font-size: 12px;
+            font-weight: 820;
+        }
+
+        .chat-history-preview {
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 620;
+        }
+
+        .chat-history-card-meta {
+            justify-content: flex-start;
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 680;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .chat-history-state {
+            flex: 0 0 auto;
+            padding: 3px 6px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            font-size: 8px;
+            font-weight: 850;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .chat-history-state.unread {
+            background: var(--warning-soft);
+            color: #92400e;
+        }
+
+        .chat-history-empty {
+            padding: 34px 20px;
+            border: 1px dashed var(--border-strong);
+            border-radius: 12px;
+            background: #ffffff;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.55;
+            text-align: center;
         }
 
         .agent-activity {
@@ -4905,7 +5057,9 @@
             text-transform: uppercase;
         }
 
-        #agentActivityHeading {
+        #agentActivityHeading,
+        #chatHistoryHeading {
+            margin: 0;
             color: var(--text);
             font-size: 15px;
             font-weight: 820;
@@ -5838,6 +5992,10 @@
                 padding: 10px 12px max(12px, env(safe-area-inset-bottom));
             }
 
+            .chat-history-body {
+                padding: 10px 12px max(12px, env(safe-area-inset-bottom));
+            }
+
             .agent-card {
                 padding: 13px;
             }
@@ -5977,6 +6135,7 @@
 
             .floating-chat-btn,
             .chat-prompt-btn,
+            .chat-history-card,
             .agent-progress-fill,
             .agent-activity-toggle-chevron,
             .sidebar {
@@ -6106,11 +6265,11 @@
                             <div class="annual-date-grid">
                                 <label class="control-field">
                                     <span class="date-label">Start date</span>
-                                    <input type="date" class="date-input annual-input" id="annualFromDate" value="2025-01-01">
+                                    <input type="date" class="date-input annual-input" id="annualFromDate" value="2025-01-01" required>
                                 </label>
                                 <label class="control-field">
                                     <span class="date-label">End date</span>
-                                    <input type="date" class="date-input annual-input" id="annualToDate" value="2025-12-31">
+                                    <input type="date" class="date-input annual-input" id="annualToDate" value="2025-12-31" required>
                                 </label>
                                 <label class="control-field annual-interval-field">
                                     <span class="date-label">Time interval</span>
@@ -6607,7 +6766,7 @@
                         <div class="validation-window-grid">
                             <label class="control-field">
                                 <span class="date-label">Start date</span>
-                                <input type="date" class="date-input" id="fromDate" value="2026-06-20">
+                                <input type="date" class="date-input" id="fromDate" value="2026-06-20" required>
                             </label>
                             <label class="control-field">
                                 <span class="date-label">Start time (24-hour)</span>
@@ -6615,7 +6774,7 @@
                             </label>
                             <label class="control-field">
                                 <span class="date-label">End date</span>
-                                <input type="date" class="date-input" id="toDate" value="2026-06-27">
+                                <input type="date" class="date-input" id="toDate" value="2026-06-27" required>
                             </label>
                             <label class="control-field">
                                 <span class="date-label">End time (24-hour)</span>
@@ -6633,7 +6792,7 @@
                             <label class="control-field">
                                 <span class="date-label">Time interval</span>
                                 <span class="interval-row">
-                                    <input type="number" class="date-input" id="intervalValue" value="1" min="1">
+                                    <input type="number" class="date-input" id="intervalValue" value="1" min="1" step="1" inputmode="numeric">
                                     <select class="date-input" id="intervalUnit">
                                         <option value="minutes">minutes</option>
                                         <option value="hours" selected>hours</option>
@@ -7165,6 +7324,12 @@
                     <span class="agent-context-dot" aria-hidden="true"></span>
                     <span class="agent-context-text" id="agentContextText">Calibration &middot; No baseline yet</span>
                 </div>
+                <button class="agent-activity-toggle conversation-history-toggle" id="chatHistoryBtn" type="button"
+                    aria-controls="chatHistory" aria-expanded="false" title="View conversations">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5M12 7v5l3 2"></path></svg>
+                    <span class="agent-activity-toggle-label">History</span>
+                    <span class="agent-activity-count" id="chatHistoryCount">0</span>
+                </button>
                 <button class="agent-activity-toggle hidden" id="agentActivityToggle" type="button"
                     aria-controls="agentActivity" aria-expanded="false">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"></path><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"></path></svg>
@@ -7177,6 +7342,7 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-4"></path></svg>
                 <span>Uses the active dashboard. Scenario results stay separate until you promote them.</span>
             </div>
+            <div class="chat-history-storage-status" id="chatHistoryStorageStatus" role="status" hidden></div>
         </div>
         <div class="agent-workspace">
             <div class="agent-chat-pane" aria-label="Solar Agent conversation">
@@ -7213,6 +7379,21 @@
                     </div>
                 </div>
             </div>
+            <section class="chat-history-pane hidden" id="chatHistory" aria-labelledby="chatHistoryHeading">
+                <div class="agent-activity-heading">
+                    <div class="agent-activity-heading-copy">
+                        <span class="agent-activity-eyebrow">Conversation archive</span>
+                        <h2 id="chatHistoryHeading">Conversations</h2>
+                        <span class="agent-activity-summary">Saved in this browser. New messages use the active dashboard context.</span>
+                    </div>
+                    <div class="agent-activity-heading-actions">
+                        <button class="agent-activity-back" id="chatHistoryBack" type="button">Back to chat</button>
+                    </div>
+                </div>
+                <div class="chat-history-body">
+                    <div class="chat-history-list" id="chatHistoryList" role="list"></div>
+                </div>
+            </section>
             <section class="agent-activity hidden collapsed" id="agentActivity" aria-labelledby="agentActivityHeading">
                 <div class="agent-activity-heading">
                     <div class="agent-activity-heading-copy">
@@ -7411,6 +7592,8 @@
         const operationsNavLink = document.getElementById('operationsNavLink');
         const pvModelNavLink = document.getElementById('pvModelNavLink');
         const STORAGE_KEY = 'sb-energy-dashboard-state-v1';
+        const CHAT_HISTORY_STORAGE_KEY = 'sb-energy-solar-agent-conversations-v1';
+        const MAX_SAVED_CHAT_CONVERSATIONS = 20;
         const DEFAULT_ASSISTANT_MESSAGE = "Ask about performance, model accuracy, or explore a what-if scenario using the active dashboard context.";
         let latestJobId = null;
         let latestInputPlots = null;
@@ -7424,6 +7607,7 @@
         let calibrationControlDisabledState = null;
         let pollTimer = null;
         let activeView = 'validation';
+        let validationPollRevision = 0;
         let activeMode = 'validation';
         let annualLatestJobId = null;
         let annualLatestResult = null;
@@ -7458,11 +7642,22 @@
             iam_model: 'IAM model',
             iam_a_r: 'IAM coefficient',
         };
+        let annualPollRevision = 0;
+        const STATUS_POLL_MAX_FAILURES = 5;
+        const STATUS_POLL_MAX_DELAY_MS = 8000;
         let chatMessages = [{
             role: 'assistant',
             content: DEFAULT_ASSISTANT_MESSAGE,
             created_at: new Date().toISOString(),
         }];
+        let chatConversations = [];
+        let activeChatConversationId = null;
+        let chatHistoryOpen = false;
+        let chatHistoryPersistenceState = 'ok';
+        let chatHistoryRevision = 0;
+        let chatHistoryStickyIssue = 'none';
+        let chatHydrationPending = true;
+        const transientProtectedConversationIds = new Set();
         let serverSessionId = null;
         let agentServerState = { proposals: [], jobs: [], promoted_baselines: { validation: null, annual: null } };
         const agentJobPollTimers = new Map();
@@ -7473,10 +7668,23 @@
         const agentCompletionCards = new Set();
         let chatDraft = '';
         let chatIsSending = false;
+        let activeChatAbortController = null;
         let chatDraftSaveTimer = null;
         let agentActivityExpanded = false;
         let agentActivityFilter = 'all';
         let agentActivitySelection = null;
+        const CHAT_REQUEST_TIMEOUT_MS = 60000;
+        const AGENT_POLL_MAX_FAILURES = 5;
+        const TERMINAL_CHAT_ACTION_STATUSES = new Set([
+            'done',
+            'error',
+            'cancelled',
+            'interrupted',
+            'deleted',
+            'unavailable',
+            'dismissed',
+            'expired',
+        ]);
 
         function setProgress(pct, stage) {
             const bounded = Math.min(100, Math.max(0, Number(pct) || 0));
@@ -8092,6 +8300,41 @@
             return value;
         }
 
+        function readPositiveInteger(id, label) {
+            const input = document.getElementById(id);
+            const value = Number(input.value);
+            if (!Number.isInteger(value) || value < 1) {
+                showError(label + ' must be a whole number of at least 1.');
+                input.focus();
+                return null;
+            }
+            return value;
+        }
+
+        function readValidationWindow(fromTime, toTime) {
+            const fromInput = document.getElementById('fromDate');
+            const toInput = document.getElementById('toDate');
+            const fromDate = fromInput.value.trim();
+            const toDate = toInput.value.trim();
+            const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+            if (!datePattern.test(fromDate)) {
+                showError('Choose a valid start date.');
+                fromInput.focus();
+                return null;
+            }
+            if (!datePattern.test(toDate)) {
+                showError('Choose a valid end date.');
+                toInput.focus();
+                return null;
+            }
+            if (fromDate + 'T' + fromTime >= toDate + 'T' + toTime) {
+                showError('Start date/time must be before end date/time.');
+                toInput.focus();
+                return null;
+            }
+            return { fromDate, toDate };
+        }
+
         function showImage(imgId, iconId, boxId, url, cacheBust = true) {
             const img = document.getElementById(imgId);
             img.onload = () => {
@@ -8280,6 +8523,11 @@
             return Number.isFinite(number) ? number : null;
         }
 
+        function positiveIntegerOrNull(value) {
+            const number = finiteOrNull(value);
+            return Number.isInteger(number) && number >= 1 ? number : null;
+        }
+
         function getCanonicalCurrentConfig(mode = activeMode) {
             const annual = mode === 'annual';
             const form = annual ? getAnnualFormState() : getFormState();
@@ -8296,7 +8544,7 @@
                 solectria_bos_efficiency: finiteOrNull(form.solectriaBosEfficiency),
                 iam_model: iamModel,
                 iam_a_r: iamModel === 'martin_ruiz' ? finiteOrNull(form.iamAr) : null,
-                interval_value: finiteOrNull(form.intervalValue),
+                interval_value: positiveIntegerOrNull(form.intervalValue),
                 interval_unit: form.intervalUnit,
             };
             if (!annual) {
@@ -9526,9 +9774,23 @@
             }
         }
 
+        async function fetchWithDashboardTimeout(resource, options = {}, timeoutMs = 8000) {
+            const controller = new AbortController();
+            const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                return await fetch(resource, { ...options, signal: controller.signal });
+            } finally {
+                window.clearTimeout(timeout);
+            }
+        }
+
         async function loadServerSessionId() {
             try {
-                const res = await fetch('/api/session', { cache: 'no-store' });
+                const res = await fetchWithDashboardTimeout(
+                    '/api/session',
+                    { cache: 'no-store' },
+                    4000
+                );
                 if (!res.ok) return null;
                 const data = await res.json();
                 return data.session_id || null;
@@ -9539,6 +9801,8 @@
 
         function resetClientState() {
             calibrationWorkflowRevision += 1;
+            invalidateValidationStatusPoll();
+            invalidateAnnualStatusPoll();
             abortCalibrationReviewRequests();
             setCalibrationControlsLocked(false);
             latestJobId = null;
@@ -9556,23 +9820,27 @@
             annualCalibrationProfileSha256 = null;
             annualRequestRevision += 1;
             clearAnnualFallbackConfirmation();
-            chatMessages = [{
-                role: 'assistant',
-                content: DEFAULT_ASSISTANT_MESSAGE,
-                created_at: new Date().toISOString(),
-            }];
-            chatDraft = '';
-            chatInput.value = '';
+            let preservedConversation = activeChatConversation();
+            if (!preservedConversation) {
+                preservedConversation = createChatConversation(chatMessages, chatDraft);
+                chatConversations = [preservedConversation];
+                activeChatConversationId = preservedConversation.id;
+            }
+            chatMessages = preservedConversation.messages;
+            chatDraft = preservedConversation.draft;
+            chatInput.value = chatDraft;
             autoResizeChatInput();
             syncChatComposerState();
+            chatHistoryOpen = false;
+            chatSidebar.classList.remove('history-view');
+            chatHistoryPanel.classList.add('hidden');
             agentActivityExpanded = false;
             agentActivityFilter = 'all';
             agentActivitySelection = null;
             agentServerState = { proposals: [], jobs: [], promoted_baselines: { validation: null, annual: null } };
             agentProposalSnapshots.clear();
             agentJobSnapshots.clear();
-            agentExplainedJobs.clear();
-            agentCompletionCards.clear();
+            rebuildAgentCompletionCardIndex();
             agentJobPollTimers.forEach((timer) => clearTimeout(timer));
             agentJobPollTimers.clear();
             progressWrap.classList.remove('visible');
@@ -9591,11 +9859,16 @@
             renderAnnualCalibrationBaseline(null, { state: 'loading' });
             renderAgentActivity();
             renderChatMessages();
+            renderChatHistory();
             setChatOpen(false);
             switchMode('validation', false);
         }
 
-        function saveDashboardState() {
+        function saveDashboardState(options = {}) {
+            if (chatHydrationPending && options.allowDuringHydration !== true) return false;
+            syncActiveChatConversation();
+            const historySaved = saveChatConversationHistory(false);
+            syncChatHistoryControls();
             try {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify({
                     serverSessionId,
@@ -9615,18 +9888,61 @@
                     annualCalibrationProfileSha256,
                     annualForm: getAnnualFormState(),
                     technoeconomicForm: getTechnoeconomicFormState(),
+                    activeChatConversationId,
                     chatMessages,
                     chatDraft,
+                    chatHistoryRevision,
+                    chatHistoryPersistenceState,
                     agentActivityExpanded,
                     agentActivityFilter,
                     agentActivitySelection,
+                    chatHistoryOpen,
                     agentExplainedJobs: Array.from(agentExplainedJobs).slice(-50),
-                    agentCompletionCards: Array.from(agentCompletionCards).slice(-100),
                     chatOpen: !chatSidebar.classList.contains('hidden'),
                 }));
             } catch (_) {
                 // localStorage may be unavailable in private or restricted contexts.
             }
+            return historySaved;
+        }
+
+        function invalidateValidationStatusPoll() {
+            validationPollRevision += 1;
+            if (pollTimer) {
+                clearTimeout(pollTimer);
+                pollTimer = null;
+            }
+            return validationPollRevision;
+        }
+
+        function invalidateAnnualStatusPoll() {
+            annualPollRevision += 1;
+            if (annualPollTimer) {
+                clearTimeout(annualPollTimer);
+                annualPollTimer = null;
+            }
+            return annualPollRevision;
+        }
+
+        function statusPollRetryDelay(failureCount) {
+            return Math.min(STATUS_POLL_MAX_DELAY_MS, 600 * (2 ** Math.max(0, failureCount - 1)));
+        }
+
+        function registerDirectRun(jobId, mode, request, progress, stage) {
+            if (!jobId) return;
+            putAgentJob({
+                job_id: jobId,
+                kind: 'baseline',
+                mode,
+                state: 'queued',
+                progress,
+                stage,
+                cancel_requested: false,
+                request: { ...request },
+                created_at: new Date().toISOString(),
+            });
+            agentActivityFilter = 'active';
+            renderAgentActivity();
         }
 
         async function runAnalysis() {
@@ -9635,6 +9951,10 @@
             if (fromTime === null) return;
             const toTime = read24HourTime('toTime', 'End time');
             if (toTime === null) return;
+            const validationWindow = readValidationWindow(fromTime, toTime);
+            if (validationWindow === null) return;
+            const intervalValue = readPositiveInteger('intervalValue', 'Time interval');
+            if (intervalValue === null) return;
             const calibrationRequested = calibrateModel.checked;
             const curtailmentOn = curtailmentEnabled.checked;
             const curtailmentLimit = parseFloat(curtailmentLimitKw.value);
@@ -9659,6 +9979,8 @@
                 return;
             }
 
+            const statusPollRevision = invalidateValidationStatusPoll();
+            latestJobId = null;
             abortCalibrationReviewRequests();
             calibrationWorkflowRevision += 1;
             const workflowRevision = calibrationWorkflowRevision;
@@ -9693,11 +10015,11 @@
             saveDashboardState();
 
             const body = {
-                from_date: document.getElementById('fromDate').value,
+                from_date: validationWindow.fromDate,
                 from_time: fromTime,
-                to_date: document.getElementById('toDate').value,
+                to_date: validationWindow.toDate,
                 to_time: toTime,
-                interval_value: parseInt(document.getElementById('intervalValue').value, 10) || 1,
+                interval_value: intervalValue,
                 interval_unit: document.getElementById('intervalUnit').value,
                 backtrack: document.getElementById('backtrack').checked,
                 solaredge_inverter_efficiency: solaredgeInverterEfficiency,
@@ -9734,16 +10056,20 @@
                     throw new Error(msg);
                 }
                 const payload = await res.json();
-                if (workflowRevision !== calibrationWorkflowRevision) return;
+                if (
+                    workflowRevision !== calibrationWorkflowRevision ||
+                    statusPollRevision !== validationPollRevision
+                ) return;
                 if (calibrationRequested) {
                     renderCalibrationReview(payload);
                 } else {
                     latestJobId = payload.job_id;
                     currentRunState = { state: 'queued', progress: 5, stage: 'Uncalibrated model queued' };
                     runBtn.textContent = 'Running...';
+                    registerDirectRun(payload.job_id, 'validation', body, 5, 'Uncalibrated model queued');
                     saveDashboardState();
                     progressWrap.focus({ preventScroll: true });
-                    pollStatus(payload.job_id);
+                    pollStatus(payload.job_id, statusPollRevision);
                 }
             } catch (e) {
                 if (e?.name === 'AbortError' || workflowRevision !== calibrationWorkflowRevision) {
@@ -9780,6 +10106,10 @@
             }
             const submittedDecisions = { ...calibrationReviewDecisions() };
             pendingCalibrationReview.decisions = { ...submittedDecisions };
+            const reviewedRequest = getCanonicalCurrentConfig('validation');
+            reviewedRequest.calibrate_model = true;
+            const statusPollRevision = invalidateValidationStatusPoll();
+            latestJobId = null;
             calibrationIssueList.querySelectorAll('.calibration-decision-select').forEach((select) => {
                 select.disabled = true;
             });
@@ -9826,7 +10156,10 @@
                     throw new Error(message);
                 }
                 const data = await res.json();
-                if (workflowRevision !== calibrationWorkflowRevision) return;
+                if (
+                    workflowRevision !== calibrationWorkflowRevision ||
+                    statusPollRevision !== validationPollRevision
+                ) return;
                 latestJobId = data.job_id;
                 currentRunState = { state: 'queued', progress: 22, stage: 'Reviewed calibration queued' };
                 setCalibrationControlsLocked(false);
@@ -9841,9 +10174,10 @@
                 };
                 renderCalibrationReview(pendingCalibrationReview, { focusPanel: false });
                 runBtn.textContent = 'Running...';
+                registerDirectRun(data.job_id, 'validation', reviewedRequest, 22, 'Reviewed calibration queued');
                 saveDashboardState();
                 progressWrap.focus({ preventScroll: true });
-                pollStatus(data.job_id);
+                pollStatus(data.job_id, statusPollRevision);
             } catch (error) {
                 if (error?.name === 'AbortError' || workflowRevision !== calibrationWorkflowRevision) {
                     return;
@@ -9899,31 +10233,44 @@
             runBtn.textContent = calibrateModel.checked ? 'Run calibration' : 'Run model';
         }
 
-        async function pollStatus(jobId) {
+        async function pollStatus(jobId, pollRevision = validationPollRevision, failureCount = 0) {
+            if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
             if (pollTimer) {
                 clearTimeout(pollTimer);
                 pollTimer = null;
             }
             try {
-                const res = await fetch('/api/status/' + jobId);
+                const res = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
                 if (!res.ok) {
-                    if (res.status === 404 && latestResult) {
-                        currentRunState = { state: 'missing', progress: 0, stage: 'Cached result restored locally' };
+                    if (res.status === 404) {
+                        currentRunState = { state: 'missing', progress: 0, stage: 'Run is no longer available' };
+                        latestJobId = null;
+                        latestResult = null;
+                        latestInputPlots = null;
+                        agentJobSnapshots.delete(jobId);
+                        updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable');
+                        renderAgentActivity();
                         progressWrap.classList.remove('visible');
+                        showError('This run is no longer available on the server.');
                         resetRunBtn();
                         saveDashboardState();
                         return;
                     }
-                    throw new Error('Status request failed (' + res.status + ')');
+                    const statusError = new Error('Status request failed (' + res.status + ')');
+                    statusError.retryable = res.status === 408 || res.status === 429 || res.status >= 500;
+                    throw statusError;
                 }
                 const data = await res.json();
+                if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
                 setProgress(data.progress, data.stage);
-                latestJobId = jobId;
                 currentRunState = {
                     state: data.state,
                     progress: data.progress,
                     stage: data.stage || '',
                 };
+                putAgentJob(data);
+                renderAgentJobUpdate(data);
                 if (data.input_plots) {
                     latestInputPlots = data.input_plots;
                     applyInputPlots(data.input_plots);
@@ -9947,6 +10294,7 @@
                     progressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
                 if (data.state === 'cancelled' || data.state === 'interrupted') {
@@ -9954,12 +10302,49 @@
                     progressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
-                pollTimer = setTimeout(() => pollStatus(jobId), 600);
+                pollTimer = setTimeout(() => pollStatus(jobId, pollRevision, 0), 600);
             } catch (e) {
-                showError(e.message || 'Lost connection to the server.');
-                resetRunBtn();
+                if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
+                const nextFailureCount = failureCount + 1;
+                const retryable = e?.retryable !== false;
+                if (retryable && nextFailureCount <= STATUS_POLL_MAX_FAILURES) {
+                    const retryDelay = statusPollRetryDelay(nextFailureCount);
+                    const reconnectStage = 'Status unavailable; retrying (' + nextFailureCount + '/' + STATUS_POLL_MAX_FAILURES + ')...';
+                    currentRunState = {
+                        state: currentRunState?.state || 'running',
+                        progress: currentRunState?.progress || 0,
+                        stage: reconnectStage,
+                    };
+                    setProgress(currentRunState.progress, reconnectStage);
+                    putAgentJob({
+                        ...(agentJobSnapshots.get(jobId) || { job_id: jobId }),
+                        stage: reconnectStage,
+                    });
+                    renderAgentJobUpdate(agentJobSnapshots.get(jobId));
+                    saveDashboardState();
+                    pollTimer = setTimeout(
+                        () => pollStatus(jobId, pollRevision, nextFailureCount),
+                        retryDelay
+                    );
+                    return;
+                }
+                const message = retryable
+                    ? 'Status monitoring paused after repeated connection failures. Open Solar Agent Runs to refresh or cancel this job.'
+                    : (e.message || 'The server rejected the status request.');
+                showError(message);
+                currentRunState = {
+                    state: 'monitoring_error',
+                    progress: currentRunState?.progress || 0,
+                    stage: 'Status monitoring paused',
+                };
+                setProgress(currentRunState.progress, currentRunState.stage);
+                runBtn.disabled = true;
+                runBtn.textContent = 'Monitoring paused';
+                saveDashboardState();
+                await refreshAgentState(false);
             }
         }
 
@@ -10064,6 +10449,7 @@
         }
 
         async function submitAnnualRequest(body, { acknowledgement = null, requestRevision = annualRequestRevision } = {}) {
+            const statusPollRevision = invalidateAnnualStatusPoll();
             annualRunBtn.disabled = true;
             annualRunBtn.textContent = acknowledgement ? 'Queuing confirmed run...' : 'Reviewing request...';
             setAnnualProgress(0, acknowledgement ? 'Validating confirmation...' : 'Checking calibration coverage...');
@@ -10086,6 +10472,7 @@
                     responseBody = null;
                 }
                 if (requestRevision !== annualRequestRevision) return;
+                if (statusPollRevision !== annualPollRevision) return;
                 if (!res.ok) {
                     const detail = responseBody?.detail;
                     const code = detail && typeof detail === 'object' ? detail.code : null;
@@ -10119,8 +10506,9 @@
                 setAnnualExcelLink(null);
                 setAnnualProgress(0, 'Queued...');
                 annualRunBtn.textContent = 'Running...';
+                registerDirectRun(job_id, 'annual', body, 0, 'Annual simulation queued');
                 saveDashboardState();
-                pollAnnualStatus(job_id);
+                pollAnnualStatus(job_id, statusPollRevision);
             } catch (e) {
                 if (requestRevision !== annualRequestRevision) return;
                 clearAnnualFallbackConfirmation();
@@ -10133,10 +10521,20 @@
         }
 
         async function runAnnualAnalysis() {
+            const fromDate = document.getElementById('annualFromDate').value;
+            const toDate = document.getElementById('annualToDate').value;
+            if (!fromDate || !toDate) {
+                showAnnualError('Choose both a start date and an end date.');
+                return;
+            }
             const body = buildAnnualRequest();
             if (!body) return;
             annualRequestRevision += 1;
             clearAnnualFallbackConfirmation();
+            annualLatestJobId = null;
+            annualLatestResult = null;
+            clearAnnualImages();
+            setAnnualExcelLink(null);
             await submitAnnualRequest(body, { requestRevision: annualRequestRevision });
         }
 
@@ -10161,27 +10559,39 @@
             });
         }
 
-        async function pollAnnualStatus(jobId) {
+        async function pollAnnualStatus(jobId, pollRevision = annualPollRevision, failureCount = 0) {
+            if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
             if (annualPollTimer) {
                 clearTimeout(annualPollTimer);
                 annualPollTimer = null;
             }
             try {
-                const res = await fetch('/api/status/' + jobId);
+                const res = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
                 if (!res.ok) {
-                    if (res.status === 404 && annualLatestResult) {
-                        annualRunState = { state: 'missing', progress: 0, stage: 'Cached result restored locally' };
+                    if (res.status === 404) {
+                        annualRunState = { state: 'missing', progress: 0, stage: 'Run is no longer available' };
+                        annualLatestJobId = null;
+                        annualLatestResult = null;
+                        agentJobSnapshots.delete(jobId);
+                        updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable');
+                        renderAgentActivity();
                         annualProgressWrap.classList.remove('visible');
+                        showAnnualError('This annual run is no longer available on the server.');
                         resetAnnualRunBtn();
                         saveDashboardState();
                         return;
                     }
-                    throw new Error('Annual status request failed (' + res.status + ')');
+                    const statusError = new Error('Annual status request failed (' + res.status + ')');
+                    statusError.retryable = res.status === 408 || res.status === 429 || res.status >= 500;
+                    throw statusError;
                 }
                 const data = await res.json();
+                if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
                 setAnnualProgress(data.progress, data.stage);
-                annualLatestJobId = jobId;
                 annualRunState = { state: data.state, progress: data.progress, stage: data.stage || '' };
+                putAgentJob(data);
+                renderAgentJobUpdate(data);
                 if (data.input_plots) applyAnnualInputPlots(data.input_plots);
                 saveDashboardState();
                 if (data.state === 'done') {
@@ -10198,6 +10608,7 @@
                     annualProgressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetAnnualRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
                 if (data.state === 'cancelled' || data.state === 'interrupted') {
@@ -10205,12 +10616,49 @@
                     annualProgressWrap.classList.remove('visible');
                     saveDashboardState();
                     resetAnnualRunBtn();
+                    await refreshAgentState(false);
                     return;
                 }
-                annualPollTimer = setTimeout(() => pollAnnualStatus(jobId), 600);
+                annualPollTimer = setTimeout(() => pollAnnualStatus(jobId, pollRevision, 0), 600);
             } catch (e) {
-                showAnnualError(e.message || 'Lost connection to the server.');
-                resetAnnualRunBtn();
+                if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
+                const nextFailureCount = failureCount + 1;
+                const retryable = e?.retryable !== false;
+                if (retryable && nextFailureCount <= STATUS_POLL_MAX_FAILURES) {
+                    const retryDelay = statusPollRetryDelay(nextFailureCount);
+                    const reconnectStage = 'Status unavailable; retrying (' + nextFailureCount + '/' + STATUS_POLL_MAX_FAILURES + ')...';
+                    annualRunState = {
+                        state: annualRunState?.state || 'running',
+                        progress: annualRunState?.progress || 0,
+                        stage: reconnectStage,
+                    };
+                    setAnnualProgress(annualRunState.progress, reconnectStage);
+                    putAgentJob({
+                        ...(agentJobSnapshots.get(jobId) || { job_id: jobId }),
+                        stage: reconnectStage,
+                    });
+                    renderAgentJobUpdate(agentJobSnapshots.get(jobId));
+                    saveDashboardState();
+                    annualPollTimer = setTimeout(
+                        () => pollAnnualStatus(jobId, pollRevision, nextFailureCount),
+                        retryDelay
+                    );
+                    return;
+                }
+                const message = retryable
+                    ? 'Annual status monitoring paused after repeated connection failures. Open Solar Agent Runs to refresh or cancel this job.'
+                    : (e.message || 'The server rejected the annual status request.');
+                showAnnualError(message);
+                annualRunState = {
+                    state: 'monitoring_error',
+                    progress: annualRunState?.progress || 0,
+                    stage: 'Status monitoring paused',
+                };
+                setAnnualProgress(annualRunState.progress, annualRunState.stage);
+                annualRunBtn.disabled = true;
+                annualRunBtn.textContent = 'Monitoring paused';
+                saveDashboardState();
+                await refreshAgentState(false);
             }
         }
 
@@ -10288,6 +10736,12 @@
         const sendBtn = document.getElementById('sendBtn');
         const messagesContainer = document.getElementById('messages');
         const chatComposerStatus = document.getElementById('chatComposerStatus');
+        const chatHistoryBtn = document.getElementById('chatHistoryBtn');
+        const chatHistoryCount = document.getElementById('chatHistoryCount');
+        const chatHistoryPanel = document.getElementById('chatHistory');
+        const chatHistoryList = document.getElementById('chatHistoryList');
+        const chatHistoryBack = document.getElementById('chatHistoryBack');
+        const chatHistoryStorageStatus = document.getElementById('chatHistoryStorageStatus');
         const agentContextBadge = document.getElementById('agentContextBadge');
         const agentContextText = document.getElementById('agentContextText');
         const agentActivity = document.getElementById('agentActivity');
@@ -10311,6 +10765,573 @@
         let agentActivityInteractionPointerId = null;
         let agentActivityRenderQueued = false;
 
+        function defaultChatConversationMessages(createdAt = new Date().toISOString()) {
+            return [{
+                role: 'assistant',
+                content: DEFAULT_ASSISTANT_MESSAGE,
+                created_at: normalizeChatTimestamp(createdAt).toISOString(),
+            }];
+        }
+
+        function createChatConversationId() {
+            if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+            return 'chat-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+        }
+
+        function normalizeStoredChatMessage(item) {
+            if (!item || typeof item !== 'object' || item.content === null || item.content === undefined) return null;
+            const content = String(item.content);
+            if (!content) return null;
+            const restored = {
+                role: item.role === 'user' ? 'user' : 'assistant',
+                content,
+                created_at: normalizeChatTimestamp(
+                    item.created_at || item.createdAt
+                ).toISOString(),
+                gpt_seconds: finiteElapsedSeconds(
+                    item.gpt_seconds ?? item.gptSeconds
+                ),
+                model_run_seconds: finiteElapsedSeconds(
+                    item.model_run_seconds ?? item.modelSeconds
+                ),
+                model_run_status: String(
+                    item.model_run_status || item.modelStatus || 'not_run'
+                ),
+                automated: item.automated === true,
+            };
+            const restoredSources = collectExternalEvidence(content, item);
+            if (item.web_search_enabled === true || restoredSources.length) {
+                restored.web_search_enabled = true;
+                restored.web_sources = restoredSources;
+            }
+            const actionCard = normalizeChatActionCard(item.action_card);
+            if (actionCard) restored.action_card = actionCard;
+            return restored;
+        }
+
+        function chatConversationTitle(messages, draft = '') {
+            const firstUserMessage = (messages || []).find((message) => message?.role === 'user' && message.content);
+            const source = String(firstUserMessage?.content || draft || '').replace(/\s+/g, ' ').trim();
+            if (!source) return 'New conversation';
+            return source.length > 58 ? source.slice(0, 57) + '...' : source;
+        }
+
+        function chatConversationPreview(conversation) {
+            const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+            const lastMessage = [...messages].reverse().find((message) => (
+                message?.content && message.content !== DEFAULT_ASSISTANT_MESSAGE
+            ));
+            const source = String(lastMessage?.content || conversation?.draft || 'No messages yet')
+                .replace(/\s+/g, ' ')
+                .trim();
+            return source.length > 105 ? source.slice(0, 104) + '...' : source;
+        }
+
+        function chatConversationHasContent(conversation) {
+            if (String(conversation?.draft || '').trim()) return true;
+            return (conversation?.messages || []).some((message) => (
+                message?.role === 'user' ||
+                (message?.content && message.content !== DEFAULT_ASSISTANT_MESSAGE)
+            ));
+        }
+
+        function chatMessageHasNonterminalAction(message) {
+            const card = normalizeChatActionCard(message?.action_card);
+            if (!card) return false;
+            const status = String(card.status || '').toLowerCase();
+            return !TERMINAL_CHAT_ACTION_STATUSES.has(status) && (
+                card.job_id || card.job_ids?.length ||
+                card.proposal_id || card.proposal_ids?.length ||
+                card.sweep_id
+            );
+        }
+
+        function trimChatMessages(messages, limit = 50) {
+            const items = Array.isArray(messages) ? messages : [];
+            if (items.length <= limit) return items;
+            const cutoff = items.length - limit;
+            const pinned = items.slice(0, cutoff).filter(chatMessageHasNonterminalAction);
+            const pinnedTail = pinned.slice(-limit);
+            const remaining = limit - pinnedTail.length;
+            if (!remaining) return pinnedTail;
+            return [
+                ...pinnedTail,
+                ...items.slice(-remaining),
+            ];
+        }
+
+        function chatConversationHasNonterminalAction(conversation) {
+            return (conversation?.messages || []).some(chatMessageHasNonterminalAction);
+        }
+
+        function chatConversationIsProtected(conversation) {
+            return conversation?.id === activeChatConversationId ||
+                transientProtectedConversationIds.has(conversation?.id) ||
+                chatConversationHasNonterminalAction(conversation);
+        }
+
+        function compactChatConversationForStorage(conversation, level) {
+            const configurations = [
+                { recentMessages: 24, contentCharacters: 4000, draftCharacters: 2000 },
+                { recentMessages: 12, contentCharacters: 2000, draftCharacters: 1000 },
+                { recentMessages: 6, contentCharacters: 1000, draftCharacters: 500 },
+                { recentMessages: 2, contentCharacters: 500, draftCharacters: 250 },
+            ];
+            const configuration = configurations[Math.min(
+                Math.max(level - 1, 0),
+                configurations.length - 1
+            )];
+            const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+            const recentStart = Math.max(0, messages.length - configuration.recentMessages);
+            const compactedMessages = messages
+                .filter((message, index) => index >= recentStart || chatMessageHasNonterminalAction(message))
+                .map((message) => {
+                    const content = String(message.content || '');
+                    const compacted = {
+                        ...message,
+                        content: content.length > configuration.contentCharacters
+                            ? content.slice(0, configuration.contentCharacters - 3) + '...'
+                            : content,
+                    };
+                    if (level >= 3) delete compacted.web_sources;
+                    return compacted;
+                });
+            return {
+                ...conversation,
+                draft: String(conversation.draft || '').slice(0, configuration.draftCharacters),
+                messages: compactedMessages,
+            };
+        }
+
+        function createChatConversation(messages = null, draft = '') {
+            const now = new Date().toISOString();
+            const normalizedMessages = trimChatMessages(
+                (Array.isArray(messages) ? messages : defaultChatConversationMessages(now))
+                .map(normalizeStoredChatMessage)
+                .filter(Boolean)
+            );
+            const safeMessages = normalizedMessages.length
+                ? normalizedMessages
+                : defaultChatConversationMessages(now);
+            return {
+                id: createChatConversationId(),
+                title: chatConversationTitle(safeMessages, draft),
+                created_at: safeMessages[0]?.created_at || now,
+                updated_at: safeMessages.at(-1)?.created_at || now,
+                draft: String(draft || '').slice(0, 4000),
+                messages: safeMessages,
+                unread: false,
+            };
+        }
+
+        function normalizeChatConversation(item) {
+            if (!item || typeof item !== 'object') return null;
+            const draft = String(item.draft || '').slice(0, 4000);
+            const messages = trimChatMessages(
+                (Array.isArray(item.messages) ? item.messages : [])
+                .map(normalizeStoredChatMessage)
+                .filter(Boolean)
+            );
+            const safeMessages = messages.length
+                ? messages
+                : defaultChatConversationMessages(item.created_at);
+            const createdAt = normalizeChatTimestamp(
+                item.created_at || safeMessages[0]?.created_at
+            ).toISOString();
+            const latestMessageTime = safeMessages.reduce((latest, message) => {
+                const parsed = Date.parse(message.created_at);
+                return Number.isFinite(parsed) ? Math.max(latest, parsed) : latest;
+            }, Date.parse(createdAt));
+            const requestedUpdatedAt = Date.parse(item.updated_at || '');
+            const updatedAt = new Date(Math.max(
+                latestMessageTime,
+                Number.isFinite(requestedUpdatedAt) ? requestedUpdatedAt : latestMessageTime
+            )).toISOString();
+            return {
+                id: String(item.id || createChatConversationId()).slice(0, 160),
+                title: chatConversationTitle(safeMessages, draft),
+                created_at: createdAt,
+                updated_at: updatedAt,
+                draft,
+                messages: safeMessages,
+                unread: item.unread === true,
+            };
+        }
+
+        function activeChatConversation() {
+            return chatConversations.find((conversation) => conversation.id === activeChatConversationId) || null;
+        }
+
+        function syncActiveChatConversation() {
+            let conversation = activeChatConversation();
+            if (!conversation) {
+                conversation = createChatConversation(chatMessages, chatDraft);
+                chatConversations.unshift(conversation);
+                activeChatConversationId = conversation.id;
+            }
+            const previousDraft = conversation.draft;
+            const normalizedMessages = trimChatMessages(
+                chatMessages
+                .map(normalizeStoredChatMessage)
+                .filter(Boolean)
+            );
+            conversation.messages = normalizedMessages.length
+                ? normalizedMessages
+                : defaultChatConversationMessages(conversation.created_at);
+            conversation.draft = String(chatDraft || '').slice(0, 4000);
+            conversation.title = chatConversationTitle(conversation.messages, conversation.draft);
+            conversation.unread = false;
+            const latestMessageTime = conversation.messages.reduce((latest, message) => {
+                const parsed = Date.parse(message.created_at);
+                return Number.isFinite(parsed) ? Math.max(latest, parsed) : latest;
+            }, Date.parse(conversation.updated_at || conversation.created_at));
+            conversation.updated_at = new Date(Math.max(
+                latestMessageTime,
+                previousDraft !== conversation.draft ? Date.now() : 0
+            )).toISOString();
+            chatMessages = conversation.messages;
+            return conversation;
+        }
+
+        function sortedVisibleChatConversations() {
+            return chatConversations
+                .filter(chatConversationHasContent)
+                .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
+        }
+
+        function readChatConversationHistory() {
+            try {
+                return JSON.parse(localStorage.getItem(CHAT_HISTORY_STORAGE_KEY) || 'null');
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function isChatHistoryQuotaError(error) {
+            return error?.name === 'QuotaExceededError' ||
+                error?.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+                error?.code === 22 || error?.code === 1014;
+        }
+
+        function saveChatConversationHistory(syncActive = true) {
+            if (syncActive) syncActiveChatConversation();
+            chatHistoryRevision += 1;
+            const eligible = chatConversations
+                .filter((conversation) => conversation.id === activeChatConversationId || chatConversationHasContent(conversation))
+                .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
+            const active = eligible.find((conversation) => conversation.id === activeChatConversationId);
+            const protectedCandidates = [
+                active,
+                ...eligible.filter((conversation) => (
+                    conversation.id !== activeChatConversationId && chatConversationIsProtected(conversation)
+                )),
+            ].filter(Boolean);
+            const candidateIds = new Set();
+            const protectedUnique = protectedCandidates
+                .filter((conversation) => {
+                    if (candidateIds.has(conversation.id)) return false;
+                    candidateIds.add(conversation.id);
+                    return true;
+                });
+            const recentOrdinary = eligible.filter((conversation) => !candidateIds.has(conversation.id));
+            let candidates = [
+                ...protectedUnique,
+                ...recentOrdinary.slice(0, Math.max(
+                    0,
+                    MAX_SAVED_CHAT_CONVERSATIONS - protectedUnique.length
+                )),
+            ];
+            let compactionLevel = 0;
+            while (candidates.length) {
+                try {
+                    const persistenceState = chatHistoryStickyIssue === 'possible_loss'
+                        ? 'possible_loss'
+                        : (
+                            chatHistoryStickyIssue === 'degraded' ||
+                            compactionLevel > 0 || candidates.length < eligible.length
+                        ) ? 'degraded' : 'ok';
+                    localStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify({
+                        version: 1,
+                        revision: chatHistoryRevision,
+                        persistence_state: persistenceState,
+                        active_conversation_id: activeChatConversationId,
+                        conversations: compactionLevel
+                            ? candidates.map((conversation) => (
+                                compactChatConversationForStorage(conversation, compactionLevel)
+                            ))
+                            : candidates,
+                    }));
+                    chatHistoryPersistenceState = persistenceState;
+                    return true;
+                } catch (error) {
+                    if (!isChatHistoryQuotaError(error)) {
+                        chatHistoryPersistenceState = 'failed';
+                        return false;
+                    }
+                    if (compactionLevel === 0) {
+                        compactionLevel = 1;
+                        continue;
+                    }
+                    const removableIndex = candidates.findLastIndex(
+                        (conversation) => !chatConversationIsProtected(conversation)
+                    );
+                    if (removableIndex >= 0) {
+                        candidates = candidates.filter((_, index) => index !== removableIndex);
+                        continue;
+                    }
+                    if (compactionLevel < 4) {
+                        compactionLevel += 1;
+                        continue;
+                    }
+                    chatHistoryPersistenceState = 'failed';
+                    return false;
+                }
+            }
+            chatHistoryPersistenceState = 'failed';
+            return false;
+        }
+
+        function restoreChatConversationHistory(
+            legacyMessages = null,
+            legacyDraft = '',
+            legacyActiveConversationId = '',
+            legacyHistoryRevision = 0,
+            legacyPersistenceState = 'ok'
+        ) {
+            const stored = readChatConversationHistory();
+            const storedRevision = Number(stored?.revision) || 0;
+            const savedRevision = Number(legacyHistoryRevision) || 0;
+            const legacyFailedWithoutRevision = (
+                savedRevision === 0 && storedRevision === 0 && legacyPersistenceState === 'failed'
+            );
+            const recoverLegacyActive = savedRevision > storedRevision || legacyFailedWithoutRevision;
+            chatHistoryRevision = Math.max(storedRevision, savedRevision);
+            chatHistoryStickyIssue = recoverLegacyActive || stored?.persistence_state === 'possible_loss'
+                ? 'possible_loss'
+                : stored?.persistence_state === 'degraded' ? 'degraded' : 'none';
+            chatHistoryPersistenceState = recoverLegacyActive
+                ? 'possible_loss'
+                : ['degraded', 'possible_loss'].includes(stored?.persistence_state)
+                    ? stored.persistence_state
+                    : 'ok';
+            const rawConversations = Array.isArray(stored)
+                ? stored
+                : (Array.isArray(stored?.conversations) ? stored.conversations : []);
+            const seenIds = new Set();
+            chatConversations = rawConversations
+                .map(normalizeChatConversation)
+                .filter((conversation) => {
+                    if (!conversation || seenIds.has(conversation.id)) return false;
+                    seenIds.add(conversation.id);
+                    return true;
+                })
+                .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
+            const recoveredActiveId = String(legacyActiveConversationId || '').slice(0, 160);
+            if (recoverLegacyActive && Array.isArray(legacyMessages)) {
+                const recovered = createChatConversation(legacyMessages, legacyDraft);
+                if (recoveredActiveId) recovered.id = recoveredActiveId;
+                const existingIndex = chatConversations.findIndex(
+                    (conversation) => conversation.id === recovered.id
+                );
+                if (existingIndex >= 0) {
+                    recovered.created_at = chatConversations[existingIndex].created_at;
+                    chatConversations.splice(existingIndex, 1, recovered);
+                } else {
+                    chatConversations.unshift(recovered);
+                }
+            }
+            if (!chatConversations.length) {
+                chatConversations = [createChatConversation(legacyMessages, legacyDraft)];
+            }
+            const requestedActiveId = recoverLegacyActive && recoveredActiveId
+                ? recoveredActiveId
+                : String(stored?.active_conversation_id || '');
+            const active = chatConversations.find((conversation) => conversation.id === requestedActiveId)
+                || chatConversations[0];
+            const protectedConversations = chatConversations.filter((conversation) => (
+                conversation.id === active.id || chatConversationHasNonterminalAction(conversation)
+            ));
+            const protectedIds = new Set(protectedConversations.map((conversation) => conversation.id));
+            const recentConversations = chatConversations.filter(
+                (conversation) => !protectedIds.has(conversation.id)
+            );
+            chatConversations = [
+                ...protectedConversations,
+                ...recentConversations.slice(0, Math.max(
+                    0,
+                    MAX_SAVED_CHAT_CONVERSATIONS - protectedConversations.length
+                )),
+            ];
+            activeChatConversationId = active.id;
+            active.unread = false;
+            chatMessages = active.messages;
+            chatDraft = active.draft;
+            rebuildAgentCompletionCardIndex();
+        }
+
+        function rebuildAgentCompletionCardIndex() {
+            chatConversations.forEach((conversation) => {
+                conversation.messages.forEach((message) => {
+                    const card = normalizeChatActionCard(message.action_card);
+                    const completionStatus = String(card?.status || '').toLowerCase();
+                    const isRecordedCompletion = ['done', 'error', 'cancelled', 'interrupted'].includes(
+                        completionStatus
+                    );
+                    if (card?.kind === 'run_complete' && card.job_id && isRecordedCompletion) {
+                        agentCompletionCards.add('job:' + card.job_id);
+                    } else if (card?.kind === 'sweep_complete' && card.sweep_id && isRecordedCompletion) {
+                        agentCompletionCards.add('sweep:' + card.sweep_id);
+                    }
+                });
+            });
+        }
+
+        function syncChatHistoryControls() {
+            const conversations = sortedVisibleChatConversations();
+            const unreadCount = conversations.filter((conversation) => conversation.unread).length;
+            chatHistoryCount.textContent = String(conversations.length);
+            chatHistoryBtn.disabled = chatIsSending || chatHydrationPending;
+            chatHistoryBtn.setAttribute('aria-expanded', String(chatHistoryOpen));
+            chatHistoryBtn.setAttribute(
+                'aria-label',
+                unreadCount
+                    ? 'View Solar Agent conversations, ' + unreadCount + ' with new updates'
+                    : 'View Solar Agent conversations'
+            );
+            if (chatHistoryPersistenceState !== 'ok') {
+                chatHistoryBtn.setAttribute(
+                    'aria-label',
+                    chatHistoryBtn.getAttribute('aria-label') + (
+                        chatHistoryPersistenceState === 'failed'
+                            ? '. Recent changes are not saved'
+                            : chatHistoryPersistenceState === 'possible_loss'
+                                ? '. Some recent conversation updates may be missing after storage recovery'
+                                : '. Some older content is not included in the saved browser archive'
+                    )
+                );
+            }
+            chatHistoryBtn.title = chatHistoryPersistenceState === 'failed'
+                ? 'Recent conversation changes could not be saved in this browser'
+                : chatHistoryPersistenceState === 'possible_loss'
+                    ? 'Some recent conversation updates may be missing after storage recovery'
+                : chatHistoryPersistenceState === 'degraded'
+                    ? 'Some older content is not included in the saved browser archive'
+                    : chatHydrationPending
+                        ? 'Wait while the saved dashboard context is restored'
+                        : chatIsSending
+                            ? 'Wait for the current response before switching conversations'
+                            : 'View conversations';
+            const storageMessage = chatHistoryPersistenceState === 'failed'
+                ? 'Recent conversation changes could not be saved in this browser. Keep this page open and try again after freeing browser storage.'
+                : chatHistoryPersistenceState === 'possible_loss'
+                    ? 'Some recent conversation updates may be missing after browser-storage recovery. Future changes are saving, but verify important run updates.'
+                : chatHistoryPersistenceState === 'degraded'
+                    ? 'The saved browser archive keeps the newest 20 conversations and may trim older content to fit. Conversations in this open page are unchanged.'
+                    : '';
+            if (chatHistoryStorageStatus.textContent !== storageMessage) {
+                chatHistoryStorageStatus.textContent = storageMessage;
+            }
+            chatHistoryStorageStatus.hidden = !storageMessage;
+        }
+
+        function renderChatHistory() {
+            syncActiveChatConversation();
+            syncChatHistoryControls();
+            const focusedConversationId = chatHistoryList.contains(document.activeElement)
+                ? document.activeElement.closest('[data-chat-conversation-id]')?.dataset.chatConversationId
+                : null;
+            chatHistoryList.innerHTML = '';
+            const conversations = sortedVisibleChatConversations();
+            if (!conversations.length) {
+                const empty = document.createElement('div');
+                empty.className = 'chat-history-empty';
+                empty.setAttribute('role', 'listitem');
+                empty.textContent = 'Your previous Solar Agent conversations will appear here after you send a message.';
+                chatHistoryList.appendChild(empty);
+                return;
+            }
+            conversations.forEach((conversation) => {
+                const item = document.createElement('div');
+                item.setAttribute('role', 'listitem');
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'chat-history-card';
+                button.dataset.chatConversationId = conversation.id;
+                button.classList.toggle('active', conversation.id === activeChatConversationId);
+                button.disabled = chatIsSending || chatHydrationPending;
+                button.setAttribute('aria-current', conversation.id === activeChatConversationId ? 'true' : 'false');
+
+                const head = document.createElement('span');
+                head.className = 'chat-history-card-head';
+                const title = document.createElement('span');
+                title.className = 'chat-history-title';
+                title.textContent = conversation.title;
+                head.appendChild(title);
+                if (conversation.id === activeChatConversationId || conversation.unread) {
+                    const state = document.createElement('span');
+                    state.className = 'chat-history-state' + (conversation.unread ? ' unread' : '');
+                    state.textContent = conversation.unread ? 'Updated' : 'Current';
+                    head.appendChild(state);
+                }
+
+                const preview = document.createElement('span');
+                preview.className = 'chat-history-preview';
+                preview.textContent = chatConversationPreview(conversation);
+                const meta = document.createElement('span');
+                meta.className = 'chat-history-card-meta';
+                const messageCount = conversation.messages.filter((message) => (
+                    message.content !== DEFAULT_ASSISTANT_MESSAGE
+                )).length;
+                meta.textContent = messageCount + ' message' + (messageCount === 1 ? '' : 's') +
+                    ' - ' + formatDashboardTimestamp(conversation.updated_at);
+                button.append(head, preview, meta);
+                item.appendChild(button);
+                chatHistoryList.appendChild(item);
+            });
+            if (focusedConversationId) {
+                window.requestAnimationFrame(() => {
+                    const focusTarget = Array.from(chatHistoryList.querySelectorAll('[data-chat-conversation-id]'))
+                        .find((element) => element.dataset.chatConversationId === focusedConversationId);
+                    (focusTarget || chatHistoryBack).focus({ preventScroll: true });
+                });
+            }
+        }
+
+        function setChatHistoryOpen(open, persist = true) {
+            if (open && chatIsSending) return;
+            if (open) setAgentActivityOpen(false, false);
+            chatHistoryOpen = !!open;
+            chatSidebar.classList.toggle('history-view', chatHistoryOpen);
+            chatHistoryPanel.classList.toggle('hidden', !chatHistoryOpen);
+            renderChatHistory();
+            if (persist) saveDashboardState();
+        }
+
+        function openChatConversation(conversationId) {
+            if (chatIsSending || chatHydrationPending) return;
+            syncActiveChatConversation();
+            const conversation = chatConversations.find((item) => item.id === conversationId);
+            if (!conversation) return;
+            activeChatConversationId = conversation.id;
+            conversation.unread = false;
+            chatMessages = conversation.messages;
+            chatDraft = conversation.draft;
+            chatInput.value = chatDraft;
+            autoResizeChatInput();
+            syncChatComposerState();
+            setChatHistoryOpen(false, false);
+            messagesContainer.setAttribute('aria-live', 'off');
+            renderChatMessages();
+            saveDashboardState();
+            chatInput.focus();
+            window.requestAnimationFrame(() => {
+                messagesContainer.setAttribute('aria-live', 'polite');
+                if (activeChatConversationId === conversation.id) {
+                    chatComposerStatus.textContent = 'Opened ' + conversation.title + '. New messages use the active dashboard context.';
+                }
+            });
+        }
+
         function isChatMobile() {
             return window.innerWidth <= CHAT_MOBILE_BREAKPOINT;
         }
@@ -10324,19 +11345,35 @@
         }
 
         function syncChatComposerState() {
-            sendBtn.disabled = chatIsSending || !chatInput.value.trim();
-            newChatBtn.disabled = chatIsSending;
-            messagesContainer.setAttribute('aria-busy', String(chatIsSending));
-            sendBtn.setAttribute('aria-label', chatIsSending ? 'Solar Agent is responding' : 'Send message');
-            chatComposerStatus.textContent = chatIsSending
-                ? 'Reviewing the active ' + (activeMode === 'annual' ? 'annual simulation' : 'calibration run') + '...'
+            sendBtn.disabled = chatHydrationPending || (!chatIsSending && !chatInput.value.trim());
+            newChatBtn.disabled = chatIsSending || chatHydrationPending;
+            syncChatHistoryControls();
+            messagesContainer.setAttribute('aria-busy', String(chatIsSending || chatHydrationPending));
+            sendBtn.setAttribute(
+                'aria-label',
+                chatHydrationPending
+                    ? 'Solar Agent is restoring the saved dashboard context'
+                    : chatIsSending ? 'Cancel Solar Agent response' : 'Send message'
+            );
+            chatComposerStatus.textContent = chatHydrationPending
+                ? 'Restoring the saved dashboard context...'
+                : chatIsSending
+                ? 'Reviewing the active ' + (activeMode === 'annual' ? 'annual simulation' : 'calibration run') + '... Select Cancel to stop waiting.'
                 : isChatMobile()
                     ? 'Tap Send · Enter adds a new line'
                     : 'Enter to send · Shift+Enter for a new line';
         }
 
+        function releaseChatHydration() {
+            if (!chatHydrationPending) return;
+            chatHydrationPending = false;
+            syncChatComposerState();
+            renderChatHistory();
+        }
+
         function queueChatDraftSave() {
             chatDraft = chatInput.value;
+            if (chatHydrationPending) return;
             if (chatDraftSaveTimer) clearTimeout(chatDraftSaveTimer);
             chatDraftSaveTimer = window.setTimeout(() => {
                 chatDraftSaveTimer = null;
@@ -10345,6 +11382,7 @@
         }
 
         function setAgentActivityOpen(open, persist = true) {
+            if (open && chatHistoryOpen) setChatHistoryOpen(false, false);
             const hasActivity = !agentActivity.classList.contains('hidden');
             agentActivityExpanded = !!open && hasActivity;
             agentActivity.classList.toggle('collapsed', !agentActivityExpanded);
@@ -10370,17 +11408,32 @@
         }
 
         function startNewChat() {
-            if (chatIsSending) return;
+            if (chatIsSending || chatHydrationPending) return;
+            const currentConversation = syncActiveChatConversation();
+            const shouldArchiveCurrent = chatConversationHasContent(currentConversation);
             chatMessages = [{
                 role: 'assistant',
                 content: DEFAULT_ASSISTANT_MESSAGE,
                 created_at: new Date().toISOString(),
             }];
             chatDraft = '';
+            if (shouldArchiveCurrent) {
+                const conversation = createChatConversation(chatMessages, chatDraft);
+                chatConversations.unshift(conversation);
+                activeChatConversationId = conversation.id;
+                chatMessages = conversation.messages;
+            } else {
+                currentConversation.messages = chatMessages;
+                currentConversation.draft = '';
+                currentConversation.title = 'New conversation';
+                currentConversation.updated_at = chatMessages[0].created_at;
+            }
             chatInput.value = '';
             autoResizeChatInput();
             syncChatComposerState();
+            setChatHistoryOpen(false, false);
             renderChatMessages();
+            renderChatHistory();
             saveDashboardState();
             chatInput.focus();
         }
@@ -10598,8 +11651,28 @@
         restoreChatTogglePosition();
         restoreChatWindowPosition();
 
-        sendBtn.addEventListener('click', sendMessage);
+        sendBtn.addEventListener('click', () => {
+            if (chatIsSending) cancelChatRequest();
+            else sendMessage();
+        });
         newChatBtn.addEventListener('click', startNewChat);
+        chatHistoryBtn.addEventListener('click', () => {
+            const opening = !chatHistoryOpen;
+            setChatHistoryOpen(opening);
+            window.setTimeout(() => {
+                if (opening) (chatHistoryList.querySelector('.chat-history-card') || chatHistoryBack).focus();
+                else chatInput.focus();
+            }, 0);
+        });
+        chatHistoryBack.addEventListener('click', () => {
+            setChatHistoryOpen(false);
+            chatInput.focus();
+        });
+        chatHistoryList.addEventListener('click', (event) => {
+            const conversation = event.target.closest('[data-chat-conversation-id]');
+            if (!conversation) return;
+            openChatConversation(conversation.dataset.chatConversationId);
+        });
         agentRefreshBtn.addEventListener('click', () => refreshAgentState(true));
         agentActivityToggle.addEventListener('click', () => {
             const opening = !agentActivityExpanded;
@@ -10638,6 +11711,11 @@
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && !chatSidebar.classList.contains('hidden')) {
                 event.preventDefault();
+                if (chatHistoryOpen) {
+                    setChatHistoryOpen(false);
+                    chatHistoryBtn.focus();
+                    return;
+                }
                 if (agentActivityExpanded) {
                     if (agentActivitySelection) {
                         const selectedKey = agentActivitySelection;
@@ -10899,6 +11977,11 @@
                 model_run_status: timing.model_run_status || 'not_run',
                 automated: data.automated === true,
             };
+            const webSources = collectExternalEvidence(content, data);
+            if (data.web_search_enabled === true || webSources.length) {
+                message.web_search_enabled = true;
+                message.web_sources = webSources;
+            }
             const actionCard = normalizeChatActionCard(data.action_card);
             if (actionCard) message.action_card = actionCard;
             return message;
@@ -10974,6 +12057,9 @@
             msg.appendChild(bubble);
             applyMessageMeta(msg, role, options);
             messagesContainer.appendChild(msg);
+            if (role === 'assistant' && !options.loading) {
+                renderExternalEvidence(content, options);
+            }
             if (shouldStick) scrollChatToBottom(true);
             return bubble;
         }
@@ -10990,16 +12076,18 @@
             return /\?/.test(text) && /\b(iam|a_r|coefficient|interval|unit|clarif|do you mean|which)\b/i.test(text);
         }
 
-        function renderExternalEvidence(reply, data) {
-            if (!data || !data.web_search_enabled) return;
+        function collectExternalEvidence(reply, data) {
+            if (!data || (!data.web_search_enabled && !Array.isArray(data.web_sources) && !Array.isArray(data.citations))) {
+                return [];
+            }
             const candidates = [];
-            const supplied = data.web_sources || data.citations || [];
-            if (Array.isArray(supplied)) {
+            [data.web_sources, data.citations].forEach((supplied) => {
+                if (!Array.isArray(supplied)) return;
                 supplied.forEach((item) => {
                     if (typeof item === 'string') candidates.push({ label: item, url: item });
                     else if (item && item.url) candidates.push({ label: item.title || item.label || item.url, url: item.url });
                 });
-            }
+            });
             const markdownLink = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
             let match;
             while ((match = markdownLink.exec(String(reply || ''))) !== null) {
@@ -11008,11 +12096,20 @@
             const unique = [];
             const seen = new Set();
             candidates.forEach((item) => {
-                if (!/^https?:\/\//i.test(String(item.url || '')) || seen.has(item.url)) return;
-                seen.add(item.url);
-                unique.push(item);
+                const url = String(item.url || '').slice(0, 2048);
+                if (!/^https?:\/\//i.test(url) || seen.has(url)) return;
+                seen.add(url);
+                unique.push({
+                    label: String(item.label || item.url).slice(0, 240),
+                    url,
+                });
             });
-            if (!unique.length) return;
+            return unique.slice(0, 12);
+        }
+
+        function renderExternalEvidence(reply, data) {
+            const unique = collectExternalEvidence(reply, data);
+            if (!unique.length) return null;
             const evidence = document.createElement('div');
             evidence.className = 'message-evidence';
             const title = document.createElement('strong');
@@ -11028,7 +12125,7 @@
                 evidence.appendChild(link);
             });
             messagesContainer.appendChild(evidence);
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            return evidence;
         }
 
         function shortAgentId(value) {
@@ -11331,13 +12428,16 @@
             const modeLabel = activeView === 'technoeconomic'
                 ? 'Technoeconomic · Annual production'
                 : (activeMode === 'annual' ? 'Annual' : 'Calibration');
-            const visibleIamModel = getCanonicalCurrentConfig(activeMode).iam_model;
-            const iamLabel = visibleIamModel === 'martin_ruiz' ? 'Martin–Ruiz IAM' : 'Physical IAM';
             const baselineId = agentServerState.promoted_baselines?.[activeMode] || null;
             const baselineJob = baselineId ? agentJobSnapshots.get(baselineId) : null;
             const state = baselineJob?.state || (baselineId ? 'done' : 'not run');
             const stateLabel = state === 'done' ? 'ready' : humanizeAgentField(state);
             const baselineRequest = baselineJob?.request || baselineJob?.provenance?.request || baselineJob?.provenance?.request_snapshot || baselineJob?.provenance?.candidate_request || null;
+            const currentRequest = getCanonicalCurrentConfig(activeMode);
+            const contextIamModel = baselineId ? baselineRequest?.iam_model : currentRequest.iam_model;
+            const iamLabel = contextIamModel === 'martin_ruiz'
+                ? 'Martin–Ruiz IAM'
+                : (contextIamModel === 'physical' ? 'Physical IAM' : 'IAM not loaded');
             agentContextBadge.classList.toggle('ready', !!baselineId);
             agentContextText.textContent = baselineId
                 ? modeLabel + ' · ' + iamLabel + ' · ' + compactAgentContextWindow(baselineRequest) + ' · Baseline ' + shortAgentId(baselineId) + ' ' + stateLabel
@@ -11374,7 +12474,12 @@
             if (Array.isArray(data.proposals)) return { type: 'proposal_batch', proposals: data.proposals, sweep: data.sweep };
             if (data.proposal) return { type: 'proposal', proposal: data.proposal };
             if (data.proposal_id) return { type: 'proposal', proposal: data };
-            if (data.job_id) return { type: 'job_started', job: data };
+            if (
+                data.job_id &&
+                Object.prototype.hasOwnProperty.call(data, 'state') &&
+                Object.prototype.hasOwnProperty.call(data, 'kind') &&
+                Object.prototype.hasOwnProperty.call(data, 'request')
+            ) return { type: 'job_started', job: data };
             return null;
         }
 
@@ -11425,6 +12530,7 @@
                 'window',
                 'run_kind',
                 'error',
+                'expires_at',
             ].forEach((field) => {
                 const value = boundedChatCardString(card[field], field === 'error' ? 300 : 180);
                 if (value !== null) normalized[field] = value;
@@ -11486,6 +12592,44 @@
             return normalized;
         }
 
+        function chatActionCardMatches(card, match) {
+            if (!card || !match) return false;
+            const cardJobIds = [card.job_id, ...(card.job_ids || [])].filter(Boolean).map(String);
+            const matchJobIds = [match.job_id, ...(match.job_ids || [])].filter(Boolean).map(String);
+            const cardProposalIds = [card.proposal_id, ...(card.proposal_ids || [])].filter(Boolean).map(String);
+            const matchProposalIds = [match.proposal_id, ...(match.proposal_ids || [])].filter(Boolean).map(String);
+            return (
+                (!!match.sweep_id && card.sweep_id === match.sweep_id) ||
+                matchJobIds.some((jobId) => cardJobIds.includes(jobId)) ||
+                matchProposalIds.some((proposalId) => cardProposalIds.includes(proposalId))
+            );
+        }
+
+        function chatConversationForActionCard(match) {
+            syncActiveChatConversation();
+            return chatConversations.find((conversation) => (
+                conversation.messages.some((message) => (
+                    chatActionCardMatches(normalizeChatActionCard(message.action_card), match)
+                ))
+            )) || null;
+        }
+
+        function savedNonterminalActionJobIds() {
+            syncActiveChatConversation();
+            const jobIds = new Set();
+            chatConversations.forEach((conversation) => {
+                conversation.messages.forEach((message) => {
+                    const card = normalizeChatActionCard(message.action_card);
+                    if (!card || !['job_started', 'sweep_started'].includes(card.kind)) return;
+                    if (TERMINAL_CHAT_ACTION_STATUSES.has(String(card.status || '').toLowerCase())) return;
+                    [card.job_id, ...(card.job_ids || [])].filter(Boolean).forEach((jobId) => {
+                        jobIds.add(String(jobId));
+                    });
+                });
+            });
+            return Array.from(jobIds);
+        }
+
         function chatActionSweepMetadata(action) {
             if (action?.sweep && typeof action.sweep === 'object') return action.sweep;
             const member = action?.jobs?.[0] || action?.proposals?.[0] || action?.job || action?.proposal;
@@ -11520,6 +12664,7 @@
                     values: sweep.values,
                     count: sweep.count,
                     candidate_count: sweep.candidate_count,
+                    expires_at: action.proposals?.[0]?.expires_at,
                 });
             }
             if (action.type === 'job_batch_started') {
@@ -11554,6 +12699,7 @@
                     run_kind: proposal.kind,
                     window: compactAgentRunWindow(request, proposal.mode),
                     changes: proposal.changes,
+                    expires_at: proposal.expires_at,
                 });
             }
             if (action.type === 'job_started' && action.job) {
@@ -11835,7 +12981,35 @@
             return null;
         }
 
-        function openAgentActivityFromChat(card) {
+        async function openAgentActivityFromChat(card) {
+            const jobIds = Array.from(new Set(
+                [card.job_id, ...(card.job_ids || [])].filter(Boolean).map(String)
+            ));
+            const missingJobIds = jobIds.filter((jobId) => !agentJobSnapshots.has(jobId));
+            if (missingJobIds.length) {
+                const unavailableJobIds = new Set();
+                await Promise.all(missingJobIds.map(async (jobId) => {
+                    try {
+                        const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                        if (response.ok) putAgentJob(await response.json());
+                        else if (response.status === 404) unavailableJobIds.add(jobId);
+                    } catch (_) {
+                        // The card remains readable even if its durable run cannot be loaded right now.
+                    }
+                }));
+                if (jobIds.length && !jobIds.some((jobId) => agentJobSnapshots.has(jobId))) {
+                    if (unavailableJobIds.size === jobIds.length) {
+                        updateStoredChatActionCardStatus(
+                            card.sweep_id ? { sweep_id: card.sweep_id } : { job_id: card.job_id },
+                            'unavailable'
+                        );
+                        appendSystemNotice('This saved run is no longer available in the scenario workspace.', 'error');
+                    } else {
+                        appendSystemNotice('The saved run could not be loaded yet. Please try again.', 'error');
+                    }
+                    return;
+                }
+            }
             if (['proposal_review', 'sweep_review'].includes(card.kind) && card.status === 'needs review') {
                 agentActivityFilter = 'review';
             } else if (['run_complete', 'sweep_complete'].includes(card.kind)) {
@@ -11875,29 +13049,32 @@
             requestAgentCompletionExplanation(job);
         }
 
-        function updateStoredChatActionCardStatus(match, status) {
+        function updateStoredChatActionCardStatus(match, status, options = {}) {
+            syncActiveChatConversation();
+            const persist = options.persist !== false;
             let changed = false;
-            chatMessages.forEach((message) => {
-                const card = normalizeChatActionCard(message.action_card);
-                if (!card) return;
-                const matches = (
-                    (match.job_id && (card.job_id === match.job_id || card.job_ids?.includes(match.job_id))) ||
-                    (match.proposal_id && (card.proposal_id === match.proposal_id || card.proposal_ids?.includes(match.proposal_id))) ||
-                    (match.sweep_id && card.sweep_id === match.sweep_id)
-                );
-                if (!matches || card.status === status) return;
-                message.action_card = { ...card, status };
-                changed = true;
+            let activeChanged = false;
+            chatConversations.forEach((conversation) => {
+                conversation.messages.forEach((message) => {
+                    const card = normalizeChatActionCard(message.action_card);
+                    if (!chatActionCardMatches(card, match) || card.status === status) return;
+                    if (['deleted', 'unavailable'].includes(card.status) && !['deleted', 'unavailable'].includes(status)) return;
+                    message.action_card = { ...card, status };
+                    changed = true;
+                    if (conversation.id === activeChatConversationId) activeChanged = true;
+                });
             });
             if (!changed) return false;
-            renderChatMessages();
-            saveDashboardState();
+            if (activeChanged) renderChatMessages();
+            if (chatHistoryOpen) renderChatHistory();
+            if (persist) saveDashboardState();
             return true;
         }
 
         function appendChatCardActions(section, card) {
             const actions = document.createElement('div');
             actions.className = 'chat-action-actions';
+            if (card.status === 'unavailable') return;
             if (card.kind === 'proposal_review' && card.proposal_id && card.status === 'needs review') {
                 actions.append(
                     makeAgentButton(card.run_kind === 'baseline' ? 'Approve baseline' : 'Approve & run', 'primary', () => confirmAgentProposal(card.proposal_id)),
@@ -11910,7 +13087,10 @@
                     makeAgentButton('Open review', '', () => openAgentActivityFromChat(card)),
                     makeAgentButton('Dismiss', 'danger', () => dismissAgentSweep(card.sweep_id, card.proposal_ids))
                 );
-            } else if (['proposal_review', 'sweep_review'].includes(card.kind) && card.status !== 'dismissed') {
+            } else if (
+                ['proposal_review', 'sweep_review'].includes(card.kind) &&
+                !['dismissed', 'expired', 'unavailable'].includes(card.status)
+            ) {
                 actions.appendChild(makeAgentButton('Open runs', 'primary', () => openAgentActivityFromChat(card)));
             } else if (card.kind === 'data_review_required') {
                 actions.appendChild(makeAgentButton('Open calibration form', 'primary', openCalibrationFromChat));
@@ -11942,8 +13122,16 @@
         }
 
         function renderChatActionCard(rawCard) {
-            const card = normalizeChatActionCard(rawCard);
+            let card = normalizeChatActionCard(rawCard);
             if (!card) return null;
+            const expiresAt = card.expires_at ? Date.parse(card.expires_at) : NaN;
+            if (
+                card.status === 'needs review' &&
+                Number.isFinite(expiresAt) &&
+                expiresAt <= Date.now()
+            ) {
+                card = { ...card, status: 'expired' };
+            }
             const section = document.createElement('section');
             section.className = 'chat-action-card';
             section.dataset.chatCardKind = card.kind;
@@ -12489,12 +13677,31 @@
                     model_run_status: options.model_run_status || 'completed',
                 },
             });
+            const targetConversation = (
+                options.origin_conversation ||
+                (options.origin_conversation_id
+                    ? chatConversations.find((conversation) => conversation.id === options.origin_conversation_id)
+                    : null)
+            ) || chatConversationForActionCard(actionCard);
+            if (targetConversation && targetConversation.id !== activeChatConversationId) {
+                targetConversation.messages.push(assistantMessage);
+                targetConversation.messages = trimChatMessages(targetConversation.messages);
+                targetConversation.title = chatConversationTitle(
+                    targetConversation.messages,
+                    targetConversation.draft
+                );
+                targetConversation.updated_at = assistantMessage.created_at;
+                targetConversation.unread = true;
+                renderChatHistory();
+                return saveDashboardState();
+            }
             appendMessage('assistant', content, assistantMessage);
             chatMessages.push(assistantMessage);
-            if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
+            chatMessages = trimChatMessages(chatMessages);
             renderChatFollowups();
-            saveDashboardState();
+            const historySaved = saveDashboardState();
             scrollChatToBottom();
+            return historySaved;
         }
 
         function rememberAgentCompletionCard(key) {
@@ -12516,41 +13723,62 @@
                     group.jobs.length < expected || !group.jobs.every(isAgentJobTerminal)) return;
                 const completionKey = 'sweep:' + group.sweep_id;
                 if (agentCompletionCards.has(completionKey)) return;
-                rememberAgentCompletionCard(completionKey);
                 const card = buildSweepCompletionChatCard(group);
                 const errorCount = card?.error_count || 0;
                 const label = String(card?.label || 'parameter');
-                updateStoredChatActionCardStatus(
-                    { sweep_id: group.sweep_id },
-                    errorCount ? 'error' : 'done'
-                );
-                appendAutomatedChatCardMessage(
-                    errorCount
-                        ? `The ${label} sweep finished with ${errorCount} run issue${errorCount === 1 ? '' : 's'}.`
-                        : `The ${label} sweep is complete, and the comparison is ready.`,
-                    card,
-                    { model_run_status: errorCount ? 'failed' : 'completed' }
-                );
+                const originConversation = chatConversationForActionCard({ sweep_id: group.sweep_id });
+                if (originConversation) transientProtectedConversationIds.add(originConversation.id);
+                try {
+                    updateStoredChatActionCardStatus(
+                        { sweep_id: group.sweep_id },
+                        errorCount ? 'error' : 'done',
+                        { persist: false }
+                    );
+                    appendAutomatedChatCardMessage(
+                        errorCount
+                            ? `The ${label} sweep finished with ${errorCount} run issue${errorCount === 1 ? '' : 's'}.`
+                            : `The ${label} sweep is complete, and the comparison is ready.`,
+                        card,
+                        {
+                            model_run_status: errorCount ? 'failed' : 'completed',
+                            origin_conversation: originConversation,
+                        }
+                    );
+                    rememberAgentCompletionCard(completionKey);
+                } finally {
+                    if (originConversation) transientProtectedConversationIds.delete(originConversation.id);
+                }
                 return;
             }
 
             const completionKey = 'job:' + job.job_id;
             if (agentCompletionCards.has(completionKey)) return;
-            rememberAgentCompletionCard(completionKey);
             const card = buildRunCompletionChatCard(job);
             const baseline = ['baseline', 'manual'].includes(job.kind);
             const successful = job.state === 'done';
-            updateStoredChatActionCardStatus({ job_id: job.job_id }, job.state);
-            appendAutomatedChatCardMessage(
-                successful
-                    ? (baseline ? 'The baseline model run is complete.' : 'The scenario comparison is complete.')
-                    : (baseline ? 'The baseline model run stopped before completion.' : 'The scenario model run stopped before completion.'),
-                card,
-                {
-                    model_run_seconds: job.elapsed_seconds,
-                    model_run_status: successful ? 'completed' : 'failed',
-                }
-            );
+            const originConversation = chatConversationForActionCard({ job_id: job.job_id });
+            if (originConversation) transientProtectedConversationIds.add(originConversation.id);
+            try {
+                updateStoredChatActionCardStatus(
+                    { job_id: job.job_id },
+                    job.state,
+                    { persist: false }
+                );
+                appendAutomatedChatCardMessage(
+                    successful
+                        ? (baseline ? 'The baseline model run is complete.' : 'The scenario comparison is complete.')
+                        : (baseline ? 'The baseline model run stopped before completion.' : 'The scenario model run stopped before completion.'),
+                    card,
+                    {
+                        model_run_seconds: job.elapsed_seconds,
+                        model_run_status: successful ? 'completed' : 'failed',
+                        origin_conversation: originConversation,
+                    }
+                );
+                rememberAgentCompletionCard(completionKey);
+            } finally {
+                if (originConversation) transientProtectedConversationIds.delete(originConversation.id);
+            }
         }
 
         function buildParameterSweepComparisonCard(group) {
@@ -13289,21 +14517,88 @@
             });
         }
 
-        function scheduleAgentJobPoll(jobId, delay = 800) {
+        function syncTrackedMainRunFromAgentJob(job) {
+            if (!job || !isAgentJobTerminal(job)) return;
+            if (job.job_id === latestJobId) {
+                invalidateValidationStatusPoll();
+                currentRunState = { state: job.state, progress: job.progress || 0, stage: job.stage || '' };
+                if (job.state === 'done' && job.result) {
+                    latestResult = job.result;
+                    latestInputPlots = job.input_plots || job.result.input_plots || null;
+                    applyResult(job.result);
+                } else {
+                    showError(job.error || (job.state === 'cancelled' ? 'Run was cancelled.' : 'Run did not complete.'));
+                    progressWrap.classList.remove('visible');
+                }
+                resetRunBtn();
+                saveDashboardState();
+            }
+            if (job.job_id === annualLatestJobId) {
+                invalidateAnnualStatusPoll();
+                annualRunState = { state: job.state, progress: job.progress || 0, stage: job.stage || '' };
+                if (job.state === 'done' && job.result) {
+                    annualLatestResult = job.result;
+                    applyAnnualResult(job.result);
+                } else {
+                    showAnnualError(job.error || (job.state === 'cancelled' ? 'Annual run was cancelled.' : 'Annual run did not complete.'));
+                    annualProgressWrap.classList.remove('visible');
+                }
+                resetAnnualRunBtn();
+                saveDashboardState();
+            }
+        }
+
+        function scheduleAgentJobPoll(jobId, delay = 800, failureCount = 0) {
             const current = agentJobSnapshots.get(jobId);
             if (!jobId || isAgentJobTerminal(current)) return;
             const existing = agentJobPollTimers.get(jobId);
             if (existing) clearTimeout(existing);
-            agentJobPollTimers.set(jobId, setTimeout(() => pollAgentJob(jobId), delay));
+            agentJobPollTimers.set(jobId, setTimeout(() => pollAgentJob(jobId, failureCount), delay));
         }
 
-        async function pollAgentJob(jobId) {
+        function forgetUnavailableAgentJob(jobId) {
+            const timer = agentJobPollTimers.get(jobId);
+            if (timer) clearTimeout(timer);
+            agentJobPollTimers.delete(jobId);
+            agentJobSnapshots.delete(jobId);
+            agentJobStartedAt.delete(jobId);
+            updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable');
+            if (latestJobId === jobId) {
+                invalidateValidationStatusPoll();
+                latestJobId = null;
+                latestInputPlots = null;
+                latestResult = null;
+                currentRunState = null;
+                clearRunImages();
+                setExcelLink(null);
+                renderValidationRunContext(null);
+                resetRunBtn();
+            }
+            if (annualLatestJobId === jobId) {
+                invalidateAnnualStatusPoll();
+                annualLatestJobId = null;
+                annualLatestResult = null;
+                annualRunState = null;
+                clearAnnualImages();
+                setAnnualExcelLink(null);
+                resetAnnualRunBtn();
+            }
+            renderAgentActivity();
+            saveDashboardState();
+        }
+
+        async function pollAgentJob(jobId, failureCount = 0) {
             agentJobPollTimers.delete(jobId);
             try {
                 const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                if (response.status === 404) {
+                    forgetUnavailableAgentJob(jobId);
+                    return;
+                }
                 const data = await readAgentResponse(response, 'Scenario status is temporarily unavailable.');
                 const previous = agentJobSnapshots.get(jobId);
                 putAgentJob(data);
+                syncTrackedMainRunFromAgentJob(data);
                 if (isAgentParameterSweepJob(data) && agentActivityFilter === 'active') {
                     const sweepId = agentParameterSweepMetadata(data)?.sweep_id;
                     const group = getAgentParameterSweepGroups().find((item) => item.sweep_id === sweepId);
@@ -13319,19 +14614,107 @@
                     announceAgentCompletion(data);
                 }
                 if (isAgentJobTerminal(data)) await refreshAgentState(false);
-                else scheduleAgentJobPoll(jobId);
-            } catch (_) {
+                else scheduleAgentJobPoll(jobId, 800, 0);
+            } catch (error) {
                 const current = agentJobSnapshots.get(jobId) || { job_id: jobId };
-                putAgentJob({ ...current, stage: 'Reconnecting to model worker…' });
+                const nextFailureCount = failureCount + 1;
+                const reconnecting = nextFailureCount <= AGENT_POLL_MAX_FAILURES;
+                putAgentJob({
+                    ...current,
+                    stage: reconnecting
+                        ? 'Reconnecting to model worker (' + nextFailureCount + '/' + AGENT_POLL_MAX_FAILURES + ')...'
+                        : 'Status unavailable after repeated attempts',
+                });
                 renderAgentJobUpdate(agentJobSnapshots.get(jobId));
-                scheduleAgentJobPoll(jobId, 1800);
+                if (reconnecting) {
+                    scheduleAgentJobPoll(
+                        jobId,
+                        Math.min(STATUS_POLL_MAX_DELAY_MS, 900 * (2 ** Math.max(0, nextFailureCount - 1))),
+                        nextFailureCount
+                    );
+                }
             }
+        }
+
+        function trackedChatCardForJob(job) {
+            syncActiveChatConversation();
+            const sweepId = agentParameterSweepMetadata(job)?.sweep_id;
+            return chatConversations.some((conversation) => (
+                conversation.messages.some((message) => {
+                    const card = normalizeChatActionCard(message.action_card);
+                    if (!card) return false;
+                    if (sweepId && card.sweep_id === sweepId) return true;
+                    return card.job_id === job.job_id ||
+                        card.job_ids?.includes(job.job_id) ||
+                        (!!job.proposal_id && (
+                            card.proposal_id === job.proposal_id ||
+                            card.proposal_ids?.includes(job.proposal_id)
+                        ));
+                })
+            ));
+        }
+
+        function reconcileTerminalAgentCards() {
+            Array.from(agentJobSnapshots.values()).forEach((job) => {
+                if (job.proposal_id) {
+                    updateStoredChatActionCardStatus(
+                        { proposal_id: job.proposal_id },
+                        job.state || 'queued'
+                    );
+                }
+                if (agentParameterSweepMetadata(job) || !trackedChatCardForJob(job)) return;
+                updateStoredChatActionCardStatus({ job_id: job.job_id }, job.state || 'queued');
+                if (!isAgentJobTerminal(job)) return;
+                const completionKey = 'job:' + job.job_id;
+                if (agentCompletionCards.has(completionKey)) {
+                    return;
+                }
+                announceAgentCompletion(job);
+            });
+            getAgentParameterSweepGroups().forEach((group) => {
+                const tracked = group.jobs.some(trackedChatCardForJob);
+                if (!tracked || !group.jobs.length) return;
+                const expected = Number(group.metadata?.candidate_count || 0);
+                const complete = !group.proposals.length && expected > 0 &&
+                    group.jobs.length >= expected && group.jobs.every(isAgentJobTerminal);
+                const status = complete
+                    ? (group.jobs.some((job) => job.state !== 'done') ? 'error' : 'done')
+                    : (group.jobs.some((job) => job.state === 'running') ? 'running' : 'queued');
+                updateStoredChatActionCardStatus({ sweep_id: group.sweep_id }, status);
+                const completionKey = 'sweep:' + group.sweep_id;
+                if (complete && !agentCompletionCards.has(completionKey)) {
+                    announceAgentCompletion(group.jobs[0]);
+                }
+            });
+        }
+
+        async function recoverSavedNonterminalActionJobs() {
+            const missingJobIds = savedNonterminalActionJobIds()
+                .filter((jobId) => !agentJobSnapshots.has(jobId));
+            await Promise.all(missingJobIds.map(async (jobId) => {
+                try {
+                    const response = await fetchWithDashboardTimeout(
+                        '/api/status/' + encodeURIComponent(jobId),
+                        { cache: 'no-store' }
+                    );
+                    if (response.status === 404) {
+                        forgetUnavailableAgentJob(jobId);
+                        return;
+                    }
+                    putAgentJob(await readAgentResponse(response, 'Could not restore this scenario run.'));
+                } catch (_) {
+                    // Preserve the saved card so a later manual refresh can retry it.
+                }
+            }));
         }
 
         async function refreshAgentState(showFeedback = false) {
             agentRefreshBtn.disabled = true;
             try {
-                const response = await fetch('/api/agent/state', { cache: 'no-store' });
+                const response = await fetchWithDashboardTimeout(
+                    '/api/agent/state',
+                    { cache: 'no-store' }
+                );
                 const data = await readAgentResponse(response, 'Could not restore scenario activity.');
                 agentServerState = normalizeAgentState(data);
                 agentProposalSnapshots.clear();
@@ -13342,14 +14725,19 @@
                     .filter((jobId) => jobId && !agentJobSnapshots.has(jobId));
                 await Promise.all(missingBaselineIds.map(async (jobId) => {
                     try {
-                        const baselineResponse = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                        const baselineResponse = await fetchWithDashboardTimeout(
+                            '/api/status/' + encodeURIComponent(jobId),
+                            { cache: 'no-store' }
+                        );
                         if (baselineResponse.ok) putAgentJob(await baselineResponse.json());
                     } catch (_) {
                         // The context badge falls back gracefully if an old baseline is unavailable.
                     }
                 }));
+                await recoverSavedNonterminalActionJobs();
+                reconcileTerminalAgentCards();
                 renderAgentActivity();
-                agentServerState.jobs.forEach((job) => {
+                Array.from(agentJobSnapshots.values()).forEach((job) => {
                     if (!isAgentJobTerminal(job)) scheduleAgentJobPoll(job.job_id, 250);
                 });
                 if (activeView === 'annual') await loadCurrentCalibration();
@@ -13428,23 +14816,19 @@
                 proposalIds.push(...fallbackProposalIds.filter(Boolean));
             }
             if (!proposalIds.length) return;
-            let failures = 0;
-            for (const proposalId of proposalIds) {
-                try {
-                    const data = await postAgentAction('/api/agent/proposals/' + encodeURIComponent(proposalId) + '/confirm');
-                    agentProposalSnapshots.delete(proposalId);
-                    handleAgentAction(data);
-                } catch (_) {
-                    failures += 1;
-                }
-            }
-            await refreshAgentState(false);
-            if (failures) {
-                appendSystemNotice(failures + ' sweep run' + (failures === 1 ? '' : 's') + ' could not be queued.', 'error');
-            } else {
+            try {
+                const data = await postAgentAction(
+                    '/api/agent/sweeps/' + encodeURIComponent(sweepId) + '/confirm',
+                    { proposal_ids: proposalIds }
+                );
+                proposalIds.forEach((proposalId) => agentProposalSnapshots.delete(proposalId));
+                handleAgentAction(data);
                 const cardUpdated = updateStoredChatActionCardStatus({ sweep_id: sweepId }, 'queued');
                 if (!cardUpdated) appendSystemNotice('Parameter sweep queued against the selected baseline.', 'success');
+            } catch (error) {
+                appendSystemNotice(error.message || 'The parameter sweep could not be queued.', 'error');
             }
+            await refreshAgentState(false);
         }
 
         async function dismissAgentSweep(sweepId, fallbackProposalIds = []) {
@@ -13547,6 +14931,7 @@
                 agentCompletionCards.delete('job:' + jobId);
                 updateStoredChatActionCardStatus({ job_id: jobId }, 'deleted');
                 if (job.mode === 'annual' && annualLatestJobId === jobId) {
+                    invalidateAnnualStatusPoll();
                     annualLatestJobId = null;
                     annualLatestResult = null;
                     annualRunState = null;
@@ -13556,6 +14941,7 @@
                     setAnnualExcelLink(null);
                 }
                 if (job.mode !== 'annual' && latestJobId === jobId) {
+                    invalidateValidationStatusPoll();
                     latestJobId = null;
                     latestInputPlots = null;
                     latestResult = null;
@@ -13582,11 +14968,13 @@
                 const action = normalizeAgentAction(data);
                 const retried = action?.job || data.job || data;
                 const sweepId = agentParameterSweepMetadata(retried)?.sweep_id;
-                agentCompletionCards.delete(sweepId ? 'sweep:' + sweepId : 'job:' + retried.job_id);
+                const completionKey = sweepId ? 'sweep:' + sweepId : 'job:' + retried.job_id;
+                agentCompletionCards.delete(completionKey);
                 const cardUpdated = updateStoredChatActionCardStatus(
                     sweepId ? { sweep_id: sweepId } : { job_id: retried.job_id },
                     retried.state || 'queued'
                 );
+                agentJobStartedAt.set(retried.job_id, Date.now());
                 putAgentJob(retried);
                 renderAgentJobUpdate(agentJobSnapshots.get(retried.job_id));
                 scheduleAgentJobPoll(retried.job_id, 150);
@@ -13599,13 +14987,20 @@
         async function requestAgentCompletionExplanation(job) {
             if (!job || job.state !== 'done' || !job.comparison) return;
             if (agentExplainedJobs.has(job.job_id)) return;
+            const originConversation = chatConversationForActionCard({ job_id: job.job_id })
+                || activeChatConversation();
+            const originConversationId = originConversation?.id || activeChatConversationId;
             agentExplainedJobs.add(job.job_id);
             saveDashboardState();
-            const loadingBubble = appendMessage('assistant', '', { loading: true });
-            const loadingLabel = loadingBubble.querySelector('.chat-loading-label');
+            const loadingBubble = originConversationId === activeChatConversationId
+                ? appendMessage('assistant', '', { loading: true })
+                : null;
+            const loadingLabel = loadingBubble?.querySelector('.chat-loading-label');
             if (loadingLabel) loadingLabel.textContent = 'Preparing engineering explanation';
             try {
-                const history = chatMessages.slice(-8).map((item) => ({ role: item.role, content: item.content }));
+                const history = (originConversation?.messages || chatMessages)
+                    .slice(-8)
+                    .map((item) => ({ role: item.role, content: item.content }));
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -13621,19 +15016,35 @@
                 const data = await readAgentResponse(response, 'The engineering explanation is temporarily unavailable.');
                 const reply = data.reply || 'The comparison is complete, but no engineering explanation was returned.';
                 const assistantMessage = assistantMessageFromResponse(reply, data);
-                loadingBubble.parentElement.remove();
-                chatMessages.push(assistantMessage);
-                if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
-                renderChatMessages();
+                loadingBubble?.parentElement?.remove();
+                const targetConversation = chatConversations.find(
+                    (conversation) => conversation.id === originConversationId
+                ) || activeChatConversation();
+                if (targetConversation?.id === activeChatConversationId) {
+                    chatMessages.push(assistantMessage);
+                    chatMessages = trimChatMessages(chatMessages);
+                    renderChatMessages();
+                    renderChatFollowups();
+                } else if (targetConversation) {
+                    targetConversation.messages.push(assistantMessage);
+                    targetConversation.messages = trimChatMessages(targetConversation.messages);
+                    targetConversation.updated_at = assistantMessage.created_at;
+                    targetConversation.unread = true;
+                    renderChatHistory();
+                }
                 renderAgentActivity();
-                renderExternalEvidence(reply, data);
-                renderChatFollowups();
                 saveDashboardState();
             } catch (error) {
-                loadingBubble.parentElement.remove();
+                loadingBubble?.parentElement?.remove();
                 agentExplainedJobs.delete(job.job_id);
                 saveDashboardState();
-                appendSystemNotice(error.message || 'The comparison completed, but its explanation could not be generated.', 'error');
+                const errorMessage = error.message || 'The comparison completed, but its explanation could not be generated.';
+                appendSystemNotice(
+                    activeChatConversationId === originConversationId
+                        ? errorMessage
+                        : 'Could not add an explanation to "' + (originConversation?.title || 'the original conversation') + '": ' + errorMessage,
+                    'error'
+                );
             }
         }
 
@@ -13650,6 +15061,8 @@
                 const previous = agentJobSnapshots.get(jobId) || {};
                 const mode = data.mode === 'annual' ? 'annual' : (previous.mode === 'annual' ? 'annual' : 'validation');
                 const promoted = { ...previous, ...data, job_id: jobId, mode, state: 'done', progress: 100 };
+                if (mode === 'annual') invalidateAnnualStatusPoll();
+                else invalidateValidationStatusPoll();
                 putAgentJob(promoted);
                 agentServerState.promoted_baselines[mode] = jobId;
                 if (mode === 'validation' && calibrationReviewWorkflowIsActive()) {
@@ -13713,7 +15126,8 @@
                 syncChatWindowPosition();
                 if (focus) {
                     window.setTimeout(() => {
-                        if (isChatMobile()) closeChat.focus();
+                        if (chatHistoryOpen) chatHistoryBack.focus();
+                        else if (isChatMobile()) closeChat.focus();
                         else chatInput.focus();
                     }, 0);
                 }
@@ -13727,13 +15141,18 @@
         function setSending(isSending) {
             chatIsSending = !!isSending;
             sendBtn.classList.toggle('is-sending', chatIsSending);
-            sendBtn.querySelector('.send-label').textContent = chatIsSending ? 'Working' : 'Send';
+            sendBtn.querySelector('.send-label').textContent = chatIsSending ? 'Cancel' : 'Send';
             syncChatComposerState();
+        }
+
+        function cancelChatRequest() {
+            if (!activeChatAbortController) return;
+            activeChatAbortController.abort();
         }
 
         async function sendMessage() {
             const text = chatInput.value.trim();
-            if (!text || chatIsSending) return;
+            if (!text || chatIsSending || chatHydrationPending) return;
 
             chatInput.value = '';
             chatDraft = '';
@@ -13746,10 +15165,17 @@
             };
             appendMessage('user', text, userMessage);
             chatMessages.push(userMessage);
-            if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
+            chatMessages = trimChatMessages(chatMessages);
             saveDashboardState();
 
             const loadingBubble = appendMessage('assistant', '', { loading: true });
+            const chatController = new AbortController();
+            activeChatAbortController = chatController;
+            let chatRequestTimedOut = false;
+            const chatTimeout = window.setTimeout(() => {
+                chatRequestTimedOut = true;
+                chatController.abort();
+            }, CHAT_REQUEST_TIMEOUT_MS);
             setSending(true);
             try {
                 const history = chatMessages.slice(-10, -1).map((item) => ({
@@ -13766,6 +15192,7 @@
                         active_mode: activeMode,
                         current_config: getCanonicalCurrentConfig(activeMode),
                     }),
+                    signal: chatController.signal,
                 });
                 let data = {};
                 try {
@@ -13793,21 +15220,30 @@
                 chatMessages.push(assistantMessage);
                 handleAgentAction(data);
                 if (!action) renderExternalEvidence(reply, data);
-                if (data.job_id) {
-                    if (activeMode === 'annual') {
-                        annualLatestJobId = data.job_id;
+                const startedJob = action?.type === 'job_started' ? action.job : null;
+                if (startedJob?.job_id) {
+                    if (startedJob.mode === 'annual') {
+                        annualLatestJobId = startedJob.job_id;
                     } else {
-                        latestJobId = data.job_id;
+                        latestJobId = startedJob.job_id;
                     }
                 }
-                if (chatMessages.length > 50) chatMessages = chatMessages.slice(-50);
+                chatMessages = trimChatMessages(chatMessages);
                 saveDashboardState();
                 scrollChatToBottom();
             } catch (e) {
-                const msg = e.message || 'The solar agent could not answer right now.';
+                const msg = e?.name === 'AbortError'
+                    ? (chatRequestTimedOut
+                        ? 'Solar Agent took too long to respond. The wait was stopped after 60 seconds; you can retry.'
+                        : 'Solar Agent response canceled.')
+                    : (e.message || 'The solar agent could not answer right now.');
                 loadingBubble.parentElement.remove();
                 appendSystemNotice(msg, 'error');
             } finally {
+                clearTimeout(chatTimeout);
+                if (activeChatAbortController === chatController) {
+                    activeChatAbortController = null;
+                }
                 setSending(false);
                 renderChatFollowups();
                 if (!isChatMobile() && (document.activeElement === chatInput || document.activeElement === document.body)) {
@@ -13816,18 +15252,132 @@
             }
         }
 
+        function clearCachedCompletedRun(mode) {
+            if (mode === 'annual') {
+                annualLatestJobId = null;
+                annualLatestResult = null;
+                annualRunState = null;
+                setAnnualExcelLink(null);
+                clearAnnualImages();
+                return;
+            }
+            latestJobId = null;
+            latestInputPlots = null;
+            latestResult = null;
+            currentRunState = null;
+            setExcelLink(null);
+            clearRunImages();
+            renderValidationRunContext(null);
+        }
+
+        function markCachedRunUnverified(mode) {
+            if (mode === 'annual') {
+                annualLatestResult = null;
+                annualRunState = {
+                    state: 'monitoring_error',
+                    progress: annualRunState?.progress || 0,
+                    stage: 'Revalidating cached annual run',
+                };
+                setAnnualExcelLink(null);
+                clearAnnualImages();
+                return;
+            }
+            latestInputPlots = null;
+            latestResult = null;
+            currentRunState = {
+                state: 'monitoring_error',
+                progress: currentRunState?.progress || 0,
+                stage: 'Revalidating cached run',
+            };
+            setExcelLink(null);
+            clearRunImages();
+            renderValidationRunContext(null);
+        }
+
+        async function revalidateCachedCompletedRun(mode) {
+            const annual = mode === 'annual';
+            const jobId = annual ? annualLatestJobId : latestJobId;
+            const cachedResult = annual ? annualLatestResult : latestResult;
+            if (!jobId || !cachedResult) return;
+            try {
+                const response = await fetchWithDashboardTimeout(
+                    '/api/status/' + encodeURIComponent(jobId),
+                    { cache: 'no-store' },
+                    6000
+                );
+                if (response.status === 404) {
+                    clearCachedCompletedRun(mode);
+                    updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable');
+                    if (annual) showAnnualError('The cached annual run was deleted or is no longer available.');
+                    else showError('The cached run was deleted or is no longer available.');
+                    return;
+                }
+                const data = await readAgentResponse(response, 'Could not verify the cached run.');
+                putAgentJob(data);
+                if (data.state === 'done' && data.result) {
+                    if (annual) {
+                        annualLatestResult = data.result;
+                        annualRunState = { state: 'done', progress: 100, stage: data.stage || 'Done' };
+                    } else {
+                        latestResult = data.result;
+                        latestInputPlots = data.input_plots || data.result.input_plots || null;
+                        currentRunState = { state: 'done', progress: 100, stage: data.stage || 'Done' };
+                    }
+                    return;
+                }
+
+                if (annual) {
+                    annualLatestResult = null;
+                    annualRunState = { state: data.state, progress: data.progress || 0, stage: data.stage || '' };
+                } else {
+                    latestResult = null;
+                    latestInputPlots = data.input_plots || null;
+                    currentRunState = { state: data.state, progress: data.progress || 0, stage: data.stage || '' };
+                }
+            } catch (error) {
+                markCachedRunUnverified(mode);
+                if (annual) {
+                    showAnnualError(error.message || 'The cached annual run could not be verified yet; status monitoring will retry.');
+                } else {
+                    showError(error.message || 'The cached run could not be verified yet; status monitoring will retry.');
+                }
+            }
+        }
+
         async function restoreDashboardState() {
-            serverSessionId = await loadServerSessionId();
             const saved = readSavedState();
+            const legacyChatMessages = saved ? saved.chatMessages : null;
+            const legacyChatDraft = saved ? saved.chatDraft : '';
+            const legacyPersistenceState = ['degraded', 'failed', 'possible_loss'].includes(saved?.chatHistoryPersistenceState)
+                ? saved.chatHistoryPersistenceState
+                : saved?.chatHistoryPersistenceFailed === true ? 'failed' : 'ok';
+            restoreChatConversationHistory(
+                legacyChatMessages,
+                legacyChatDraft,
+                saved?.activeChatConversationId,
+                saved?.chatHistoryRevision,
+                legacyPersistenceState
+            );
+            chatInput.value = chatDraft;
+            if (Array.isArray(saved?.agentExplainedJobs)) {
+                saved.agentExplainedJobs.filter(Boolean).slice(-50).forEach((jobId) => agentExplainedJobs.add(String(jobId)));
+            }
+            autoResizeChatInput();
+            syncChatComposerState();
+            renderChatMessages();
+            setChatHistoryOpen(saved?.chatHistoryOpen === true, false);
+            setChatOpen(!!saved?.chatOpen, { focus: false, persist: false });
+            serverSessionId = await loadServerSessionId();
             if (!saved) {
-                chatDraft = '';
-                chatInput.value = '';
                 autoResizeChatInput();
                 syncChatComposerState();
                 renderChatMessages();
                 await loadCurrentCalibration({ forceSettings: true });
-                saveDashboardState();
+                renderChatHistory();
+                saveDashboardState({ allowDuringHydration: true });
+                releaseChatHydration();
                 await refreshAgentState(false);
+                saveDashboardState();
                 return;
             }
 
@@ -13835,8 +15385,10 @@
                 clearSavedState();
                 resetClientState();
                 await loadCurrentCalibration({ forceSettings: true });
-                saveDashboardState();
+                saveDashboardState({ allowDuringHydration: true });
+                releaseChatHydration();
                 await refreshAgentState(false);
+                saveDashboardState();
                 return;
             }
 
@@ -13852,8 +15404,6 @@
             if (annualRunState?.state === 'confirmation_required') annualRunState = null;
             annualCalibrationBaselineJobId = saved.annualCalibrationBaselineJobId || null;
             annualCalibrationProfileSha256 = saved.annualCalibrationProfileSha256 || null;
-            chatDraft = String(saved.chatDraft || '').slice(0, 4000);
-            chatInput.value = chatDraft;
             agentActivityExpanded = saved.agentActivityExpanded === true;
             agentActivityFilter = ['all', 'review', 'active', 'complete'].includes(saved.agentActivityFilter)
                 ? saved.agentActivityFilter
@@ -13863,39 +15413,10 @@
                 : null;
             autoResizeChatInput();
             syncChatComposerState();
-            if (Array.isArray(saved.chatMessages) && saved.chatMessages.length) {
-                chatMessages = saved.chatMessages
-                    .filter((item) => item && item.content)
-                    .map((item) => {
-                        const restored = {
-                            role: item.role === 'user' ? 'user' : 'assistant',
-                            content: String(item.content),
-                            created_at: normalizeChatTimestamp(
-                                item.created_at || item.createdAt
-                            ).toISOString(),
-                            gpt_seconds: finiteElapsedSeconds(
-                                item.gpt_seconds ?? item.gptSeconds
-                            ),
-                            model_run_seconds: finiteElapsedSeconds(
-                                item.model_run_seconds ?? item.modelSeconds
-                            ),
-                            model_run_status: String(
-                                item.model_run_status || item.modelStatus || 'not_run'
-                            ),
-                            automated: item.automated === true,
-                        };
-                        const actionCard = normalizeChatActionCard(item.action_card);
-                        if (actionCard) restored.action_card = actionCard;
-                        return restored;
-                    })
-                    .slice(-50);
-            }
-            if (Array.isArray(saved.agentExplainedJobs)) {
-                saved.agentExplainedJobs.filter(Boolean).slice(-50).forEach((jobId) => agentExplainedJobs.add(String(jobId)));
-            }
-            if (Array.isArray(saved.agentCompletionCards)) {
-                saved.agentCompletionCards.filter(Boolean).slice(-100).forEach((key) => agentCompletionCards.add(String(key)));
-            }
+            await Promise.all([
+                revalidateCachedCompletedRun('validation'),
+                revalidateCachedCompletedRun('annual'),
+            ]);
 
             applyFormState(saved.form);
             applyAnnualFormState(saved.annualForm);
@@ -13932,24 +15453,28 @@
                 resetRunBtn();
             }
             renderChatMessages();
+            setChatHistoryOpen(saved.chatHistoryOpen === true, false);
             setChatOpen(!!saved.chatOpen, { focus: false, persist: false });
 
-            if (currentRunState && ['queued', 'running'].includes(currentRunState.state) && latestJobId) {
+            if (currentRunState && ['queued', 'running', 'monitoring_error'].includes(currentRunState.state) && latestJobId) {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Running...';
                 setProgress(currentRunState.progress || 0, currentRunState.stage || 'Restoring run...');
                 pollStatus(latestJobId);
             }
-            if (annualRunState && ['queued', 'running'].includes(annualRunState.state) && annualLatestJobId) {
+            if (annualRunState && ['queued', 'running', 'monitoring_error'].includes(annualRunState.state) && annualLatestJobId) {
                 annualRunBtn.disabled = true;
                 annualRunBtn.textContent = 'Running...';
                 setAnnualProgress(annualRunState.progress || 0, annualRunState.stage || 'Restoring annual run...');
                 pollAnnualStatus(annualLatestJobId);
             }
+            saveDashboardState({ allowDuringHydration: true });
+            releaseChatHydration();
             await refreshAgentState(false);
+            saveDashboardState();
         }
 
-        document.querySelectorAll('.date-input, #backtrack, #curtailmentEnabled, #calibrateModel, .iam-model-input, .annual-input').forEach((el) => {
+        document.querySelectorAll('#analysisControls input, #analysisControls select').forEach((el) => {
             el.addEventListener('input', () => {
                 if (calibrationReviewWorkflowIsActive()) {
                     cancelCalibrationReview();
@@ -13985,7 +15510,24 @@
                 updateAgentContext();
             });
         });
-        restoreDashboardState();
+        document.querySelectorAll('#annualControls input, #annualControls select').forEach((el) => {
+            el.addEventListener('input', () => {
+                saveDashboardState();
+                updateAgentContext();
+            });
+            el.addEventListener('change', () => {
+                saveDashboardState();
+                updateAgentContext();
+            });
+        });
+        restoreDashboardState()
+            .catch((error) => {
+                appendSystemNotice(
+                    error?.message || 'The saved dashboard context could not be fully restored.',
+                    'error'
+                );
+            })
+            .finally(releaseChatHydration);
     </script>
 </body>
 

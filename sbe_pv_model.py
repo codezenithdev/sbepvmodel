@@ -42,6 +42,7 @@ import pvmismatch as pvm
 from pvmismatch.contrib import gen_coeffs
 
 from calibration_workflow import (
+    _bounded_interval_hours,
     apply_frozen_seasonal_calibration,
     apply_seasonal_calibration,
 )
@@ -446,6 +447,55 @@ def build_weather(
     return weather, dhi_source
 
 
+def _cec_p_mp_from_effective_irradiance(
+    effective_irradiance: pd.Series,
+    cell_temperature: pd.Series,
+    fallback_p_mp: pd.Series,
+) -> pd.Series:
+    """Recalculate CEC maximum power after a manually applied IAM.
+
+    ModelChain's ``no_loss`` DC result was calculated before Martin-Ruiz was
+    applied.  Re-running only the CEC electrical step makes SolarEdge consume
+    the same adjusted irradiance that is passed to Solectria, without applying
+    IAM a second time to either system.
+    """
+
+    effective = pd.Series(effective_irradiance, copy=False)
+    temperature = pd.Series(cell_temperature, index=effective.index, copy=False)
+    fallback = pd.Series(fallback_p_mp, index=effective.index, copy=False)
+    finite_effective = pd.Series(
+        np.isfinite(effective.to_numpy(dtype=float)),
+        index=effective.index,
+        dtype=bool,
+    )
+    positive_effective = finite_effective & effective.gt(0.0)
+    recalculated = fallback.astype(float).copy()
+    recalculated.loc[finite_effective & ~positive_effective] = 0.0
+
+    # Zero irradiance is exactly zero power and need not enter pvlib's root
+    # solver. Besides avoiding unnecessary annual-run work, this prevents the
+    # solver's zero-current divide warnings while retaining the prior fallback
+    # behavior for non-finite irradiance.
+    if positive_effective.any():
+        diode_parameters = pvl.pvsystem.calcparams_cec(
+            effective.loc[positive_effective],
+            temperature.loc[positive_effective],
+            alpha_sc=MODULE_PARAMETERS["alpha_sc"],
+            a_ref=MODULE_PARAMETERS["a_ref"],
+            I_L_ref=MODULE_PARAMETERS["I_L_ref"],
+            I_o_ref=MODULE_PARAMETERS["I_o_ref"],
+            R_sh_ref=MODULE_PARAMETERS["R_sh_ref"],
+            R_s=MODULE_PARAMETERS["R_s"],
+            Adjust=MODULE_PARAMETERS["Adjust"],
+        )
+        recalculated.loc[positive_effective] = pd.Series(
+            pvl.pvsystem.singlediode(*diode_parameters)["p_mp"],
+            index=effective.index[positive_effective],
+            dtype=float,
+        )
+    return recalculated
+
+
 def run_modelchain_for_axis_tilt(
     axis_tilt: float,
     weather: pd.DataFrame,
@@ -478,9 +528,9 @@ def run_modelchain_for_axis_tilt(
         arrays=[array], inverter_parameters=INVERTER_PARAMETERS
     )
 
-    # Match pvmismatch_Ho_v8.py exactly: Physical is handled inside ModelChain;
-    # Martin-Ruiz runs ModelChain with no AOI loss and is applied afterward to
-    # total effective irradiance. The already-computed dc.p_mp is not rerun.
+    # Physical is handled inside ModelChain. Martin-Ruiz runs ModelChain with no
+    # AOI loss, then applies IAM to effective irradiance and reruns the CEC DC
+    # step so both modeled systems use the same single IAM application.
     aoi_model = (
         "no_loss"
         if selected_iam_model == IAM_MODEL_MARTIN_RUIZ
@@ -492,6 +542,7 @@ def run_modelchain_for_axis_tilt(
     mc.run_model(weather)
 
     effective = mc.results.effective_irradiance
+    p_mp = mc.results.dc.p_mp
     if selected_iam_model == IAM_MODEL_MARTIN_RUIZ:
         aoi = getattr(mc.results, "aoi", None)
         if aoi is None:
@@ -500,11 +551,16 @@ def run_modelchain_for_axis_tilt(
             )
         iam = pvl.iam.martin_ruiz(aoi, a_r=effective_iam_a_r)
         effective = effective * iam
+        p_mp = _cec_p_mp_from_effective_irradiance(
+            effective,
+            mc.results.cell_temperature,
+            p_mp,
+        )
 
     return {
         "Ee_suns": (effective / 1000.0).to_numpy(),
         "Tk": (mc.results.cell_temperature + 273.15).to_numpy(),
-        "p_mp_w": mc.results.dc.p_mp.to_numpy(),
+        "p_mp_w": p_mp.to_numpy(),
     }
 
 
@@ -576,17 +632,23 @@ def run_modelchain_for_axis_tilts(
     output: dict[float, dict[str, np.ndarray]] = {}
     for index, tilt in enumerate(tilts):
         effective = effective_results[index]
+        p_mp = dc_results[index].p_mp
         if selected_iam_model == IAM_MODEL_MARTIN_RUIZ:
             iam = pvl.iam.martin_ruiz(
                 aoi_results[index],
                 a_r=effective_iam_a_r,
             )
             effective = effective * iam
+            p_mp = _cec_p_mp_from_effective_irradiance(
+                effective,
+                temperature_results[index],
+                p_mp,
+            )
 
         output[tilt] = {
             "Ee_suns": (effective / 1000.0).to_numpy(),
             "Tk": (temperature_results[index] + 273.15).to_numpy(),
-            "p_mp_w": dc_results[index].p_mp.to_numpy(),
+            "p_mp_w": p_mp.to_numpy(),
         }
     return output
 
@@ -840,21 +902,18 @@ def predict_ac_power(
 def add_energy(
     df: pd.DataFrame,
     expected_interval_seconds: int | None = None,
+    *,
+    requested_start: str | None = None,
+    requested_end: str | None = None,
 ) -> pd.DataFrame:
-    """Add interval dt_hours and cumulative energies (kWh)."""
+    """Add bounded interval durations and cumulative energies (kWh)."""
     out = df.copy()
-    dt_h = out.index.to_series().diff().dt.total_seconds() / 3600.0
-    if expected_interval_seconds is not None:
-        dt0 = max(float(expected_interval_seconds) / 3600.0, 0.0)
-    else:
-        dt0 = float(dt_h.dropna().median()) if dt_h.notna().any() else 0.0
-    # Each aggregated historian row represents at most one nominal interval.
-    # A missing/excluded timestamp must not make the next row stand in for the
-    # entire gap and overstate energy.
-    bounded = dt_h.fillna(dt0).clip(lower=0.0)
-    if dt0 > 0:
-        bounded = bounded.clip(upper=dt0)
-    out["dt_hours"] = bounded
+    out["dt_hours"] = _bounded_interval_hours(
+        pd.DatetimeIndex(out.index),
+        expected_interval_seconds=expected_interval_seconds,
+        requested_start=requested_start,
+        requested_end=requested_end,
+    )
 
     for sysname in ("se", "sol"):
         for kind in ("measured", "predicted", "uncalibrated"):
@@ -1642,6 +1701,8 @@ def run_model(
     iam_model: str | None = None,
     data_quality_context: dict | None = None,
     expected_interval_seconds: int | None = None,
+    requested_start: str | None = None,
+    requested_end: str | None = None,
     calibration_profile: dict | None = None,
     calibration_application_context: dict | None = None,
     calibrate_model: bool = True,
@@ -1677,6 +1738,13 @@ def run_model(
         )
     else:
         raise ValueError("calibration_application_context must be an object.")
+
+    quality_source = (
+        ((data_quality_context or {}).get("report") or {}).get("source") or {}
+    )
+    if requested_start is None and requested_end is None:
+        requested_start = quality_source.get("requested_start")
+        requested_end = quality_source.get("requested_end")
 
     data_quality_warnings: list[str] = []
     if input_kind == "midc":
@@ -1753,6 +1821,8 @@ def run_model(
             ) = apply_seasonal_calibration(
                 df,
                 expected_interval_seconds=expected_interval_seconds,
+                requested_start=requested_start,
+                requested_end=requested_end,
                 maximum_uncurtailed_power_w=(
                     float(curtailment_limit_kw) * 1_000.0
                     if curtailment_enabled and curtailment_limit_kw is not None
@@ -1782,6 +1852,8 @@ def run_model(
     df = add_energy(
         df,
         expected_interval_seconds=expected_interval_seconds,
+        requested_start=requested_start,
+        requested_end=requested_end,
     )
     if (
         fitting_enabled

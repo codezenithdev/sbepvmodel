@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 PROPOSAL_STATES = frozenset(
     {"pending", "confirmed", "superseded", "dismissed", "expired"}
 )
@@ -43,6 +43,14 @@ class InvalidStateTransition(AgentStoreError):
 
 class StoreConflict(AgentStoreError):
     """Raised when a transaction conflicts with existing durable state."""
+
+
+class QueueCapacityExceeded(StoreConflict):
+    """Raised when accepting another job would exceed the active queue limit."""
+
+
+class LeaseOwnershipLost(StoreConflict):
+    """Raised when a runner no longer owns the lease for a running job."""
 
 
 class SchemaVersionError(AgentStoreError):
@@ -150,6 +158,12 @@ class AgentStore:
                 connection.execute("PRAGMA journal_mode = WAL")
                 if version == 0:
                     self._migrate_v1(connection)
+                    version = 1
+                if version < 2:
+                    self._migrate_v2(connection)
+                    version = 2
+                if version < 3:
+                    self._migrate_v3(connection)
             finally:
                 connection.close()
 
@@ -269,8 +283,52 @@ class AgentStore:
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
             (1, applied_at),
         )
-        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        connection.execute("PRAGMA user_version = 1")
         connection.commit()
+
+    def _migrate_v2(self, connection: sqlite3.Connection) -> None:
+        """Add process ownership and renewable leases to running jobs."""
+
+        applied_at = _timestamp(self._current_time())
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(jobs)")
+            }
+            if "worker_id" not in columns:
+                connection.execute("ALTER TABLE jobs ADD COLUMN worker_id TEXT")
+            if "heartbeat_at" not in columns:
+                connection.execute("ALTER TABLE jobs ADD COLUMN heartbeat_at TEXT")
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (2, applied_at),
+            )
+            connection.execute("PRAGMA user_version = 2")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
+    def _migrate_v3(self, connection: sqlite3.Connection) -> None:
+        """Add a unique token so each individual job lease can be fenced."""
+
+        applied_at = _timestamp(self._current_time())
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(jobs)")
+            }
+            if "lease_token" not in columns:
+                connection.execute("ALTER TABLE jobs ADD COLUMN lease_token TEXT")
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (3, applied_at),
+            )
+            connection.execute("PRAGMA user_version = 3")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
     def _current_time(self) -> datetime:
         return _as_utc(self._now())
@@ -586,6 +644,41 @@ class AgentStore:
             ),
         )
 
+    @staticmethod
+    def _ensure_queue_capacity(
+        connection: sqlite3.Connection,
+        *,
+        max_active_jobs: int | None,
+        required: int = 1,
+    ) -> None:
+        if max_active_jobs is None:
+            return
+        limit = int(max_active_jobs)
+        required_slots = int(required)
+        if limit < 1:
+            raise ValueError("max_active_jobs must be at least 1")
+        if required_slots < 1:
+            raise ValueError("required must be at least 1")
+        active = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running')"
+            ).fetchone()[0]
+        )
+        if active + required_slots > limit:
+            raise QueueCapacityExceeded(
+                f"model queue is full ({active}/{limit} active jobs)"
+            )
+
+    def ensure_job_capacity(self, *, max_active_jobs: int, required: int = 1) -> None:
+        """Fail when a requested batch cannot fit in the active queue."""
+
+        with self._transaction(write=True) as connection:
+            self._ensure_queue_capacity(
+                connection,
+                max_active_jobs=max_active_jobs,
+                required=required,
+            )
+
     def confirm_proposal(
         self,
         proposal_id: str,
@@ -596,78 +689,166 @@ class AgentStore:
         source_path: str | None = None,
         source_hash: str | None = None,
         provenance: Mapping[str, Any] | None = None,
+        max_active_jobs: int | None = None,
     ) -> dict[str, Any]:
         """Confirm once and atomically enqueue exactly one candidate job.
 
         Repeated or concurrent confirmations return the original job unchanged.
         """
 
-        if not job_kind or not job_kind.strip():
-            raise ValueError("job_kind must not be blank")
+        return self.confirm_proposals_batch(
+            [
+                {
+                    "proposal_id": proposal_id,
+                    "job_id": job_id,
+                    "job_kind": job_kind,
+                    "confirmation_metadata": confirmation_metadata,
+                    "source_path": source_path,
+                    "source_hash": source_hash,
+                    "provenance": provenance,
+                }
+            ],
+            max_active_jobs=max_active_jobs,
+        )[0]
+
+    def confirm_proposals_batch(
+        self,
+        confirmations: Sequence[Mapping[str, Any]],
+        *,
+        max_active_jobs: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Confirm a proposal batch and enqueue all of its jobs atomically.
+
+        Already-confirmed proposals are returned idempotently and consume no new
+        capacity. Every still-pending proposal is validated, capacity-checked,
+        inserted, and marked confirmed in one ``BEGIN IMMEDIATE`` transaction.
+        Any error therefore leaves the entire pending portion unchanged.
+        """
+
+        if not confirmations:
+            raise ValueError("confirmations must not be empty")
+
+        prepared: list[dict[str, Any]] = []
+        proposal_ids: set[str] = set()
+        for raw in confirmations:
+            proposal_id = str(raw.get("proposal_id") or "").strip()
+            if not proposal_id:
+                raise ValueError("proposal_id must not be blank")
+            if proposal_id in proposal_ids:
+                raise ValueError(f"duplicate proposal id: {proposal_id}")
+            proposal_ids.add(proposal_id)
+
+            job_kind = str(raw.get("job_kind", "candidate") or "").strip()
+            if not job_kind:
+                raise ValueError("job_kind must not be blank")
+            requested_job_id = str(raw.get("job_id") or _new_id("job")).strip()
+            if not requested_job_id:
+                raise ValueError("job_id must not be blank")
+            confirmation_metadata = raw.get("confirmation_metadata")
+            provenance = raw.get("provenance")
+            prepared.append(
+                {
+                    "proposal_id": proposal_id,
+                    "job_id": requested_job_id,
+                    "job_kind": job_kind,
+                    "confirmation_metadata": dict(confirmation_metadata or {}),
+                    "source_path": raw.get("source_path"),
+                    "source_hash": raw.get("source_hash"),
+                    "provenance_json": (
+                        None if provenance is None else _json_dump(dict(provenance))
+                    ),
+                }
+            )
+
         now_text = _timestamp(self._current_time())
-        requested_job_id = job_id or _new_id("job")
         with self._transaction(write=True) as connection:
             self._expire_due(connection, now_text)
-            proposal = connection.execute(
-                "SELECT * FROM proposals WHERE proposal_id = ?", (proposal_id,)
-            ).fetchone()
-            if proposal is None:
-                raise RecordNotFound(f"unknown proposal: {proposal_id}")
-            if proposal["confirmed_job_id"]:
-                existing = connection.execute(
-                    "SELECT * FROM jobs WHERE job_id = ?",
-                    (proposal["confirmed_job_id"],),
+            pending: list[tuple[dict[str, Any], sqlite3.Row]] = []
+            jobs_by_proposal: dict[str, sqlite3.Row] = {}
+            for item in prepared:
+                proposal = connection.execute(
+                    "SELECT * FROM proposals WHERE proposal_id = ?",
+                    (item["proposal_id"],),
                 ).fetchone()
-                if existing is None:
-                    raise StoreConflict("confirmed proposal references a missing job")
-                return self._job_from_row(existing)  # type: ignore[return-value]
-            if proposal["state"] != "pending":
-                raise InvalidStateTransition(
-                    f"cannot confirm proposal in state {proposal['state']}"
+                if proposal is None:
+                    raise RecordNotFound(
+                        f"unknown proposal: {item['proposal_id']}"
+                    )
+                if proposal["confirmed_job_id"]:
+                    existing = connection.execute(
+                        "SELECT * FROM jobs WHERE job_id = ?",
+                        (proposal["confirmed_job_id"],),
+                    ).fetchone()
+                    if existing is None:
+                        raise StoreConflict(
+                            "confirmed proposal references a missing job"
+                        )
+                    jobs_by_proposal[item["proposal_id"]] = existing
+                    continue
+                if proposal["state"] != "pending":
+                    raise InvalidStateTransition(
+                        f"cannot confirm proposal in state {proposal['state']}"
+                    )
+                pending.append((item, proposal))
+
+            if pending:
+                self._ensure_queue_capacity(
+                    connection,
+                    max_active_jobs=max_active_jobs,
+                    required=len(pending),
                 )
 
-            provenance_json = (
-                None if provenance is None else _json_dump(dict(provenance))
-            )
-            existing_metadata = _json_load(proposal["confirmation_metadata_json"])
-            existing_metadata.update(dict(confirmation_metadata or {}))
-            metadata_json = _json_dump(existing_metadata)
             try:
-                self._insert_job(
-                    connection,
-                    job_id=requested_job_id,
-                    kind=job_kind.strip(),
-                    mode=proposal["mode"],
-                    request_json=proposal["effective_request_json"],
-                    baseline_id=proposal["baseline_id"],
-                    proposal_id=proposal_id,
-                    source_path=source_path,
-                    source_hash=source_hash,
-                    provenance_json=provenance_json,
-                    artifacts_json=None,
-                    now_text=now_text,
-                )
-                connection.execute(
-                    """
-                    UPDATE proposals
-                       SET state = 'confirmed', confirmed_job_id = ?, confirmed_at = ?,
-                           confirmation_metadata_json = ?, updated_at = ?
-                     WHERE proposal_id = ? AND state = 'pending'
-                    """,
-                    (
-                        requested_job_id,
-                        now_text,
-                        metadata_json,
-                        now_text,
-                        proposal_id,
-                    ),
-                )
+                for item, proposal in pending:
+                    existing_metadata = _json_load(
+                        proposal["confirmation_metadata_json"]
+                    )
+                    existing_metadata.update(item["confirmation_metadata"])
+                    self._insert_job(
+                        connection,
+                        job_id=item["job_id"],
+                        kind=item["job_kind"],
+                        mode=proposal["mode"],
+                        request_json=proposal["effective_request_json"],
+                        baseline_id=proposal["baseline_id"],
+                        proposal_id=item["proposal_id"],
+                        source_path=item["source_path"],
+                        source_hash=item["source_hash"],
+                        provenance_json=item["provenance_json"],
+                        artifacts_json=None,
+                        now_text=now_text,
+                    )
+                    updated = connection.execute(
+                        """
+                        UPDATE proposals
+                           SET state = 'confirmed', confirmed_job_id = ?,
+                               confirmed_at = ?, confirmation_metadata_json = ?,
+                               updated_at = ?
+                         WHERE proposal_id = ? AND state = 'pending'
+                        """,
+                        (
+                            item["job_id"],
+                            now_text,
+                            _json_dump(existing_metadata),
+                            now_text,
+                            item["proposal_id"],
+                        ),
+                    )
+                    if updated.rowcount != 1:
+                        raise StoreConflict("proposal changed during batch confirmation")
+                    job = connection.execute(
+                        "SELECT * FROM jobs WHERE job_id = ?", (item["job_id"],)
+                    ).fetchone()
+                    jobs_by_proposal[item["proposal_id"]] = job
             except sqlite3.IntegrityError as exc:
-                raise StoreConflict("could not create a unique proposal job") from exc
-            job = connection.execute(
-                "SELECT * FROM jobs WHERE job_id = ?", (requested_job_id,)
-            ).fetchone()
-        return self._job_from_row(job)  # type: ignore[return-value]
+                raise StoreConflict(
+                    "could not create unique jobs for proposal batch"
+                ) from exc
+
+            ordered_jobs = [
+                jobs_by_proposal[item["proposal_id"]] for item in prepared
+            ]
+        return [self._job_from_row(job) for job in ordered_jobs]  # type: ignore[misc]
 
     def create_job(
         self,
@@ -681,6 +862,7 @@ class AgentStore:
         source_hash: str | None = None,
         provenance: Mapping[str, Any] | None = None,
         artifacts: Mapping[str, Any] | None = None,
+        max_active_jobs: int | None = None,
     ) -> dict[str, Any]:
         """Enqueue a manual/baseline job not owned by an agent proposal."""
 
@@ -693,6 +875,13 @@ class AgentStore:
         provenance_json = None if provenance is None else _json_dump(dict(provenance))
         artifacts_json = None if artifacts is None else _json_dump(dict(artifacts))
         with self._transaction(write=True) as connection:
+            if connection.execute(
+                "SELECT 1 FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone() is not None:
+                raise StoreConflict(f"job id already exists: {job_id}")
+            self._ensure_queue_capacity(
+                connection, max_active_jobs=max_active_jobs
+            )
             try:
                 self._insert_job(
                     connection,
@@ -787,6 +976,8 @@ class AgentStore:
         self,
         job_id: str,
         *,
+        expected_worker_id: str | None = None,
+        expected_lease_token: str | None = None,
         state: str | None = None,
         progress: float | None = None,
         stage: str | None = None,
@@ -800,6 +991,14 @@ class AgentStore:
     ) -> dict[str, Any]:
         """Update mutable job execution fields while enforcing state transitions."""
 
+        if (expected_worker_id is None) != (expected_lease_token is None):
+            raise ValueError(
+                "expected_worker_id and expected_lease_token must be supplied together"
+            )
+        if expected_worker_id is not None and (
+            not expected_worker_id.strip() or not expected_lease_token.strip()
+        ):
+            raise ValueError("job lease owner and token must not be blank")
         if state is not None and state not in JOB_STATES:
             raise ValueError(f"unknown job state: {state}")
         if progress is not None:
@@ -812,6 +1011,20 @@ class AgentStore:
             ).fetchone()
             if row is None:
                 raise RecordNotFound(f"unknown job: {job_id}")
+            lease_is_owned = bool(row["worker_id"] or row["lease_token"])
+            expected_lease = expected_worker_id is not None
+            if expected_lease and (
+                row["state"] != "running"
+                or row["worker_id"] != expected_worker_id
+                or row["lease_token"] != expected_lease_token
+            ):
+                raise LeaseOwnershipLost(
+                    f"runner no longer owns the active lease for job {job_id}"
+                )
+            if row["state"] == "running" and lease_is_owned and not expected_lease:
+                raise LeaseOwnershipLost(
+                    f"running job {job_id} requires its active lease token"
+                )
             if state is not None:
                 self._check_job_transition(row["state"], state)
 
@@ -831,6 +1044,10 @@ class AgentStore:
                     values.extend([now_text, stage or "Interrupted"])
                 if state == "done" and progress is None:
                     assignments.append("progress = 100")
+                if state in {"done", "error", "cancelled", "interrupted"}:
+                    assignments.extend(
+                        ["worker_id = NULL", "lease_token = NULL", "heartbeat_at = NULL"]
+                    )
             if progress is not None:
                 assignments.append("progress = ?")
                 values.append(float(progress))
@@ -865,10 +1082,15 @@ class AgentStore:
             ).fetchone()
         return self._job_from_row(updated)  # type: ignore[return-value]
 
-    def claim_next_queued_job(self) -> dict[str, Any] | None:
+    def claim_next_queued_job(
+        self, *, worker_id: str | None = None
+    ) -> dict[str, Any] | None:
         """Atomically claim the oldest job, unless another job is running."""
 
+        if worker_id is not None and not worker_id.strip():
+            raise ValueError("worker_id must not be blank")
         now_text = _timestamp(self._current_time())
+        lease_token = uuid.uuid4().hex if worker_id is not None else None
         with self._transaction(write=True) as connection:
             active = connection.execute(
                 "SELECT job_id FROM jobs WHERE state = 'running' LIMIT 1"
@@ -888,10 +1110,18 @@ class AgentStore:
             cursor = connection.execute(
                 """
                 UPDATE jobs
-                   SET state = 'running', stage = 'Running', started_at = ?, updated_at = ?
+                   SET state = 'running', stage = 'Running', started_at = ?,
+                       updated_at = ?, worker_id = ?, lease_token = ?, heartbeat_at = ?
                  WHERE job_id = ? AND state = 'queued' AND cancel_requested = 0
                 """,
-                (now_text, now_text, queued["job_id"]),
+                (
+                    now_text,
+                    now_text,
+                    worker_id,
+                    lease_token,
+                    now_text,
+                    queued["job_id"],
+                ),
             )
             if cursor.rowcount != 1:
                 return None
@@ -899,6 +1129,28 @@ class AgentStore:
                 "SELECT * FROM jobs WHERE job_id = ?", (queued["job_id"],)
             ).fetchone()
         return self._job_from_row(row)
+
+    def heartbeat_job(
+        self, job_id: str, *, worker_id: str, lease_token: str
+    ) -> bool:
+        """Renew a running job lease only for the process that claimed it."""
+
+        if not worker_id or not worker_id.strip():
+            raise ValueError("worker_id must not be blank")
+        if not lease_token or not lease_token.strip():
+            raise ValueError("lease_token must not be blank")
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE jobs
+                   SET heartbeat_at = ?, updated_at = ?
+                 WHERE job_id = ? AND state = 'running' AND worker_id = ?
+                   AND lease_token = ?
+                """,
+                (now_text, now_text, job_id, worker_id, lease_token),
+            )
+        return cursor.rowcount == 1
 
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued job, or request cooperative cancellation of a runner."""
@@ -935,13 +1187,33 @@ class AgentStore:
             ).fetchone()
         return self._job_from_row(updated)  # type: ignore[return-value]
 
-    def is_cancel_requested(self, job_id: str) -> bool:
+    def is_cancel_requested(
+        self,
+        job_id: str,
+        *,
+        expected_worker_id: str | None = None,
+        expected_lease_token: str | None = None,
+    ) -> bool:
+        if (expected_worker_id is None) != (expected_lease_token is None):
+            raise ValueError(
+                "expected_worker_id and expected_lease_token must be supplied together"
+            )
         with self._transaction() as connection:
             row = connection.execute(
-                "SELECT cancel_requested FROM jobs WHERE job_id = ?", (job_id,)
+                "SELECT state, worker_id, lease_token, cancel_requested "
+                "FROM jobs WHERE job_id = ?",
+                (job_id,),
             ).fetchone()
         if row is None:
             raise RecordNotFound(f"unknown job: {job_id}")
+        if expected_worker_id is not None and (
+            row["state"] != "running"
+            or row["worker_id"] != expected_worker_id
+            or row["lease_token"] != expected_lease_token
+        ):
+            raise LeaseOwnershipLost(
+                f"runner no longer owns the active lease for job {job_id}"
+            )
         return bool(row["cancel_requested"])
 
     def mark_stale_running_jobs_interrupted(
@@ -949,29 +1221,33 @@ class AgentStore:
     ) -> int:
         """Mark jobs left running by a prior process as interrupted.
 
-        With no cutoff, all running jobs are treated as stale, which is intended
-        for application startup.  Supplying ``before`` supports live health checks.
+        With no cutoff, all running jobs are treated as stale for explicit
+        administrative recovery. Application startup should always supply a lease
+        cutoff so another live process's work remains valid.
         """
 
         now_text = _timestamp(self._current_time())
         clauses = ["state = 'running'"]
         parameters: list[Any] = [now_text, now_text]
         if before is not None:
-            clauses.append("started_at <= ?")
+            clauses.append("COALESCE(heartbeat_at, started_at, updated_at) <= ?")
             parameters.append(_timestamp(before))
         with self._transaction(write=True) as connection:
             cursor = connection.execute(
                 """
                 UPDATE jobs
                    SET state = 'interrupted', stage = 'Interrupted after service restart',
-                       interrupted_at = ?, updated_at = ?
+                       interrupted_at = ?, updated_at = ?, worker_id = NULL,
+                       lease_token = NULL, heartbeat_at = NULL
                  WHERE """
                 + " AND ".join(clauses),
                 parameters,
             )
             return int(cursor.rowcount)
 
-    def retry_job(self, job_id: str) -> dict[str, Any]:
+    def retry_job(
+        self, job_id: str, *, max_active_jobs: int | None = None
+    ) -> dict[str, Any]:
         """Explicitly requeue an interrupted, errored, or cancelled job."""
 
         now_text = _timestamp(self._current_time())
@@ -985,6 +1261,9 @@ class AgentStore:
                 raise InvalidStateTransition(
                     f"cannot retry job in state {row['state']}"
                 )
+            self._ensure_queue_capacity(
+                connection, max_active_jobs=max_active_jobs
+            )
             connection.execute(
                 """
                 UPDATE jobs
@@ -992,7 +1271,8 @@ class AgentStore:
                        result_json = NULL, comparison_json = NULL, artifacts_json = NULL,
                        cancel_requested = 0, error = NULL, queued_at = ?, updated_at = ?,
                        started_at = NULL, completed_at = NULL,
-                       cancel_requested_at = NULL, interrupted_at = NULL
+                        cancel_requested_at = NULL, interrupted_at = NULL,
+                        worker_id = NULL, lease_token = NULL, heartbeat_at = NULL
                  WHERE job_id = ?
                 """,
                 (now_text, now_text, job_id),
@@ -1259,6 +1539,7 @@ __all__ = [
     "COMPARISON_KINDS",
     "InvalidStateTransition",
     "JOB_STATES",
+    "LeaseOwnershipLost",
     "MODES",
     "PROPOSAL_STATES",
     "RecordNotFound",

@@ -23,6 +23,7 @@ import uuid
 import math
 import json
 import os
+import posixpath
 from decimal import Decimal, InvalidOperation
 from time import perf_counter
 from contextlib import asynccontextmanager
@@ -50,9 +51,12 @@ from calibration_workflow import (
     validate_seasonal_calibration_profile,
 )
 from agent_store import (
+    SCHEMA_VERSION as AGENT_STORE_SCHEMA_VERSION,
     AgentStore,
     AgentStoreError,
     InvalidStateTransition,
+    LeaseOwnershipLost,
+    QueueCapacityExceeded,
     RecordNotFound,
     StoreConflict,
 )
@@ -64,6 +68,27 @@ from scenario_reporting import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_env_number(
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid %s value", name)
+        return default
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        logger.warning("Ignoring out-of-range %s value", name)
+        return default
+    return value
 
 HERE = Path(__file__).parent
 historian.load_dotenv(str(HERE / ".env"))
@@ -83,9 +108,63 @@ OUTPUT_DIR = _configured_output_dir()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CALIBRATION_REVIEW_DIR = OUTPUT_DIR / ".calibration_reviews"
 CALIBRATION_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+PRIVATE_OUTPUT_DIRS = (
+    (OUTPUT_DIR / ".agent_state").resolve(),
+    CALIBRATION_REVIEW_DIR.resolve(),
+)
+PUBLIC_OUTPUT_SUFFIXES = frozenset({".csv", ".png", ".xlsx"})
 CALIBRATION_REVIEW_TTL = timedelta(hours=24)
 CALIBRATION_REVIEW_MAX_RANGE = timedelta(days=366)
 CALIBRATION_REVIEW_MAX_ROWS = 200_000
+VALIDATION_RUN_MAX_RANGE = CALIBRATION_REVIEW_MAX_RANGE
+VALIDATION_RUN_MAX_ROWS = CALIBRATION_REVIEW_MAX_ROWS
+ANNUAL_RUN_MAX_DAYS = 3 * 366
+MAX_ACTIVE_MODEL_JOBS = int(
+    _bounded_env_number(
+        "PV_DASHBOARD_MAX_ACTIVE_JOBS", 25, minimum=1, maximum=500
+    )
+)
+JOB_HEARTBEAT_SECONDS = _bounded_env_number(
+    "PV_DASHBOARD_JOB_HEARTBEAT_SECONDS", 10, minimum=1, maximum=60
+)
+JOB_STALE_SECONDS = max(
+    JOB_HEARTBEAT_SECONDS * 3,
+    _bounded_env_number(
+        "PV_DASHBOARD_JOB_STALE_SECONDS", 120, minimum=10, maximum=3_600
+    ),
+)
+OPENAI_TIMEOUT_SECONDS = _bounded_env_number(
+    "OPENAI_REQUEST_TIMEOUT_SECONDS", 45, minimum=5, maximum=300
+)
+OPENAI_MAX_RETRIES = int(
+    _bounded_env_number("OPENAI_MAX_RETRIES", 0, minimum=0, maximum=5)
+)
+
+
+class PublicOutputStaticFiles(StaticFiles):
+    """Serve only root-level generated artifacts from an explicit allowlist."""
+
+    def lookup_path(self, path: str):
+        full_path, stat_result = super().lookup_path(path)
+        if not full_path:
+            return full_path, stat_result
+        try:
+            resolved = Path(full_path).resolve()
+        except OSError:
+            return "", None
+        if any(
+            resolved == private_root or private_root in resolved.parents
+            for private_root in PRIVATE_OUTPUT_DIRS
+        ):
+            return "", None
+        if (
+            resolved.parent != OUTPUT_DIR.resolve()
+            or resolved.name.startswith(".")
+            or resolved.suffix.casefold() not in PUBLIC_OUTPUT_SUFFIXES
+            or (stat_result is not None and not resolved.is_file())
+        ):
+            return "", None
+        return full_path, stat_result
 
 # ``JOBS`` remains as a live compatibility/read-through cache for existing local
 # integrations. SQLite is the authoritative registry and survives restarts.
@@ -96,17 +175,24 @@ _WORKER_WAKE = threading.Event()
 _WORKER_LOCK = threading.Lock()
 _ORCHESTRATION_LOCK = threading.RLock()
 _WORKER_THREAD: threading.Thread | None = None
+_APP_STARTED = False
 
 
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
-    interrupted = AGENT_STORE.mark_stale_running_jobs_interrupted()
+    global _APP_STARTED
+    _dashboard_basic_credentials()
+    interrupted = AGENT_STORE.mark_stale_running_jobs_interrupted(
+        before=datetime.now(timezone.utc) - timedelta(seconds=JOB_STALE_SECONDS)
+    )
     if interrupted:
         logger.warning("Marked %s stale model job(s) interrupted", interrupted)
     _start_model_worker()
+    _APP_STARTED = True
     try:
         yield
     finally:
+        _APP_STARTED = False
         _stop_model_worker()
 
 
@@ -126,7 +212,11 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
-app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
+app.mount(
+    "/outputs",
+    PublicOutputStaticFiles(directory=str(OUTPUT_DIR)),
+    name="outputs",
+)
 
 SERVER_SESSION_ID = uuid.uuid4().hex
 
@@ -137,7 +227,11 @@ AUTH_REALM = "SB Energy Dashboard"
 def _dashboard_basic_credentials() -> tuple[str, str] | None:
     username = os.getenv("DASHBOARD_BASIC_USER", "").strip()
     password = os.getenv("DASHBOARD_BASIC_PASSWORD", "")
-    if not username or not password:
+    if bool(username) != bool(password):
+        raise RuntimeError(
+            "DASHBOARD_BASIC_USER and DASHBOARD_BASIC_PASSWORD must be configured together"
+        )
+    if not username:
         return None
     return username, password
 
@@ -176,10 +270,33 @@ def _basic_auth_is_valid(authorization: str | None) -> bool:
 async def require_dashboard_basic_auth(request: Request, call_next):
     if request.url.path == "/healthz":
         return await call_next(request)
-    if not _basic_auth_is_valid(request.headers.get("authorization")):
+    try:
+        authenticated = _basic_auth_is_valid(request.headers.get("authorization"))
+    except RuntimeError:
+        logger.error("Dashboard Basic authentication is only partially configured")
+        return JSONResponse(
+            {"detail": "Dashboard authentication is misconfigured."},
+            status_code=503,
+        )
+    if not authenticated:
         return _auth_required_response()
-    if request.url.path.startswith(
-        ("/outputs/.agent_state/", "/outputs/.calibration_reviews/")
+    request_path = request.url.path.replace("\\", "/")
+    normalized_path = posixpath.normpath(
+        "/" + request_path.lstrip("/")
+    )
+    # Win32 path lookup is case-insensitive and ignores trailing dots/spaces in
+    # path components. Normalize those aliases before applying the denylist.
+    normalized_path = "/".join(
+        component.rstrip(" .").casefold()
+        for component in normalized_path.split("/")
+    ).rstrip("/")
+    private_roots = (
+        "/outputs/.agent_state",
+        "/outputs/.calibration_reviews",
+    )
+    if any(
+        normalized_path == root or normalized_path.startswith(f"{root}/")
+        for root in private_roots
     ):
         return JSONResponse({"detail": "Not found."}, status_code=404)
     return await call_next(request)
@@ -289,7 +406,7 @@ IAM is a method selection, not a generic scalar. If the user gives a numeric IAM
 Never calculate scenario deltas yourself. The application returns deterministic comparison metrics after the model run; explain those values without changing them. A multi-field scenario is a combined scenario and must not be attributed to one field. A cross-run comparison uses different input data and must not be described causally.
 After explaining a completed deterministic comparison, suggest one or two useful follow-up experiments, but never request or launch them unless the user explicitly asks in a later turn.
 The application, not you, decides whether a run requires confirmation. Never claim a run started unless the tool output says it did.
-When the tool output status is started or batch_started, explicitly say the run or sweep was queued from the reviewed, verified source data and do not ask for confirmation. Ask for confirmation only when the tool output status is confirmation_required or baseline_required. A data_review_required status is not a confirmation request and must never be described as a queued run.
+When the tool output status is started or batch_started, explicitly say the run or sweep was queued from verified source data (and from reviewed data when calibration is enabled) and do not ask for confirmation. Ask for confirmation only when the tool output status is confirmation_required or baseline_required. A data_review_required status is not a confirmation request and must never be described as a queued run.
 When web_search is available and you use external information, include source links in the answer.
 Format answers for a narrow chat sidebar. Use concise Markdown with bold section labels and short bullets. Do not use nested bullets. Do not use tables unless the user explicitly asks for a table.
 For ordinary questions, lead with the answer and stay under 90 words unless the user asks for detail. Do not restate the request or repeat the same metric in prose and bullets.
@@ -429,6 +546,13 @@ SWEEPABLE_PARAMETER_CONFIG: dict[str, dict[str, Any]] = {
 }
 PARAMETER_SWEEP_FIELDS = ("mode", "parameter", "start", "stop", "increment")
 MAX_PARAMETER_SWEEP_VALUES = 12
+
+
+class ProposalSweepConfirmRequest(StrictRequest):
+    proposal_ids: list[str] = Field(
+        min_length=1, max_length=MAX_PARAMETER_SWEEP_VALUES
+    )
+
 
 PARAMETER_SWEEP_TOOL = {
     "type": "function",
@@ -625,6 +749,15 @@ def _validate_run_request(req: RunRequest | AnnualRunRequest) -> None:
                 status_code=422,
                 detail="Calibration start date/time must be before end date/time.",
             )
+        interval_seconds = int(req.interval_value) * UNIT_SECONDS[req.interval_unit]
+        _validate_requested_window(
+            start=start,
+            end=end,
+            interval_seconds=interval_seconds,
+            max_range=VALIDATION_RUN_MAX_RANGE,
+            max_rows=VALIDATION_RUN_MAX_ROWS,
+            label="Calibration runs",
+        )
 
 
 def _validate_curtailment(req: RunRequest | AnnualRunRequest) -> None:
@@ -664,6 +797,12 @@ def _annual_dates(req: AnnualRunRequest) -> tuple[date, date]:
     if start_date > end_date:
         raise HTTPException(
             status_code=422, detail="Annual start date must be on or before end date."
+        )
+    inclusive_days = (end_date - start_date).days + 1
+    if inclusive_days > ANNUAL_RUN_MAX_DAYS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Annual runs are limited to {ANNUAL_RUN_MAX_DAYS:,} days.",
         )
     return start_date, end_date
 
@@ -770,6 +909,12 @@ def _public_source_url(path: Path) -> str | None:
     return _output_url(path)
 
 
+def _job_attempt_prefix(job_id: str, lease_token: str | None) -> str:
+    """Return a collision-free output prefix for one claimed execution attempt."""
+
+    return f"{job_id}_{lease_token}" if lease_token else job_id
+
+
 def _job_output_file(raw: Any) -> Path | None:
     """Resolve one recorded job artifact only when it is a direct output file."""
 
@@ -799,6 +944,18 @@ def _delete_job_artifacts(job: dict[str, Any]) -> int:
         return 0
     output_root = OUTPUT_DIR.resolve()
     candidates: set[Path] = set()
+    protected_shared_sources: set[Path] = set()
+
+    # Same-input scenarios deliberately reuse their baseline's immutable source
+    # snapshot. That path can appear both as ``source_path`` and inside the
+    # public result payload, so protect it before recursively collecting files.
+    baseline_id = job.get("baseline_id")
+    if baseline_id:
+        baseline = _get_job_record(str(baseline_id))
+        baseline_source = _job_output_file((baseline or {}).get("source_path"))
+        job_source = _job_output_file(job.get("source_path"))
+        if baseline_source is not None and baseline_source == job_source:
+            protected_shared_sources.add(baseline_source)
 
     def collect(value: Any) -> None:
         if isinstance(value, dict):
@@ -829,6 +986,8 @@ def _delete_job_artifacts(job: dict[str, Any]) -> int:
     except OSError:
         logger.warning("Could not enumerate output artifacts for job %s", job_id, exc_info=True)
 
+    candidates.difference_update(protected_shared_sources)
+
     removed = 0
     for candidate in candidates:
         try:
@@ -838,6 +997,57 @@ def _delete_job_artifacts(job: dict[str, Any]) -> int:
             removed += 1
         except OSError:
             logger.warning("Could not remove deleted job artifact %s", candidate, exc_info=True)
+    return removed
+
+
+def _delete_job_attempt_artifacts(job_id: str, lease_token: str | None) -> int:
+    """Remove files from a fenced-off attempt after it loses ownership."""
+
+    if not lease_token:
+        return 0
+    attempt_prefix = _job_attempt_prefix(job_id, lease_token)
+    if any(
+        character
+        not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        for character in attempt_prefix
+    ):
+        return 0
+    output_root = OUTPUT_DIR.resolve()
+    protected_source: Path | None = None
+    current = _get_job_record(job_id)
+    if current is not None:
+        protected_source = _job_output_file(current.get("source_path"))
+    try:
+        candidates = [
+            output_root / attempt_prefix,
+            *output_root.glob(f"{attempt_prefix}*"),
+        ]
+    except OSError:
+        logger.warning(
+            "Could not enumerate expired attempt artifacts for job %s",
+            job_id,
+            exc_info=True,
+        )
+        return 0
+
+    removed = 0
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            if (
+                resolved.parent != output_root
+                or not resolved.is_file()
+                or resolved == protected_source
+            ):
+                continue
+            resolved.unlink()
+            removed += 1
+        except OSError:
+            logger.warning(
+                "Could not remove expired attempt artifact %s",
+                candidate,
+                exc_info=True,
+            )
     return removed
 
 
@@ -1336,6 +1546,35 @@ def _calibration_review_state(report: dict[str, Any]) -> str:
     return "decision_required"
 
 
+def _validate_requested_window(
+    *,
+    start: datetime,
+    end: datetime,
+    interval_seconds: int,
+    max_range: timedelta,
+    max_rows: int,
+    label: str,
+) -> None:
+    span = end - start
+    if span > max_range:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{label} are limited to {max_range.days} days.",
+        )
+    expected_rows = int(
+        math.ceil(span.total_seconds() / max(int(interval_seconds), 1))
+    )
+    if expected_rows > max_rows:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The selected range and interval would produce approximately "
+                f"{expected_rows:,} rows; {label.lower()} are limited to "
+                f"{max_rows:,} rows."
+            ),
+        )
+
+
 def _validate_calibration_review_size(
     *,
     from_iso: str,
@@ -1344,27 +1583,14 @@ def _validate_calibration_review_size(
 ) -> None:
     start = datetime.fromisoformat(from_iso).replace(tzinfo=timezone.utc)
     end = datetime.fromisoformat(to_iso).replace(tzinfo=timezone.utc)
-    span = end - start
-    if span > CALIBRATION_REVIEW_MAX_RANGE:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "Calibration reviews are limited to "
-                f"{CALIBRATION_REVIEW_MAX_RANGE.days} days."
-            ),
-        )
-    expected_rows = int(
-        math.ceil(span.total_seconds() / max(int(interval_seconds), 1))
+    _validate_requested_window(
+        start=start,
+        end=end,
+        interval_seconds=interval_seconds,
+        max_range=CALIBRATION_REVIEW_MAX_RANGE,
+        max_rows=CALIBRATION_REVIEW_MAX_ROWS,
+        label="Calibration reviews",
     )
-    if expected_rows > CALIBRATION_REVIEW_MAX_ROWS:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "The selected range and interval would produce approximately "
-                f"{expected_rows:,} rows; calibration reviews are limited to "
-                f"{CALIBRATION_REVIEW_MAX_ROWS:,} rows."
-            ),
-        )
 
 
 def _cache_job_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -1399,25 +1625,49 @@ def _get_job_record(job_id: str) -> dict[str, Any] | None:
     return {"id": job_id, **cached}
 
 
-def _update_job(job_id: str, **fields: Any) -> dict[str, Any]:
+def _update_job(
+    job_id: str,
+    *,
+    worker_id: str | None = None,
+    lease_token: str | None = None,
+    **fields: Any,
+) -> dict[str, Any]:
     """Update SQLite when present and always keep the compatibility cache fresh."""
+    try:
+        if AGENT_STORE.get_job(job_id) is not None:
+            record = AGENT_STORE.update_job(
+                job_id,
+                expected_worker_id=worker_id,
+                expected_lease_token=lease_token,
+                **fields,
+            )
+            _cache_job_record(record)
+            return record
+    except LeaseOwnershipLost:
+        raise
+    except AgentStoreError:
+        logger.exception("Could not update durable job %s", job_id)
+        raise
     cached = JOBS.setdefault(job_id, {})
     cached.update(fields)
     artifacts = fields.get("artifacts")
     if isinstance(artifacts, dict) and artifacts.get("input_plots"):
         cached["input_plots"] = artifacts["input_plots"]
-    try:
-        if AGENT_STORE.get_job(job_id) is not None:
-            record = AGENT_STORE.update_job(job_id, **fields)
-            _cache_job_record(record)
-            return record
-    except AgentStoreError:
-        logger.exception("Could not update durable job %s", job_id)
-        raise
     return {"id": job_id, **cached}
 
 
-def _job_cancel_requested(job_id: str) -> bool:
+def _job_cancel_requested(
+    job_id: str,
+    *,
+    worker_id: str | None = None,
+    lease_token: str | None = None,
+) -> bool:
+    if worker_id is not None or lease_token is not None:
+        return AGENT_STORE.is_cancel_requested(
+            job_id,
+            expected_worker_id=worker_id,
+            expected_lease_token=lease_token,
+        )
     record = _get_job_record(job_id)
     if record is None:
         return False
@@ -1430,8 +1680,15 @@ class _JobCancelled(RuntimeError):
     pass
 
 
-def _check_job_cancelled(job_id: str) -> None:
-    if _job_cancel_requested(job_id):
+def _check_job_cancelled(
+    job_id: str,
+    *,
+    worker_id: str | None = None,
+    lease_token: str | None = None,
+) -> None:
+    if _job_cancel_requested(
+        job_id, worker_id=worker_id, lease_token=lease_token
+    ):
         raise _JobCancelled("Cancellation requested")
 
 
@@ -1474,7 +1731,9 @@ def _normalise_config_keys(config: dict[str, Any] | None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in (config or {}).items():
         canonical = _CAMEL_CONFIG_FIELDS.get(key, key)
-        if canonical in SCENARIO_OVERRIDE_FIELDS and canonical != "mode":
+        if (
+            canonical in SCENARIO_OVERRIDE_FIELDS and canonical != "mode"
+        ) or canonical == "calibrate_model":
             out[canonical] = value
     return out
 
@@ -1488,6 +1747,7 @@ def _canonical_request(
         if mode == "annual":
             for unsupported in ("from_time", "to_time"):
                 values.pop(unsupported, None)
+            values.pop("calibrate_model", None)
             request_model = AnnualRunRequest(**values)
         else:
             request_model = RunRequest(**values)
@@ -1698,10 +1958,33 @@ def _ambiguous_numeric_iam(message: str) -> bool:
     import re
 
     text = (message or "").lower()
-    if "iam" not in text or not re.search(r"\b\d+(?:\.\d+)?\b", text):
+    if "iam" not in text:
         return False
     explicit = ("martin", "ruiz", "a_r", "a-r", "coefficient", "physical")
-    return not any(marker in text for marker in explicit)
+    if any(marker in text for marker in explicit):
+        return False
+    number = r"(?<![\w.])-?(?:\d+(?:\.\d*)?|\.\d+)"
+    relation = r"(?:value|setting|at|to|of|is|=|:)"
+    patterns = (
+        rf"\biam\b\s*(?:{relation}\s*)?({number})",
+        rf"({number})\s*(?:{relation}\s*)?\biam\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        token = match.group(1)
+        suffix = text[match.end(1) : match.end(1) + 12].lstrip()
+        try:
+            value = float(token)
+        except ValueError:
+            continue
+        if suffix.startswith("%"):
+            continue
+        if value.is_integer() and 1900 <= value <= 2200:
+            continue
+        return True
+    return False
 
 
 def _visible_iam_selection(current_config: dict[str, Any] | None) -> dict[str, Any]:
@@ -1754,6 +2037,29 @@ def _selected_baseline(mode: str) -> dict[str, Any] | None:
         if cached.get("state") == "done" and cached.get("mode", "validation") == mode:
             return {"id": job_id, **cached}
     return None
+
+
+def _visible_baseline(
+    req: ChatRequest,
+    target_mode: str,
+    *,
+    allow_mode_change: bool = False,
+) -> dict[str, Any] | None:
+    """Resolve the completed job visible to chat before using a stored default."""
+
+    if req.job_id:
+        visible = _get_job_record(str(req.job_id))
+        if (
+            visible
+            and visible.get("state") == "done"
+            and visible.get("mode", "validation") == req.active_mode
+            and (
+                allow_mode_change
+                or visible.get("mode", "validation") == target_mode
+            )
+        ):
+            return visible
+    return _selected_baseline(target_mode)
 
 
 def _verified_baseline_source(
@@ -2309,9 +2615,11 @@ def _create_candidate_proposal(
     )
 
 
-def _confirm_durable_proposal(
+def _proposal_confirmation_spec(
     proposal: dict[str, Any], *, automatic: bool = False
 ) -> dict[str, Any]:
+    """Validate one proposal and build its immutable store confirmation input."""
+
     if proposal.get("confirmed_job_id"):
         existing = _get_job_record(str(proposal["confirmed_job_id"]))
         if existing is None:
@@ -2319,7 +2627,7 @@ def _confirm_durable_proposal(
                 status_code=409,
                 detail="The confirmed proposal references an unavailable job.",
             )
-        return existing
+        return {"proposal_id": str(proposal["id"])}
     metadata = proposal.get("confirmation_metadata") or {}
     job_kind = str(metadata.get("job_kind", "candidate"))
     source_path: str | None = None
@@ -2332,7 +2640,9 @@ def _confirm_durable_proposal(
     if proposal.get("baseline_id"):
         baseline = _get_job_record(str(proposal["baseline_id"]))
     validation_quality: dict[str, Any] | None = None
-    if proposal.get("mode") == "validation":
+    effective_request = dict(proposal.get("effective_request") or {})
+    calibration_requested = bool(effective_request.get("calibrate_model", True))
+    if proposal.get("mode") == "validation" and calibration_requested:
         if (
             job_kind != "candidate"
             or proposal.get("comparison_kind") != "same_input"
@@ -2368,6 +2678,7 @@ def _confirm_durable_proposal(
             )
     if (
         proposal.get("mode") == "validation"
+        and calibration_requested
         and job_kind == "candidate"
         and proposal.get("baseline_id")
     ):
@@ -2400,17 +2711,47 @@ def _confirm_durable_proposal(
             )
         provenance["calibration_profile"] = profile
         provenance["data_quality"] = validation_quality
-    job = AGENT_STORE.confirm_proposal(
-        str(proposal["id"]),
-        job_kind=job_kind,
-        confirmation_metadata={"automatic": automatic},
-        source_path=source_path,
-        source_hash=source_hash,
-        provenance=provenance or None,
-    )
-    _cache_job_record(job)
+    return {
+        "proposal_id": str(proposal["id"]),
+        "job_kind": job_kind,
+        "confirmation_metadata": {"automatic": automatic},
+        "source_path": source_path,
+        "source_hash": source_hash,
+        "provenance": provenance or None,
+    }
+
+
+def _confirm_durable_proposals(
+    proposals: list[dict[str, Any]], *, automatic: bool = False
+) -> list[dict[str, Any]]:
+    """Validate and enqueue a proposal group in one durable transaction."""
+
+    if not proposals:
+        raise ValueError("proposals must not be empty")
+    confirmations = [
+        _proposal_confirmation_spec(proposal, automatic=automatic)
+        for proposal in proposals
+    ]
+    try:
+        jobs = AGENT_STORE.confirm_proposals_batch(
+            confirmations,
+            max_active_jobs=MAX_ACTIVE_MODEL_JOBS,
+        )
+    except QueueCapacityExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="The model queue is full. Wait for an active run to finish and retry.",
+        ) from exc
+    for job in jobs:
+        _cache_job_record(job)
     _WORKER_WAKE.set()
-    return job
+    return jobs
+
+
+def _confirm_durable_proposal(
+    proposal: dict[str, Any], *, automatic: bool = False
+) -> dict[str, Any]:
+    return _confirm_durable_proposals([proposal], automatic=automatic)[0]
 
 
 def _handle_scenario_tool(
@@ -2433,11 +2774,11 @@ def _handle_scenario_tool(
         )
 
     with _ORCHESTRATION_LOCK:
-        baseline = (
-            _selected_baseline(req.active_mode)
-            if target_mode != req.active_mode
-            else _selected_baseline(target_mode)
-        ) or _selected_baseline(target_mode)
+        baseline = _visible_baseline(
+            req,
+            target_mode,
+            allow_mode_change=target_mode != req.active_mode,
+        )
         if baseline is None:
             if target_mode == "validation":
                 effective_request: dict[str, Any] | None = None
@@ -2505,13 +2846,17 @@ def _handle_scenario_tool(
             )
         if target_mode == "validation":
             source_path, source_hash = _verified_baseline_source(baseline)
-            same_reviewed_input = (
+            same_verified_input = (
                 baseline_mode == "validation"
                 and _same_input_context("validation", baseline_request, candidate)
                 and bool(source_path and source_hash)
+            )
+            calibration_requested = bool(candidate.get("calibrate_model", True))
+            reusable_calibration = (
+                same_verified_input
                 and _reviewed_baseline_data_quality(baseline) is not None
             )
-            if not same_reviewed_input:
+            if calibration_requested and not reusable_calibration:
                 return _calibration_review_required(
                     effective_request=candidate
                 )
@@ -2525,15 +2870,25 @@ def _handle_scenario_tool(
             job = _confirm_durable_proposal(proposal, automatic=True)
             public_job = _public_job(job)
             if proposal["comparison_kind"] == "cross_run":
+                scenario_label = (
+                    "calibration"
+                    if bool(candidate.get("calibrate_model", True))
+                    else "physics-model"
+                )
                 started_message = (
-                    "The calibration scenario was queued automatically. It will pull fresh "
+                    f"The {scenario_label} scenario was queued automatically. It will pull fresh "
                     "data from Bazefield. The interval or source data will differ, so the "
                     "comparison is descriptive only."
                 )
             else:
+                source_label = (
+                    "source data"
+                    if bool(candidate.get("calibrate_model", True))
+                    else "verified physics-model source data"
+                )
                 started_message = (
-                    "The calibration scenario was queued automatically with the same interval "
-                    "and source data; only the requested parameters will change."
+                    "The scenario was queued automatically with the same interval and "
+                    f"{source_label}; only the requested parameters will change."
                 )
             return (
                 {
@@ -2565,7 +2920,7 @@ def _handle_parameter_sweep_tool(
     )
 
     with _ORCHESTRATION_LOCK:
-        baseline = _selected_baseline(target_mode)
+        baseline = _visible_baseline(req, target_mode)
         if baseline is None:
             if target_mode == "validation":
                 effective_request: dict[str, Any] | None = None
@@ -2648,37 +3003,57 @@ def _handle_parameter_sweep_tool(
 
         if target_mode == "validation":
             source_path, source_hash = _verified_baseline_source(baseline)
-            same_reviewed_input = (
+            same_verified_input = (
                 str(baseline.get("mode")) == "validation"
                 and bool(source_path and source_hash)
+            )
+            calibration_requested = bool(
+                candidate_specs[0]["candidate"].get("calibrate_model", True)
+            )
+            reusable_calibration = (
+                same_verified_input
                 and _reviewed_baseline_data_quality(baseline) is not None
             )
-            if not same_reviewed_input:
+            if calibration_requested and not reusable_calibration:
                 return _calibration_review_required(
                     effective_request=candidate_specs[0]["candidate"]
                 )
+            if calibration_requested:
+                try:
+                    profile = _baseline_calibration_profile(
+                        baseline,
+                        candidate_request=candidate_specs[0]["candidate"],
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "The reviewed baseline calibration profile is invalid or "
+                            f"does not cover this date range: {exc}"
+                        ),
+                    ) from exc
+                if profile is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "The reviewed baseline does not contain a frozen seasonal "
+                            "calibration profile. Re-run it through the visible "
+                            "Calibration data-quality review."
+                        ),
+                    )
             try:
-                profile = _baseline_calibration_profile(
-                    baseline,
-                    candidate_request=candidate_specs[0]["candidate"],
+                AGENT_STORE.ensure_job_capacity(
+                    max_active_jobs=MAX_ACTIVE_MODEL_JOBS,
+                    required=len(candidate_specs),
                 )
-            except (KeyError, TypeError, ValueError) as exc:
+            except QueueCapacityExceeded as exc:
                 raise HTTPException(
-                    status_code=409,
+                    status_code=429,
                     detail=(
-                        "The reviewed baseline calibration profile is invalid or "
-                        f"does not cover this date range: {exc}"
+                        "The model queue does not have room for this sweep. "
+                        "Wait for active runs to finish and retry."
                     ),
                 ) from exc
-            if profile is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "The reviewed baseline does not contain a frozen seasonal "
-                        "calibration profile. Re-run it through the visible "
-                        "Calibration data-quality review."
-                    ),
-                )
 
         baseline_parameter_value = baseline_request.get(parameter)
         if parameter == "iam_a_r" and baseline_request.get("iam_model") != "martin_ruiz":
@@ -2717,7 +3092,6 @@ def _handle_parameter_sweep_tool(
             "baseline_label": baseline_label,
         }
         proposals: list[dict[str, Any]] = []
-        jobs: list[dict[str, Any]] = []
         for spec in candidate_specs:
             scenario_sweep = {
                 **sweep_common,
@@ -2732,10 +3106,10 @@ def _handle_parameter_sweep_tool(
                 scenario_sweep=scenario_sweep,
             )
             proposals.append(proposal)
-            if not proposal["confirmation_required"]:
-                jobs.append(
-                    _confirm_durable_proposal(proposal, automatic=True)
-                )
+
+        jobs: list[dict[str, Any]] = []
+        if proposals and not proposals[0]["confirmation_required"]:
+            jobs = _confirm_durable_proposals(proposals, automatic=True)
 
         public_sweep = deepcopy(sweep_common)
         if jobs:
@@ -2754,10 +3128,15 @@ def _handle_parameter_sweep_tool(
                 if baseline_index is not None
                 else ""
             )
+            source_description = (
+                "reviewed, hash-verified baseline source"
+                if bool(baseline_request.get("calibrate_model", True))
+                else "hash-verified physics-model baseline source"
+            )
             message = (
                 f"Queued {len(public_jobs)} controlled "
                 f"{parameter_config['label']} scenario runs "
-                "from the same reviewed, hash-verified baseline source. The "
+                f"from the same {source_description}. The "
                 "comparison table will update as each value completes."
                 + baseline_note
             )
@@ -2817,7 +3196,9 @@ def _handle_iam_ar_sweep_tool(
     )
 
 
-def _clean_chat_history(history: list[ChatMessage]) -> list[dict[str, str]]:
+def _clean_chat_history(
+    history: list[ChatMessage], *, current_message: str | None = None
+) -> list[dict[str, str]]:
     cleaned: list[dict[str, str]] = []
     for item in history[-8:]:
         role = item.role if item.role in {"user", "assistant"} else "user"
@@ -2825,7 +3206,54 @@ def _clean_chat_history(history: list[ChatMessage]) -> list[dict[str, str]]:
         if not content:
             continue
         cleaned.append({"role": role, "content": content[:1400]})
+    if (
+        cleaned
+        and cleaned[-1]["role"] == "user"
+        and current_message
+        and cleaned[-1]["content"] == current_message.strip()[:1400]
+    ):
+        cleaned.pop()
     return cleaned
+
+
+def _deduplicated_job_context(job: dict[str, Any]) -> dict[str, Any]:
+    """Keep trusted fields while removing large values repeated in nested sections."""
+
+    result = deepcopy(job.get("result") or {})
+    if not isinstance(result, dict):
+        result = {}
+    stats = result.get("stats")
+    if isinstance(stats, dict):
+        stats = deepcopy(stats)
+        for key in (
+            "calibration_factors",
+            "factor_driver_diagnostics",
+            "data_quality",
+            "data_quality_review",
+            "data_quality_warnings",
+        ):
+            if key in result and stats.get(key) == result.get(key):
+                stats.pop(key, None)
+        result["stats"] = stats
+
+    provenance = deepcopy(job.get("provenance") or {})
+    if isinstance(provenance, dict):
+        if provenance.get("data_quality") == result.get("data_quality"):
+            provenance.pop("data_quality", None)
+
+    artifacts = deepcopy(job.get("artifacts") or {})
+    if isinstance(artifacts, dict):
+        workbook = artifacts.get("model_workbook")
+        if isinstance(workbook, dict) and workbook.get("url") == result.get("excel"):
+            artifacts.pop("model_workbook", None)
+        if artifacts.get("input_plots") == result.get("input_plots"):
+            artifacts.pop("input_plots", None)
+
+    return {
+        "result": result,
+        "provenance": provenance,
+        "artifacts": artifacts,
+    }
 
 
 def _chat_run_context(
@@ -2861,45 +3289,40 @@ def _chat_run_context(
     if "request" in job:
         context["request"] = job["request"]
     if job.get("state") == "done":
-        context["result"] = job.get("result", {})
+        compact = _deduplicated_job_context(job)
+        context["result"] = compact["result"]
         if job.get("comparison"):
             context["comparison"] = job["comparison"]
-        if job.get("provenance"):
-            context["provenance"] = job["provenance"]
-        if job.get("artifacts"):
-            context["artifacts"] = job["artifacts"]
+        if compact["provenance"]:
+            context["provenance"] = compact["provenance"]
+        if compact["artifacts"]:
+            context["artifacts"] = compact["artifacts"]
     elif job.get("state") == "error":
         context["error"] = job.get("error", "Unknown error")
     return resolved_job_id, context
 
 
 def _should_allow_web_search(message: str) -> bool:
+    import re
+
     text = (message or "").lower()
-    triggers = (
-        "web",
-        "internet",
-        "online",
-        "source",
-        "sources",
-        "citation",
-        "citations",
-        "reference",
-        "references",
-        "latest",
-        "current",
-        "today",
-        "recent",
-        "forecast",
-        "weather",
-        "nrel",
-        "pvlib",
-        "pvmismatch",
-        "prediction",
-        "predict",
-        "external",
-        "research",
+    explicit_external_intent = re.search(
+        r"\b(?:web|internet|online|sources?|citations?|references?|external|research|search)\b"
+        r"|\blook\s+up\b",
+        text,
     )
-    return any(trigger in text for trigger in triggers)
+    if explicit_external_intent:
+        return True
+    if re.search(r"\b(?:weather|forecast|nrel|pvlib|pvmismatch)\b", text):
+        return True
+    current_external_topic = re.search(
+        r"\b(?:latest|current|today|recent)\b.*"
+        r"\b(?:news|version|release|documentation|standard|specification|policy|law|price)\b"
+        r"|\b(?:news|version|release|documentation|standard|specification|policy|law|price)\b.*"
+        r"\b(?:latest|current|today|recent)\b",
+        text,
+    )
+    return current_external_topic is not None
 
 
 def _extract_response_text(response) -> str:
@@ -3013,10 +3436,14 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         "question": req.message.strip(),
         "dashboard_run_context": run_context,
         "active_mode": req.active_mode,
-        "visible_dashboard_configuration": req.current_config,
+        "visible_dashboard_configuration": _normalise_config_keys(
+            req.current_config
+        ),
         "visible_iam_selection": _visible_iam_selection(req.current_config),
         "model_knowledge": SOLAR_MODEL_KNOWLEDGE,
-        "recent_chat_history": _clean_chat_history(req.history),
+        "recent_chat_history": _clean_chat_history(
+            req.history, current_message=req.message
+        ),
     }
     user_input = {
         "role": "user",
@@ -3027,19 +3454,39 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         ),
     }
 
-    client = OpenAI()
+    try:
+        client = OpenAI(
+            timeout=OPENAI_TIMEOUT_SECONDS,
+            max_retries=OPENAI_MAX_RETRIES,
+        )
+    except TypeError:
+        # Lightweight test doubles and older compatible clients may not expose
+        # constructor options. The supported production SDK does.
+        client = OpenAI()
     gpt_started = perf_counter()
     try:
+        request_options: dict[str, Any] = {}
+        if req.allow_scenario_actions:
+            request_options.update(
+                {"max_tool_calls": 1, "parallel_tool_calls": False}
+            )
         response = client.responses.create(
             model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
             instructions=SOLAR_AGENT_INSTRUCTIONS,
             input=[user_input],
             tools=tools,
             store=False,
+            max_output_tokens=1_200,
             text={"verbosity": "low"},
+            **request_options,
         )
     except Exception as exc:
-        logger.error("OpenAI request failed: %s", exc.__class__.__name__)
+        logger.error(
+            "OpenAI request failed: type=%s status=%s request_id=%s",
+            exc.__class__.__name__,
+            getattr(exc, "status_code", None),
+            getattr(exc, "request_id", None),
+        )
         raise HTTPException(
             status_code=502,
             detail="Solar Agent is temporarily unavailable. Please retry.",
@@ -3052,10 +3499,12 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
     deterministic_reply: str | None = None
     tool_calls = _scenario_tool_calls(response) if req.allow_scenario_actions else []
     if len(tool_calls) > 1:
-        raise HTTPException(
-            status_code=502,
-            detail="Solar Agent requested more than one scenario action. Please retry.",
+        deterministic_reply = (
+            "I did not start a run because more than one scenario action was "
+            "requested in the same response. Please ask for one scenario or one "
+            "parameter sweep at a time."
         )
+        tool_calls = []
     if tool_calls:
         tool_call = tool_calls[0]
         try:
@@ -3141,10 +3590,40 @@ def _stop_model_worker() -> None:
             _WORKER_THREAD = None
 
 
+def _heartbeat_model_job(
+    job_id: str, lease_token: str, stop: threading.Event
+) -> None:
+    while not stop.wait(JOB_HEARTBEAT_SECONDS):
+        try:
+            if not AGENT_STORE.heartbeat_job(
+                job_id,
+                worker_id=SERVER_SESSION_ID,
+                lease_token=lease_token,
+            ):
+                return
+        except Exception:
+            logger.exception("Could not renew the lease for model job %s", job_id)
+
+
 def _model_worker_loop() -> None:
+    next_stale_check = 0.0
     while not _WORKER_STOP.is_set():
         try:
-            record = AGENT_STORE.claim_next_queued_job()
+            now = perf_counter()
+            if now >= next_stale_check:
+                interrupted = AGENT_STORE.mark_stale_running_jobs_interrupted(
+                    before=datetime.now(timezone.utc)
+                    - timedelta(seconds=JOB_STALE_SECONDS)
+                )
+                if interrupted:
+                    logger.warning(
+                        "Marked %s expired model job lease(s) interrupted",
+                        interrupted,
+                    )
+                next_stale_check = now + min(JOB_STALE_SECONDS / 2, 30)
+            record = AGENT_STORE.claim_next_queued_job(
+                worker_id=SERVER_SESSION_ID
+            )
         except AgentStoreError:
             logger.exception("The durable model queue could not claim a job")
             _WORKER_WAKE.wait(1.0)
@@ -3156,6 +3635,18 @@ def _model_worker_loop() -> None:
             continue
         _cache_job_record(record)
         job_id = str(record["id"])
+        lease_token = str(record.get("lease_token") or "")
+        if not lease_token:
+            logger.error("Claimed model job %s without a lease token", job_id)
+            continue
+        heartbeat_stop = threading.Event()
+        heartbeat = threading.Thread(
+            target=_heartbeat_model_job,
+            args=(job_id, lease_token, heartbeat_stop),
+            name=f"solar-model-heartbeat-{job_id[:12]}",
+            daemon=True,
+        )
+        heartbeat.start()
         try:
             if record["mode"] == "annual":
                 req = AnnualRunRequest(**record["request"])
@@ -3174,6 +3665,8 @@ def _model_worker_loop() -> None:
                     calibration_application_context=provenance.get(
                         "calibration_application"
                     ),
+                    worker_id=SERVER_SESSION_ID,
+                    lease_token=lease_token,
                 )
             else:
                 req = RunRequest(**record["request"])
@@ -3189,17 +3682,37 @@ def _model_worker_loop() -> None:
                     calibration_profile=provenance.get(
                         "calibration_profile"
                     ),
+                    worker_id=SERVER_SESSION_ID,
+                    lease_token=lease_token,
                 )
+        except LeaseOwnershipLost:
+            removed = _delete_job_attempt_artifacts(job_id, lease_token)
+            logger.warning(
+                "Stopped model job %s after its lease was lost; removed %s "
+                "expired attempt artifact(s)",
+                job_id,
+                removed,
+            )
         except Exception:
             logger.exception("Unhandled model worker failure for %s", job_id)
             current = _get_job_record(job_id)
             if current and current.get("state") == "running":
-                _update_job(
-                    job_id,
-                    state="error",
-                    stage="Failed",
-                    error="The model run failed. Review server logs and retry.",
-                )
+                try:
+                    _update_job(
+                        job_id,
+                        worker_id=SERVER_SESSION_ID,
+                        lease_token=lease_token,
+                        state="error",
+                        stage="Failed",
+                        error="The model run failed. Review server logs and retry.",
+                    )
+                except LeaseOwnershipLost:
+                    logger.warning(
+                        "Ignored failure transition for %s after lease loss", job_id
+                    )
+        finally:
+            heartbeat_stop.set()
+            heartbeat.join(timeout=1)
 
 
 def _artifact_file(result: dict[str, Any], key: str) -> Path:
@@ -3213,7 +3726,13 @@ def _artifact_file(result: dict[str, Any], key: str) -> Path:
     return OUTPUT_DIR / raw_path.name
 
 
-def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
+def _finish_model_job(
+    job_id: str,
+    result: dict[str, Any],
+    *,
+    worker_id: str | None = None,
+    lease_token: str | None = None,
+) -> None:
     record = _get_job_record(job_id) or {"id": job_id, **JOBS.get(job_id, {})}
     artifacts = dict(record.get("artifacts") or {})
     if JOBS.get(job_id, {}).get("input_plots"):
@@ -3231,8 +3750,16 @@ def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
     provenance = record.get("provenance")
     baseline_id = record.get("baseline_id")
     if baseline_id:
-        _update_job(job_id, progress=97, stage="Calculating trusted comparison")
-        _check_job_cancelled(job_id)
+        _update_job(
+            job_id,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            progress=97,
+            stage="Calculating trusted comparison",
+        )
+        _check_job_cancelled(
+            job_id, worker_id=worker_id, lease_token=lease_token
+        )
         baseline = _get_job_record(str(baseline_id))
         if baseline is None or baseline.get("state") != "done":
             raise ValueError("The bound baseline is not available as a completed job")
@@ -3245,7 +3772,7 @@ def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
         generated = generate_comparison_artifacts(
             _artifact_file(baseline_result, "excel"),
             _artifact_file(result, "excel"),
-            OUTPUT_DIR / job_id,
+            OUTPUT_DIR / _job_attempt_prefix(job_id, lease_token),
             baseline_job_id=str(baseline_id),
             candidate_job_id=job_id,
             baseline_request=baseline.get("request") or {},
@@ -3265,9 +3792,11 @@ def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
         }
         artifacts.update(generated["artifacts"])
 
-    _check_job_cancelled(job_id)
+    _check_job_cancelled(job_id, worker_id=worker_id, lease_token=lease_token)
     _update_job(
         job_id,
+        worker_id=worker_id,
+        lease_token=lease_token,
         state="done",
         progress=100,
         stage="Done",
@@ -3278,15 +3807,9 @@ def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
         error=None,
     )
     completed = _get_job_record(job_id)
-    request = (completed or {}).get("request") or {}
-    should_promote = (
-        (completed or {}).get("mode") == "annual"
-        or bool(request.get("calibrate_model", True))
-    )
     if (
         completed
         and completed.get("kind") in {"baseline", "manual"}
-        and should_promote
     ):
         try:
             with _ORCHESTRATION_LOCK:
@@ -3295,22 +3818,69 @@ def _finish_model_job(job_id: str, result: dict[str, Any]) -> None:
             logger.exception("Completed baseline %s could not be promoted", job_id)
 
 
-def _handle_model_failure(job_id: str, exc: Exception) -> None:
-    if isinstance(exc, _JobCancelled) or _job_cancel_requested(job_id):
+def _handle_model_failure(
+    job_id: str,
+    exc: Exception,
+    *,
+    worker_id: str | None = None,
+    lease_token: str | None = None,
+) -> None:
+    if isinstance(exc, LeaseOwnershipLost):
+        removed = _delete_job_attempt_artifacts(job_id, lease_token)
+        logger.warning(
+            "Ignoring model job %s after its lease was lost; removed %s "
+            "expired attempt artifact(s)",
+            job_id,
+            removed,
+        )
+        return
+    try:
+        cancelled = _job_cancel_requested(
+            job_id, worker_id=worker_id, lease_token=lease_token
+        )
+    except LeaseOwnershipLost:
+        removed = _delete_job_attempt_artifacts(job_id, lease_token)
+        logger.warning(
+            "Ignoring model job %s after its lease was lost; removed %s "
+            "expired attempt artifact(s)",
+            job_id,
+            removed,
+        )
+        return
+    if isinstance(exc, _JobCancelled) or cancelled:
         current = _get_job_record(job_id)
         if current and current.get("state") == "running":
-            _update_job(job_id, state="cancelled", stage="Cancelled", error=None)
+            try:
+                _update_job(
+                    job_id,
+                    worker_id=worker_id,
+                    lease_token=lease_token,
+                    state="cancelled",
+                    stage="Cancelled",
+                    error=None,
+                )
+            except LeaseOwnershipLost:
+                logger.warning(
+                    "Ignored cancellation transition for %s after lease loss", job_id
+                )
         return
     logger.error("Model job %s failed\n%s", job_id, traceback.format_exc())
     JOBS.setdefault(job_id, {})["traceback"] = traceback.format_exc()
     current = _get_job_record(job_id)
     if current and current.get("state") == "running":
-        _update_job(
-            job_id,
-            state="error",
-            stage="Failed",
-            error="The model run failed. Review server logs and retry.",
-        )
+        try:
+            _update_job(
+                job_id,
+                worker_id=worker_id,
+                lease_token=lease_token,
+                state="error",
+                stage="Failed",
+                error="The model run failed. Review server logs and retry.",
+            )
+        except LeaseOwnershipLost:
+            logger.warning(
+                "Ignored failure transition for %s after lease loss", job_id
+            )
     else:
         JOBS[job_id]["state"] = "error"
         JOBS[job_id]["error"] = str(exc) or exc.__class__.__name__
@@ -3324,23 +3894,34 @@ def _run_job(
     expected_source_hash: str | None = None,
     data_quality_context: dict[str, Any] | None = None,
     calibration_profile: dict[str, Any] | None = None,
+    worker_id: str | None = None,
+    lease_token: str | None = None,
 ) -> None:
     JOBS.setdefault(job_id, {"mode": "validation", "state": "running"})
 
     def set_progress(pct: int, stage: str) -> None:
-        _check_job_cancelled(job_id)
-        _update_job(job_id, progress=int(pct), stage=stage)
+        _check_job_cancelled(
+            job_id, worker_id=worker_id, lease_token=lease_token
+        )
+        _update_job(
+            job_id,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            progress=int(pct),
+            stage=stage,
+        )
 
     try:
         from_iso = _iso(req.from_date, req.from_time)
         to_iso = _iso(req.to_date, req.to_time)
         interval_seconds = int(req.interval_value) * UNIT_SECONDS[req.interval_unit]
+        attempt_prefix = _job_attempt_prefix(job_id, lease_token)
         csv_path = (
             Path(source_path)
             if source_path and expected_source_hash
-            else OUTPUT_DIR / f"{job_id}.csv"
+            else OUTPUT_DIR / f"{attempt_prefix}.csv"
         )
-        base_path = OUTPUT_DIR / job_id
+        base_path = OUTPUT_DIR / attempt_prefix
 
         if source_path and expected_source_hash:
             set_progress(5, "Verifying cached baseline source")
@@ -3355,18 +3936,26 @@ def _run_job(
                 interval=str(interval_seconds),
                 output_csv=str(csv_path),
             )
-            _check_job_cancelled(job_id)
+            _check_job_cancelled(
+                job_id, worker_id=worker_id, lease_token=lease_token
+            )
             source_hash = sha256_file(csv_path)
         _update_job(
             job_id,
+            worker_id=worker_id,
+            lease_token=lease_token,
             source_path=str(csv_path.resolve()),
             source_hash=source_hash,
         )
-        _check_job_cancelled(job_id)
+        _check_job_cancelled(
+            job_id, worker_id=worker_id, lease_token=lease_token
+        )
         input_plots = _render_input_data_plots(csv_path, base_path)
         existing_artifacts = (_get_job_record(job_id) or {}).get("artifacts") or {}
         _update_job(
             job_id,
+            worker_id=worker_id,
+            lease_token=lease_token,
             artifacts={**existing_artifacts, "input_plots": input_plots},
         )
         set_progress(20, f"Loaded {n} rows; running pvlib ModelChain")
@@ -3389,6 +3978,8 @@ def _run_job(
             curtailment_limit_kw=req.curtailment_limit_kw,
             data_quality_context=data_quality_context,
             expected_interval_seconds=interval_seconds,
+            requested_start=from_iso,
+            requested_end=to_iso,
             calibration_profile=calibration_profile,
             calibrate_model=req.calibrate_model,
         )
@@ -3444,9 +4035,19 @@ def _run_job(
                 "calibrate_model": req.calibrate_model,
             },
         }
-        _finish_model_job(job_id, result)
+        _finish_model_job(
+            job_id,
+            result,
+            worker_id=worker_id,
+            lease_token=lease_token,
+        )
     except Exception as exc:
-        _handle_model_failure(job_id, exc)
+        _handle_model_failure(
+            job_id,
+            exc,
+            worker_id=worker_id,
+            lease_token=lease_token,
+        )
 
 
 def _run_annual_job(
@@ -3457,23 +4058,34 @@ def _run_annual_job(
     expected_source_hash: str | None = None,
     calibration_profile: dict[str, Any] | None = None,
     calibration_application_context: dict[str, Any] | None = None,
+    worker_id: str | None = None,
+    lease_token: str | None = None,
 ) -> None:
     JOBS.setdefault(job_id, {"mode": "annual", "state": "running"})
 
     def set_progress(pct: int, stage: str) -> None:
-        _check_job_cancelled(job_id)
-        _update_job(job_id, progress=int(pct), stage=stage)
+        _check_job_cancelled(
+            job_id, worker_id=worker_id, lease_token=lease_token
+        )
+        _update_job(
+            job_id,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            progress=int(pct),
+            stage=stage,
+        )
 
     try:
         start_date, end_date = _annual_dates(req)
         interval_seconds = _annual_interval_seconds(req)
         interval_hours = interval_seconds // 3_600
+        attempt_prefix = _job_attempt_prefix(job_id, lease_token)
         csv_path = (
             Path(source_path)
             if source_path and expected_source_hash
-            else OUTPUT_DIR / f"{job_id}_midc_hourly.csv"
+            else OUTPUT_DIR / f"{attempt_prefix}_midc_hourly.csv"
         )
-        base_path = OUTPUT_DIR / job_id
+        base_path = OUTPUT_DIR / attempt_prefix
         source_warnings: list[str] = []
         source_quality: dict[str, Any]
 
@@ -3504,7 +4116,9 @@ def _run_annual_job(
                 interval_seconds=interval_seconds,
                 progress_cb=download_progress,
             )
-            _check_job_cancelled(job_id)
+            _check_job_cancelled(
+                job_id, worker_id=worker_id, lease_token=lease_token
+            )
             set_progress(27, "Saving exact MIDC interval source")
             midc.write_csv_atomically(source.interval_data, csv_path)
             source_hash = sha256_file(csv_path)
@@ -3523,6 +4137,8 @@ def _run_annual_job(
             }
         _update_job(
             job_id,
+            worker_id=worker_id,
+            lease_token=lease_token,
             source_path=str(csv_path.resolve()),
             source_hash=source_hash,
         )
@@ -3531,6 +4147,8 @@ def _run_annual_job(
         existing_artifacts = (_get_job_record(job_id) or {}).get("artifacts") or {}
         _update_job(
             job_id,
+            worker_id=worker_id,
+            lease_token=lease_token,
             artifacts={**existing_artifacts, "input_plots": input_plots},
         )
 
@@ -3663,9 +4281,19 @@ def _run_annual_job(
                 ),
             },
         }
-        _finish_model_job(job_id, result)
+        _finish_model_job(
+            job_id,
+            result,
+            worker_id=worker_id,
+            lease_token=lease_token,
+        )
     except Exception as exc:
-        _handle_model_failure(job_id, exc)
+        _handle_model_failure(
+            job_id,
+            exc,
+            worker_id=worker_id,
+            lease_token=lease_token,
+        )
 
 
 @app.get("/")
@@ -3684,6 +4312,27 @@ def annual_warning_icon() -> FileResponse:
 
 @app.get("/healthz")
 def healthz() -> JSONResponse:
+    failures: list[str] = []
+    try:
+        _dashboard_basic_credentials()
+    except RuntimeError:
+        failures.append("authentication configuration")
+    try:
+        if AGENT_STORE.schema_version != AGENT_STORE_SCHEMA_VERSION:
+            failures.append("state schema")
+    except Exception:
+        logger.exception("Health check could not read durable state")
+        failures.append("durable state")
+    if not OUTPUT_DIR.is_dir() or not os.access(OUTPUT_DIR, os.W_OK):
+        failures.append("output directory")
+    worker = _WORKER_THREAD
+    if _APP_STARTED and (worker is None or not worker.is_alive()):
+        failures.append("model worker")
+    if failures:
+        return JSONResponse(
+            {"status": "unavailable", "failed_checks": failures},
+            status_code=503,
+        )
     return JSONResponse({"status": "ok"})
 
 
@@ -3727,16 +4376,23 @@ def _enqueue_baseline_job(
     artifacts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     with _ORCHESTRATION_LOCK:
-        record = AGENT_STORE.create_job(
-            kind="baseline",
-            mode=mode,
-            request=request_snapshot,
-            job_id=job_id or uuid.uuid4().hex[:12],
-            source_path=source_path,
-            source_hash=source_hash,
-            provenance=provenance,
-            artifacts=artifacts,
-        )
+        try:
+            record = AGENT_STORE.create_job(
+                kind="baseline",
+                mode=mode,
+                request=request_snapshot,
+                job_id=job_id or uuid.uuid4().hex[:12],
+                source_path=source_path,
+                source_hash=source_hash,
+                provenance=provenance,
+                artifacts=artifacts,
+                max_active_jobs=MAX_ACTIVE_MODEL_JOBS,
+            )
+        except QueueCapacityExceeded as exc:
+            raise HTTPException(
+                status_code=429,
+                detail="The model queue is full. Wait for an active run to finish and retry.",
+            ) from exc
         _cache_job_record(record)
         _WORKER_WAKE.set()
         return record
@@ -4306,10 +4962,121 @@ def _proposal_or_404(proposal_id: str) -> dict[str, Any]:
     return proposal
 
 
+def _proposal_parameter_sweep(
+    proposal: dict[str, Any],
+) -> dict[str, Any] | None:
+    metadata = proposal.get("confirmation_metadata") or {}
+    sweep = metadata.get("scenario_sweep")
+    if not isinstance(sweep, dict) or sweep.get("type") != "parameter_sweep":
+        return None
+    return sweep
+
+
+def _parameter_sweep_confirmation_proposals(
+    sweep_id: str, proposal_ids: list[str]
+) -> list[dict[str, Any]]:
+    """Resolve and verify the exact, complete proposal set for one sweep."""
+
+    normalized_id = str(sweep_id).strip()
+    normalized_proposal_ids = [str(item).strip() for item in proposal_ids]
+    if not normalized_id or any(not item for item in normalized_proposal_ids):
+        raise HTTPException(status_code=422, detail="Sweep and proposal ids are required")
+    if len(set(normalized_proposal_ids)) != len(normalized_proposal_ids):
+        raise HTTPException(status_code=422, detail="Sweep proposal ids must be unique")
+
+    proposals = [_proposal_or_404(item) for item in normalized_proposal_ids]
+    indexed: list[tuple[int, dict[str, Any]]] = []
+    expected_count: int | None = None
+    group_signature: tuple[Any, ...] | None = None
+    for proposal in proposals:
+        sweep = _proposal_parameter_sweep(proposal)
+        if sweep is None or str(sweep.get("sweep_id")) != normalized_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Every proposal must belong to the requested parameter sweep.",
+            )
+        try:
+            candidate_count = int(sweep["candidate_count"])
+            index = int(sweep["index"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="The parameter sweep metadata is incomplete.",
+            ) from exc
+        if expected_count is None:
+            expected_count = candidate_count
+        elif candidate_count != expected_count:
+            raise HTTPException(
+                status_code=409,
+                detail="The parameter sweep proposal count is inconsistent.",
+            )
+        signature = (
+            sweep.get("mode"),
+            sweep.get("parameter"),
+            sweep.get("baseline_job_id"),
+        )
+        if group_signature is None:
+            group_signature = signature
+        elif signature != group_signature:
+            raise HTTPException(
+                status_code=409,
+                detail="The parameter sweep proposals do not share one baseline.",
+            )
+        indexed.append((index, proposal))
+
+    if expected_count != len(proposals):
+        raise HTTPException(
+            status_code=409,
+            detail="The complete parameter sweep must be confirmed as one batch.",
+        )
+    if len({index for index, _ in indexed}) != len(indexed):
+        raise HTTPException(
+            status_code=409,
+            detail="The parameter sweep contains duplicate row indexes.",
+        )
+    return [proposal for _, proposal in sorted(indexed, key=lambda item: item[0])]
+
+
+def _parameter_sweep_started_action(
+    proposals: list[dict[str, Any]], jobs: list[dict[str, Any]]
+) -> dict[str, Any]:
+    sweep = deepcopy(_proposal_parameter_sweep(proposals[0]) or {})
+    sweep.pop("index", None)
+    sweep.pop("value", None)
+    public_jobs = [_public_job(job) for job in jobs]
+    sweep["job_ids"] = [job["job_id"] for job in public_jobs]
+    return {
+        "type": "job_batch_started",
+        "sweep": sweep,
+        "jobs": public_jobs,
+    }
+
+
+@app.post("/api/agent/sweeps/{sweep_id}/confirm")
+def confirm_agent_sweep(
+    sweep_id: str, req: ProposalSweepConfirmRequest
+) -> JSONResponse:
+    with _ORCHESTRATION_LOCK:
+        proposals = _parameter_sweep_confirmation_proposals(
+            sweep_id, req.proposal_ids
+        )
+        try:
+            jobs = _confirm_durable_proposals(proposals, automatic=False)
+        except InvalidStateTransition as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        action = _parameter_sweep_started_action(proposals, jobs)
+    return JSONResponse({"action": action})
+
+
 @app.post("/api/agent/proposals/{proposal_id}/confirm")
 def confirm_agent_proposal(proposal_id: str) -> JSONResponse:
     with _ORCHESTRATION_LOCK:
         proposal = _proposal_or_404(proposal_id)
+        if _proposal_parameter_sweep(proposal) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Confirm the complete parameter sweep as one batch.",
+            )
         if proposal.get("confirmed_job_id"):
             existing = _get_job_record(str(proposal["confirmed_job_id"]))
             if existing is None:
@@ -4417,11 +5184,18 @@ def cancel_model_job(job_id: str) -> JSONResponse:
 @app.post("/api/jobs/{job_id}/retry")
 def retry_model_job(job_id: str) -> JSONResponse:
     try:
-        job = AGENT_STORE.retry_job(job_id)
+        job = AGENT_STORE.retry_job(
+            job_id, max_active_jobs=MAX_ACTIVE_MODEL_JOBS
+        )
     except RecordNotFound as exc:
         raise HTTPException(status_code=404, detail="Unknown job id") from exc
     except InvalidStateTransition as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except QueueCapacityExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="The model queue is full. Wait for an active run to finish and retry.",
+        ) from exc
     _cache_job_record(job)
     _WORKER_WAKE.set()
     return JSONResponse({"job": _public_job(job)})
@@ -4453,19 +5227,28 @@ def promote_model_job(job_id: str) -> JSONResponse:
     if candidate is None:
         raise HTTPException(status_code=404, detail="Unknown job id")
     if candidate.get("mode") == "validation":
-        reviewed_quality = _reviewed_baseline_data_quality(candidate)
         verified_path, verified_hash = _verified_baseline_source(candidate)
-        if (
-            reviewed_quality is None
-            or not verified_path
-            or not verified_hash
+        calibration_requested = bool(
+            (candidate.get("request") or {}).get("calibrate_model", True)
+        )
+        reviewed_quality = (
+            _reviewed_baseline_data_quality(candidate)
+            if calibration_requested
+            else None
+        )
+        if not verified_path or not verified_hash or (
+            calibration_requested and reviewed_quality is None
         ):
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "This calibration job is not bound to an available, hash-verified "
-                    "data-quality review and cannot be promoted. Run the requested "
-                    "range through the visible Calibration review first."
+                    "This validation job is not bound to an available, hash-verified "
+                    + (
+                        "data-quality review and cannot be promoted. Run the requested "
+                        "range through the visible Calibration review first."
+                        if calibration_requested
+                        else "source and cannot be promoted. Re-run the physics model first."
+                    )
                 ),
             )
     try:
