@@ -75,9 +75,14 @@ function isAllowedApiPath(path: string[]): boolean {
   return (
     path.length === 4 &&
     path[0] === "agent" &&
-    path[1] === "proposals" &&
     isSafeId(path[2]) &&
-    ["confirm", "edit", "dismiss"].includes(path[3])
+    (
+      (
+        path[1] === "proposals" &&
+        ["confirm", "edit", "dismiss"].includes(path[3])
+      ) ||
+      (path[1] === "sweeps" && path[3] === "confirm")
+    )
   );
 }
 

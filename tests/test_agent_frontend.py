@@ -53,6 +53,7 @@ class AgentFrontendContractTests(unittest.TestCase):
         expected_fragments = (
             "/api/agent/state",
             "/api/agent/proposals/",
+            "/api/agent/sweeps/",
             "/confirm",
             "/edit",
             "/dismiss",
@@ -329,6 +330,24 @@ class AgentFrontendContractTests(unittest.TestCase):
             1,
         )[1].split("\n        restoreDashboardState();", 1)[0]
         self.assertNotIn("cancelCalibrationReview", annual_controls)
+        self.assertEqual(
+            annual_controls.count("invalidateAnnualRequestFromFormEdit();"),
+            2,
+        )
+        annual_invalidation = self.html.split(
+            "function invalidateAnnualRequestFromFormEdit()",
+            1,
+        )[1].split(
+            "\n        document.querySelectorAll('#analysisControls",
+            1,
+        )[0]
+        for invalidation_hook in (
+            "annualRequestRevision += 1",
+            "clearAnnualFallbackConfirmation()",
+            "annualRunState = null",
+            "renderAnnualSettingDiffs()",
+        ):
+            self.assertIn(invalidation_hook, annual_invalidation)
 
     def test_promotion_invalidates_stale_polls_and_retry_resets_elapsed_clock(self):
         promotion = self.html.split(
@@ -974,6 +993,8 @@ class AgentFrontendContractTests(unittest.TestCase):
             '["cancel", "delete", "promote", "retry"]',
             'path[1] === "proposals"',
             '["confirm", "edit", "dismiss"]',
+            'path[1] === "sweeps"',
+            'path[3] === "confirm"',
         ):
             self.assertIn(route, self.proxy)
         self.assertIn("isSafeId(path[1])", self.proxy)
