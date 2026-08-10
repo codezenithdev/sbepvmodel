@@ -1,0 +1,93 @@
+                <section class="annual-results-shell" aria-labelledby="annualResultsHeading">
+                    <div class="annual-results-heading">
+                        <div>
+                            <h2 id="annualResultsHeading">Simulation results</h2>
+                            <p>Headline production first, then model differences, coverage, and time-series detail.</p>
+                        </div>
+                        <span class="annual-results-note" id="annualResultsNote">Weather inputs render before annual predictions</span>
+                    </div>
+
+                <section class="annual-result-calibration" id="annualResultCalibration" aria-label="Annual calibration application details" hidden>
+                    <div class="annual-result-calibration-item"><span>Prediction basis</span><strong id="annualResultBasis">--</strong></div>
+                    <div class="annual-result-calibration-item"><span>Source calibration</span><strong id="annualResultSourceCalibration">--</strong></div>
+                    <div class="annual-result-calibration-item"><span>Settings</span><strong id="annualResultSettingsDelta">--</strong></div>
+                    <div class="annual-result-calibration-item"><span>Seasonal application</span><strong id="annualResultSeasonalApplication">--</strong></div>
+                    <div class="annual-result-detail-row"><span>Applied factors</span><strong id="annualResultAppliedFactors">--</strong></div>
+                    <div class="annual-result-detail-row"><span>Setting differences</span><strong id="annualResultSettingDetails">--</strong></div>
+                </section>
+
+                <section class="stats-bar annual-stats" aria-label="Annual simulation summary">
+                    <article class="stat-card annual-stat-primary">
+                        <div class="stat-label" id="annualStatSePredLabel">Predicted SolarEdge energy</div>
+                        <div class="stat-value neutral"><span id="annualStatSePred">--</span> <span class="stat-unit">kWh</span></div>
+                        <p class="stat-context">Estimated SolarEdge energy production for the selected period.</p>
+                    </article>
+                    <article class="stat-card annual-stat-primary">
+                        <div class="stat-label" id="annualStatSolPredLabel">Predicted Solectria energy</div>
+                        <div class="stat-value neutral"><span id="annualStatSolPred">--</span> <span class="stat-unit">kWh</span></div>
+                        <p class="stat-context">Estimated Solectria energy production for the selected period.</p>
+                    </article>
+                    <article class="stat-card annual-stat-physics" id="annualStatSePhysicsCard" hidden>
+                        <div class="stat-label">Uncalibrated SolarEdge energy</div>
+                        <div class="stat-value neutral"><span id="annualStatSePhysics">--</span> <span class="stat-unit">kWh</span></div>
+                        <p class="stat-context">Same annual inputs before seasonal calibration factors.</p>
+                    </article>
+                    <article class="stat-card annual-stat-physics" id="annualStatSolPhysicsCard" hidden>
+                        <div class="stat-label">Uncalibrated Solectria energy</div>
+                        <div class="stat-value neutral"><span id="annualStatSolPhysics">--</span> <span class="stat-unit">kWh</span></div>
+                        <p class="stat-context">Same annual inputs before seasonal calibration factors.</p>
+                    </article>
+                    <article class="stat-card annual-stat-secondary">
+                        <div class="stat-label">Absolute difference</div>
+                        <div class="stat-value neutral"><span id="annualStatDiff">--</span> <span class="stat-unit">kWh</span></div>
+                        <p class="stat-context">SolarEdge prediction minus Solectria prediction.</p>
+                    </article>
+                    <article class="stat-card annual-stat-secondary">
+                        <div class="stat-label">Percentage difference</div>
+                        <div class="stat-value neutral" id="annualStatDiffPct">--</div>
+                        <p class="stat-context">Difference relative to predicted Solectria energy.</p>
+                    </article>
+                    <article class="stat-card annual-stat-secondary">
+                        <div class="stat-label">Model interval rows</div>
+                        <div class="stat-value neutral" id="annualStatRows">--</div>
+                        <p class="stat-context">Right-labeled MIDC intervals across the requested dates.</p>
+                    </article>
+                    <article class="stat-card annual-stat-secondary">
+                        <div class="stat-label">Data quality</div>
+                        <div class="stat-value positive" id="annualStatQuality">Not run</div>
+                        <p class="stat-context">Missing inputs use the documented visible fallback.</p>
+                    </article>
+                </section>
+
+                <div class="annual-results-meta" id="annualResultsMeta" hidden>
+                    <div>Fixed MIDC range<strong id="annualResultRange">--</strong></div>
+                    <div>Model interval<strong id="annualResultInterval">--</strong></div>
+                    <div>Interval convention<strong>right-closed, right-labeled</strong></div>
+                    <div>Plot timezone<strong>America/Denver</strong></div>
+                </div>
+                <div class="quality-panel ok" id="annualQualityPanel">Data-quality details will appear after a run.</div>
+
+                <section class="analysis-layout" aria-label="Annual simulation charts">
+                    <div class="annual-charts-grid" id="annualChartGrid">
+                        <article class="chart-card">
+                            <div class="chart-header"><div><div class="chart-title">Measured Irradiance </div><div class="chart-meta">DNI, GHI, and DHI from the selected MIDC interval - W/m2</div></div><span class="chart-badge">Weather</span></div>
+                            <div class="chart-placeholder" id="annualIrradianceChartBox"><div class="chart-icon" id="annualIrradianceIcon">W/m2</div><img class="chart-image" id="annualIrradianceImg" alt="Annual DNI, GHI, and DHI irradiance input chart" style="display:none;"></div>
+                        </article>
+                        <article class="chart-card">
+                            <div class="chart-header"><div><div class="chart-title">Predicted AC Power</div><div class="chart-meta">SolarEdge and Solectria predicted AC output</div></div><span class="chart-badge">Power</span></div>
+                            <div class="chart-placeholder" id="annualAcChartBox"><div class="chart-icon" id="annualAcIcon">AC</div><img class="chart-image" id="annualAcImg" alt="Annual predicted AC power chart" style="display:none;"></div>
+                        </article>
+                        <article class="chart-card">
+                            <div class="chart-header"><div><div class="chart-title">Cumulative Predicted Energy</div><div class="chart-meta">Predicted energy growth over the requested range</div></div><span class="chart-badge">Energy</span></div>
+                            <div class="chart-placeholder" id="annualEnergyChartBox"><div class="chart-icon" id="annualEnergyIcon">kWh</div><img class="chart-image" id="annualEnergyImg" alt="Annual cumulative predicted energy chart" style="display:none;"></div>
+                        </article>
+                        <article class="chart-card">
+                            <div class="chart-header"><div><div class="chart-title">Monthly Predicted Energy</div><div class="chart-meta">SolarEdge and Solectria monthly bars with percentage labels</div></div><span class="chart-badge">Energy</span></div>
+                            <div class="chart-placeholder" id="annualMonthlyChartBox"><div class="chart-icon" id="annualMonthlyIcon">Mon</div><img class="chart-image" id="annualMonthlyImg" alt="Monthly predicted energy chart" style="display:none;"></div>
+                        </article>
+                    </div>
+                </section>
+                </section>
+            </div>
+
+            <div class="technoeconomic-only" id="technoeconomicPanel">

@@ -1,0 +1,470 @@
+        .calibration-review-panel {
+            display: grid;
+            gap: 16px;
+            margin: 18px 0 0;
+            padding: 20px;
+            border: 1px solid #8fc6bc;
+            border-left: 4px solid var(--accent);
+            border-radius: 10px;
+            background: #f5fbf9;
+            box-shadow: 0 10px 24px rgba(15, 118, 110, 0.08);
+        }
+
+        .calibration-review-panel.hidden,
+        .calibration-factor-panel.hidden {
+            display: none;
+        }
+
+        .calibration-review-panel [hidden] {
+            display: none !important;
+        }
+
+        .calibration-review-content {
+            display: grid;
+            gap: 16px;
+        }
+
+        .calibration-review-heading,
+        .calibration-factor-heading,
+        .calibration-review-actions {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .calibration-review-eyebrow,
+        .calibration-factor-eyebrow {
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 850;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+        }
+
+        .calibration-review-heading h3,
+        .calibration-factor-heading h3 {
+            margin-top: 3px;
+            color: var(--text);
+            font-size: 18px;
+        }
+
+        .calibration-review-heading > div {
+            min-width: 0;
+        }
+
+        .calibration-review-toggle {
+            width: 40px;
+            height: 40px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border: 1px solid var(--border-strong);
+            border-radius: 9px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            cursor: pointer;
+            transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+        }
+
+        .calibration-review-toggle:hover {
+            border-color: rgba(15, 118, 110, 0.42);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+        }
+
+        .calibration-review-toggle:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.24);
+            outline-offset: 2px;
+        }
+
+        .calibration-review-chevron {
+            display: block;
+            font-size: 20px;
+            font-weight: 800;
+            line-height: 1;
+            transition: transform 0.16s ease;
+        }
+
+        .calibration-review-toggle[aria-expanded="false"] .calibration-review-chevron {
+            transform: rotate(180deg);
+        }
+
+        .calibration-review-heading p,
+        .calibration-factor-heading p {
+            max-width: 760px;
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .calibration-review-summary {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .calibration-review-stat {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .calibration-review-stat span {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 720;
+            text-transform: uppercase;
+        }
+
+        .calibration-review-stat strong {
+            display: block;
+            margin-top: 4px;
+            color: var(--text);
+            font-size: 18px;
+        }
+
+        .calibration-season-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+        }
+
+        .calibration-season-chip {
+            padding: 5px 9px;
+            border: 1px solid #a8d3ca;
+            border-radius: 999px;
+            background: #e7f6f2;
+            color: #245b50;
+            font-size: 11px;
+            font-weight: 750;
+            text-transform: capitalize;
+        }
+
+        .calibration-issue-list {
+            display: grid;
+            gap: 9px;
+            max-height: 430px;
+            overflow: auto;
+            padding-right: 3px;
+        }
+
+        .calibration-issue {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(150px, 190px);
+            gap: 16px;
+            align-items: center;
+            padding: 13px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .calibration-issue-title-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .calibration-issue-title {
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .calibration-severity {
+            padding: 2px 6px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 850;
+            text-transform: uppercase;
+        }
+
+        .calibration-severity.critical,
+        .calibration-severity.high {
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .calibration-severity.medium {
+            background: var(--warning-soft);
+            color: var(--warning);
+        }
+
+        .calibration-severity.low {
+            background: var(--info-soft);
+            color: var(--info);
+        }
+
+        .calibration-issue-description {
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .calibration-issue-evidence {
+            margin-top: 5px;
+            color: var(--muted-strong);
+            font-size: 11px;
+        }
+
+        .calibration-row-toggle {
+            margin-top: 9px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: var(--accent-strong);
+            cursor: pointer;
+            font: inherit;
+            font-size: 12px;
+            font-weight: 800;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        .calibration-row-preview {
+            grid-column: 1 / -1;
+            min-width: 0;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .calibration-row-preview.hidden,
+        .calibration-decision-gate.hidden {
+            display: none;
+        }
+
+        .calibration-row-preview-note {
+            margin-bottom: 8px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .calibration-row-table-wrap {
+            max-height: 280px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+        }
+
+        .calibration-row-table {
+            width: max-content;
+            min-width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+
+        .calibration-row-table th,
+        .calibration-row-table td {
+            padding: 7px 9px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        .calibration-row-table th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: var(--surface-strong);
+            color: var(--muted-strong);
+            font-weight: 800;
+        }
+
+        .calibration-decision-label {
+            display: grid;
+            gap: 5px;
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 750;
+        }
+
+        .calibration-decision-select {
+            width: 100%;
+            min-height: 38px;
+            padding: 8px 10px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            background: #ffffff;
+            color: var(--text);
+        }
+
+        .calibration-decision-note {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .calibration-review-actions {
+            align-items: center;
+            padding-top: 4px;
+            border-top: 1px solid var(--border);
+        }
+
+        .calibration-review-actions p {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .calibration-review-button-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .calibration-decision-gate {
+            display: grid;
+            grid-column: 1 / -1;
+            gap: 12px;
+            width: 100%;
+            margin-top: 4px;
+            padding: 14px;
+            border: 1px solid #d7a332;
+            border-left: 4px solid var(--warning);
+            border-radius: 8px;
+            background: #fffaf0;
+        }
+
+        .calibration-decision-gate.applied {
+            border-color: #8fc6bc;
+            border-left-color: var(--accent);
+            background: #edf8f3;
+        }
+
+        .calibration-decision-gate h4 {
+            color: var(--text);
+            font-size: 15px;
+        }
+
+        .calibration-decision-gate p {
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .source-decision-acknowledgement {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .source-decision-acknowledgement input {
+            width: 16px;
+            height: 16px;
+            margin-top: 1px;
+            accent-color: var(--accent);
+        }
+
+        .calibration-secondary-btn {
+            min-height: 40px;
+            padding: 9px 14px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            cursor: pointer;
+            font-weight: 760;
+        }
+
+        .calibration-factor-panel {
+            display: grid;
+            gap: 14px;
+            margin-bottom: 18px;
+            padding: 18px;
+            border: 1px solid #a8d3ca;
+            border-radius: 10px;
+            background: #f5fbf9;
+        }
+
+        .calibration-factor-table-wrap {
+            overflow-x: auto;
+        }
+
+        .calibration-factor-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--surface);
+            font-size: 12px;
+        }
+
+        .calibration-factor-table th,
+        .calibration-factor-table td {
+            padding: 10px 11px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        .calibration-factor-table th {
+            color: var(--muted);
+            font-size: 10px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .calibration-factor-value {
+            color: var(--accent-strong);
+            font-weight: 850;
+            white-space: normal;
+        }
+
+        .calibration-factor-evidence {
+            display: block;
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 650;
+            line-height: 1.35;
+            white-space: normal;
+        }
+
+        .calibration-factor-evidence:first-child {
+            margin-top: 0;
+        }
+
+        .calibration-audit-line,
+        .calibration-driver-insights {
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .calibration-driver-insights {
+            display: grid;
+            gap: 5px;
+            padding-top: 11px;
+            border-top: 1px solid var(--border);
+        }
+
+        @media (max-width: 900px) {
+            .calibration-review-summary {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .calibration-issue {
+                grid-template-columns: 1fr;
+            }
+
+            .calibration-review-actions,
+            .calibration-factor-heading {
+                flex-direction: column;
+            }
+        }
+
+        .runtime-warning {
+            display: none;
+            margin-top: 14px;
+            margin-bottom: 0;
+        }
+
+        .runtime-warning.visible {
+            display: block;
+        }
+
+        #annualControls,

@@ -1,0 +1,297 @@
+                <section class="controls-bar" id="annualControls" aria-label="Annual simulation controls" tabindex="-1">
+                    <div class="controls-header">
+                        <div class="annual-heading-copy">
+                            <p class="annual-kicker">Long-range forecast</p>
+                            <h2 class="section-title">Annual simulation</h2>
+                            <p class="section-subtitle">Carry the promoted, reviewed calibration into a long-range forecast while keeping annual dates independent.</p>
+                        </div>
+                    </div>
+
+                    <section class="annual-calibration-strip loading" id="annualCalibrationStrip" role="status" aria-live="polite" aria-atomic="true">
+                        <span class="annual-calibration-mark" id="annualCalibrationMark" aria-hidden="true">…</span>
+                        <div class="annual-calibration-content">
+                            <div class="annual-calibration-title-row">
+                                <h3 id="annualCalibrationTitle">Loading current calibration</h3>
+                                <span class="annual-verification-badge" id="annualCalibrationBadge">Checking</span>
+                            </div>
+                            <div class="annual-calibration-summary" id="annualCalibrationSummary" hidden>
+                                <div class="annual-calibration-summary-item">
+                                    <span>Source window</span>
+                                    <strong id="annualCalibrationWindow">--</strong>
+                                </div>
+                                <div class="annual-calibration-summary-item">
+                                    <span>Promoted</span>
+                                    <strong id="annualCalibrationPromoted">--</strong>
+                                </div>
+                            </div>
+                            <p class="annual-calibration-copy" id="annualCalibrationCopy">Checking for the current promoted, reviewed calibration…</p>
+                        </div>
+                    </section>
+
+                    <!-- <div class="annual-duration-caution" role="note" aria-label="Annual simulation duration caution">
+                        <span class="caution-mark" aria-hidden="true">!</span>
+                        <div>
+                            <strong>Allow approximately 5–6 hours for a full-year simulation.</strong>
+                            <p>Completion time depends on the requested date range and source-data availability; longer ranges may take more time.</p>
+                        </div>
+                    </div> -->
+
+                    <div class="annual-config-grid">
+                        <section class="annual-config-card annual-window-card" aria-labelledby="annualWindowHeading">
+                            <div class="annual-card-heading">
+                                <span class="annual-step" aria-hidden="true">1</span>
+                                <div>
+                                    <h3 id="annualWindowHeading">Annual forecast dates</h3>
+                                    <p>Dates stay independent from the inherited calibration window.</p>
+                                </div>
+                            </div>
+
+                            <div class="annual-date-grid">
+                                <label class="control-field">
+                                    <span class="date-label">Start date</span>
+                                    <input type="date" class="date-input annual-input" id="annualFromDate" value="2025-01-01" required>
+                                </label>
+                                <label class="control-field">
+                                    <span class="date-label">End date</span>
+                                    <input type="date" class="date-input annual-input" id="annualToDate" value="2025-12-31" required>
+                                </label>
+                                <label class="control-field annual-interval-field">
+                                    <span class="date-label">Time interval</span>
+                                    <span class="interval-row">
+                                        <input type="number" class="date-input annual-input" id="annualIntervalValue" value="1" min="1" step="1" inputmode="numeric">
+                                        <select class="date-input annual-input" id="annualIntervalUnit">
+                                            <option value="minutes">minutes</option>
+                                            <option value="hours" selected>hours</option>
+                                            <option value="days">days</option>
+                                        </select>
+                                    </span>
+                                    <span class="limit-helper">Use a whole-hour interval that divides one day; 1 hour is recommended.</span>
+                                </label>
+                            </div>
+                            <div class="annual-time-note">
+                                <span class="annual-time-dot" aria-hidden="true"></span>
+                                Mountain Standard Time (MST, UTC-7)</div>
+                            <div class="runtime-warning" id="annualRuntimeWarning">
+                                This range is longer than 366 days. Downloading minute data and running the model may take a long time, but the range is allowed.
+                            </div>
+                        </section>
+
+                        <section class="annual-config-card annual-settings-card" aria-labelledby="annualEfficiencyHeading">
+                            <div class="annual-card-heading has-corner-help">
+                                <span class="annual-step" aria-hidden="true">2</span>
+                                <div>
+                                    <div class="heading-with-help">
+                                        <h3 id="annualEfficiencyHeading">Inherited model settings</h3>
+                                        <span class="help-tip-wrap card-corner-help">
+                                            <button class="help-tip" type="button" aria-label="Explain annual system efficiency fields" aria-describedby="annualEfficiencyHelpTooltip" aria-expanded="false">?</button>
+                                            <span class="help-tooltip" id="annualEfficiencyHelpTooltip" role="tooltip">Enter decimal multipliers from 0 to 1. Inverter efficiency represents AC-conversion efficiency; balance of system covers other modeled losses. The model applies inverter × balance of system for each PV path.</span>
+                                        </span>
+                                    </div>
+                                    <p>Prefilled from calibration and editable for this annual run.</p>
+                                </div>
+                            </div>
+
+                            <div class="annual-settings-toolbar" id="annualSettingsToolbar">
+                                <div class="annual-settings-status">
+                                    <span class="annual-modified-count" id="annualModifiedCount">0 settings changed</span>
+                                    <span id="annualSettingsStatusText">Waiting for a calibration baseline.</span>
+                                </div>
+                                <button class="annual-restore-btn" id="annualRestoreSettingsBtn" type="button" disabled>Restore calibrated settings</button>
+                            </div>
+
+                            <div class="annual-subheading">Tracking and output limits</div>
+                            <div class="annual-option-grid settings-options">
+                                <label class="checkbox-control annual-setting-field" data-annual-setting-field="backtrack">
+                                    <input type="checkbox" class="annual-input" id="annualBacktrack" checked>
+                                    <span>Backtracking</span>
+                                    <span class="annual-setting-origin" data-annual-setting-origin="backtrack" hidden>From calibration</span>
+                                </label>
+                                <label class="checkbox-control annual-setting-field" data-annual-setting-field="curtailment_enabled">
+                                    <input type="checkbox" class="annual-input" id="annualCurtailmentEnabled">
+                                    <span>Clipping / Curtailment</span>
+                                    <span class="annual-setting-origin" data-annual-setting-origin="curtailment_enabled" hidden>From calibration</span>
+                                </label>
+                            </div>
+                            <label class="control-field curtailment-limit annual-limit annual-setting-field" id="annualCurtailmentLimitGroup" data-annual-setting-field="curtailment_limit_kw">
+                                <span class="limit-copy">
+                                    <span class="annual-field-label-row">
+                                        <span class="date-label">Curtailment limit</span>
+                                        <span class="annual-setting-origin" data-annual-setting-origin="curtailment_limit_kw" hidden>From calibration</span>
+                                    </span>
+                                    <span class="limit-helper">Maximum AC output in kW</span>
+                                </span>
+                                <input type="number" class="date-input annual-input" id="annualCurtailmentLimitKw" min="0.1" step="0.1" value="125" placeholder="125" disabled>
+                            </label>
+
+                            <div class="annual-card-divider"></div>
+                            <div class="annual-subheading">System efficiencies</div>
+
+                            <div class="annual-system-grid" aria-label="Annual efficiencies">
+                                <section class="annual-system-card solaredge" aria-labelledby="annualSolarEdgeHeading">
+                                    <div class="annual-system-heading">
+                                        <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                                        <div>
+                                            <h4 id="annualSolarEdgeHeading">SolarEdge</h4>
+                                            <p>Module-level inverter model</p>
+                                        </div>
+                                    </div>
+                                    <label class="control-field annual-efficiency-field annual-setting-field" data-annual-setting-field="solaredge_inverter_efficiency">
+                                        <span class="annual-field-label-row">
+                                            <span class="date-label">Inverter efficiency</span>
+                                            <span class="annual-setting-origin" data-annual-setting-origin="solaredge_inverter_efficiency" hidden>From calibration</span>
+                                        </span>
+                                        <input type="number" class="date-input eff-input annual-input" id="annualSolaredgeInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                    </label>
+                                    <label class="control-field annual-efficiency-field annual-setting-field" data-annual-setting-field="solaredge_bos_efficiency">
+                                        <span class="annual-field-label-row">
+                                            <span class="date-label">Balance of system</span>
+                                            <span class="annual-setting-origin" data-annual-setting-origin="solaredge_bos_efficiency" hidden>From calibration</span>
+                                        </span>
+                                        <input type="number" class="date-input eff-input annual-input" id="annualSolaredgeBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                    </label>
+                                </section>
+
+                                <section class="annual-system-card solectria" aria-labelledby="annualSolectriaHeading">
+                                    <div class="annual-system-heading">
+                                        <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                                        <div>
+                                            <h4 id="annualSolectriaHeading">Solectria</h4>
+                                            <p>String-level model</p>
+                                        </div>
+                                    </div>
+                                    <label class="control-field annual-efficiency-field annual-setting-field" data-annual-setting-field="solectria_inverter_efficiency">
+                                        <span class="annual-field-label-row">
+                                            <span class="date-label">Inverter efficiency</span>
+                                            <span class="annual-setting-origin" data-annual-setting-origin="solectria_inverter_efficiency" hidden>From calibration</span>
+                                        </span>
+                                        <input type="number" class="date-input eff-input annual-input" id="annualSolectriaInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                    </label>
+                                    <label class="control-field annual-efficiency-field annual-setting-field" data-annual-setting-field="solectria_bos_efficiency">
+                                        <span class="annual-field-label-row">
+                                            <span class="date-label">Balance of system</span>
+                                            <span class="annual-setting-origin" data-annual-setting-origin="solectria_bos_efficiency" hidden>From calibration</span>
+                                        </span>
+                                        <input type="number" class="date-input eff-input annual-input" id="annualSolectriaBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                    </label>
+                                </section>
+                            </div>
+
+                            <div class="annual-iam-row annual-setting-field" data-annual-setting-field="iam_model">
+                                <div>
+                                    <div class="annual-field-label-row">
+                                        <div class="annual-subheading" id="annualIamHeading">Incidence angle modifier</div>
+                                        <span class="annual-setting-origin" data-annual-setting-origin="iam_model" hidden>From calibration</span>
+                                    </div>
+                                    <p>Choose how incidence-angle optical losses are modeled.</p>
+                                </div>
+                                <fieldset class="iam-model-fieldset" aria-labelledby="annualIamHeading">
+                                    <legend class="sr-only">Annual simulation IAM model</legend>
+                                    <div class="iam-model-options">
+                                        <div class="iam-model-card">
+                                            <input type="radio" class="annual-input iam-model-input" id="annualIamModelPhysical" name="annualIamModel" value="physical" aria-describedby="annualIamPhysicalDescription annualIamPhysicalReference" checked>
+                                            <label class="iam-model-label" for="annualIamModelPhysical">
+                                                <span class="iam-model-name">Physical</span>
+                                                <span class="iam-model-description" id="annualIamPhysicalDescription">Uses the physical optics model for glass transmission losses.</span>
+                                            </label>
+                                            <a class="iam-reference-link" id="annualIamPhysicalReference" href="https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.iam.physical.html" target="_blank" rel="noopener noreferrer">Physical IAM reference</a>
+                                        </div>
+                                        <div class="iam-model-card">
+                                            <input type="radio" class="annual-input iam-model-input" id="annualIamModelMartinRuiz" name="annualIamModel" value="martin_ruiz" aria-describedby="annualIamMartinRuizDescription annualIamMartinRuizReference">
+                                            <label class="iam-model-label" for="annualIamModelMartinRuiz">
+                                                <span class="iam-model-name">Martin–Ruiz</span>
+                                                <span class="iam-model-description" id="annualIamMartinRuizDescription">Uses the angular-loss coefficient a<sub>r</sub>, defaulting to 0.2.</span>
+                                            </label>
+                                            <a class="iam-reference-link" id="annualIamMartinRuizReference" href="https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.iam.martin_ruiz.html" target="_blank" rel="noopener noreferrer">Martin–Ruiz IAM reference</a>
+                                        </div>
+                                    </div>
+                                </fieldset>
+                                <label class="control-field iam-ar annual-iam-value annual-setting-field" id="annualIamArGroup" data-annual-setting-field="iam_a_r">
+                                    <span>
+                                        <span class="annual-field-label-row">
+                                            <span class="date-label">Martin–Ruiz a<sub>r</sub></span>
+                                            <span class="annual-setting-origin" data-annual-setting-origin="iam_a_r" hidden>From calibration</span>
+                                        </span>
+                                        <span class="limit-helper">Enter any positive finite value.</span>
+                                    </span>
+                                    <input type="number" class="date-input eff-input annual-input" id="annualIamAr" min="0" step="any" value="0.2" disabled>
+                                </label>
+                                <p class="iam-parity-note" role="note">Reference parity: If Martin-Ruiz is selected, no IAM loss will be applied to the Physical model in ModelChain to avoid double-counting.</p>
+                            </div>
+                        </section>
+
+                        <section class="annual-config-card annual-season-card" aria-labelledby="annualSeasonHeading">
+                            <div class="annual-card-heading">
+                                <span class="annual-step" aria-hidden="true">3</span>
+                                <div>
+                                    <h3 id="annualSeasonHeading">Seasonal coverage &amp; factors</h3>
+                                    <p>Frozen per-system factors from the promoted calibration.</p>
+                                </div>
+                            </div>
+                            <div class="annual-factor-coverage" id="annualFactorCoverage" aria-label="Calibration season coverage">
+                                <div class="annual-season-state loading" data-annual-season="winter"><strong>Winter</strong><span>Checking</span></div>
+                                <div class="annual-season-state loading" data-annual-season="spring"><strong>Spring</strong><span>Checking</span></div>
+                                <div class="annual-season-state loading" data-annual-season="summer"><strong>Summer</strong><span>Checking</span></div>
+                                <div class="annual-season-state loading" data-annual-season="fall"><strong>Fall</strong><span>Checking</span></div>
+                            </div>
+                            <div class="annual-factor-table-wrap">
+                                <table class="annual-factor-table">
+                                    <caption class="sr-only">Seasonal multiplicative calibration factors for SolarEdge and Solectria</caption>
+                                    <thead>
+                                        <tr><th scope="col">Season</th><th scope="col">SolarEdge</th><th scope="col">Solectria</th></tr>
+                                    </thead>
+                                    <tbody id="annualSeasonalFactorRows">
+                                        <tr><td>Winter (Dec–Feb)</td><td>--</td><td>--</td></tr>
+                                        <tr><td>Spring (Mar–May)</td><td>--</td><td>--</td></tr>
+                                        <tr><td>Summer (Jun–Aug)</td><td>--</td><td>--</td></tr>
+                                        <tr><td>Fall (Sep–Nov)</td><td>--</td><td>--</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p class="annual-factor-note" id="annualFactorNote" role="note">Season coverage will appear after the current calibration is verified.</p>
+                        </section>
+
+                        <aside class="annual-fallback-drawer" id="annualFallbackDrawer" role="region" aria-labelledby="annualFallbackTitle" aria-describedby="annualFallbackDescription" aria-hidden="true" hidden>
+                            <button class="annual-fallback-close" id="annualFallbackCloseBtn" type="button" aria-label="Cancel annual run and close confirmation">×</button>
+                            <div class="annual-fallback-warning-mark" aria-hidden="true"><img src="/annual-warning.png" alt="" width="78" height="78"></div>
+                            <h2 id="annualFallbackTitle">Fall factor is unavailable.</h2>
+                            <p class="annual-fallback-subtitle">Use Spring factors for Fall?</p>
+                            <div class="annual-fallback-copy" id="annualFallbackDescription">
+                                <p id="annualFallbackWindowCopy">Fall (Sep–Nov) factors are not available in the inherited calibration window.</p>
+                                <p>Spring (Mar–May) factors can be copied exactly to Fall for this annual run. This substitution is recorded in the result and workbook.</p>
+                                <p><strong>No annual job or MIDC download has started.</strong></p>
+                            </div>
+                            <section class="annual-fallback-details" aria-labelledby="annualFallbackDetailsHeading">
+                                <h3 id="annualFallbackDetailsHeading">Exact Spring factors to use for Fall</h3>
+                                <div class="annual-fallback-factor-grid">
+                                    <div class="annual-fallback-factor"><span>SolarEdge</span><strong id="annualFallbackSolarEdgeFactor">--</strong></div>
+                                    <div class="annual-fallback-factor"><span>Solectria</span><strong id="annualFallbackSolectriaFactor">--</strong></div>
+                                </div>
+                                <p class="annual-fallback-modified" id="annualFallbackModifiedSettings">No inherited settings were modified.</p>
+                            </section>
+                            <div class="annual-fallback-actions">
+                                <button class="annual-fallback-confirm" id="annualFallbackConfirmBtn" type="button">Use Spring for Fall</button>
+                                <button class="annual-fallback-cancel" id="annualFallbackCancelBtn" type="button">Cancel run</button>
+                            </div>
+                        </aside>
+                    </div>
+                    <div class="configuration-actions">
+                        <p class="configuration-actions-copy">
+                            <strong id="annualActionTitle">Review &amp; run</strong>
+                            <span id="annualActionCopy">Inherited settings and exact seasonal factors will be recorded with the annual result.</span>
+                        </p>
+                        <div class="control-actions">
+                            <a class="download-link hidden" id="annualExcelLink" href="#" download>Export workbook</a>
+                            <button class="run-btn" id="annualRunBtn" type="button">Review &amp; run annual simulation</button>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="progress-wrap" id="annualProgressWrap">
+                    <div class="progress-head">
+                        <span id="annualProgressStage">Starting...</span>
+                        <span id="annualProgressPct">0%</span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill" id="annualProgressFill"></div></div>
+                </div>
+                <div class="error-banner" id="annualErrorBanner"></div>
+

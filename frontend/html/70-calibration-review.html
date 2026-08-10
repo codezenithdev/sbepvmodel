@@ -1,0 +1,56 @@
+            <section class="calibration-review-panel hidden validation-only" id="calibrationReviewPanel"
+                role="region" aria-labelledby="calibrationReviewHeading" aria-live="polite">
+                <div class="calibration-review-heading">
+                    <div>
+                        <div class="calibration-review-eyebrow">Bazefield data review</div>
+                        <h3 id="calibrationReviewHeading" tabindex="-1">Review Bazefield irregularities</h3>
+                        <p id="calibrationReviewDescription">Open the affected source rows, then choose whether each detected issue should be retained or excluded.</p>
+                    </div>
+                    <button class="calibration-review-toggle" id="calibrationReviewToggle" type="button"
+                        aria-expanded="true" aria-controls="calibrationReviewContent"
+                        aria-label="Collapse Bazefield data review" title="Collapse Bazefield data review">
+                        <span class="calibration-review-chevron" aria-hidden="true">&uarr;</span>
+                    </button>
+                </div>
+                <div class="calibration-review-content" id="calibrationReviewContent">
+                    <div class="calibration-review-summary" id="calibrationReviewSummary"></div>
+                    <div class="calibration-season-list" id="calibrationReviewSeasons" aria-label="Seasons in selected range"></div>
+                    <div class="calibration-issue-list" id="calibrationIssueList"></div>
+                    <div class="calibration-review-actions" id="calibrationReviewActions">
+                        <p id="calibrationReviewActionNote">Recommended decisions are selected by default. Review them before continuing.</p>
+                        <div class="calibration-review-button-row">
+                            <button class="calibration-secondary-btn" id="cancelCalibrationReviewBtn" type="button">Change configuration</button>
+                            <button class="run-btn" id="applyCalibrationReviewBtn" type="button">Apply decisions &amp; calibrate</button>
+                        </div>
+                    </div>
+                    <section class="calibration-decision-gate hidden" id="calibrationDecisionGate"
+                        role="region" aria-labelledby="calibrationDecisionGateHeading" aria-live="polite">
+                        <div>
+                            <div class="calibration-review-eyebrow">Source-data decision gate</div>
+                            <h4 id="calibrationDecisionGateHeading" tabindex="-1">Confirm the source rows used for calibration</h4>
+                        </div>
+                        <p id="calibrationDecisionGateSummary"></p>
+                        <label class="source-decision-acknowledgement" id="sourceDecisionAcknowledgementLabel">
+                            <input type="checkbox" id="sourceDecisionAcknowledgement">
+                            <span>I reviewed the flagged rows and confirm the retain/exclude decisions above.</span>
+                        </label>
+                        <div class="calibration-review-button-row" id="calibrationDecisionGateActions">
+                            <button class="calibration-secondary-btn" id="backToCalibrationDecisionsBtn" type="button">Back to decisions</button>
+                            <button class="run-btn" id="confirmCalibrationReviewBtn" type="button" disabled>Confirm decisions &amp; calibrate</button>
+                        </div>
+                    </section>
+                </div>
+            </section>
+
+            <div class="progress-wrap validation-only" id="progressWrap" role="progressbar" tabindex="-1"
+                aria-label="Model progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="progress-head">
+                    <span id="progressStage">Starting...</span>
+                    <span id="progressPct">0%</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+            <div class="error-banner validation-only" id="errorBanner" role="alert" aria-live="assertive"></div>
+

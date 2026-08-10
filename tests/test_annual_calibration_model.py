@@ -8,8 +8,8 @@ from uuid import uuid4
 
 import pandas as pd
 
-import calibration_workflow as calibration
-import sbe_pv_model as model
+from sbepv import calibration
+from sbepv import model
 
 
 def resolved_profile() -> dict:

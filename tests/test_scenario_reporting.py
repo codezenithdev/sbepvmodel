@@ -10,8 +10,8 @@ import matplotlib.dates as mdates
 import matplotlib.figure
 import pandas as pd
 
-import sbe_pv_model as model
-import scenario_reporting as reporting
+from sbepv import model
+from sbepv import reporting
 
 
 TEST_TEMP_ROOT = Path(__file__).resolve().parent / "outputs"

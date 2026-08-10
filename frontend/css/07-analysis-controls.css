@@ -1,0 +1,226 @@
+        #analysisControls {
+            padding: 0;
+            overflow: hidden;
+            border-top: 3px solid var(--accent);
+        }
+
+        #annualControls .controls-header,
+        #analysisControls .controls-header {
+            align-items: center;
+            margin: 0;
+            padding: 20px 22px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .annual-heading-copy,
+        .validation-heading-copy {
+            display: grid;
+            gap: 5px;
+            max-width: 700px;
+        }
+
+        .annual-kicker,
+        .validation-kicker {
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 850;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+        }
+
+        #annualControls .section-title,
+        #analysisControls .section-title {
+            font-size: 21px;
+        }
+
+        #annualControls .section-subtitle,
+        #analysisControls .section-subtitle {
+            font-size: 13px;
+        }
+
+        #annualRunBtn {
+            min-height: 42px;
+            padding: 10px 17px;
+            box-shadow: 0 7px 18px rgba(15, 118, 110, 0.18);
+        }
+
+        .annual-config-grid {
+            display: grid;
+            grid-template-columns: minmax(460px, 1.08fr) minmax(360px, 0.92fr);
+            grid-template-areas:
+                "window seasonal"
+                "settings seasonal"
+                "settings fallback";
+            align-items: start;
+            gap: 16px;
+            padding: 20px;
+            background: var(--surface-muted);
+        }
+
+        .annual-window-card {
+            grid-area: window;
+        }
+
+        .annual-settings-card {
+            grid-area: settings;
+        }
+
+        .annual-season-card {
+            grid-area: seasonal;
+            position: sticky;
+            top: 18px;
+        }
+
+        #analysisControls .date-controls {
+            padding: 20px;
+            background: var(--surface-muted);
+        }
+
+        #analysisControls .control-section {
+            padding: 18px;
+            border-radius: 10px;
+            background: var(--surface);
+        }
+
+        .annual-duration-caution {
+            display: flex;
+            align-items: flex-start;
+            gap: 11px;
+            padding: 13px 20px;
+            border-bottom: 1px solid #e7c36a;
+            background: var(--warning-soft);
+            color: #674b08;
+        }
+
+        .annual-duration-caution strong {
+            display: block;
+            margin-bottom: 2px;
+            color: #5b4207;
+            font-size: 13px;
+        }
+
+        .annual-duration-caution p {
+            font-size: 12px;
+        }
+
+        .caution-mark {
+            width: 24px;
+            height: 24px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border: 1px solid #d8a936;
+            border-radius: 50%;
+            background: #fff9e8;
+            color: #7a5707;
+            font-size: 12px;
+            font-weight: 900;
+        }
+
+        .annual-config-card {
+            position: relative;
+            min-width: 0;
+            padding: 18px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+        }
+
+        .annual-card-heading {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .annual-card-heading.has-corner-help {
+            padding-right: 42px;
+        }
+
+        .annual-card-heading .card-corner-help {
+            position: absolute;
+            top: 18px;
+            right: 18px;
+        }
+
+        .card-corner-help .help-tooltip {
+            right: 0;
+            left: auto;
+        }
+
+        .annual-card-heading h3 {
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 830;
+            line-height: 1.25;
+        }
+
+        .annual-card-heading p,
+        .annual-iam-row p,
+        .annual-system-heading p {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .annual-step {
+            width: 28px;
+            height: 28px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border-radius: 7px;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            font-size: 12px;
+            font-weight: 900;
+        }
+
+        .annual-date-grid,
+        .annual-option-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .annual-interval-field {
+            grid-column: 1 / -1;
+        }
+
+        .validation-window-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .validation-options-block {
+            display: grid;
+            gap: 10px;
+        }
+
+        .annual-time-note {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 650;
+        }
+
+        .annual-time-dot {
+            width: 7px;
+            height: 7px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: var(--info);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .annual-card-divider {
+            height: 1px;
+            margin: 17px 0;
+            background: var(--border);
+        }
+

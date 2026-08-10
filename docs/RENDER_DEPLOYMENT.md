@@ -2,23 +2,25 @@
 
 ## Upload to GitHub
 
-Create a private GitHub repository in the browser and upload only these project files:
+Create a private GitHub repository in the browser and upload these project files:
 
-- `app.py`
-- `agent_store.py`
-- `bazefield_historian.py`
-- `calibration_workflow.py`
-- `scenario_reporting.py`
-- `sbe_pv_model.py`
-- `run_pipeline.py`
+- `src/` — the `sbepv` package and `run_pipeline.py`
+- `sb_energy_dashboard_modern.html` — the generated dashboard the backend serves
+- `frontend/` — the sources it is built from
+- `tools/build_dashboard.py`
+- `public/` — **required**; `GET /annual-warning.png` reads from it
+- `pyproject.toml`
 - `requirements.txt`
 - `env.example`
 - `.gitignore`
 - `docs/`
-- `sb_energy_dashboard_modern.html`
 - `tests/`
 
 Do not upload `.env`, `outputs/`, `__pycache__/`, generated `.csv` / `.xlsx` / `.png` files, or log files.
+
+Prefer `git push` over a manual file selection. The earlier hand-picked list omitted
+`midc_stac_hourly.py` (imported at startup, so the service would not boot) and
+`public/`, which is easy to repeat by hand and impossible to repeat with a push.
 
 ## Render Web Service
 
@@ -29,7 +31,7 @@ Create a new Render Web Service from the private GitHub repo.
 - Region: Oregon / US West
 - Instance type: paid Starter or higher
 - Build command: `pip install -r requirements.txt`
-- Start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+- Start command: `uvicorn sbepv.api.main:app --app-dir src --host 0.0.0.0 --port $PORT`
 - Health check path: `/healthz`
 
 Attach a persistent disk:

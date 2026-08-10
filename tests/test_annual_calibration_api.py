@@ -8,11 +8,14 @@ from unittest.mock import patch
 import pandas as pd
 from fastapi.testclient import TestClient
 
-import app
-import midc_stac_hourly as midc
-from agent_store import AgentStore
-from calibration_workflow import CALIBRATION_PROFILE_SCHEMA_VERSION
-from scenario_reporting import sha256_file
+from sbepv.api import config, state
+from sbepv.worker import run_annual
+from sbepv.api import baselines
+from sbepv.api import main as app
+from sbepv.ingest import midc
+from sbepv.store import AgentStore
+from sbepv.calibration import CALIBRATION_PROFILE_SCHEMA_VERSION
+from sbepv.reporting import sha256_file
 
 
 class AnnualCalibrationApiTests(unittest.TestCase):
@@ -26,12 +29,12 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         handle.close()
         self.database = Path(handle.name)
         self.generated_files: list[Path] = []
-        self.original_store = app.AGENT_STORE
-        app.AGENT_STORE = AgentStore(self.database)
-        app.JOBS.clear()
+        self.original_store = state.AGENT_STORE
+        state.AGENT_STORE = AgentStore(self.database)
+        state.JOBS.clear()
         self.client = TestClient(app.app)
-        self.addCleanup(setattr, app, "AGENT_STORE", self.original_store)
-        self.addCleanup(app.JOBS.clear)
+        self.addCleanup(setattr, state, "AGENT_STORE", self.original_store)
+        self.addCleanup(state.JOBS.clear)
         self.addCleanup(self._cleanup)
 
     def _cleanup(self) -> None:
@@ -119,16 +122,16 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             },
             "calibration_profile": profile,
         }
-        app.AGENT_STORE.create_job(
+        state.AGENT_STORE.create_job(
             job_id=job_id,
             kind="baseline",
             mode="validation",
             request=request,
             provenance=provenance,
         )
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(claimed["id"], job_id)
-        completed = app.AGENT_STORE.update_job(
+        completed = state.AGENT_STORE.update_job(
             job_id,
             state="done",
             progress=100,
@@ -138,7 +141,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             result={"mode": "validation", "stats": {"calibration_enabled": True}},
             artifacts={},
         )
-        app.AGENT_STORE.promote_job(job_id)
+        state.AGENT_STORE.promote_job(job_id)
         return completed
 
     @staticmethod
@@ -206,7 +209,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             solaredge_bos_efficiency=0.95,
         )
 
-        self.assertEqual(app.AGENT_STORE.list_jobs(mode="annual"), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
         self.assertEqual(
             detail["mapping"],
             {"target_season": "fall", "source_season": "spring"},
@@ -238,7 +241,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.text)
-        job = app.AGENT_STORE.get_job(response.json()["job_id"])
+        job = state.AGENT_STORE.get_job(response.json()["job_id"])
         self.assertIsNotNone(job)
         self.assertNotIn("calibration_baseline_job_id", job["request"])
         self.assertNotIn("seasonal_fallback_acknowledgement", job["request"])
@@ -282,7 +285,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             response.json()["detail"]["code"],
             "seasonal_fallback_confirmation_context_changed",
         )
-        self.assertEqual(app.AGENT_STORE.list_jobs(mode="annual"), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
 
     def test_changed_promotion_rejects_old_baseline_and_context(self):
         first = self._completed_reviewed_baseline(job_id="first-calibration")
@@ -303,7 +306,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         conflict = response.json()["detail"]
         self.assertEqual(conflict["code"], "calibration_baseline_changed")
         self.assertEqual(conflict["current_baseline_job_id"], second["id"])
-        self.assertEqual(app.AGENT_STORE.list_jobs(mode="annual"), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
 
     def test_promotion_race_is_rechecked_immediately_before_enqueue(self):
         first = self._completed_reviewed_baseline(
@@ -311,16 +314,16 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             seasons=("winter", "spring", "summer", "fall"),
             to_date="2025-12-01",
         )
-        first_bundle = app._current_calibration_bundle()
+        first_bundle = baselines._current_calibration_bundle()
         self._completed_reviewed_baseline(
             job_id="race-second",
             seasons=("winter", "spring", "summer", "fall"),
             to_date="2025-12-01",
         )
-        second_bundle = app._current_calibration_bundle()
+        second_bundle = baselines._current_calibration_bundle()
 
         with patch.object(
-            app,
+            baselines,
             "_current_calibration_bundle",
             side_effect=[first_bundle, second_bundle],
         ):
@@ -332,7 +335,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         self.assertEqual(
             response.json()["detail"]["code"], "calibration_baseline_changed"
         )
-        self.assertEqual(app.AGENT_STORE.list_jobs(mode="annual"), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
 
     def test_missing_unsupported_seasons_block_without_fall_prompt(self):
         baseline = self._completed_reviewed_baseline(
@@ -350,7 +353,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         self.assertEqual(detail["code"], "seasonal_calibration_coverage_missing")
         self.assertIn("spring", detail["missing_seasons"])
         self.assertIn("fall", detail["missing_seasons"])
-        self.assertEqual(app.AGENT_STORE.list_jobs(mode="annual"), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
 
     def test_actual_fall_factor_takes_precedence_and_needs_no_acknowledgement(self):
         baseline = self._completed_reviewed_baseline(
@@ -363,7 +366,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.text)
-        job = app.AGENT_STORE.get_job(response.json()["job_id"])
+        job = state.AGENT_STORE.get_job(response.json()["job_id"])
         application = job["provenance"]["calibration_application"]
         self.assertIsNone(application["seasonal_substitution"])
         self.assertIsNone(application["server_confirmation"])
@@ -380,7 +383,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.text)
-        job = app.AGENT_STORE.get_job(response.json()["job_id"])
+        job = state.AGENT_STORE.get_job(response.json()["job_id"])
         self.assertIsNone(job["provenance"])
         self.assertEqual(job["request"]["from_date"], "2026-06-01")
         self.assertEqual(job["request"]["interval_value"], 1)
@@ -432,7 +435,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             ),
         )
         self.assertEqual(response.status_code, 200, response.text)
-        job = app.AGENT_STORE.get_job(response.json()["job_id"])
+        job = state.AGENT_STORE.get_job(response.json()["job_id"])
         self.assertEqual(job["request"]["interval_value"], 6)
         self.assertEqual(job["request"]["interval_unit"], "hours")
 
@@ -449,7 +452,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(response.status_code, 200, response.text)
-                job = app.AGENT_STORE.get_job(response.json()["job_id"])
+                job = state.AGENT_STORE.get_job(response.json()["job_id"])
                 self.assertEqual(job["request"]["interval_value"], interval_value)
                 self.assertEqual(job["request"]["interval_unit"], interval_unit)
 
@@ -483,7 +486,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         )
         self.assertEqual(queued.status_code, 200, queued.text)
         job_id = queued.json()["job_id"]
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(claimed["id"], job_id)
         request = app.AnnualRunRequest(**claimed["request"])
         provenance = claimed["provenance"]
@@ -498,9 +501,9 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             }
         )
         source = midc.MidcFetchResult(hourly, 1, 1, 0, 1, 1)
-        base = app.OUTPUT_DIR / job_id
-        source_path = app.OUTPUT_DIR / f"{job_id}_midc_hourly.csv"
-        irradiance_path = app.OUTPUT_DIR / f"{job_id}_irradiance.png"
+        base = config.OUTPUT_DIR / job_id
+        source_path = config.OUTPUT_DIR / f"{job_id}_midc_hourly.csv"
+        irradiance_path = config.OUTPUT_DIR / f"{job_id}_irradiance.png"
         self.generated_files.extend((source_path, irradiance_path))
         captured: dict = {}
 
@@ -532,7 +535,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             patch.object(app.midc, "fetch_hourly_data", return_value=source),
             patch.object(app.model, "run_model", side_effect=fake_run_model),
         ):
-            app._run_annual_job(
+            run_annual._run_annual_job(
                 job_id,
                 request,
                 calibration_profile=provenance["calibration_profile"],
@@ -548,7 +551,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             captured["calibration_application_context"],
             provenance["calibration_application"],
         )
-        completed = app.AGENT_STORE.get_job(job_id)
+        completed = state.AGENT_STORE.get_job(job_id)
         result = completed["result"]
         self.assertTrue(result["calibration_application"]["applied"])
         self.assertEqual(
@@ -577,7 +580,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 422)
-        self.assertEqual(app.AGENT_STORE.list_jobs(mode="annual"), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
 
 
 if __name__ == "__main__":

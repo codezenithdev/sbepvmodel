@@ -11,9 +11,18 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-import app
-from agent_store import AgentStore, LeaseOwnershipLost
-from scenario_reporting import sha256_file
+from sbepv.api import config, plots, state
+from sbepv.worker import completion
+from sbepv.worker import run_validation
+from sbepv.agent import chat
+from sbepv.agent import message_guards
+from sbepv.agent import scenario_math
+from sbepv.agent import tools
+from sbepv.api import proposals
+from sbepv.api import baselines
+from sbepv.api import main as app
+from sbepv.store import AgentStore, LeaseOwnershipLost
+from sbepv.reporting import sha256_file
 
 
 class SemiAutomaticAgentBackendTests(unittest.TestCase):
@@ -33,12 +42,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.generated_files: list[Path] = []
         self.addCleanup(self._remove_generated_files)
 
-        self.original_store = app.AGENT_STORE
-        app.AGENT_STORE = AgentStore(self.db_path)
-        self.addCleanup(setattr, app, "AGENT_STORE", self.original_store)
+        self.original_store = state.AGENT_STORE
+        state.AGENT_STORE = AgentStore(self.db_path)
+        self.addCleanup(setattr, state, "AGENT_STORE", self.original_store)
 
-        app.JOBS.clear()
-        self.addCleanup(app.JOBS.clear)
+        state.JOBS.clear()
+        self.addCleanup(state.JOBS.clear)
         self.environment = patch.dict(
             os.environ,
             {"OPENAI_API_KEY": "unit-test-placeholder"},
@@ -95,7 +104,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             request = self.validation_config()
         if reviewed is None:
             reviewed = mode == "validation"
-        _, canonical = app._canonical_request(mode, request)
+        _, canonical = scenario_math._canonical_request(mode, request)
 
         source_handle = tempfile.NamedTemporaryFile(
             prefix=f"{job_id}-",
@@ -155,16 +164,16 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                     },
                 }
             )
-        created = app.AGENT_STORE.create_job(
+        created = state.AGENT_STORE.create_job(
             job_id=job_id,
             kind="baseline",
             mode=mode,
             request=canonical,
             provenance=provenance,
         )
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(created["id"], claimed["id"])
-        completed = app.AGENT_STORE.update_job(
+        completed = state.AGENT_STORE.update_job(
             job_id,
             state="done",
             progress=100,
@@ -174,11 +183,11 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             result=result,
             artifacts={},
         )
-        app.AGENT_STORE.promote_job(job_id)
+        state.AGENT_STORE.promote_job(job_id)
         return completed
 
     def completed_physics_baseline(self, *, job_id: str) -> dict:
-        _, canonical = app._canonical_request(
+        _, canonical = scenario_math._canonical_request(
             "validation",
             self.validation_config(calibrate_model=False),
         )
@@ -190,15 +199,15 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             encoding="utf-8",
         )
         source_hash = sha256_file(source)
-        created = app.AGENT_STORE.create_job(
+        created = state.AGENT_STORE.create_job(
             job_id=job_id,
             kind="baseline",
             mode="validation",
             request=canonical,
         )
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(created["id"], claimed["id"])
-        return app.AGENT_STORE.update_job(
+        return state.AGENT_STORE.update_job(
             job_id,
             state="done",
             source_path=str(source.resolve()),
@@ -242,14 +251,14 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
 
     def test_delete_scenario_endpoint_removes_record_and_output_files(self) -> None:
         job_id = "candidate-delete"
-        job = app.AGENT_STORE.create_job(
+        job = state.AGENT_STORE.create_job(
             job_id=job_id,
             kind="candidate",
             mode="validation",
             baseline_id="baseline-validation",
             request=self.validation_config(),
         )
-        app.AGENT_STORE.claim_next_queued_job()
+        state.AGENT_STORE.claim_next_queued_job()
 
         files = []
         for suffix in (".csv", ".xlsx", "_comparison.png"):
@@ -262,42 +271,42 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             files.append(path)
             self.generated_files.append(path)
         source, workbook, comparison = files
-        app.AGENT_STORE.update_job(
+        state.AGENT_STORE.update_job(
             job_id,
             state="done",
             source_path=str(source),
             result={"excel": f"/outputs/{workbook.name}"},
             artifacts={"comparison": {"path": str(comparison)}},
         )
-        with patch.object(app, "OUTPUT_DIR", self.root):
+        with patch.object(config, "OUTPUT_DIR", self.root):
             response = app.delete_model_job(job_id)
 
         self.assertEqual(200, response.status_code)
         payload = json.loads(response.body.decode("utf-8"))
         self.assertTrue(payload["deleted"])
         self.assertEqual(3, payload["artifacts_deleted"])
-        self.assertIsNone(app.AGENT_STORE.get_job(job_id))
+        self.assertIsNone(state.AGENT_STORE.get_job(job_id))
         self.assertFalse(source.exists())
         self.assertFalse(workbook.exists())
         self.assertFalse(comparison.exists())
 
     def test_expired_runner_stops_before_mutating_reclaimed_job(self) -> None:
-        _, canonical = app._canonical_request(
+        _, canonical = scenario_math._canonical_request(
             "validation", self.validation_config(calibrate_model=False)
         )
-        app.AGENT_STORE.create_job(
+        state.AGENT_STORE.create_job(
             job_id="lease-race",
             kind="manual",
             mode="validation",
             request=canonical,
         )
-        first = app.AGENT_STORE.claim_next_queued_job(
+        first = state.AGENT_STORE.claim_next_queued_job(
             worker_id=app.SERVER_SESSION_ID
         )
         first_token = first["lease_token"]
-        app.AGENT_STORE.mark_stale_running_jobs_interrupted()
-        app.AGENT_STORE.retry_job("lease-race")
-        second = app.AGENT_STORE.claim_next_queued_job(
+        state.AGENT_STORE.mark_stale_running_jobs_interrupted()
+        state.AGENT_STORE.retry_job("lease-race")
+        second = state.AGENT_STORE.claim_next_queued_job(
             worker_id=app.SERVER_SESSION_ID
         )
         app._cache_job_record(second)
@@ -306,7 +315,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             patch.object(app.historian, "run_historian") as historian_call,
             patch.object(app.model, "run_model") as model_call,
         ):
-            app._run_job(
+            run_validation._run_job(
                 "lease-race",
                 app.RunRequest(**canonical),
                 worker_id=app.SERVER_SESSION_ID,
@@ -315,14 +324,14 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
 
         historian_call.assert_not_called()
         model_call.assert_not_called()
-        current = app.AGENT_STORE.get_job("lease-race")
+        current = state.AGENT_STORE.get_job("lease-race")
         self.assertEqual("running", current["state"])
         self.assertEqual(second["lease_token"], current["lease_token"])
         self.assertEqual(0, current["progress"])
-        self.assertEqual(0, app.JOBS["lease-race"]["progress"])
+        self.assertEqual(0, state.JOBS["lease-race"]["progress"])
 
     def test_owned_attempt_uses_lease_token_specific_output_prefix(self) -> None:
-        _, canonical = app._canonical_request(
+        _, canonical = scenario_math._canonical_request(
             "validation", self.validation_config(calibrate_model=False)
         )
         source = self.root / "lease-output-source.csv"
@@ -333,7 +342,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         )
         self.generated_files.append(source)
         source_hash = sha256_file(source)
-        app.AGENT_STORE.create_job(
+        state.AGENT_STORE.create_job(
             job_id="lease-output",
             kind="manual",
             mode="validation",
@@ -341,10 +350,10 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             source_path=str(source.resolve()),
             source_hash=source_hash,
         )
-        claimed = app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        claimed = state.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
 
         with (
-            patch.object(app, "_render_input_data_plots", return_value={}),
+            patch.object(plots, "_render_input_data_plots", return_value={}),
             patch.object(
                 app.model,
                 "run_model",
@@ -354,9 +363,9 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                     "excel": str(self.root / "lease-output.xlsx"),
                 },
             ) as model_call,
-            patch.object(app, "_finish_model_job") as finish_call,
+            patch.object(completion, "_finish_model_job") as finish_call,
         ):
-            app._run_job(
+            run_validation._run_job(
                 "lease-output",
                 app.RunRequest(**canonical),
                 source_path=str(source.resolve()),
@@ -379,28 +388,28 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
 
     def test_delete_removes_artifacts_from_every_lease_attempt(self) -> None:
         job_id = "candidate-attempt-cleanup"
-        app.AGENT_STORE.create_job(
+        state.AGENT_STORE.create_job(
             job_id=job_id,
             kind="candidate",
             mode="validation",
             baseline_id="baseline-validation",
             request=self.validation_config(),
         )
-        first = app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        first = state.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
         first_prefix = app._job_attempt_prefix(job_id, first["lease_token"])
         stale_artifact = self.root / f"{first_prefix}_stale.xlsx"
         stale_artifact.write_text("stale attempt", encoding="utf-8")
         self.generated_files.append(stale_artifact)
 
-        app.AGENT_STORE.mark_stale_running_jobs_interrupted()
-        app.AGENT_STORE.retry_job(job_id)
-        second = app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        state.AGENT_STORE.mark_stale_running_jobs_interrupted()
+        state.AGENT_STORE.retry_job(job_id)
+        second = state.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
         second_prefix = app._job_attempt_prefix(job_id, second["lease_token"])
         accepted_artifact = self.root / f"{second_prefix}.xlsx"
         accepted_artifact.write_text("accepted attempt", encoding="utf-8")
         self.generated_files.append(accepted_artifact)
         self.assertNotEqual(first_prefix, second_prefix)
-        app.AGENT_STORE.update_job(
+        state.AGENT_STORE.update_job(
             job_id,
             expected_worker_id="worker-a",
             expected_lease_token=second["lease_token"],
@@ -408,7 +417,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             result={"excel": f"/outputs/{accepted_artifact.name}"},
         )
 
-        with patch.object(app, "OUTPUT_DIR", self.root):
+        with patch.object(config, "OUTPUT_DIR", self.root):
             response = app.delete_model_job(job_id)
 
         self.assertEqual(200, response.status_code)
@@ -417,20 +426,20 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
 
     def test_lost_attempt_cleanup_preserves_source_reused_by_retry(self) -> None:
         job_id = "attempt-source-reuse"
-        app.AGENT_STORE.create_job(
+        state.AGENT_STORE.create_job(
             job_id=job_id,
             kind="manual",
             mode="validation",
             request=self.validation_config(),
         )
-        first = app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        first = state.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
         first_prefix = app._job_attempt_prefix(job_id, first["lease_token"])
         source = self.root / f"{first_prefix}.csv"
         stale_plot = self.root / f"{first_prefix}_ac.png"
         source.write_text("timestamp,dni\n2026-06-20,700\n", encoding="utf-8")
         stale_plot.write_text("stale plot", encoding="utf-8")
         self.generated_files.extend([source, stale_plot])
-        app.AGENT_STORE.update_job(
+        state.AGENT_STORE.update_job(
             job_id,
             expected_worker_id="worker-a",
             expected_lease_token=first["lease_token"],
@@ -438,10 +447,10 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             source_hash=sha256_file(source),
         )
 
-        app.AGENT_STORE.mark_stale_running_jobs_interrupted()
-        app.AGENT_STORE.retry_job(job_id)
-        app.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
-        with patch.object(app, "OUTPUT_DIR", self.root):
+        state.AGENT_STORE.mark_stale_running_jobs_interrupted()
+        state.AGENT_STORE.retry_job(job_id)
+        state.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        with patch.object(config, "OUTPUT_DIR", self.root):
             removed = app._delete_job_attempt_artifacts(
                 job_id, first["lease_token"]
             )
@@ -459,7 +468,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         workbook.write_text("candidate workbook", encoding="utf-8")
         self.generated_files.append(workbook)
 
-        app.AGENT_STORE.create_job(
+        state.AGENT_STORE.create_job(
             job_id=candidate_id,
             kind="candidate",
             mode="validation",
@@ -468,9 +477,9 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             source_path=str(baseline_source),
             source_hash=baseline_hash,
         )
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(candidate_id, claimed["id"])
-        app.AGENT_STORE.update_job(
+        state.AGENT_STORE.update_job(
             candidate_id,
             state="done",
             result={
@@ -480,24 +489,24 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             artifacts={"model_workbook": {"path": str(workbook)}},
         )
 
-        with patch.object(app, "OUTPUT_DIR", self.root):
+        with patch.object(config, "OUTPUT_DIR", self.root):
             response = app.delete_model_job(candidate_id)
 
         self.assertEqual(200, response.status_code)
-        self.assertIsNone(app.AGENT_STORE.get_job(candidate_id))
+        self.assertIsNone(state.AGENT_STORE.get_job(candidate_id))
         self.assertFalse(workbook.exists())
         self.assertTrue(baseline_source.exists())
         self.assertEqual(baseline_hash, sha256_file(baseline_source))
         verified_path, verified_hash = app._verified_baseline_source(
-            app.AGENT_STORE.get_job(baseline["id"])
+            state.AGENT_STORE.get_job(baseline["id"])
         )
         self.assertEqual(str(baseline_source.resolve()), verified_path)
         self.assertEqual(baseline_hash, verified_hash)
 
     def test_chat_fallback_prefers_promoted_baseline_over_newer_scenario(self) -> None:
         baseline = self.completed_physics_baseline(job_id="promoted-chat-baseline")
-        app.AGENT_STORE.promote_job(baseline["id"])
-        candidate = app.AGENT_STORE.create_job(
+        state.AGENT_STORE.promote_job(baseline["id"])
+        candidate = state.AGENT_STORE.create_job(
             job_id="newer-unpromoted-scenario",
             kind="candidate",
             mode="validation",
@@ -506,15 +515,15 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             source_path=baseline["source_path"],
             source_hash=baseline["source_hash"],
         )
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(candidate["id"], claimed["id"])
-        app.AGENT_STORE.update_job(
+        state.AGENT_STORE.update_job(
             candidate["id"],
             state="done",
             result={"mode": "validation", "stats": {"calibration_enabled": False}},
         )
 
-        resolved_job_id, context = app._chat_run_context(None, "validation")
+        resolved_job_id, context = chat._chat_run_context(None, "validation")
 
         self.assertEqual(baseline["id"], resolved_job_id)
         self.assertEqual(baseline["id"], context["job_id"])
@@ -527,7 +536,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
 
         fake_openai.OpenAI = forbidden_client
         with patch.dict(sys.modules, {"openai": fake_openai}):
-            response = app._openai_agent_response(
+            response = chat._openai_agent_response(
                 app.ChatRequest(
                     message="Run a comparison with IAM at .80",
                     active_mode="validation",
@@ -539,21 +548,21 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertFalse(response["web_search_enabled"])
         self.assertIn("Martin-Ruiz", response["reply"])
         self.assertIn("`a_r`", response["reply"])
-        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
-        self.assertEqual(app.AGENT_STORE.list_jobs(), [])
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(), [])
 
     def test_iam_dates_years_and_percentages_are_not_numeric_iam_values(self) -> None:
-        self.assertFalse(app._ambiguous_numeric_iam("Explain IAM results for 2026."))
+        self.assertFalse(message_guards._ambiguous_numeric_iam("Explain IAM results for 2026."))
         self.assertFalse(
-            app._ambiguous_numeric_iam("Compare IAM on 2026-06-20 at 97% efficiency.")
+            message_guards._ambiguous_numeric_iam("Compare IAM on 2026-06-20 at 97% efficiency.")
         )
-        self.assertTrue(app._ambiguous_numeric_iam("Set IAM to 0.8 and run it."))
+        self.assertTrue(message_guards._ambiguous_numeric_iam("Set IAM to 0.8 and run it."))
 
     def test_visible_physics_run_is_used_instead_of_older_promoted_calibration(self) -> None:
         self.completed_baseline(job_id="older-calibrated")
         physics = self.completed_physics_baseline(job_id="visible-physics")
 
-        _, action = app._handle_scenario_tool(
+        _, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Run this physics model with backtracking off.",
                 job_id=physics["id"],
@@ -563,7 +572,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             self.tool_arguments(backtrack=False),
         )
 
-        candidate = app.AGENT_STORE.get_job(action["job"]["job_id"])
+        candidate = state.AGENT_STORE.get_job(action["job"]["job_id"])
         self.assertEqual("visible-physics", candidate["baseline_id"])
         self.assertFalse(candidate["request"]["calibrate_model"])
         self.assertIsNone(
@@ -578,12 +587,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertEqual(
             physics["id"],
-            app.AGENT_STORE.get_current_baseline("validation")["job_id"],
+            state.AGENT_STORE.get_current_baseline("validation")["job_id"],
         )
 
     def test_physics_worker_passes_exact_request_boundaries_to_model(self) -> None:
         physics = self.completed_physics_baseline(job_id="physics-boundaries")
-        proposal = app._create_candidate_proposal(
+        proposal = proposals._create_candidate_proposal(
             mode="validation",
             baseline=physics,
             candidate={**physics["request"], "backtrack": False},
@@ -596,12 +605,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 }
             ],
         )
-        candidate = app._confirm_durable_proposal(proposal, automatic=True)
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        candidate = proposals._confirm_durable_proposal(proposal, automatic=True)
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(candidate["id"], claimed["id"])
 
         with (
-            patch.object(app, "_render_input_data_plots", return_value={}),
+            patch.object(plots, "_render_input_data_plots", return_value={}),
             patch.object(
                 app.model,
                 "run_model",
@@ -611,10 +620,10 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                     "excel": str(self.root / "physics.xlsx"),
                 },
             ) as model_call,
-            patch.object(app, "_finish_model_job"),
+            patch.object(completion, "_finish_model_job"),
         ):
             request = app.RunRequest(**candidate["request"])
-            app._run_job(
+            run_validation._run_job(
                 candidate["id"],
                 request,
                 source_path=candidate["source_path"],
@@ -657,7 +666,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         )
 
         with patch.dict(sys.modules, {"openai": fake_openai}):
-            result = app._openai_agent_response(
+            result = chat._openai_agent_response(
                 app.ChatRequest(
                     message="Run one scenario.",
                     job_id=baseline["id"],
@@ -668,8 +677,8 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
 
         self.assertIn("did not start", result["reply"])
         self.assertIsNone(result["action"])
-        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
-        self.assertEqual([], app.AGENT_STORE.list_proposals())
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
+        self.assertEqual([], state.AGENT_STORE.list_proposals())
         self.assertEqual(app.OPENAI_TIMEOUT_SECONDS, constructor_calls[0]["timeout"])
         self.assertEqual(app.OPENAI_MAX_RETRIES, constructor_calls[0]["max_retries"])
         self.assertEqual(1, api_calls[0]["max_tool_calls"])
@@ -695,7 +704,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             )
         self.assertEqual(422, annual_error.exception.status_code)
 
-        with patch.object(app, "MAX_ACTIVE_MODEL_JOBS", 1):
+        with patch.object(config, "MAX_ACTIVE_MODEL_JOBS", 1):
             app._enqueue_baseline_job(
                 "validation",
                 self.validation_config(calibrate_model=False),
@@ -708,7 +717,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                     job_id="queue-overflow",
                 )
         self.assertEqual(429, queue_error.exception.status_code)
-        self.assertIsNone(app.AGENT_STORE.get_job("queue-overflow"))
+        self.assertIsNone(state.AGENT_STORE.get_job("queue-overflow"))
 
     def test_strict_tool_schema_and_single_step_deterministic_action_response(self) -> None:
         baseline = self.completed_baseline()
@@ -732,7 +741,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         fake_openai.OpenAI = lambda: fake_client
 
         with patch.dict(sys.modules, {"openai": fake_openai}):
-            result = app._openai_agent_response(
+            result = chat._openai_agent_response(
                 app.ChatRequest(
                     message="Run the same data with backtracking disabled.",
                     job_id=baseline["id"],
@@ -752,7 +761,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertIn("queued automatically", result["reply"])
         self.assertIn("same interval and source data", result["reply"])
         self.assertEqual(result["action"]["type"], "job_started")
-        candidate = app.AGENT_STORE.get_job(result["action"]["job"]["job_id"])
+        candidate = state.AGENT_STORE.get_job(result["action"]["job"]["job_id"])
         self.assertEqual(candidate["baseline_id"], baseline["id"])
         self.assertEqual(candidate["request"]["backtrack"], False)
 
@@ -760,11 +769,11 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         baseline = self.completed_baseline()
 
         with patch.object(
-            app.AGENT_STORE,
+            state.AGENT_STORE,
             "confirm_proposals_batch",
-            wraps=app.AGENT_STORE.confirm_proposals_batch,
+            wraps=state.AGENT_STORE.confirm_proposals_batch,
         ) as batch_confirm:
-            tool_result, action = app._handle_iam_ar_sweep_tool(
+            tool_result, action = tools._handle_iam_ar_sweep_tool(
                 app.ChatRequest(
                     message=(
                         "Run the model with different iam a_r values from 0.1 to "
@@ -789,7 +798,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual([0.1, 0.2, 0.3, 0.4, 0.5], action["sweep"]["values"])
         self.assertEqual(5, len(action["jobs"]))
         jobs = sorted(
-            (app.AGENT_STORE.get_job(item["job_id"]) for item in action["jobs"]),
+            (state.AGENT_STORE.get_job(item["job_id"]) for item in action["jobs"]),
             key=lambda item: item["provenance"]["scenario_sweep"]["index"],
         )
         self.assertEqual(
@@ -845,7 +854,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         fake_openai.OpenAI = lambda: fake_client
 
         with patch.dict(sys.modules, {"openai": fake_openai}):
-            result = app._openai_agent_response(
+            result = chat._openai_agent_response(
                 app.ChatRequest(
                     message=(
                         "Run the model with iam a_r from 0.1 to 0.5 by 0.1 "
@@ -875,7 +884,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
     def test_efficiency_sweep_changes_only_selected_numeric_parameter(self) -> None:
         baseline = self.completed_baseline()
 
-        _, action = app._handle_parameter_sweep_tool(
+        _, action = tools._handle_parameter_sweep_tool(
             app.ChatRequest(
                 message=(
                     "Compare SolarEdge inverter efficiency from 0.96 to 1.0 "
@@ -914,7 +923,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
     def test_curtailment_limit_sweep_enables_curtailment_for_every_value(self) -> None:
         baseline = self.completed_baseline()
 
-        _, action = app._handle_parameter_sweep_tool(
+        _, action = tools._handle_parameter_sweep_tool(
             app.ChatRequest(
                 message="Compare curtailment limits from 100 to 125 kW by 25 kW.",
                 job_id=baseline["id"],
@@ -949,7 +958,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             )
         )
 
-        tool_result, action = app._handle_iam_ar_sweep_tool(
+        tool_result, action = tools._handle_iam_ar_sweep_tool(
             app.ChatRequest(
                 message="Compare Martin-Ruiz a_r values 0.1 through 0.5 by 0.1.",
                 job_id=baseline["id"],
@@ -976,7 +985,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
     def test_annual_iam_ar_sweep_is_one_grouped_confirmation(self) -> None:
         baseline = self.completed_baseline(mode="annual", reviewed=False)
 
-        tool_result, action = app._handle_iam_ar_sweep_tool(
+        tool_result, action = tools._handle_iam_ar_sweep_tool(
             app.ChatRequest(
                 message="Compare annual Martin-Ruiz a_r 0.1 to 0.3 by 0.1.",
                 job_id=baseline["id"],
@@ -994,7 +1003,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual("confirmation_required", tool_result["status"])
         self.assertEqual("proposal_batch", action["type"])
         self.assertEqual(3, len(action["proposals"]))
-        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
         self.assertEqual(
             1,
             len(
@@ -1011,12 +1020,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         )
         baseline = self.completed_baseline(mode="annual", reviewed=False)
         calibration = self.annual_calibration_provenance(calibration_baseline)
-        baseline = app.AGENT_STORE.update_job(
+        baseline = state.AGENT_STORE.update_job(
             baseline["id"],
             provenance=calibration,
         )
 
-        _, action = app._handle_iam_ar_sweep_tool(
+        _, action = tools._handle_iam_ar_sweep_tool(
             app.ChatRequest(
                 message="Compare annual Martin-Ruiz a_r 0.1 to 0.3 by 0.1.",
                 job_id=baseline["id"],
@@ -1039,13 +1048,13 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertEqual("job_batch_started", payload["action"]["type"])
         for item in payload["action"]["jobs"]:
-            candidate = app.AGENT_STORE.get_job(item["job_id"])
+            candidate = state.AGENT_STORE.get_job(item["job_id"])
             self.assertEqual(
                 calibration["calibration_profile"],
                 candidate["provenance"]["calibration_profile"],
             )
             expected_deltas = app._calibration_setting_deltas(
-                app._baseline_transferable_settings(calibration_baseline),
+                baselines._baseline_transferable_settings(calibration_baseline),
                 candidate["request"],
             )
             self.assertEqual(
@@ -1068,12 +1077,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         baseline = self.completed_baseline(mode="annual", reviewed=False)
         calibration = self.annual_calibration_provenance(calibration_baseline)
         calibration["calibration_application"]["resolved_profile_sha256"] = "0" * 64
-        baseline = app.AGENT_STORE.update_job(
+        baseline = state.AGENT_STORE.update_job(
             baseline["id"],
             provenance=calibration,
         )
 
-        _, action = app._handle_scenario_tool(
+        _, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Turn annual backtracking off.",
                 job_id=baseline["id"],
@@ -1087,7 +1096,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             app.confirm_agent_proposal(action["proposal"]["proposal_id"])
         self.assertEqual(409, context.exception.status_code)
         self.assertIn("provenance is invalid", str(context.exception.detail))
-        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
 
     def test_annual_fallback_consent_is_not_reused_for_scenarios(self) -> None:
         calibration_baseline = self.completed_baseline(
@@ -1104,12 +1113,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             "accepted": True,
             "confirmation_context_sha256": "1" * 64,
         }
-        baseline = app.AGENT_STORE.update_job(
+        baseline = state.AGENT_STORE.update_job(
             baseline["id"],
             provenance=calibration,
         )
 
-        _, action = app._handle_scenario_tool(
+        _, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Turn annual backtracking off.",
                 job_id=baseline["id"],
@@ -1123,7 +1132,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             app.confirm_agent_proposal(action["proposal"]["proposal_id"])
         self.assertEqual(409, context.exception.status_code)
         self.assertIn("fresh confirmation", str(context.exception.detail))
-        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
 
     def test_embedded_annual_fallback_requires_fresh_confirmation(self) -> None:
         calibration_baseline = self.completed_baseline(
@@ -1135,12 +1144,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             "source_season": "spring",
             "target_season": "fall",
         }
-        baseline = app.AGENT_STORE.update_job(
+        baseline = state.AGENT_STORE.update_job(
             baseline["id"],
             provenance=calibration,
         )
 
-        _, action = app._handle_scenario_tool(
+        _, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Turn annual backtracking off.",
                 job_id=baseline["id"],
@@ -1154,11 +1163,11 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             app.confirm_agent_proposal(action["proposal"]["proposal_id"])
         self.assertEqual(409, context.exception.status_code)
         self.assertIn("fresh confirmation", str(context.exception.detail))
-        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
 
     def test_annual_sweep_confirmation_is_all_or_nothing_near_capacity(self) -> None:
         baseline = self.completed_baseline(mode="annual", reviewed=False)
-        _, action = app._handle_iam_ar_sweep_tool(
+        _, action = tools._handle_iam_ar_sweep_tool(
             app.ChatRequest(
                 message="Compare annual Martin-Ruiz a_r 0.1 to 0.3 by 0.1.",
                 job_id=baseline["id"],
@@ -1174,7 +1183,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         )
         sweep_id = action["sweep"]["sweep_id"]
         proposal_ids = [item["proposal_id"] for item in action["proposals"]]
-        active = app.AGENT_STORE.create_job(
+        active = state.AGENT_STORE.create_job(
             job_id="annual-sweep-active",
             kind="manual",
             mode="annual",
@@ -1182,14 +1191,14 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         )
         request = app.ProposalSweepConfirmRequest(proposal_ids=proposal_ids)
 
-        with patch.object(app, "MAX_ACTIVE_MODEL_JOBS", 3):
+        with patch.object(config, "MAX_ACTIVE_MODEL_JOBS", 3):
             with self.assertRaises(HTTPException) as capacity_error:
                 app.confirm_agent_sweep(sweep_id, request)
         self.assertEqual(429, capacity_error.exception.status_code)
-        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
         self.assertTrue(
             all(
-                app.AGENT_STORE.get_proposal(proposal_id)["state"] == "pending"
+                state.AGENT_STORE.get_proposal(proposal_id)["state"] == "pending"
                 for proposal_id in proposal_ids
             )
         )
@@ -1197,23 +1206,23 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as single_error:
             app.confirm_agent_proposal(proposal_ids[0])
         self.assertEqual(409, single_error.exception.status_code)
-        self.assertEqual([], app.AGENT_STORE.list_jobs(kind="candidate"))
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
 
-        app.AGENT_STORE.cancel_job(active["id"])
-        with patch.object(app, "MAX_ACTIVE_MODEL_JOBS", 3):
+        state.AGENT_STORE.cancel_job(active["id"])
+        with patch.object(config, "MAX_ACTIVE_MODEL_JOBS", 3):
             response = app.confirm_agent_sweep(sweep_id, request)
         payload = json.loads(response.body)
         self.assertEqual("job_batch_started", payload["action"]["type"])
         self.assertEqual(3, len(payload["action"]["jobs"]))
         self.assertTrue(
             all(
-                app.AGENT_STORE.get_proposal(proposal_id)["state"] == "confirmed"
+                state.AGENT_STORE.get_proposal(proposal_id)["state"] == "confirmed"
                 for proposal_id in proposal_ids
             )
         )
 
     def test_missing_validation_baseline_requires_visible_data_review(self) -> None:
-        tool_result, action = app._handle_scenario_tool(
+        tool_result, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Use Martin-Ruiz a_r 0.80",
                 active_mode="validation",
@@ -1230,12 +1239,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             tool_result["effective_request"]["iam_model"], "martin_ruiz"
         )
         self.assertEqual(tool_result["effective_request"]["iam_a_r"], 0.8)
-        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
-        self.assertEqual(app.AGENT_STORE.list_jobs(), [])
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(), [])
 
     def test_verified_same_input_auto_start_reuses_hash_and_never_fetches(self) -> None:
         baseline = self.completed_baseline()
-        _, action = app._handle_scenario_tool(
+        _, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Turn backtracking off.",
                 job_id=baseline["id"],
@@ -1247,7 +1256,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
 
         self.assertEqual(action["type"], "job_started")
         job_id = action["job"]["job_id"]
-        candidate = app.AGENT_STORE.get_job(job_id)
+        candidate = state.AGENT_STORE.get_job(job_id)
         self.assertEqual(candidate["state"], "queued")
         self.assertEqual(candidate["baseline_id"], baseline["id"])
         self.assertEqual(candidate["source_path"], baseline["source_path"])
@@ -1263,7 +1272,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             f"review-{baseline['id']}",
         )
 
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(claimed["id"], job_id)
         with (
             patch.object(
@@ -1271,7 +1280,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 "run_historian",
                 side_effect=AssertionError("cached scenarios must not fetch Bazefield"),
             ) as historian_call,
-            patch.object(app, "_render_input_data_plots", return_value={}),
+            patch.object(plots, "_render_input_data_plots", return_value={}),
             patch.object(
                 app.model,
                 "run_model",
@@ -1281,9 +1290,9 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                     "excel": str(self.root / "candidate.xlsx"),
                 },
             ) as model_call,
-            patch.object(app, "_finish_model_job") as finish_call,
+            patch.object(completion, "_finish_model_job") as finish_call,
         ):
-            app._run_job(
+            run_validation._run_job(
                 job_id,
                 app.RunRequest(**candidate["request"]),
                 source_path=candidate["source_path"],
@@ -1336,7 +1345,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self,
     ) -> None:
         baseline = self.completed_baseline()
-        tool_result, action = app._handle_scenario_tool(
+        tool_result, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Run June 1-7 using Bazefield with physical IAM.",
                 job_id=baseline["id"],
@@ -1357,17 +1366,17 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         )
         self.assertEqual(action["effective_request"]["to_date"], "2026-06-08")
         self.assertIn("Retain or Exclude", action["message"])
-        self.assertEqual(app.AGENT_STORE.list_jobs(kind="candidate"), [])
-        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(kind="candidate"), [])
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
         self.assertEqual(
-            app.AGENT_STORE.get_current_baseline("validation")["job_id"],
+            state.AGENT_STORE.get_current_baseline("validation")["job_id"],
             baseline["id"],
         )
 
     def test_same_input_unreviewed_baseline_requires_visible_review(self) -> None:
         baseline = self.completed_baseline(reviewed=False)
 
-        tool_result, action = app._handle_scenario_tool(
+        tool_result, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Turn backtracking off.",
                 job_id=baseline["id"],
@@ -1379,12 +1388,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
 
         self.assertEqual(tool_result["status"], "data_review_required")
         self.assertEqual(action["type"], "data_review_required")
-        self.assertEqual(app.AGENT_STORE.list_jobs(kind="candidate"), [])
-        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(kind="candidate"), [])
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
 
     def test_promoted_same_input_scenario_reuses_original_profile(self) -> None:
         original = self.completed_baseline()
-        _, first_action = app._handle_scenario_tool(
+        _, first_action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Turn backtracking off.",
                 job_id=original["id"],
@@ -1394,9 +1403,9 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             self.tool_arguments(backtrack=False),
         )
         first_id = first_action["job"]["job_id"]
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(claimed["id"], first_id)
-        app.AGENT_STORE.update_job(
+        state.AGENT_STORE.update_job(
             first_id,
             state="done",
             progress=100,
@@ -1420,8 +1429,8 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         )
         self.assertEqual(promoted_payload["job_id"], first_id)
 
-        promoted = app.AGENT_STORE.get_job(first_id)
-        _, second_action = app._handle_scenario_tool(
+        promoted = state.AGENT_STORE.get_job(first_id)
+        _, second_action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Use 95 percent SolarEdge inverter efficiency.",
                 job_id=first_id,
@@ -1430,7 +1439,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             ),
             self.tool_arguments(solaredge_inverter_efficiency=0.95),
         )
-        second = app.AGENT_STORE.get_job(
+        second = state.AGENT_STORE.get_job(
             second_action["job"]["job_id"]
         )
         profile = second["provenance"]["calibration_profile"]
@@ -1457,7 +1466,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 if record["season"] == "summer"
             ],
         }
-        app.AGENT_STORE.update_job(
+        state.AGENT_STORE.update_job(
             baseline["id"],
             result={
                 **result,
@@ -1466,7 +1475,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         )
 
         with self.assertRaises(HTTPException) as context:
-            app._handle_scenario_tool(
+            tools._handle_scenario_tool(
                 app.ChatRequest(
                     message="Turn backtracking off.",
                     job_id=baseline["id"],
@@ -1479,7 +1488,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 409)
         self.assertIn("winter", str(context.exception.detail).lower())
         self.assertEqual(
-            app.AGENT_STORE.list_jobs(kind="candidate"),
+            state.AGENT_STORE.list_jobs(kind="candidate"),
             [],
         )
 
@@ -1487,17 +1496,17 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self,
     ) -> None:
         baseline = self.completed_baseline()
-        active = app.AGENT_STORE.create_job(
+        active = state.AGENT_STORE.create_job(
             job_id="already-running",
             kind="candidate",
             mode="validation",
             request=self.validation_config(backtrack=False),
             baseline_id=baseline["id"],
         )
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(claimed["id"], active["id"])
 
-        tool_result, action = app._handle_scenario_tool(
+        tool_result, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Run June 1-7 using Bazefield with physical IAM.",
                 job_id=baseline["id"],
@@ -1514,16 +1523,16 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual(tool_result["status"], "data_review_required")
         self.assertEqual(action["type"], "data_review_required")
         self.assertEqual(
-            [job["id"] for job in app.AGENT_STORE.list_jobs(kind="candidate")],
+            [job["id"] for job in state.AGENT_STORE.list_jobs(kind="candidate")],
             [active["id"]],
         )
-        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
 
     def test_cross_run_validation_proposal_cannot_be_confirmed(
         self,
     ) -> None:
         baseline = self.completed_baseline()
-        _, candidate = app._canonical_request(
+        _, candidate = scenario_math._canonical_request(
             "validation",
             self.validation_config(
                 from_date="2026-06-01",
@@ -1532,7 +1541,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 to_time="00:00",
             ),
         )
-        proposal = app.AGENT_STORE.create_proposal(
+        proposal = state.AGENT_STORE.create_proposal(
             mode="validation",
             effective_request=candidate,
             changes=[
@@ -1551,15 +1560,15 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         )
 
         with self.assertRaises(HTTPException) as context:
-            app._confirm_durable_proposal(proposal)
+            proposals._confirm_durable_proposal(proposal)
 
         self.assertEqual(context.exception.status_code, 409)
         self.assertIn("visible Calibration", str(context.exception.detail))
-        self.assertEqual(app.AGENT_STORE.list_jobs(kind="candidate"), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(kind="candidate"), [])
 
     def test_unreviewed_validation_candidate_cannot_be_promoted(self) -> None:
         baseline = self.completed_baseline()
-        candidate = app.AGENT_STORE.create_job(
+        candidate = state.AGENT_STORE.create_job(
             job_id="unreviewed-candidate",
             kind="candidate",
             mode="validation",
@@ -1569,9 +1578,9 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             source_hash=baseline["source_hash"],
             provenance={"calibration_profile": {"schema_version": 1}},
         )
-        claimed = app.AGENT_STORE.claim_next_queued_job()
+        claimed = state.AGENT_STORE.claim_next_queued_job()
         self.assertEqual(claimed["id"], candidate["id"])
-        app.AGENT_STORE.update_job(
+        state.AGENT_STORE.update_job(
             candidate["id"],
             state="done",
             result={"mode": "validation", "stats": {}},
@@ -1583,7 +1592,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 409)
         self.assertIn("hash-verified data-quality review", context.exception.detail)
         self.assertEqual(
-            app.AGENT_STORE.get_current_baseline("validation")["job_id"],
+            state.AGENT_STORE.get_current_baseline("validation")["job_id"],
             baseline["id"],
         )
 
@@ -1613,7 +1622,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             request=annual_request,
         )
 
-        _, action = app._handle_scenario_tool(
+        _, action = tools._handle_scenario_tool(
             app.ChatRequest(
                 message="Switch this validation setup to an annual run.",
                 job_id=validation["id"],
@@ -1644,7 +1653,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 "to_date": "2025-12-31",
             },
         )
-        app.AGENT_STORE.update_job(
+        state.AGENT_STORE.update_job(
             annual["id"],
             comparison={
                 "comparison_type": "cross_run",
@@ -1654,7 +1663,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             artifacts={"comparison_workbook": {"url": "/outputs/annual-compare.xlsx"}},
         )
 
-        resolved, context = app._chat_run_context(None, "annual")
+        resolved, context = chat._chat_run_context(None, "annual")
 
         self.assertEqual(resolved, annual["id"])
         self.assertEqual(context["mode"], "annual")
@@ -1692,7 +1701,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         fake_openai.OpenAI = lambda: fake_client
 
         with patch.dict(sys.modules, {"openai": fake_openai}):
-            result = app._openai_agent_response(
+            result = chat._openai_agent_response(
                 app.ChatRequest(
                     message="Explain these completed results only.",
                     active_mode="validation",
@@ -1705,8 +1714,8 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertNotIn(app.SCENARIO_TOOL, api_calls[0]["tools"])
         self.assertEqual(api_calls[0]["tools"], [])
         self.assertIsNone(result["action"])
-        self.assertEqual(app.AGENT_STORE.list_proposals(), [])
-        self.assertEqual(app.AGENT_STORE.list_jobs(), [])
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(), [])
 
 
 if __name__ == "__main__":

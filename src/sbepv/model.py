@@ -1,4 +1,4 @@
-"""sbe_pv_model.py
+"""sbepv.model
 
 Our own physics-based PV prediction model for the SBE Innovation Center PV
 (STAC1) East array. Consumes the historian CSV (stac1.csv) and predicts AC power
@@ -14,7 +14,7 @@ This is a fresh, automated reimplementation of the physics in pvmismatch_Ho_v8.p
   - Uses MEASURED DHI from the CSV when present (only derives it from GHI/DNI when
     DHI is missing).
 
-INPUT  (stac1.csv, produced by bazefield_historian.py):
+INPUT  (stac1.csv, produced by sbepv.ingest.bazefield):
   timestamp, solaredge_measured_power, solectria_measured_power,
   dni, ghi, dhi, temp_air, wind_speed          (power in W, irradiance W/m2, degC, m/s)
 
@@ -41,7 +41,7 @@ import pvlib as pvl
 import pvmismatch as pvm
 from pvmismatch.contrib import gen_coeffs
 
-from calibration_workflow import (
+from sbepv.calibration import (
     _bounded_interval_hours,
     apply_frozen_seasonal_calibration,
     apply_seasonal_calibration,

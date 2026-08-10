@@ -1,0 +1,24 @@
+            <section class="header" aria-labelledby="dashboardTitle">
+                <div class="header-copy">
+                    <p class="eyebrow">Renewable Energy Operations</p>
+                    <div class="header-title-row">
+                        <h1 class="header-title" id="dashboardTitle">SolarEdge &amp; Solectria Performance Analysis</h1>
+                        <span class="help-tip-wrap">
+                            <button class="help-tip" type="button" aria-label="Dashboard overview help" aria-describedby="dashboardHelpTooltip" aria-expanded="false">?</button>
+                            <span class="help-tooltip" id="dashboardHelpTooltip" role="tooltip">Run the Bazefield-backed physics model directly, or select Calibrate the model to review source rows and fit meteorological-season factors. Use Annual Simulation for long-range weather-based production forecasts, then use Technoeconomic Analysis to compare annualized costs.</span>
+                        </span>
+                    </div>
+                    <p class="header-subtitle" id="dashboardSubtitle">
+                        Compare measured power, irradiance, physics-model predictions, and export-ready run artifacts for the SBE
+                        Innovation Site.
+                    </p>
+                </div>
+            </section>
+
+            <nav class="mode-tabs" aria-label="Analysis mode">
+                <button class="mode-tab active" id="validationTab" type="button" aria-pressed="true">Model Calibration</button>
+                <button class="mode-tab" id="annualTab" type="button" aria-pressed="false">Annual Simulation</button>
+                <button class="mode-tab" id="technoeconomicTab" type="button" aria-pressed="false">Technoeconomic Analysis</button>
+            </nav>
+
+            <div class="annual-only" id="annualPanel">

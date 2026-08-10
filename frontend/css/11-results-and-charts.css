@@ -1,0 +1,378 @@
+        .annual-results-shell {
+            margin-top: 24px;
+        }
+
+        .validation-results-shell {
+            margin-top: 24px;
+        }
+
+        .validation-system-summaries {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 18px;
+            margin-bottom: 18px;
+        }
+
+        .validation-system-summary {
+            display: grid;
+            grid-template-columns: minmax(160px, 0.72fr) minmax(360px, 1.55fr) minmax(210px, 0.82fr);
+            align-items: stretch;
+            min-width: 0;
+            padding: 32px 26px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            box-shadow: 0 8px 22px rgba(22, 34, 29, 0.04);
+        }
+
+        .validation-system-summary.has-calibration-baseline {
+            grid-template-columns: minmax(160px, 0.72fr) minmax(250px, 1.08fr) minmax(310px, 1.34fr) minmax(190px, 0.82fr);
+        }
+
+        .validation-system-summary.solaredge-summary {
+            border-left: 4px solid var(--accent);
+        }
+
+        .validation-system-summary.solectria-summary {
+            border-left: 4px solid var(--info);
+        }
+
+        .validation-system-summary-heading {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+            padding-right: 24px;
+            border-right: 1px solid var(--border);
+        }
+
+        .validation-system-summary-heading .system-dot {
+            width: 11px;
+            height: 11px;
+            margin-top: 0;
+        }
+
+        .validation-system-summary-heading h3 {
+            color: var(--text);
+            font-size: 19px;
+            font-weight: 840;
+            line-height: 1.2;
+        }
+
+        .validation-system-summary-heading p {
+            margin-top: 5px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .validation-calibrated-stage,
+        .validation-uncalibrated-comparison,
+        .validation-measured-metric {
+            display: grid;
+            align-content: center;
+            min-width: 0;
+        }
+
+        .validation-uncalibrated-comparison {
+            grid-column: 2;
+            gap: 14px;
+            margin: 0;
+            padding: 0 26px;
+            border: 0;
+            border-right: 1px solid var(--border);
+            border-radius: 0;
+            background: transparent;
+        }
+
+        .validation-calibrated-stage {
+            grid-column: 2;
+            gap: 14px;
+            padding: 0 26px;
+            border-right: 1px solid var(--border);
+        }
+
+        .validation-system-summary.has-calibration-baseline .validation-calibrated-stage {
+            grid-column: 3;
+        }
+
+        .validation-measured-metric {
+            grid-column: 3;
+            padding-left: 26px;
+        }
+
+        .validation-system-summary.has-calibration-baseline .validation-measured-metric {
+            grid-column: 4;
+        }
+
+        .validation-stage-label {
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 820;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .validation-calibrated-values {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(96px, 0.72fr) auto;
+            align-items: end;
+            gap: 22px;
+            min-width: 0;
+        }
+
+        .validation-system-metric {
+            min-width: 0;
+        }
+
+        .validation-metric-label,
+        .validation-comparison-label {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 820;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .validation-metric-value {
+            margin-top: 6px;
+            color: var(--text);
+            font-size: clamp(23px, 2vw, 30px);
+            font-weight: 850;
+            line-height: 1.08;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .solaredge-summary .validation-metric-value,
+        .solaredge-summary .validation-delta-value,
+        .solaredge-summary .validation-uncalibrated-value {
+            color: var(--accent-strong);
+        }
+
+        .solectria-summary .validation-metric-value,
+        .solectria-summary .validation-delta-value,
+        .solectria-summary .validation-uncalibrated-value {
+            color: var(--info);
+        }
+
+        .validation-delta-row {
+            display: grid;
+            align-content: end;
+            gap: 6px;
+            min-width: 0;
+            padding-left: 22px;
+            border-left: 1px solid var(--border);
+        }
+
+        .validation-delta-copy {
+            display: grid;
+            gap: 2px;
+        }
+
+        .validation-delta-copy strong {
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 820;
+            text-transform: uppercase;
+        }
+
+        .validation-delta-copy span {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .validation-calibrated-stage .validation-delta-copy span {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .validation-delta-value {
+            color: var(--text);
+            font-size: clamp(21px, 1.7vw, 27px);
+            font-weight: 850;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .validation-flow-marker {
+            align-self: end;
+            padding-bottom: 1px;
+            color: var(--muted);
+            font-size: 28px;
+            font-weight: 500;
+            line-height: 1;
+        }
+
+        .validation-uncalibrated-comparison[hidden] {
+            display: none !important;
+        }
+
+        .validation-uncalibrated-values {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: flex-end;
+            gap: 24px;
+            min-width: 0;
+        }
+
+        .validation-uncalibrated-metric {
+            display: grid;
+            justify-items: start;
+            gap: 3px;
+            min-width: 0;
+        }
+
+        .validation-uncalibrated-label {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .validation-uncalibrated-value {
+            color: var(--muted-strong);
+            font-size: clamp(19px, 1.6vw, 25px);
+            font-weight: 820;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .validation-comparison-strip {
+            display: grid;
+            grid-template-columns: minmax(260px, 1.35fr) repeat(2, minmax(180px, 0.65fr));
+            align-items: center;
+            gap: 18px;
+            margin-bottom: 20px;
+            padding: 28px 26px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            box-shadow: 0 8px 22px rgba(22, 34, 29, 0.04);
+        }
+
+        .validation-comparison-intro {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            min-width: 0;
+        }
+
+        .validation-comparison-symbol {
+            width: 42px;
+            height: 42px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border-radius: 9px;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            font-size: 17px;
+            font-weight: 900;
+        }
+
+        .validation-comparison-intro h3 {
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 830;
+        }
+
+        .validation-comparison-intro p,
+        .validation-comparison-helper {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .validation-comparison-metric {
+            min-width: 0;
+            padding-left: 18px;
+            border-left: 1px solid var(--border);
+        }
+
+        .validation-comparison-value {
+            margin-top: 5px;
+            color: var(--accent-strong);
+            font-size: clamp(25px, 2vw, 32px);
+            font-weight: 850;
+            line-height: 1.08;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .annual-results-heading {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 14px;
+        }
+
+        .annual-results-heading h2 {
+            color: var(--text);
+            font-size: 19px;
+            font-weight: 830;
+        }
+
+        .annual-results-heading p {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .annual-results-note {
+            flex: 0 0 auto;
+            padding: 6px 9px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 780;
+        }
+
+        .annual-charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .annual-charts-grid .chart-placeholder {
+            height: 320px;
+            min-height: 320px;
+        }
+
+        .annual-charts-grid .chart-image {
+            height: 100%;
+            object-fit: contain;
+            background: #ffffff;
+        }
+
+        .stat-card,
+        .chart-card,
+        .controls-bar,
+        .progress-wrap,
+        .error-banner {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .stat-label,
+        .control-section-title {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+

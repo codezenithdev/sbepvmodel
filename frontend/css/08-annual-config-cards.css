@@ -1,0 +1,212 @@
+        .annual-subheading {
+            margin-bottom: 9px;
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 830;
+            text-transform: uppercase;
+        }
+
+        .annual-limit.visible {
+            margin-top: 10px;
+        }
+
+        .annual-system-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .annual-system-card {
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .annual-system-card.solaredge {
+            border-top: 3px solid var(--accent);
+        }
+
+        .annual-system-card.solectria {
+            border-top: 3px solid var(--info);
+        }
+
+        .annual-system-heading {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+        }
+
+        .annual-system-heading h4 {
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 830;
+        }
+
+        .system-dot {
+            width: 9px;
+            height: 9px;
+            flex: 0 0 auto;
+            margin-top: 5px;
+            border-radius: 50%;
+        }
+
+        .solaredge-dot {
+            background: var(--accent);
+        }
+
+        .solectria-dot {
+            background: var(--info);
+        }
+
+        .annual-efficiency-field .date-input {
+            background: var(--surface);
+        }
+
+        .annual-iam-row {
+            display: grid;
+            gap: 14px;
+            margin-top: 14px;
+            padding: 13px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .annual-iam-row .annual-subheading {
+            margin-bottom: 0;
+            text-transform: none;
+            font-size: 13px;
+        }
+
+        .iam-model-fieldset {
+            min-width: 0;
+            margin: 0;
+            padding: 0;
+            border: 0;
+        }
+
+        .iam-model-options {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .iam-model-card {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            align-content: start;
+            gap: 3px 9px;
+            min-width: 0;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+        }
+
+        .iam-model-card:hover {
+            border-color: var(--border-strong);
+        }
+
+        .iam-model-card:has(input:checked) {
+            border-color: rgba(15, 118, 110, 0.5);
+            background: var(--accent-soft);
+            box-shadow: inset 3px 0 0 var(--accent);
+        }
+
+        .iam-model-card:focus-within {
+            outline: 2px solid rgba(37, 99, 235, 0.55);
+            outline-offset: 2px;
+        }
+
+        .iam-model-card input[type="radio"] {
+            width: 17px;
+            height: 17px;
+            margin-top: 2px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .iam-model-label {
+            display: grid;
+            gap: 3px;
+            min-width: 0;
+            cursor: pointer;
+        }
+
+        .iam-model-name {
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .iam-model-description {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+
+        .iam-reference-link {
+            grid-column: 2;
+            justify-self: start;
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 750;
+            text-underline-offset: 2px;
+        }
+
+        .iam-reference-link:hover {
+            color: var(--accent);
+        }
+
+        .iam-parity-note {
+            padding: 10px 11px;
+            border-left: 3px solid var(--info);
+            border-radius: 0 6px 6px 0;
+            background: var(--info-soft);
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 650;
+            line-height: 1.45;
+        }
+
+        .iam-ar > span:first-child {
+            display: grid;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .iam-ar .limit-helper {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .annual-iam-value.visible {
+            grid-template-columns: minmax(0, 1fr) 128px;
+            align-items: center;
+            gap: 12px;
+            padding: 10px;
+            border: 1px solid rgba(15, 118, 110, 0.36);
+            border-radius: 6px;
+            background: #f3fbf8;
+        }
+
+        .annual-calibration-strip {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 14px 16px;
+            padding: 17px 20px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(100deg, #f0faf7 0%, #ffffff 72%);
+        }
+
+        .annual-calibration-strip.loading {
+            background: var(--surface-muted);
+        }
+

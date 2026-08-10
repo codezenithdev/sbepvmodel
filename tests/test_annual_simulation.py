@@ -8,10 +8,12 @@ import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
 
-import app
-import midc_stac_hourly as midc
-import sbe_pv_model as model
-from agent_store import AgentStore
+from sbepv.api import config, state
+from sbepv.worker import run_annual
+from sbepv.api import main as app
+from sbepv.ingest import midc
+from sbepv import model
+from sbepv.store import AgentStore
 
 
 RAW_HEADER = ["Year", "DOY", "MST", *midc.MEASUREMENT_COLUMNS]
@@ -169,7 +171,7 @@ class MidcModelInputTests(unittest.TestCase):
                 "Avg Avg Wind Speed @ 10m [m/s]": [1.0, np.nan, 3.0],
             }
         )
-        path = app.OUTPUT_DIR / "_test_midc_missing.csv"
+        path = config.OUTPUT_DIR / "_test_midc_missing.csv"
         try:
             frame.to_csv(path, index=False)
             parsed, warnings = model.parse_midc_csv(str(path))
@@ -221,7 +223,7 @@ class MidcModelInputTests(unittest.TestCase):
             out["sol_predicted_power_w"] = [0.0, 800.0, 1600.0, 0.0]
             return out, "measured"
 
-        base = app.OUTPUT_DIR / "_test_annual_artifacts"
+        base = config.OUTPUT_DIR / "_test_annual_artifacts"
         paths = [
             Path(str(base) + "_ac_power.png"),
             Path(str(base) + "_cumulative_energy.png"),
@@ -269,7 +271,7 @@ class AnnualApiTests(unittest.TestCase):
         )
         legacy_run.start()
         self.addCleanup(legacy_run.stop)
-        app.JOBS.clear()
+        state.JOBS.clear()
         handle = tempfile.NamedTemporaryFile(
             prefix="annual-api-test-",
             suffix=".sqlite3",
@@ -278,9 +280,9 @@ class AnnualApiTests(unittest.TestCase):
         )
         handle.close()
         database = Path(handle.name)
-        original_store = app.AGENT_STORE
-        app.AGENT_STORE = AgentStore(database)
-        self.addCleanup(setattr, app, "AGENT_STORE", original_store)
+        original_store = state.AGENT_STORE
+        state.AGENT_STORE = AgentStore(database)
+        self.addCleanup(setattr, state, "AGENT_STORE", original_store)
         self.addCleanup(
             lambda: [
                 path.unlink(missing_ok=True)
@@ -296,9 +298,9 @@ class AnnualApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         job_id = response.json()["job_id"]
-        self.assertEqual(app.JOBS[job_id]["mode"], "annual")
-        self.assertEqual(app.JOBS[job_id]["state"], "queued")
-        self.assertEqual(app.AGENT_STORE.get_job(job_id)["kind"], "baseline")
+        self.assertEqual(state.JOBS[job_id]["mode"], "annual")
+        self.assertEqual(state.JOBS[job_id]["state"], "queued")
+        self.assertEqual(state.AGENT_STORE.get_job(job_id)["kind"], "baseline")
 
     def test_new_requests_default_to_physical_in_both_run_modes(self):
         validation = app.RunRequest(
@@ -326,10 +328,10 @@ class AnnualApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 422)
-        self.assertEqual(app.JOBS, {})
+        self.assertEqual(state.JOBS, {})
 
     def test_status_exposes_annual_irradiance_before_model_completion(self):
-        app.JOBS["annual-weather-ready"] = {
+        state.JOBS["annual-weather-ready"] = {
             "mode": "annual",
             "state": "running",
             "progress": 28,
@@ -356,8 +358,8 @@ class AnnualApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(app.JOBS[response.json()["job_id"]]["mode"], "validation")
-        self.assertEqual(app.JOBS[response.json()["job_id"]]["state"], "queued")
+        self.assertEqual(state.JOBS[response.json()["job_id"]]["mode"], "validation")
+        self.assertEqual(state.JOBS[response.json()["job_id"]]["state"], "queued")
 
     def test_annual_worker_returns_all_artifacts_and_context(self):
         hourly = pd.DataFrame(
@@ -376,9 +378,9 @@ class AnnualApiTests(unittest.TestCase):
         )
 
         job_id = "_test_annualjob"
-        base = app.OUTPUT_DIR / job_id
-        source_path = app.OUTPUT_DIR / f"{job_id}_midc_hourly.csv"
-        irradiance_path = app.OUTPUT_DIR / f"{job_id}_irradiance.png"
+        base = config.OUTPUT_DIR / job_id
+        source_path = config.OUTPUT_DIR / f"{job_id}_midc_hourly.csv"
+        irradiance_path = config.OUTPUT_DIR / f"{job_id}_irradiance.png"
         stats = {
             "se_predicted_kwh": 10.0,
             "sol_predicted_kwh": 8.0,
@@ -393,22 +395,22 @@ class AnnualApiTests(unittest.TestCase):
         }
 
         def fake_run_model(**kwargs):
-            self.assertIn("input_plots", app.JOBS[job_id])
+            self.assertIn("input_plots", state.JOBS[job_id])
             self.assertTrue(irradiance_path.is_file())
             self.assertEqual(kwargs["iam_model"], model.IAM_MODEL_MARTIN_RUIZ)
             self.assertEqual(kwargs["iam_a_r"], 0.18)
             return stats
 
-        app.JOBS[job_id] = {"mode": "annual", "state": "running"}
+        state.JOBS[job_id] = {"mode": "annual", "state": "running"}
         try:
             with (
                 patch.object(app.midc, "fetch_hourly_data", return_value=source),
                 patch.object(app.model, "run_model", side_effect=fake_run_model),
             ):
-                app._run_annual_job(job_id, req)
+                run_annual._run_annual_job(job_id, req)
 
-            self.assertEqual(app.JOBS[job_id]["state"], "done", app.JOBS[job_id])
-            result = app.JOBS[job_id]["result"]
+            self.assertEqual(state.JOBS[job_id]["state"], "done", state.JOBS[job_id])
+            result = state.JOBS[job_id]["result"]
             self.assertEqual(result["mode"], "annual")
             self.assertTrue(source_path.is_file())
             self.assertTrue(irradiance_path.is_file())
