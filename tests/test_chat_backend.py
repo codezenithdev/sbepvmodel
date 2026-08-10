@@ -9,6 +9,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sbepv import dashboard
 from sbepv.api import config, job_store, plots, state
 from sbepv.agent import chat
 from sbepv.api import main as app
@@ -208,6 +209,19 @@ class ChatBackendTests(unittest.TestCase):
 
 
 class DashboardDeploymentTests(unittest.TestCase):
+    def test_fastapi_root_uses_the_module_qualified_renderer(self):
+        rendered = "<!DOCTYPE html><html><body>dashboard</body></html>"
+        with patch.object(
+            dashboard,
+            "render_dashboard",
+            return_value=rendered,
+        ) as build:
+            response = app.index()
+
+        build.assert_called_once_with(config.PROJECT_ROOT)
+        self.assertEqual(response.body.decode("utf-8"), rendered)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
     def test_healthz_remains_public_when_basic_auth_is_configured(self):
         with patch.dict(
             os.environ,
@@ -238,6 +252,10 @@ class DashboardDeploymentTests(unittest.TestCase):
         self.assertIn("Basic", unauthorized.headers["www-authenticate"])
         self.assertEqual(authorized.status_code, 200)
         self.assertIn("text/html", authorized.headers["content-type"])
+        self.assertEqual(
+            authorized.text,
+            dashboard.render_dashboard(config.PROJECT_ROOT),
+        )
 
     def test_basic_auth_is_disabled_without_credentials(self):
         with patch.dict(

@@ -21,7 +21,7 @@ services:
     disk:
       name: outputs
       mountPath: /var/data
-      sizeGB: 10
+      sizeGB: 5
 
     envVars:
       - key: PYTHON_VERSION

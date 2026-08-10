@@ -9,6 +9,9 @@ outputs/
 
 analysis/
 
+# The dashboard is assembled directly from frontend/ by Python and Vite.
+/sb_energy_dashboard_modern.html
+
 # Test-generated databases, review workspaces, and exported artifacts
 tests/__pycache__/
 tests/_calibration_api_tmp_*/

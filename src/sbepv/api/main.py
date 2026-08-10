@@ -1,11 +1,11 @@
-"""app.py — local web backend for the SB Energy dashboard.
+"""FastAPI backend for the SB Energy dashboard.
 
-Serves sb_energy_dashboard.html, accepts a from/to window + interval (UTC),
-runs the historian -> model pipeline as a background job with progress, and
-serves the generated PNG charts + stats back to the UI.
+Assembles the dashboard from ``frontend/``, accepts a from/to window + interval
+(UTC), runs the historian -> model pipeline as a background job with progress,
+and serves the generated PNG charts + stats back to the UI.
 
 Run:
-    uvicorn app:app --reload --port 8000
+    uvicorn sbepv.api.main:app --app-dir src --reload --port 8000
 Then open http://127.0.0.1:8000
 """
 
@@ -34,11 +34,11 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from sbepv import model, reporting
+from sbepv import dashboard, model, reporting
 from sbepv.api import config, job_store, plots, review_store, state
 from sbepv.api import baselines as baselines_module
 from sbepv.api import proposals as proposals_module
@@ -123,7 +123,6 @@ from sbepv.api.config import (
     OPENAI_MAX_RETRIES,
     OPENAI_TIMEOUT_SECONDS,
     PRIVATE_OUTPUT_DIRS,
-    PROJECT_ROOT,
     PUBLIC_OUTPUT_SUFFIXES,
     SERVER_SESSION_ID,
     UNIT_SECONDS,
@@ -167,7 +166,6 @@ from sbepv.api.schemas import (
 )
 from sbepv.ingest import bazefield as historian
 from sbepv.ingest import midc
-from sbepv.paths import DASHBOARD_FILENAME, discover_project_root
 from sbepv.calibration import (
     CALIBRATION_PROFILE_SCHEMA_VERSION,
     apply_quality_decisions,
@@ -273,8 +271,11 @@ async def require_dashboard_basic_auth(request: Request, call_next):
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(str(PROJECT_ROOT / DASHBOARD_FILENAME))
+def index() -> HTMLResponse:
+    return HTMLResponse(
+        dashboard.render_dashboard(config.PROJECT_ROOT),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/annual-warning.png", include_in_schema=False)
@@ -282,7 +283,8 @@ def annual_warning_icon() -> FileResponse:
     """Serve the warning asset shared by direct FastAPI and Vinext previews."""
 
     return FileResponse(
-        str(PROJECT_ROOT / "public" / "annual-warning.png"), media_type="image/png"
+        str(config.PROJECT_ROOT / "public" / "annual-warning.png"),
+        media_type="image/png",
     )
 
 

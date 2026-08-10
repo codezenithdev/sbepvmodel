@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
+
+from sbepv import dashboard
 
 
 class AnnualCalibrationUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.html = (
-            Path(__file__).resolve().parents[1] / "sb_energy_dashboard_modern.html"
-        ).read_text(encoding="utf-8")
+        cls.html = dashboard.render_dashboard()
 
     def test_inherits_exactly_nine_settings_without_dates(self) -> None:
         for marker in (

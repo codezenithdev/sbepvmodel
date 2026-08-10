@@ -6,7 +6,9 @@ Date: 2026-07-06
 > Historical review: this document records the original Python-only state.
 > The repository now includes a Sites-compatible frontend proxy backed by the
 > separate Render Python service; see `RENDER_DEPLOYMENT.md` and
-> `CALIBRATION_WORKFLOW.md` for the current deployment contract.
+> `CALIBRATION_WORKFLOW.md` for the current deployment contract. The generated
+> root-level dashboard file mentioned below was later replaced by direct assembly
+> from `frontend/` in both Python and Vite.
 
 ## Summary
 
