@@ -2,12 +2,17 @@ import re
 import unittest
 from pathlib import Path
 
+from sbepv import dashboard
+
 
 class AgentFrontendContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = Path("sb_energy_dashboard_modern.html").read_text(encoding="utf-8")
-        cls.proxy = Path("lib/render-proxy.ts").read_text(encoding="utf-8")
+        project_root = Path(__file__).resolve().parents[1]
+        cls.html = dashboard.render_dashboard(project_root)
+        cls.proxy = (project_root / "lib" / "render-proxy.ts").read_text(
+            encoding="utf-8"
+        )
 
     def test_chat_sends_mode_and_canonical_visible_configuration(self):
         self.assertIn("active_mode: activeMode", self.html)

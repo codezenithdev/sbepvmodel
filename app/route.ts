@@ -1,4 +1,4 @@
-import dashboardHtml from "../sb_energy_dashboard_modern.html?raw";
+import { dashboardHtml } from "../frontend/dashboard";
 
 const TITLE = "SB Energy Operations Dashboard";
 const DESCRIPTION =

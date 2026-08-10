@@ -12,8 +12,7 @@ from fastapi.testclient import TestClient
 
 from sbepv.api import config, plots, state
 from sbepv.api import main as app
-from sbepv import model
-from sbepv import reporting
+from sbepv import dashboard, model, reporting
 from sbepv.store import AgentStore
 from sbepv.worker import run_annual, run_validation
 
@@ -158,9 +157,7 @@ class ValidationWindowMetadataTests(unittest.TestCase):
 class DashboardInteractionMarkupTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = Path("sb_energy_dashboard_modern.html").read_text(
-            encoding="utf-8"
-        )
+        cls.html = dashboard.render_dashboard()
 
     def test_both_curtailment_fields_start_at_125_and_preserve_edits(self):
         for element_id in ("curtailmentLimitKw", "annualCurtailmentLimitKw"):

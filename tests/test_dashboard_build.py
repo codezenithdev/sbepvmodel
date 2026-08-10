@@ -1,53 +1,101 @@
-"""The committed dashboard must match what frontend/ builds.
-
-sb_energy_dashboard_modern.html is generated but stays committed, because two
-consumers read it directly: FastAPI serves it with FileResponse, and the Vite
-build inlines it with a `?raw` import. That makes drift easy -- someone edits the
-700 KB generated file instead of the sources and the next build silently reverts
-them. This test is the tripwire.
-"""
+"""The two dashboard front doors assemble the canonical frontend sources."""
 
 from __future__ import annotations
 
-import importlib.util
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
+from sbepv import dashboard
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BUILD_SCRIPT = PROJECT_ROOT / "tools" / "build_dashboard.py"
-
-
-def load_builder():
-    spec = importlib.util.spec_from_file_location("build_dashboard", BUILD_SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 class DashboardBuildTests(unittest.TestCase):
-    def test_committed_dashboard_matches_frontend_sources(self):
-        builder = load_builder()
-        built = builder.build()
-        committed = builder.OUTPUT.read_text(encoding="utf-8")
+    def tearDown(self):
+        dashboard.clear_dashboard_cache()
 
-        if built == committed:
-            return
+    def test_sources_assemble_deterministically_without_unfilled_slots(self):
+        first = dashboard.assemble_dashboard_html(PROJECT_ROOT)
+        second = dashboard.assemble_dashboard_html(PROJECT_ROOT)
 
-        # Point at the first divergence rather than dumping 700 KB.
-        built_lines = built.splitlines()
-        committed_lines = committed.splitlines()
-        for number, (a, b) in enumerate(zip(built_lines, committed_lines), start=1):
-            if a != b:
-                self.fail(
-                    f"{builder.OUTPUT.name} is stale at line {number}.\n"
-                    f"  committed: {b[:120]!r}\n"
-                    f"  rebuilt  : {a[:120]!r}\n"
-                    "Run: python tools/build_dashboard.py"
-                )
-        self.fail(
-            f"{builder.OUTPUT.name} is stale: rebuilt has "
-            f"{len(built_lines)} lines, committed has {len(committed_lines)}.\n"
-            "Run: python tools/build_dashboard.py"
+        self.assertEqual(first, second)
+        self.assertTrue(first.startswith("<!DOCTYPE html>"))
+        self.assertIn('id="annualPanel"', first)
+        for slot in ("{{CSS}}", "{{MARKUP}}", "{{JS}}"):
+            self.assertNotIn(slot, first)
+
+    def test_every_source_group_uses_lexical_filename_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            frontend = root / "frontend"
+            for directory in ("css", "html", "js"):
+                (frontend / directory).mkdir(parents=True, exist_ok=True)
+
+            (frontend / "html" / "document.template.html").write_text(
+                "{{CSS}}\n{{MARKUP}}\n{{JS}}",
+                encoding="utf-8",
+            )
+            sources = (
+                ("css", "20-second.css", "css-20"),
+                ("css", "10-first.css", "css-10"),
+                ("html", "20-second.html", "html-20"),
+                ("html", "10-first.html", "html-10"),
+                ("js", "20-second.js", "js-20"),
+                ("js", "10-first.js", "js-10"),
+            )
+            for directory, filename, content in sources:
+                (frontend / directory / filename).write_text(content, encoding="utf-8")
+
+            assembled = dashboard.assemble_dashboard_html(root)
+
+        self.assertEqual(
+            assembled,
+            "css-10\ncss-20\nhtml-10\nhtml-20\njs-10\njs-20",
+        )
+
+    def test_render_cache_invalidates_when_a_source_changes_or_is_added(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(PROJECT_ROOT / "frontend", root / "frontend")
+
+            initial = dashboard.render_dashboard(root)
+            source = root / "frontend" / "css" / "01-tokens-and-base.css"
+            source.write_text(
+                source.read_text(encoding="utf-8") + "\n/* cache refresh */\n",
+                encoding="utf-8",
+            )
+            edited = dashboard.render_dashboard(root)
+
+            added_source = root / "frontend" / "css" / "99-cache-refresh.css"
+            added_source.write_text(
+                ".cache-refresh { display: block; }\n",
+                encoding="utf-8",
+            )
+            added = dashboard.render_dashboard(root)
+
+        self.assertNotEqual(initial, edited)
+        self.assertIn("/* cache refresh */", edited)
+        self.assertNotEqual(edited, added)
+        self.assertIn(".cache-refresh { display: block; }", added)
+
+    def test_missing_template_fails_clearly_without_misresolving_the_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(PROJECT_ROOT / "frontend", root / "frontend")
+            (root / "frontend" / "html" / "document.template.html").unlink()
+
+            with self.assertRaisesRegex(
+                dashboard.DashboardBuildError,
+                "dashboard template is missing",
+            ):
+                dashboard.assemble_dashboard_html(root)
+
+    def test_removed_generated_dashboard_is_not_reintroduced(self):
+        self.assertFalse(
+            (PROJECT_ROOT / "sb_energy_dashboard_modern.html").exists()
         )
 
     def test_agent_drawer_override_layer_loads_last(self):
@@ -57,7 +105,9 @@ class DashboardBuildTests(unittest.TestCase):
         assertion elsewhere, because all the text is still present.
         """
 
-        names = sorted(p.name for p in (PROJECT_ROOT / "frontend" / "css").glob("*.css"))
+        names = sorted(
+            p.name for p in (PROJECT_ROOT / "frontend" / "css").glob("*.css")
+        )
         base = [n for n in names if n.endswith("agent-drawer-base.css")]
         redesign = [n for n in names if n.endswith("agent-drawer-redesign.css")]
 

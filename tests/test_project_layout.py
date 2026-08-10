@@ -18,16 +18,14 @@ from unittest.mock import patch
 import matplotlib
 
 import sbepv
+from sbepv import paths
 from sbepv.api import config, state, validation
 from sbepv.api import main as app
 from sbepv.ingest import midc
 
 
-DASHBOARD_FILENAME = "sb_energy_dashboard_modern.html"
-
-
 def discovered_project_root() -> Path:
-    """Walk up from the backend module to the directory holding the dashboard.
+    """Walk up from the backend module to the source-project root.
 
     Derived independently of any ``PROJECT_ROOT`` constant so the assertions below
     compare two separately-computed answers instead of restating one of them.
@@ -35,24 +33,34 @@ def discovered_project_root() -> Path:
 
     start = Path(app.__file__).resolve()
     for candidate in start.parents:
-        if (candidate / DASHBOARD_FILENAME).is_file():
+        if (candidate / "pyproject.toml").is_file() and (
+            candidate / "src" / "sbepv"
+        ).is_dir():
             return candidate
-    raise AssertionError(
-        f"no ancestor of {start} contains {DASHBOARD_FILENAME}"
-    )
+    raise AssertionError(f"no ancestor of {start} contains the project landmarks")
 
 
 class ProjectRootTests(unittest.TestCase):
     def test_root_holds_every_landmark_the_backend_serves(self):
         root = discovered_project_root()
 
-        self.assertTrue((root / DASHBOARD_FILENAME).is_file())
+        self.assertTrue((root / "frontend" / "html" / "document.template.html").is_file())
         self.assertTrue((root / "public" / "annual-warning.png").is_file())
         self.assertTrue((root / "requirements.txt").is_file())
         self.assertTrue((root / "tests").is_dir())
 
     def test_backend_resolves_the_same_root(self):
-        self.assertEqual(app.PROJECT_ROOT, discovered_project_root())
+        self.assertEqual(config.PROJECT_ROOT, discovered_project_root())
+
+    def test_root_discovery_fails_clearly_without_project_landmarks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            anchor = Path(tmp) / "installed" / "sbepv" / "api" / "config.py"
+
+            with self.assertRaisesRegex(
+                paths.ProjectRootNotFoundError,
+                "could not find project root",
+            ):
+                paths.discover_project_root(anchor)
 
     def test_midc_cli_writes_to_the_repository_root(self):
         # The generated CSV location must not follow the module into a package.

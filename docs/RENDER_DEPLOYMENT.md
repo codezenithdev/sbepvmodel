@@ -5,9 +5,7 @@
 Create a private GitHub repository in the browser and upload these project files:
 
 - `src/` — the `sbepv` package and `run_pipeline.py`
-- `sb_energy_dashboard_modern.html` — the generated dashboard the backend serves
-- `frontend/` — the sources it is built from
-- `tools/build_dashboard.py`
+- `frontend/` — **required**; the backend assembles the dashboard from these sources
 - `public/` — **required**; `GET /annual-warning.png` reads from it
 - `pyproject.toml`
 - `requirements.txt`

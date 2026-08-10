@@ -1,55 +1,49 @@
 # Dashboard frontend sources
 
-`sb_energy_dashboard_modern.html` at the repository root is **generated**. Edit the
-partials here, then rebuild:
+This directory is the dashboard's **only source of truth**. There is no committed
+generated HTML file and no manual assembly step.
 
-```bash
-python tools/build_dashboard.py
-```
+Two consumers assemble the same sources directly:
 
-Commit the sources *and* the regenerated file together. `tests/test_dashboard_build.py`
-fails if they drift apart.
+- `src/sbepv/dashboard.py` builds the Render/FastAPI fallback and refreshes its
+  bounded cache whenever a template or partial changes.
+- `frontend/dashboard.ts` uses Vite raw imports to build the Sites/Vinext version.
 
-## Why the generated file is still committed
-
-Two consumers read it directly and neither runs a build step first:
-
-- `src/sbepv/api/main.py` serves it with `FileResponse`
-- `app/route.ts` inlines it at Vite build time with `import ... from "...?raw"`
-
-Four test modules also assert against its exact text (≈345 substring assertions,
-some sensitive to indentation and to the order elements appear in).
+After editing a partial, run the Python tests and `npm run build`. The former checks
+the source and Render contracts; the latter validates the Vite/Cloudflare contract.
 
 ## Layout
 
-| Directory | Contents |
+| Path | Contents |
 | --- | --- |
-| `css/` | 14 partials, ~6,100 lines, concatenated into the single `<style>` block |
-| `html/` | 9 markup partials, ~1,270 lines, plus `document.template.html` |
-| `js/` | 20 partials, ~8,100 lines, concatenated into the single `<script>` block |
+| `dashboard.ts` | Vite assembler used by `app/route.ts` |
+| `css/` | 14 partials concatenated into the single `<style>` block |
+| `html/` | 9 markup partials plus `document.template.html` |
+| `js/` | 20 partials concatenated into the single classic `<script>` block |
 
-`document.template.html` is the surrounding document with three slots —
-`{{CSS}}`, `{{MARKUP}}`, `{{JS}}` — that the build fills in.
+`document.template.html` is the surrounding document with three slots:
+`{{CSS}}`, `{{MARKUP}}`, and `{{JS}}`. Both assemblers require each slot exactly
+once, require every partial group to be nonempty, normalize line endings, and remove
+one trailing newline from each partial before joining them.
 
 ## Order is load-bearing
 
-Files are concatenated in **filename order**. Two specific constraints:
+Files are concatenated in filename order. Two specific constraints:
 
 - **`13-agent-drawer-base.css` must precede `14-agent-drawer-redesign.css`.** The
-  redesign is an override layer at equal specificity. Swapping them reverts the
-  Solar Agent drawer's appearance with no error and no failing text assertion.
-- **The JS partials are one classic script sharing globals**, not ES modules.
-  Several contain immediate-execution wiring (event listeners, `setInterval`, the
-  final `restoreDashboardState()` call) that depends on earlier partials having run.
+  redesign is an override layer at equal specificity. Swapping these files reverts
+  the Solar Agent drawer's appearance without a syntax error.
+- **The JavaScript partials are one classic script sharing globals.** Several carry
+  immediate-execution wiring (`event` listeners, `setInterval`, and the final
+  `restoreDashboardState()` call) that depends on earlier partials having run.
 
-Converting the JS to ES modules would introduce a real circular import:
-`resetClientState` reads `chatInput`/`chatSidebar`, which are declared ~900 lines
-later in the chat layer, while the chat layer calls back into `saveDashboardState`.
-That works today only because nothing executes until the whole script has parsed.
+Converting the JavaScript to ES modules would introduce a real circular import:
+`resetClientState` reads `chatInput` and `chatSidebar`, which are declared later in
+the chat layer, while the chat layer calls back into `saveDashboardState`. That
+works today because nothing executes until the whole classic script has parsed.
 
 ## Markup partials are slices, not fragments
 
-The markup partials are ordered pieces of one document, not independently
-well-formed fragments: `.app-shell` and `#annualPanel` are wrappers that span
-several partials. Only the concatenation is valid HTML. The build test is what
-guarantees the result is correct.
+The markup files are ordered pieces of one document, not independently well-formed
+fragments. `.app-shell` and `#annualPanel`, for example, span multiple files. Only
+the assembled result is valid HTML.

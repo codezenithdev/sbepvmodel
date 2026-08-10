@@ -14,7 +14,7 @@ from sbepv.api import state
 from sbepv.worker import run_annual
 from sbepv.worker import run_validation
 from sbepv.api import main as app
-from sbepv import model
+from sbepv import dashboard, model
 from sbepv.store import AgentStore
 
 
@@ -411,7 +411,7 @@ class IamApiTests(unittest.TestCase):
 class IamDashboardMarkupTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = Path("sb_energy_dashboard_modern.html").read_text(encoding="utf-8")
+        cls.html = dashboard.render_dashboard()
 
     def test_both_forms_offer_physical_default_and_martin_ruiz(self):
         for element_id in (

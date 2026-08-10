@@ -26,24 +26,20 @@ detectable and a lost lease cannot overwrite a newer attempt.
 ## Commands
 
 ```bash
-python -m unittest discover -v          # 262 tests; run from the repo root
+python -m unittest discover -v          # 272 tests; run from the repo root
 ```
 
 ```bash
 uvicorn sbepv.api.main:app --app-dir src --reload --port 8000
 ```
 
-```bash
-python tools/build_dashboard.py         # after editing frontend/
-```
-
-`npm run build` builds the separate vinext/Cloudflare frontend.
+`npm run build` validates and builds the separate vinext/Cloudflare frontend.
 
 ## Layout
 
 ```
 src/sbepv/
-  model.py  calibration.py  store.py  reporting.py  paths.py
+  model.py  calibration.py  store.py  reporting.py  paths.py  dashboard.py
   ingest/   bazefield.py  midc.py
   api/      main.py config.py state.py schemas.py validation.py timewindows.py
             artifacts.py plots.py job_store.py review_store.py baselines.py
@@ -51,8 +47,7 @@ src/sbepv/
   agent/    prompts.py tool_schemas.py scenario_math.py message_guards.py
             tools.py chat.py
   worker/   loop.py run_validation.py run_annual.py completion.py
-frontend/   css/ html/ js/    -> built into sb_energy_dashboard_modern.html
-tools/build_dashboard.py
+frontend/   dashboard.ts  css/ html/ js/   canonical dashboard sources
 app/ lib/ worker/ build/      TypeScript frontend (vinext on Cloudflare Workers)
 ```
 
@@ -110,15 +105,14 @@ worker thread picks a GUI backend and hangs — it does not raise.
 Related: `model.plot_results` calls `plt.close("all")`, a process-global that
 destroys figures belonging to other callers on the same thread.
 
-**5. The dashboard HTML is generated.**
+**5. `frontend/` is the dashboard's only source of truth.**
 
-`sb_energy_dashboard_modern.html` is built from `frontend/`. Edit the partials, run
-the build, commit both. `tests/test_dashboard_build.py` fails on drift.
-
-It stays committed because two consumers read it directly and neither runs a build
-first: `api/main.py` serves it with `FileResponse`, and `app/route.ts` inlines it at
-Vite build time via `?raw`. Roughly 345 test assertions match its exact text,
-including indentation and element ordering.
+There is no committed generated HTML. `sbepv.dashboard` assembles the Render
+fallback with a source-aware cache, while `frontend/dashboard.ts` assembles the
+Vinext/Sites version through Vite raw imports. Keep their slot replacement and
+newline behaviour equivalent. `tests/test_dashboard_build.py` exercises the Python
+contract, and `npm run build` exercises the Vite contract. Roughly 345 test
+assertions match the assembled text, including indentation and element ordering.
 
 Load order inside `frontend/` is filename order and is load-bearing:
 `13-agent-drawer-base.css` must precede `14-agent-drawer-redesign.css` (equal
@@ -135,7 +129,7 @@ not ES modules.
   pandas/matplotlib in `api/plots.py` and `worker/run_annual.py`. Tests inject a fake
   `openai` via `sys.modules` *after* import time. Do not hoist these to the top.
 - **The repo root is found by landmark, not by depth.** `sbepv.paths` walks up to the
-  directory containing `sb_energy_dashboard_modern.html`. Do not reintroduce
+  directory containing `pyproject.toml` and `src/sbepv/`. Do not reintroduce
   `Path(__file__).parent` for repo-relative paths.
 - **`_JobCancelled` is matched by `isinstance` across a module boundary.** Define it
   once in `api/job_store.py`; a duplicate turns cancellations into hard errors.
@@ -165,7 +159,7 @@ contract, route table, and settings.
 | `bazefield_historian.py` | `src/sbepv/ingest/bazefield.py` |
 | `midc_stac_hourly.py` | `src/sbepv/ingest/midc.py` |
 | `run_pipeline.py` | `src/run_pipeline.py` |
-| single-file dashboard | `frontend/` + `tools/build_dashboard.py` |
+| single-file dashboard | `frontend/` + Python/Vite runtime assemblers |
 | `uvicorn app:app` | `uvicorn sbepv.api.main:app --app-dir src` |
 
 Test imports changed shape but not content:
@@ -183,8 +177,6 @@ from sbepv.api import config, state      # new: patch targets that moved out of 
 
 Pre-existing, deliberately not fixed because each changes behaviour:
 
-- Three test modules read the dashboard HTML relative to the working directory, so
-  the suite only passes from the repo root.
 - `ingest.bazefield.run_historian` calls `load_dotenv()` with a CWD-relative default
   while the API loads the same file by absolute path — a CLI run from elsewhere
   reports "No API key found" though `.env` exists.

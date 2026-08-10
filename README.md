@@ -45,17 +45,17 @@ src/sbepv/            the Python package
     run_validation.py one calibration run
     run_annual.py     one annual simulation
     completion.py     recording success or failure, lease-fenced
+  dashboard.py        assembles frontend/ for the Render fallback
 src/run_pipeline.py   standalone batch driver (no importers)
 
-frontend/             sources for the dashboard -- see frontend/README.md
-sb_energy_dashboard_modern.html   GENERATED from frontend/; do not hand-edit
-tools/build_dashboard.py          the build
+frontend/             sole dashboard source -- see frontend/README.md
+  dashboard.ts        Vite assembler for the Sites frontend
 
 app/ lib/ worker/ build/          vinext frontend on Cloudflare Workers (TypeScript)
 public/                           static assets, served by BOTH front doors
 deploy/render.yaml                Render service definition
 docs/                             deployment, calibration workflow, design QA
-tests/                            262 tests, stdlib unittest
+tests/                            272 tests, stdlib unittest
 ```
 
 ## Running it
@@ -81,21 +81,16 @@ makes the flag unnecessary.
 python -m unittest discover -v
 ```
 
-262 tests, one skipped (it needs MIDC reconciliation fixtures that are not in the
-repo). **Run from the repository root** — three test modules read the dashboard HTML
-by a path relative to the working directory.
+272 tests, one skipped (it needs MIDC reconciliation fixtures that are not in the
+repo). Run from the repository root.
 
 ## Editing the dashboard
 
-`sb_energy_dashboard_modern.html` is generated. Edit `frontend/`, then:
-
-```bash
-python tools/build_dashboard.py
-```
-
-Commit the sources and the regenerated file together; `tests/test_dashboard_build.py`
-fails if they drift. See [frontend/README.md](frontend/README.md) for why the
-generated file stays committed and why file order matters.
+Edit the partials in `frontend/`; there is no generated HTML file to rebuild or
+commit. FastAPI assembles them for the Render fallback, and Vite assembles them for
+Sites. Run the Python tests and `npm run build` before committing. See
+[frontend/README.md](frontend/README.md) for the shared assembly contract and why
+file order matters.
 
 ## Things worth knowing before you change something
 
@@ -119,8 +114,8 @@ set it at import time; `api/plots.py` imports pyplot lazily and relies on that h
 already happened. Break the chain and the worker thread picks a GUI backend and hangs.
 
 **The repository root is found by landmark, not by depth.** `sbepv.paths` walks up to
-the directory containing `sb_energy_dashboard_modern.html`, so `.env`, `outputs/`,
-`public/`, and the served HTML resolve correctly regardless of where a module sits.
+the directory containing `pyproject.toml` and `src/sbepv/`, so `.env`, `outputs/`,
+`public/`, and `frontend/` resolve correctly regardless of where a module sits.
 
 ## Deployment
 
@@ -132,8 +127,6 @@ and [deploy/render.yaml](deploy/render.yaml).
 
 Not introduced by the current layout, and each worth its own change:
 
-- Three test modules read the dashboard HTML relative to the working directory, so
-  the suite only passes when run from the repository root.
 - `sbepv.ingest.bazefield.run_historian` calls `load_dotenv()` with a CWD-relative
   default, while the API loads the same file by absolute path. A CLI run from another
   directory reports "No API key found" even though `.env` exists.
