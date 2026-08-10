@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sbepv"
+version = "1.0.0"
+description = "SB Energy PV operations dashboard: physics model, calibration workflow, and FastAPI backend"
+requires-python = ">=3.11"
+
+# Runtime dependencies are deliberately not duplicated here. requirements.txt is
+# authoritative -- it is what the Render build command installs, and keeping a
+# second pinned list in sync by hand is a reliable way to drift.
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sbepv*"]
+
+# src/run_pipeline.py is intentionally excluded: it is a standalone batch script
+# with no importers, run as `python src/run_pipeline.py`, not part of the API.

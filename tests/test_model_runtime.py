@@ -4,7 +4,7 @@ from copy import copy
 import numpy as np
 import pvmismatch as pvm
 
-import sbe_pv_model as model
+from sbepv import model
 
 
 class FastMismatchParityTests(unittest.TestCase):

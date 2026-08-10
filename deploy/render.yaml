@@ -1,0 +1,53 @@
+# Render service definition for the SB Energy dashboard backend.
+#
+# Codifies what docs/RENDER_DEPLOYMENT.md describes in prose so the deployment is
+# reviewable in git. Values marked `sync: false` are set in the Render dashboard
+# and must never be committed.
+#
+# Blueprint docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: sb-energy-dashboard
+    runtime: python
+    region: oregon
+    plan: starter
+    healthCheckPath: /healthz
+
+    buildCommand: pip install -r requirements.txt
+    # --app-dir puts src/ on sys.path so `sbepv` resolves without an install step.
+    startCommand: uvicorn sbepv.api.main:app --app-dir src --host 0.0.0.0 --port $PORT
+
+    disk:
+      name: outputs
+      mountPath: /var/data
+      sizeGB: 10
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.14
+
+      # Generated runs must land on the persistent disk, not the ephemeral
+      # filesystem. The agent SQLite database lives under this path too.
+      - key: PV_DASHBOARD_OUTPUT_DIR
+        value: /var/data/outputs
+
+      # Secrets: set in the Render dashboard.
+      - key: BAZEFIELD_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DASHBOARD_BASIC_USER
+        sync: false
+      - key: DASHBOARD_BASIC_PASSWORD
+        sync: false
+
+    # Deliberately unset, documented here so the omissions are visible:
+    #
+    #   OPENAI_MODEL                   defaults in the code; set only if the chat
+    #                                  smoke test reports a model-access error
+    #   BAZEFIELD_BASE_URL             defaults to the production Bazefield host
+    #   PV_DASHBOARD_ALLOWED_ORIGINS   CORS allowlist; add the Sites URL when the
+    #                                  hosted dashboard calls this API directly
+    #   PV_DASHBOARD_ENABLE_LEGACY_RUN leave unset so every calibration run must
+    #                                  pass through the data-quality review

@@ -18,6 +18,8 @@ from urllib.request import Request, urlopen
 import pandas as pd
 from pandas.errors import EmptyDataError, ParserError
 
+from sbepv.paths import discover_project_root
+
 
 API_URL = "https://midcdmz.nlr.gov/apps/data_api.pl"
 SITE = "STAC"
@@ -388,11 +390,11 @@ def fetch_hourly_data(
 
 
 def output_path_for(start_date: date, end_date: date) -> Path:
-    """Return the deterministic output location beside this script."""
+    """Return the deterministic output location at the repository root."""
     filename = (
         f"MIDC_STAC_hourly_{start_date:%Y%m%d}_to_{end_date:%Y%m%d}.csv"
     )
-    return Path(__file__).resolve().parent / filename
+    return discover_project_root(Path(__file__)) / filename
 
 
 def write_csv_atomically(frame: pd.DataFrame, output_path: Path) -> None:

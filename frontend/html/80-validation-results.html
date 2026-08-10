@@ -1,0 +1,289 @@
+            <section class="validation-results-shell validation-only" aria-labelledby="validationResultsHeading">
+                <div class="annual-results-heading">
+                    <div>
+                        <h2 id="validationResultsHeading">Model results</h2>
+                        <p id="validationResultsDescription">Measured energy, uncalibrated physics-model performance, and deltas over the selected window.</p>
+                    </div>
+                    <span class="annual-results-note" id="validationResultsNote">Physics model</span>
+                </div>
+
+                <section class="validation-run-context" id="validationRunContext"
+                    aria-label="Completed model run context" aria-live="polite" hidden>
+                    <div class="validation-run-context-grid">
+                        <div class="validation-run-context-item">
+                            <div class="validation-run-context-title">Measured-data window</div>
+                            <div class="validation-run-context-range" id="validationRunContextRange">--</div>
+                            <div class="validation-run-context-timezone" id="validationRunContextTimezone">--</div>
+                        </div>
+                        <div class="validation-run-context-item">
+                            <div class="validation-run-context-title">
+                                <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                                <span>SolarEdge efficiency</span>
+                            </div>
+                            <dl class="validation-run-context-metrics">
+                                <div>
+                                    <dt>Inverter</dt>
+                                    <dd id="validationRunContextSeInverter">--</dd>
+                                </div>
+                                <div>
+                                    <dt>BOS</dt>
+                                    <dd id="validationRunContextSeBos">--</dd>
+                                </div>
+                                <div>
+                                    <dt>Total</dt>
+                                    <dd id="validationRunContextSeTotal">--</dd>
+                                </div>
+                            </dl>
+                        </div>
+                        <div class="validation-run-context-item">
+                            <div class="validation-run-context-title">
+                                <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                                <span>Solectria efficiency</span>
+                            </div>
+                            <dl class="validation-run-context-metrics">
+                                <div>
+                                    <dt>Inverter</dt>
+                                    <dd id="validationRunContextSolInverter">--</dd>
+                                </div>
+                                <div>
+                                    <dt>BOS</dt>
+                                    <dd id="validationRunContextSolBos">--</dd>
+                                </div>
+                                <div>
+                                    <dt>Total</dt>
+                                    <dd id="validationRunContextSolTotal">--</dd>
+                                </div>
+                            </dl>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="calibration-factor-panel hidden" id="calibrationFactorPanel" aria-labelledby="calibrationFactorHeading">
+                    <div class="calibration-factor-heading">
+                        <div>
+                            <div class="calibration-factor-eyebrow">Applied model calibration</div>
+                            <h3 id="calibrationFactorHeading">Seasonal calibration factors</h3>
+                            <p>Factors use all rows kept during review.</p>
+                        </div>
+                    </div>
+                    <div class="calibration-audit-line" id="calibrationAuditLine"></div>
+                    <div class="calibration-factor-table-wrap">
+                        <table class="calibration-factor-table">
+                            <thead>
+                                <tr>
+                                    <th>Season</th>
+                                    <th>Coverage</th>
+                                    <th>SolarEdge factor</th>
+                                    <th>Solectria factor</th>
+                                    <th>Confidence</th>
+                                </tr>
+                            </thead>
+                            <tbody id="calibrationFactorRows"></tbody>
+                        </table>
+                    </div>
+                    <div class="calibration-driver-insights" id="calibrationDriverInsights"></div>
+                </section>
+
+                <section class="validation-system-summaries" aria-label="System calibration summary">
+                    <article class="validation-system-summary solaredge-summary" aria-labelledby="validationSolarEdgeSummaryHeading">
+                        <div class="validation-system-summary-heading">
+                            <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                            <div>
+                                <h3 id="validationSolarEdgeSummaryHeading">SolarEdge</h3>
+                                <p>Module-level inverter model</p>
+                            </div>
+                        </div>
+                        <div class="validation-uncalibrated-comparison" id="seUncalibratedComparison" hidden>
+                            <div class="validation-delta-copy">
+                                <strong>Before calibration</strong>
+                                <!-- <span>Original physics-model result</span> -->
+                            </div>
+                            <div class="validation-uncalibrated-values">
+                                <div class="validation-uncalibrated-metric">
+                                    <span class="validation-uncalibrated-label">Predicted</span>
+                                    <span class="validation-uncalibrated-value"><span id="statSeUncalibratedPred">--</span> <span class="stat-unit">kWh</span></span>
+                                </div>
+                                <div class="validation-uncalibrated-metric">
+                                    <span class="validation-uncalibrated-label">Delta</span>
+                                    <span class="validation-uncalibrated-value" id="statSeUncalibratedPct">--</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="validation-calibrated-stage">
+                            <strong class="validation-stage-label validation-prediction-stage-label">Physics-model prediction</strong>
+                            <div class="validation-calibrated-values">
+                                <div class="validation-system-metric validation-predicted-metric">
+                                    <span class="validation-metric-label">Predicted</span>
+                                    <div class="validation-metric-value"><span id="statSePred">--</span> <span class="stat-unit">kWh</span></div>
+                                </div>
+                                <div class="validation-delta-row">
+                                    <div class="validation-delta-copy">
+                                        <strong>Model delta</strong>
+                                        <span>Predicted minus measured, relative to measured energy</span>
+                                    </div>
+                                    <div class="validation-delta-value" id="statSePct">--</div>
+                                </div>
+                                <span class="validation-flow-marker" aria-hidden="true">&rarr;</span>
+                            </div>
+                        </div>
+                        <div class="validation-system-metric validation-measured-metric">
+                            <span class="validation-stage-label">Measured energy</span>
+                            <div class="validation-metric-value"><span id="statSeMeasured">--</span> <span class="stat-unit">kWh</span></div>
+                        </div>
+                    </article>
+
+                    <article class="validation-system-summary solectria-summary" aria-labelledby="validationSolectriaSummaryHeading">
+                        <div class="validation-system-summary-heading">
+                            <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                            <div>
+                                <h3 id="validationSolectriaSummaryHeading">Solectria</h3>
+                                <p>String-level model</p>
+                            </div>
+                        </div>
+                        <div class="validation-uncalibrated-comparison" id="solUncalibratedComparison" hidden>
+                            <div class="validation-delta-copy">
+                                <strong>Before calibration</strong>
+                                <!-- <span>Original physics-model result</span> -->
+                            </div>
+                            <div class="validation-uncalibrated-values">
+                                <div class="validation-uncalibrated-metric">
+                                    <span class="validation-uncalibrated-label">Predicted</span>
+                                    <span class="validation-uncalibrated-value"><span id="statSolUncalibratedPred">--</span> <span class="stat-unit">kWh</span></span>
+                                </div>
+                                <div class="validation-uncalibrated-metric">
+                                    <span class="validation-uncalibrated-label">Delta</span>
+                                    <span class="validation-uncalibrated-value" id="statSolUncalibratedPct">--</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="validation-calibrated-stage">
+                            <strong class="validation-stage-label validation-prediction-stage-label">Physics-model prediction</strong>
+                            <div class="validation-calibrated-values">
+                                <div class="validation-system-metric validation-predicted-metric">
+                                    <span class="validation-metric-label">Predicted</span>
+                                    <div class="validation-metric-value"><span id="statSolPred">--</span> <span class="stat-unit">kWh</span></div>
+                                </div>
+                                <div class="validation-delta-row">
+                                    <div class="validation-delta-copy">
+                                        <strong>Model delta</strong>
+                                        <span>Predicted minus measured, relative to measured energy</span>
+                                    </div>
+                                    <div class="validation-delta-value" id="statSolPct">--</div>
+                                </div>
+                                <span class="validation-flow-marker" aria-hidden="true">&rarr;</span>
+                            </div>
+                        </div>
+                        <div class="validation-system-metric validation-measured-metric">
+                            <span class="validation-stage-label">Measured energy</span>
+                            <div class="validation-metric-value"><span id="statSolMeasured">--</span> <span class="stat-unit">kWh</span></div>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="validation-comparison-strip" aria-label="Measured system comparison">
+                    <div class="validation-comparison-intro">
+                        <span class="validation-comparison-symbol" aria-hidden="true">&Delta;</span>
+                        <div>
+                            <h3>Measured system comparison</h3>
+                            <p>SolarEdge measured energy minus Solectria measured energy.</p>
+                        </div>
+                    </div>
+                    <div class="validation-comparison-metric">
+                        <span class="validation-comparison-label">Energy difference</span>
+                        <div class="validation-comparison-value"><span id="statMeasuredDiff">--</span> <span class="stat-unit">kWh</span></div>
+                    </div>
+                    <div class="validation-comparison-metric">
+                        <span class="validation-comparison-label">Percentage difference</span>
+                        <div class="validation-comparison-value" id="statMeasuredDiffPct">--</div>
+                        <div class="validation-comparison-helper">Relative to Solectria measured energy</div>
+                    </div>
+                </section>
+
+            <section class="analysis-layout" aria-label="Performance charts">
+                <div class="charts-grid" id="chartGrid">
+                    <article class="chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">Measured Power </div>
+                                <div class="chart-meta">SolarEdge and Solectria measured AC power - kW</div>
+                            </div>
+                            <span class="chart-badge">Input</span>
+                        </div>
+                        <div class="chart-placeholder" id="measuredPowerChartBox">
+                            <div class="chart-icon" id="measuredPowerIcon">kW</div>
+                            <img class="chart-image" id="measuredPowerImg" alt="Measured power input chart" style="display:none;">
+                        </div>
+                    </article>
+
+                    <article class="chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">Measured Irradiance </div>
+                                <div class="chart-meta">DNI, GHI, and DHI from Bazefield - W/m2</div>
+                            </div>
+                            <span class="chart-badge">Weather</span>
+                        </div>
+                        <div class="chart-placeholder" id="irradianceChartBox">
+                            <div class="chart-icon" id="irradianceIcon">W/m2</div>
+                            <img class="chart-image" id="irradianceImg" alt="Irradiance input chart" style="display:none;">
+                        </div>
+                    </article>
+
+                    <article class="chart-card calibration-chart-card" id="uncalibratedEnergyChartCard" hidden>
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">Uncalibrated Cumulative Energy</div>
+                                <div class="chart-meta">Measured vs physics-model prediction before seasonal calibration</div>
+                            </div>
+                            <span class="chart-badge">Before calibration</span>
+                        </div>
+                        <div class="chart-placeholder" id="uncalibratedEnergyChartBox">
+                            <div class="chart-icon" id="uncalibratedEnergyIcon">kWh</div>
+                            <img class="chart-image" id="uncalibratedEnergyImg" alt="Uncalibrated cumulative energy chart" style="display:none;">
+                        </div>
+                    </article>
+
+                    <article class="chart-card calibration-chart-card" id="uncalibratedAcChartCard" hidden>
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title">Uncalibrated AC Power</div>
+                                <div class="chart-meta">SolarEdge and Solectria physics-model predictions before seasonal calibration</div>
+                            </div>
+                            <span class="chart-badge">Before calibration</span>
+                        </div>
+                        <div class="chart-placeholder" id="uncalibratedAcChartBox">
+                            <div class="chart-icon" id="uncalibratedAcIcon">AC</div>
+                            <img class="chart-image" id="uncalibratedAcImg" alt="Uncalibrated AC power chart" style="display:none;">
+                        </div>
+                    </article>
+
+                    <article class="chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title" id="validationEnergyChartTitle">Physics-Model Cumulative Energy</div>
+                                <div class="chart-meta">Measured vs predicted - kWh over the selected window</div>
+                            </div>
+                            <span class="chart-badge">Energy</span>
+                        </div>
+                        <div class="chart-placeholder" id="energyChartBox">
+                            <div class="chart-icon" id="energyIcon">kWh</div>
+                            <img class="chart-image" id="energyImg" alt="Cumulative energy chart" style="display:none;">
+                        </div>
+                    </article>
+
+                    <article class="chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <div class="chart-title" id="validationAcChartTitle">Physics-Model AC Power</div>
+                                <div class="chart-meta">SolarEdge vs Solectria - predicted and measured AC power</div>
+                            </div>
+                            <span class="chart-badge">Power</span>
+                        </div>
+                        <div class="chart-placeholder" id="acChartBox">
+                            <div class="chart-icon" id="acIcon">AC</div>
+                            <img class="chart-image" id="acImg" alt="AC power chart" style="display:none;">
+                        </div>
+                    </article>
+                </div>
+            </section>
+            </section>

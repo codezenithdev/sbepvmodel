@@ -11,9 +11,12 @@ from unittest.mock import Mock, patch
 import pandas as pd
 from fastapi.testclient import TestClient
 
-import app
-from agent_store import AgentStore
-from scenario_reporting import sha256_file
+from sbepv.api import config, review_store, state
+from sbepv.worker import loop as worker_loop
+from sbepv import reporting
+from sbepv.api import main as app
+from sbepv.store import AgentStore
+from sbepv.reporting import sha256_file
 
 
 class CalibrationReviewApiTests(unittest.TestCase):
@@ -27,18 +30,18 @@ class CalibrationReviewApiTests(unittest.TestCase):
         self.addCleanup(self._remove_temporary_root)
 
         self.store = AgentStore(self.root / "agent.sqlite3")
-        self._start_patch(patch.object(app, "AGENT_STORE", self.store))
+        self._start_patch(patch.object(state, "AGENT_STORE", self.store))
         self._start_patch(
-            patch.object(app, "CALIBRATION_REVIEW_DIR", self.review_dir)
+            patch.object(config, "CALIBRATION_REVIEW_DIR", self.review_dir)
         )
 
         self.worker_wake = Mock()
-        self._start_patch(patch.object(app, "_WORKER_WAKE", self.worker_wake))
+        self._start_patch(patch.object(state, "_WORKER_WAKE", self.worker_wake))
         self.start_worker = self._start_patch(
-            patch.object(app, "_start_model_worker")
+            patch.object(worker_loop, "_start_model_worker")
         )
         self.stop_worker = self._start_patch(
-            patch.object(app, "_stop_model_worker")
+            patch.object(worker_loop, "_stop_model_worker")
         )
         self.model_run = self._start_patch(
             patch.object(
@@ -57,8 +60,8 @@ class CalibrationReviewApiTests(unittest.TestCase):
             )
         )
 
-        self.saved_jobs = dict(app.JOBS)
-        app.JOBS.clear()
+        self.saved_jobs = dict(state.JOBS)
+        state.JOBS.clear()
         self.addCleanup(self._restore_jobs)
 
         self.client = TestClient(app.app)
@@ -73,8 +76,8 @@ class CalibrationReviewApiTests(unittest.TestCase):
         shutil.rmtree(self.root, ignore_errors=False)
 
     def _restore_jobs(self) -> None:
-        app.JOBS.clear()
-        app.JOBS.update(self.saved_jobs)
+        state.JOBS.clear()
+        state.JOBS.update(self.saved_jobs)
 
     def _write_synthetic_historian_csv(self, **kwargs) -> int:
         destination = Path(kwargs["output_csv"])
@@ -186,9 +189,9 @@ class CalibrationReviewApiTests(unittest.TestCase):
                 wraps=app.quality_issue_rows,
             ) as rows_loader,
             patch.object(
-                app,
+                reporting,
                 "verify_source_sha256",
-                wraps=app.verify_source_sha256,
+                wraps=reporting.verify_source_sha256,
             ) as source_verifier,
         ):
             response = self._create_review()
@@ -371,7 +374,7 @@ class CalibrationReviewApiTests(unittest.TestCase):
         decisions = self._recommended_decisions(review["report"])
 
         with patch.object(
-            app,
+            review_store,
             "_save_calibration_review",
             side_effect=OSError("simulated receipt write failure"),
         ):
@@ -404,7 +407,7 @@ class CalibrationReviewApiTests(unittest.TestCase):
         decisions = self._recommended_decisions(review["report"])
 
         with patch.object(
-            app,
+            review_store,
             "_save_calibration_review",
             side_effect=OSError("simulated receipt write failure"),
         ):
@@ -498,7 +501,7 @@ class CalibrationReviewApiTests(unittest.TestCase):
         self.worker_wake.set.assert_not_called()
 
     def test_review_rejects_expected_and_returned_row_overflow(self) -> None:
-        with patch.object(app, "CALIBRATION_REVIEW_MAX_ROWS", 5):
+        with patch.object(config, "CALIBRATION_REVIEW_MAX_ROWS", 5):
             expected_response = self._create_review()
         self.assertEqual(expected_response.status_code, 422, expected_response.text)
         self.historian_run.assert_not_called()
@@ -508,7 +511,7 @@ class CalibrationReviewApiTests(unittest.TestCase):
             return 7
 
         self.historian_run.side_effect = overreported_rows
-        with patch.object(app, "CALIBRATION_REVIEW_MAX_ROWS", 6):
+        with patch.object(config, "CALIBRATION_REVIEW_MAX_ROWS", 6):
             returned_response = self._create_review()
         self.assertEqual(returned_response.status_code, 422, returned_response.text)
         self.assertFalse(list(self.review_dir.iterdir()))
@@ -616,7 +619,7 @@ class CalibrationReviewApiTests(unittest.TestCase):
         self.assertFalse(orphan.exists())
 
     def test_private_review_snapshot_has_no_public_source_url(self) -> None:
-        with patch.object(app, "OUTPUT_DIR", self.root):
+        with patch.object(config, "OUTPUT_DIR", self.root):
             public_source = self.root / "source.csv"
             private_source = self.root / ".calibration_reviews" / "source.csv"
             self.assertEqual(

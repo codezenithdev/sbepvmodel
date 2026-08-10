@@ -2,15 +2,15 @@
 
 One command to run the whole flow:
 
-    1) bazefield_historian.py  -> pulls the STAC1 data to stac1.csv
-    2) sbe_pv_model.py         -> reads stac1.csv, writes predictions + plots + Excel
+    1) sbepv.ingest.bazefield  -> pulls the STAC1 data to stac1.csv
+    2) sbepv.model             -> reads stac1.csv, writes predictions + plots + Excel
 
 Usage:
-    python run_pipeline.py
+    python src/run_pipeline.py
 
-Settings live in the two scripts themselves:
-  - Time window / interval  -> FROM_TIME / TO_TIME / INTERVAL in bazefield_historian.py
-  - Model options / output  -> constants at the top of sbe_pv_model.py
+Settings live in the two modules themselves:
+  - Time window / interval  -> FROM_TIME / TO_TIME / INTERVAL in sbepv/ingest/bazefield.py
+  - Model options / output  -> constants at the top of sbepv/model.py
 The historian's OUTPUT_FILE must match the model's INPUT_CSV (both default to stac1.csv).
 """
 
@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import sys
 
-import bazefield_historian as historian
-import sbe_pv_model as model
+from sbepv import model
+from sbepv.ingest import bazefield as historian
 
 
 def main() -> int:

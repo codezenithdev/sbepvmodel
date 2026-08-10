@@ -1,0 +1,210 @@
+        .annual-fallback-drawer.visible {
+            display: flex;
+        }
+
+        .annual-fallback-close {
+            align-self: flex-end;
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: transparent;
+            color: var(--muted-strong);
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        .annual-fallback-close:hover,
+        .annual-fallback-close:focus-visible {
+            background: var(--surface-strong);
+            outline: 3px solid rgba(15, 118, 110, 0.18);
+        }
+
+        .annual-fallback-warning-mark {
+            width: 72px;
+            height: 72px;
+            margin: 18px auto;
+        }
+
+        .annual-fallback-warning-mark img {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .annual-fallback-drawer h2 {
+            max-width: 310px;
+            margin: 0 auto;
+            text-align: center;
+            font-size: 25px;
+            font-weight: 860;
+            line-height: 1.15;
+        }
+
+        .annual-fallback-subtitle {
+            margin: 7px 0 24px;
+            text-align: center;
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 780;
+        }
+
+        .annual-fallback-copy {
+            display: grid;
+            gap: 14px;
+            color: var(--muted-strong);
+            font-size: 13px;
+        }
+
+        .annual-fallback-details {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .annual-fallback-details h3 {
+            font-size: 12px;
+            font-weight: 850;
+        }
+
+        .annual-fallback-factor-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin-top: 11px;
+        }
+
+        .annual-fallback-factor {
+            min-width: 0;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+        }
+
+        .annual-fallback-factor span,
+        .annual-fallback-factor strong {
+            display: block;
+        }
+
+        .annual-fallback-factor span {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 760;
+        }
+
+        .annual-fallback-factor strong {
+            margin-top: 3px;
+            font-size: 15px;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .annual-fallback-modified {
+            margin-top: 12px;
+            color: var(--muted-strong);
+            font-size: 11px;
+        }
+
+        .annual-fallback-actions {
+            display: grid;
+            gap: 9px;
+            margin-top: 20px;
+        }
+
+        .annual-fallback-confirm,
+        .annual-fallback-cancel {
+            min-height: 44px;
+            padding: 10px 14px;
+            border-radius: 7px;
+            font-weight: 830;
+            cursor: pointer;
+        }
+
+        .annual-fallback-confirm {
+            background: var(--accent);
+            color: #ffffff;
+            box-shadow: 0 7px 18px rgba(15, 118, 110, 0.2);
+        }
+
+        .annual-fallback-confirm:hover,
+        .annual-fallback-confirm:focus-visible {
+            background: var(--accent-strong);
+            outline: 3px solid rgba(15, 118, 110, 0.22);
+        }
+
+        .annual-fallback-cancel {
+            border: 1px solid var(--border-strong);
+            background: var(--surface);
+            color: var(--text);
+        }
+
+        .annual-fallback-cancel:hover,
+        .annual-fallback-cancel:focus-visible {
+            background: var(--surface-strong);
+            outline: 3px solid rgba(15, 118, 110, 0.16);
+        }
+
+        .annual-result-calibration {
+            display: none;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 1px;
+            margin: 0 0 16px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--success);
+            border-radius: 8px;
+            background: var(--border);
+        }
+
+        .annual-result-calibration.visible {
+            display: grid;
+        }
+
+        .annual-result-calibration[hidden] {
+            display: none !important;
+        }
+
+        .annual-result-calibration.fallback-used {
+            border-left-color: var(--warning);
+        }
+
+        .annual-result-calibration-item {
+            min-width: 0;
+            padding: 13px 14px;
+            background: var(--surface);
+        }
+
+        .annual-result-detail-row {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: 150px minmax(0, 1fr);
+            gap: 12px;
+            padding: 11px 14px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            font-size: 11px;
+        }
+
+        .annual-result-detail-row span {
+            color: var(--muted);
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .annual-result-detail-row strong {
+            overflow-wrap: anywhere;
+            font-weight: 760;
+        }
+
+        .annual-stat-physics {
+            grid-column: span 6;
+            border-top: 3px solid var(--border-strong);
+            background: var(--surface-muted);
+        }
+
+        .annual-stat-physics[hidden] {
+            display: none;
+        }
+

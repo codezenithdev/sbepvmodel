@@ -1,0 +1,191 @@
+            <section class="controls-bar validation-only" id="analysisControls" aria-label="Analysis controls">
+                <div class="controls-header">
+                    <div class="validation-heading-copy">
+                        <p class="validation-kicker">Measured vs modeled</p>
+                        <h2 class="section-title">Model configuration</h2>
+                        <p class="section-subtitle">Configure the measured-data window and both PV model paths, then choose whether to fit seasonal calibration factors.</p>
+                    </div>
+                </div>
+
+                <div class="annual-config-grid validation-config-grid">
+                    <section class="annual-config-card" aria-labelledby="validationWindowHeading">
+                        <div class="annual-card-heading has-corner-help">
+                            <span class="annual-step" aria-hidden="true">1</span>
+                            <div>
+                                <div class="heading-with-help">
+                                    <h3 id="validationWindowHeading">Measured-data window</h3>
+                                    <span class="help-tip-wrap card-corner-help">
+                                        <button class="help-tip" type="button" aria-label="Explain model analysis fields" aria-describedby="calibrationHelpTooltip" aria-expanded="false">?</button>
+                                        <span class="help-tooltip" id="calibrationHelpTooltip" role="tooltip">Choose the measured-data start and end in Mountain time, set the sampling interval, then adjust backtracking or curtailment if needed. Leave calibration off for physics-model results, or select it to review source data and fit seasonal factors.</span>
+                                    </span>
+                                </div>
+                                <p>Select the measured-data period in Mountain time.</p>
+                            </div>
+                        </div>
+                        <div class="validation-window-grid">
+                            <label class="control-field">
+                                <span class="date-label">Start date</span>
+                                <input type="date" class="date-input" id="fromDate" value="2026-06-20" required>
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">Start time (24-hour)</span>
+                                <input type="text" class="date-input time-24-input" id="fromTime" value="00:00" placeholder="HH:MM" pattern="(?:[01]\d|2[0-3]):[0-5]\d" maxlength="5" autocomplete="off" aria-describedby="validationTimeFormat">
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">End date</span>
+                                <input type="date" class="date-input" id="toDate" value="2026-06-27" required>
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">End time (24-hour)</span>
+                                <input type="text" class="date-input time-24-input" id="toTime" value="00:00" placeholder="HH:MM" pattern="(?:[01]\d|2[0-3]):[0-5]\d" maxlength="5" autocomplete="off" aria-describedby="validationTimeFormat">
+                            </label>
+                        </div>
+                        <div class="annual-time-note" id="validationTimeFormat">
+                            <span class="annual-time-dot" aria-hidden="true"></span>
+                            24-hour HH:MM &middot; America/Denver
+                        </div>
+
+                        <div class="annual-card-divider"></div>
+                        <div class="annual-subheading" id="validationOptionsHeading">Model options</div>
+                        <div class="validation-options-block" aria-labelledby="validationOptionsHeading">
+                            <label class="control-field">
+                                <span class="date-label">Time interval</span>
+                                <span class="interval-row">
+                                    <input type="number" class="date-input" id="intervalValue" value="1" min="1" step="1" inputmode="numeric">
+                                    <select class="date-input" id="intervalUnit">
+                                        <option value="minutes">minutes</option>
+                                        <option value="hours" selected>hours</option>
+                                        <option value="days">days</option>
+                                    </select>
+                                </span>
+                            </label>
+                            <div class="annual-option-grid">
+                                <label class="checkbox-control">
+                                    <input type="checkbox" id="backtrack" checked>
+                                    <span>Backtracking</span>
+                                </label>
+                                <label class="checkbox-control">
+                                    <input type="checkbox" id="curtailmentEnabled">
+                                    <span>Clipping / Curtailment</span>
+                                </label>
+                            </div>
+                            <label class="control-field curtailment-limit annual-limit" id="curtailmentLimitGroup">
+                                <span class="limit-copy">
+                                    <span class="date-label">Curtailment limit</span>
+                                    <span class="limit-helper">Maximum AC output in kW</span>
+                                </span>
+                                <input type="number" class="date-input" id="curtailmentLimitKw" min="0.1" step="0.1" value="125" placeholder="125" disabled>
+                            </label>
+                            <label class="checkbox-control calibration-mode-toggle">
+                                <input type="checkbox" id="calibrateModel">
+                                <span>
+                                    <strong>Calibrate the model</strong>
+                                    <small>Review flagged Bazefield rows and fit seasonal factors before producing results.</small>
+                                </span>
+                            </label>
+                            <p class="calibration-mode-note" id="calibrationSeasonNote" role="note">
+                                Meteorological windows: Winter Dec&ndash;Feb, Spring Mar&ndash;May, Summer Jun&ndash;Aug, Fall Sep&ndash;Nov.
+                            </p>
+                        </div>
+                    </section>
+
+                    <section class="annual-config-card model-settings" aria-labelledby="validationEfficiencyHeading">
+                        <div class="annual-card-heading has-corner-help">
+                            <span class="annual-step" aria-hidden="true">2</span>
+                            <div>
+                                <div class="heading-with-help">
+                                    <h3 id="validationEfficiencyHeading">System efficiencies</h3>
+                                    <span class="help-tip-wrap card-corner-help">
+                                        <button class="help-tip" type="button" aria-label="Explain calibration system efficiency fields" aria-describedby="calibrationEfficiencyHelpTooltip" aria-expanded="false">?</button>
+                                        <span class="help-tooltip" id="calibrationEfficiencyHelpTooltip" role="tooltip">Enter decimal multipliers from 0 to 1. Inverter efficiency represents AC-conversion efficiency; balance of system covers other modeled losses. The model applies inverter × balance of system for each PV path.</span>
+                                    </span>
+                                </div>
+                                <p>Use decimal values where 1.0 equals 100%.</p>
+                            </div>
+                        </div>
+                        <div class="annual-system-grid" aria-label="Calibration efficiencies">
+                            <section class="annual-system-card solaredge" aria-labelledby="validationSolarEdgeHeading">
+                                <div class="annual-system-heading">
+                                    <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                                    <div>
+                                        <h4 id="validationSolarEdgeHeading">SolarEdge</h4>
+                                        <p>Module-level inverter model</p>
+                                    </div>
+                                </div>
+                            <label class="control-field annual-efficiency-field">
+                                <span class="date-label">Inverter efficiency</span>
+                                <input type="number" class="date-input eff-input" id="solaredgeInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            <label class="control-field annual-efficiency-field">
+                                <span class="date-label">Balance of system</span>
+                                <input type="number" class="date-input eff-input" id="solaredgeBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            </section>
+
+                            <section class="annual-system-card solectria" aria-labelledby="validationSolectriaHeading">
+                                <div class="annual-system-heading">
+                                    <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                                    <div>
+                                        <h4 id="validationSolectriaHeading">Solectria</h4>
+                                        <p>String-level model</p>
+                                    </div>
+                                </div>
+                            <label class="control-field annual-efficiency-field">
+                                <span class="date-label">Inverter efficiency</span>
+                                <input type="number" class="date-input eff-input" id="solectriaInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            <label class="control-field annual-efficiency-field">
+                                <span class="date-label">Balance of system</span>
+                                <input type="number" class="date-input eff-input" id="solectriaBosEfficiency" min="0" max="1" step="0.001" value="1.0">
+                            </label>
+                            </section>
+                        </div>
+                        <div class="annual-iam-row">
+                            <div>
+                                <div class="annual-subheading" id="validationIamHeading">Incidence angle modifier</div>
+                                <p>Choose how incidence-angle optical losses are modeled.</p>
+                            </div>
+                            <fieldset class="iam-model-fieldset" aria-labelledby="validationIamHeading">
+                                <legend class="sr-only">Calibration IAM model</legend>
+                                <div class="iam-model-options">
+                                    <div class="iam-model-card">
+                                        <input type="radio" class="iam-model-input" id="iamModelPhysical" name="iamModel" value="physical" aria-describedby="iamPhysicalDescription iamPhysicalReference" checked>
+                                        <label class="iam-model-label" for="iamModelPhysical">
+                                            <span class="iam-model-name">Physical</span>
+                                            <span class="iam-model-description" id="iamPhysicalDescription">Uses the physical optics model for glass transmission losses.</span>
+                                        </label>
+                                        <a class="iam-reference-link" id="iamPhysicalReference" href="https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.iam.physical.html" target="_blank" rel="noopener noreferrer">Physical IAM reference</a>
+                                    </div>
+                                    <div class="iam-model-card">
+                                        <input type="radio" class="iam-model-input" id="iamModelMartinRuiz" name="iamModel" value="martin_ruiz" aria-describedby="iamMartinRuizDescription iamMartinRuizReference">
+                                        <label class="iam-model-label" for="iamModelMartinRuiz">
+                                            <span class="iam-model-name">Martin–Ruiz</span>
+                                            <span class="iam-model-description" id="iamMartinRuizDescription">Uses the angular-loss coefficient a<sub>r</sub>, defaulting to 0.2.</span>
+                                        </label>
+                                        <a class="iam-reference-link" id="iamMartinRuizReference" href="https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.iam.martin_ruiz.html" target="_blank" rel="noopener noreferrer">Martin–Ruiz IAM reference</a>
+                                    </div>
+                                </div>
+                            </fieldset>
+                            <label class="control-field iam-ar annual-iam-value" id="iamArGroup">
+                                <span>
+                                    <span class="date-label">Martin–Ruiz a<sub>r</sub></span>
+                                    <span class="limit-helper">Enter any positive finite value.</span>
+                                </span>
+                                <input type="number" class="date-input eff-input" id="iamAr" min="0" step="any" value="0.2" disabled>
+                            </label>
+                            <p class="iam-parity-note" role="note">Reference parity: If Martin-Ruiz is selected, no IAM loss will be applied to the Physical model in ModelChain to avoid double-counting.</p>
+                        </div>
+                    </section>
+                </div>
+                <div class="configuration-actions">
+                    <p class="configuration-actions-copy">
+                        <strong id="validationActionTitle">Ready to run?</strong>
+                        <span id="validationActionCopy">Run the physics model with the selected Bazefield data without fitting calibration factors.</span>
+                    </p>
+                    <div class="control-actions">
+                        <a class="download-link hidden" id="excelLink" href="#" download>Export workbook</a>
+                        <button class="run-btn" id="runBtn">Run model</button>
+                    </div>
+                </div>
+            </section>
+

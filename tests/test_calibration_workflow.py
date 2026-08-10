@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from calibration_workflow import (
+from sbepv.calibration import (
     HISTORIAN_COLUMNS,
     apply_frozen_seasonal_calibration,
     apply_quality_decisions,
@@ -17,7 +17,7 @@ from calibration_workflow import (
     season_name,
     validate_seasonal_calibration_profile,
 )
-from sbe_pv_model import (
+from sbepv.model import (
     MAX_TEMPERATURE_INTERPOLATION_GAP_ROWS,
     add_energy,
     apply_curtailment,

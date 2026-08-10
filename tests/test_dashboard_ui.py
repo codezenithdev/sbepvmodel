@@ -10,10 +10,12 @@ import matplotlib.figure
 import pandas as pd
 from fastapi.testclient import TestClient
 
-import app
-import sbe_pv_model as model
-import scenario_reporting as reporting
-from agent_store import AgentStore
+from sbepv.api import config, plots, state
+from sbepv.api import main as app
+from sbepv import model
+from sbepv import reporting
+from sbepv.store import AgentStore
+from sbepv.worker import run_annual, run_validation
 
 
 PLOT_TIMESTAMP_FORMAT = "%m-%d-%Y %H:%M"
@@ -39,7 +41,7 @@ class CurtailmentDefaultTests(unittest.TestCase):
         )
         legacy_run.start()
         self.addCleanup(legacy_run.stop)
-        app.JOBS.clear()
+        state.JOBS.clear()
         handle = tempfile.NamedTemporaryFile(
             prefix="dashboard-api-test-",
             suffix=".sqlite3",
@@ -48,9 +50,9 @@ class CurtailmentDefaultTests(unittest.TestCase):
         )
         handle.close()
         database = Path(handle.name)
-        original_store = app.AGENT_STORE
-        app.AGENT_STORE = AgentStore(database)
-        self.addCleanup(setattr, app, "AGENT_STORE", original_store)
+        original_store = state.AGENT_STORE
+        state.AGENT_STORE = AgentStore(database)
+        self.addCleanup(setattr, state, "AGENT_STORE", original_store)
         self.addCleanup(
             lambda: [
                 path.unlink(missing_ok=True)
@@ -63,25 +65,27 @@ class CurtailmentDefaultTests(unittest.TestCase):
             (
                 "/api/run",
                 {"from_date": "2026-06-20", "to_date": "2026-06-21"},
+                run_validation,
                 "_run_job",
             ),
             (
                 "/api/annual-run",
                 {"from_date": "2025-01-01", "to_date": "2025-01-02"},
+                run_annual,
                 "_run_annual_job",
             ),
         )
 
-        for endpoint, base_payload, worker_name in cases:
+        for endpoint, base_payload, worker_module, worker_name in cases:
             with self.subTest(endpoint=endpoint):
-                with patch.object(app, worker_name, return_value=None):
+                with patch.object(worker_module, worker_name, return_value=None):
                     response = TestClient(app.app).post(
                         endpoint,
                         json={**base_payload, "curtailment_enabled": True},
                     )
 
                 self.assertEqual(response.status_code, 200)
-                request = app.JOBS[response.json()["job_id"]]["request"]
+                request = state.JOBS[response.json()["job_id"]]["request"]
                 self.assertTrue(request["curtailment_enabled"])
                 self.assertEqual(
                     request["curtailment_limit_kw"],
@@ -596,7 +600,7 @@ class WorkbookExportContractTests(unittest.TestCase):
         )
 
     def test_calibrated_headers_are_truthful_and_loader_remains_compatible(self):
-        path = app.OUTPUT_DIR / "_test_calibrated_export_contract.xlsx"
+        path = config.OUTPUT_DIR / "_test_calibrated_export_contract.xlsx"
         try:
             model.write_excel(
                 self._time_series_frame(),
@@ -628,7 +632,7 @@ class WorkbookExportContractTests(unittest.TestCase):
             path.unlink(missing_ok=True)
 
     def test_physics_model_headers_remain_predicted(self):
-        path = app.OUTPUT_DIR / "_test_physics_export_contract.xlsx"
+        path = config.OUTPUT_DIR / "_test_physics_export_contract.xlsx"
         try:
             model.write_excel(
                 self._time_series_frame(),
@@ -781,7 +785,7 @@ class GeneratedPlotTimestampTests(unittest.TestCase):
                 side_effect=capture,
             ),
         ):
-            app._render_input_data_plots(
+            plots._render_input_data_plots(
                 Path("ignored.csv"),
                 Path("ignored"),
             )

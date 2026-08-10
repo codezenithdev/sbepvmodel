@@ -1,0 +1,135 @@
+                <section class="controls-bar" id="technoeconomicInputs" aria-labelledby="technoeconomicInputsHeading">
+                    <div class="controls-header">
+                        <div>
+                            <p class="annual-kicker">Cost assumptions</p>
+                            <h2 class="section-title" id="technoeconomicInputsHeading">User-specified annualized costs</h2>
+                            <p class="section-subtitle">Enter comparable yearly costs for the baseline Solectria system and optimized SolarEdge system.</p>
+                        </div>
+                    </div>
+
+                    <div class="technoeconomic-cost-grid">
+                        <section class="annual-config-card technoeconomic-cost-card" aria-labelledby="baselineCostHeading">
+                            <div class="technoeconomic-system-label">
+                                <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                                <div>
+                                    <h3 id="baselineCostHeading">Baseline Solectria</h3>
+                                    <p>String-level baseline system</p>
+                                </div>
+                            </div>
+                            <label class="technoeconomic-cost-field" for="baselineAnnualizedCost">
+                                <span class="date-label">Annualized system cost</span>
+                                <span class="technoeconomic-cost-input-wrap">
+                                    <span class="technoeconomic-currency-prefix" aria-hidden="true">$</span>
+                                    <input class="technoeconomic-cost-input" id="baselineAnnualizedCost" type="number" min="0" step="100" inputmode="decimal" placeholder="e.g., 24000" aria-describedby="baselineCostHelp baselineCostError">
+                                    <span class="technoeconomic-cost-unit" aria-hidden="true">USD / year</span>
+                                </span>
+                                <span class="technoeconomic-cost-helper" id="baselineCostHelp">Use the total equivalent annual cost in USD per year for the baseline system.</span>
+                                <span class="technoeconomic-cost-error" id="baselineCostError" role="status" aria-live="polite"></span>
+                            </label>
+                        </section>
+
+                        <section class="annual-config-card technoeconomic-cost-card optimized" aria-labelledby="optimizedCostHeading">
+                            <div class="technoeconomic-system-label">
+                                <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                                <div>
+                                    <h3 id="optimizedCostHeading">Optimized SolarEdge</h3>
+                                    <p>Module-level optimized system</p>
+                                </div>
+                            </div>
+                            <label class="technoeconomic-cost-field" for="optimizedAnnualizedCost">
+                                <span class="date-label">Annualized system cost</span>
+                                <span class="technoeconomic-cost-input-wrap">
+                                    <span class="technoeconomic-currency-prefix" aria-hidden="true">$</span>
+                                    <input class="technoeconomic-cost-input" id="optimizedAnnualizedCost" type="number" min="0" step="100" inputmode="decimal" placeholder="e.g., 27000" aria-describedby="optimizedCostHelp optimizedCostError">
+                                    <span class="technoeconomic-cost-unit" aria-hidden="true">USD / year</span>
+                                </span>
+                                <span class="technoeconomic-cost-helper" id="optimizedCostHelp">Enter USD per year using the same annualization method and cost year as the baseline.</span>
+                                <span class="technoeconomic-cost-error" id="optimizedCostError" role="status" aria-live="polite"></span>
+                            </label>
+                        </section>
+                    </div>
+
+                    <p class="technoeconomic-method-note">
+                        <strong>Cost basis:</strong> Enter annualized totals directly. Include annual capital recovery and recurring operating costs consistently for both systems.
+                    </p>
+                </section>
+
+                <section class="annual-results-shell" id="technoeconomicResults" aria-labelledby="technoeconomicResultsHeading">
+                    <div class="annual-results-heading">
+                        <div>
+                            <h2 id="technoeconomicResultsHeading">Levelized cost results</h2>
+                            <p>Latest full-year Annual Simulation production combined with the annualized costs above.</p>
+                        </div>
+                        <span class="annual-results-note">USD per kWh</span>
+                    </div>
+
+                    <div class="technoeconomic-source-card" id="technoeconomicSourceCard">
+                        <div role="status" aria-live="polite" aria-atomic="true">
+                            <div class="technoeconomic-source-heading">
+                                <span class="technoeconomic-source-dot" aria-hidden="true"></span>
+                                <span id="technoeconomicSourceStatus">Annual Simulation result required</span>
+                            </div>
+                            <p class="technoeconomic-source-detail" id="technoeconomicSourceDetail">Run an inclusive one-calendar-year Annual Simulation to supply annual energy production.</p>
+                        </div>
+                        <button class="technoeconomic-source-action" id="openAnnualSimulationBtn" type="button">Go to Annual Simulation</button>
+                    </div>
+
+                    <div class="technoeconomic-energy-grid" aria-label="Annual energy basis">
+                        <article class="technoeconomic-energy-card">
+                            <div class="technoeconomic-energy-label">Baseline annual energy: Solectria</div>
+                            <div class="technoeconomic-energy-value"><strong id="technoeconomicBaselineEnergy">--</strong> <span>kWh / year</span></div>
+                        </article>
+                        <article class="technoeconomic-energy-card">
+                            <div class="technoeconomic-energy-label">Optimized annual energy: SolarEdge</div>
+                            <div class="technoeconomic-energy-value"><strong id="technoeconomicOptimizedEnergy">--</strong> <span>kWh / year</span></div>
+                        </article>
+                        <article class="technoeconomic-energy-card">
+                            <div class="technoeconomic-energy-label">Annual energy increase</div>
+                            <div class="technoeconomic-energy-value"><strong id="technoeconomicEnergyIncrease">--</strong> <span>kWh / year</span></div>
+                        </article>
+                    </div>
+
+                    <div class="technoeconomic-output-grid" aria-label="Levelized cost outputs">
+                        <article class="technoeconomic-output-card optimization">
+                            <h3>LCOO</h3>
+                            <p class="technoeconomic-output-name">Levelized cost of optimization</p>
+                            <output class="technoeconomic-output-value" id="technoeconomicLcoo" for="baselineAnnualizedCost optimizedAnnualizedCost" aria-live="polite">--</output>
+                            <p class="technoeconomic-output-status" id="technoeconomicLcooStatus" aria-live="polite">Enter both annualized costs and provide a full-year Annual Simulation result.</p>
+                        </article>
+                        <article class="technoeconomic-output-card">
+                            <h3>LCOE</h3>
+                            <p class="technoeconomic-output-name">Baseline levelized cost of electricity</p>
+                            <output class="technoeconomic-output-value" id="technoeconomicLcoe" for="baselineAnnualizedCost" aria-live="polite">--</output>
+                            <p class="technoeconomic-output-status" id="technoeconomicLcoeStatus" aria-live="polite">Enter the baseline annualized cost and provide a full-year Annual Simulation result.</p>
+                        </article>
+                    </div>
+
+                    <div class="technoeconomic-basis-grid" aria-label="Annualized cost calculation basis">
+                        <div class="technoeconomic-basis-item">
+                            <div class="technoeconomic-basis-label">Baseline annualized cost</div>
+                            <div class="technoeconomic-basis-value" id="technoeconomicBaselineCost">--</div>
+                        </div>
+                        <div class="technoeconomic-basis-item">
+                            <div class="technoeconomic-basis-label">Optimized annualized cost</div>
+                            <div class="technoeconomic-basis-value" id="technoeconomicOptimizedCost">--</div>
+                        </div>
+                        <div class="technoeconomic-basis-item">
+                            <div class="technoeconomic-basis-label">Marginal annualized cost</div>
+                            <div class="technoeconomic-basis-value" id="technoeconomicMarginalCost">--</div>
+                        </div>
+                    </div>
+
+                    <div class="technoeconomic-formula-grid" aria-label="Technoeconomic formulas">
+                        <article class="technoeconomic-formula-card">
+                            <div class="technoeconomic-basis-label">LCOO formula</div>
+                            <code>(optimized annualized cost − baseline annualized cost) / (optimized annual energy − baseline annual energy)</code>
+                        </article>
+                        <article class="technoeconomic-formula-card">
+                            <div class="technoeconomic-basis-label">LCOE formula</div>
+                            <code>baseline annualized cost / baseline annual energy</code>
+                        </article>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Functional contract: every original form id, chart id, button id, and state class is preserved for the existing JavaScript. -->

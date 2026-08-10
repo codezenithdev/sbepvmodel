@@ -1,0 +1,348 @@
+        .technoeconomic-cost-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+            padding: 20px;
+            background: var(--surface-muted);
+        }
+
+        .technoeconomic-cost-card {
+            border-left: 4px solid var(--info);
+        }
+
+        .technoeconomic-cost-card.optimized {
+            border-left-color: var(--accent);
+        }
+
+        .technoeconomic-system-label {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            margin-bottom: 16px;
+        }
+
+        .technoeconomic-system-label h3 {
+            color: var(--text);
+            font-size: 17px;
+            font-weight: 830;
+        }
+
+        .technoeconomic-system-label p {
+            margin-top: 2px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .technoeconomic-cost-field {
+            display: grid;
+            gap: 7px;
+        }
+
+        .technoeconomic-cost-input-wrap {
+            position: relative;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+        }
+
+        .technoeconomic-currency-prefix {
+            position: absolute;
+            left: 13px;
+            color: var(--muted-strong);
+            font-weight: 800;
+            pointer-events: none;
+        }
+
+        .technoeconomic-cost-input {
+            width: 100%;
+            min-width: 0;
+            height: 44px;
+            padding: 9px 82px 9px 28px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            background: #ffffff;
+            color: var(--text);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .technoeconomic-cost-input:focus {
+            border-color: var(--accent);
+            outline: 3px solid rgba(15, 118, 110, 0.12);
+        }
+
+        .technoeconomic-cost-input[aria-invalid="true"] {
+            border-color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        .technoeconomic-cost-unit {
+            position: absolute;
+            right: 12px;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 750;
+            pointer-events: none;
+        }
+
+        .technoeconomic-cost-helper,
+        .technoeconomic-method-note {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .technoeconomic-cost-error {
+            color: var(--danger);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .technoeconomic-cost-error:empty {
+            display: none;
+        }
+
+        .technoeconomic-method-note {
+            margin: 0;
+            padding: 15px 20px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .technoeconomic-method-note strong {
+            color: var(--muted-strong);
+        }
+
+        .technoeconomic-source-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            margin-bottom: 16px;
+            padding: 15px 16px;
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--border-strong);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .technoeconomic-source-card.ready {
+            border-left-color: var(--success);
+            background: #f7fcf9;
+        }
+
+        .technoeconomic-source-card.running {
+            border-left-color: var(--info);
+            background: #f7f9ff;
+        }
+
+        .technoeconomic-source-card.warning {
+            border-left-color: var(--warning);
+            background: #fffaf0;
+        }
+
+        .technoeconomic-source-heading {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            color: var(--muted-strong);
+            font-size: 13px;
+            font-weight: 820;
+        }
+
+        .technoeconomic-source-dot {
+            width: 9px;
+            height: 9px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: var(--border-strong);
+        }
+
+        .technoeconomic-source-card.ready .technoeconomic-source-dot {
+            background: var(--success);
+        }
+
+        .technoeconomic-source-card.running .technoeconomic-source-dot {
+            background: var(--info);
+        }
+
+        .technoeconomic-source-card.warning .technoeconomic-source-dot {
+            background: var(--warning);
+        }
+
+        .technoeconomic-source-detail {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .technoeconomic-source-action {
+            flex: 0 0 auto;
+            padding: 8px 11px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--accent-strong);
+            font-size: 12px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .technoeconomic-source-action:hover,
+        .technoeconomic-source-action:focus-visible {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            outline: none;
+        }
+
+        .technoeconomic-energy-grid,
+        .technoeconomic-output-grid,
+        .technoeconomic-formula-grid {
+            display: grid;
+            gap: 14px;
+        }
+
+        .technoeconomic-energy-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            margin-bottom: 16px;
+        }
+
+        .technoeconomic-energy-card {
+            min-width: 0;
+            padding: 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .technoeconomic-energy-label,
+        .technoeconomic-basis-label {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .technoeconomic-energy-value {
+            margin-top: 7px;
+            color: var(--text);
+            font-size: 23px;
+            font-weight: 840;
+            line-height: 1.1;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .technoeconomic-energy-value span {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .technoeconomic-output-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            margin-bottom: 16px;
+        }
+
+        .technoeconomic-output-card {
+            min-width: 0;
+            padding: 22px;
+            border: 1px solid var(--border);
+            border-top: 4px solid var(--info);
+            border-radius: 9px;
+            background: var(--surface);
+            box-shadow: var(--shadow);
+        }
+
+        .technoeconomic-output-card.optimization {
+            border-top-color: var(--accent);
+        }
+
+        .technoeconomic-output-card h3 {
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 830;
+        }
+
+        .technoeconomic-output-name {
+            margin-top: 2px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .technoeconomic-output-value {
+            display: block;
+            margin-top: 16px;
+            color: var(--info);
+            font-size: clamp(30px, 3vw, 40px);
+            font-weight: 860;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .technoeconomic-output-card.optimization .technoeconomic-output-value {
+            color: var(--accent-strong);
+        }
+
+        .technoeconomic-output-status {
+            min-height: 36px;
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .technoeconomic-formula-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .technoeconomic-formula-card {
+            min-width: 0;
+            padding: 15px 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .technoeconomic-formula-card code {
+            display: block;
+            margin-top: 7px;
+            color: var(--muted-strong);
+            font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+            font-size: 12px;
+            line-height: 1.55;
+            white-space: normal;
+        }
+
+        .technoeconomic-basis-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1px;
+            margin: 16px 0;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--border);
+        }
+
+        .technoeconomic-basis-item {
+            min-width: 0;
+            padding: 14px 16px;
+            background: var(--surface);
+        }
+
+        .technoeconomic-basis-value {
+            margin-top: 5px;
+            color: var(--text);
+            font-size: 17px;
+            font-weight: 830;
+            font-variant-numeric: tabular-nums;
+        }
+
+        #technoeconomicInputs,
+        #technoeconomicResults {
+            scroll-margin-top: 18px;
+        }
+
+        #annualControls:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.22);
+            outline-offset: 3px;
+        }
+

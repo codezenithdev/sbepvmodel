@@ -1,0 +1,231 @@
+        .workspace {
+            min-width: 0;
+            padding: 24px;
+        }
+
+        .top-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+
+        .nav-left,
+        .nav-right,
+        .breadcrumb,
+        .status-chip,
+        .user-badge {
+            display: flex;
+            align-items: center;
+        }
+
+        .breadcrumb {
+            gap: 10px;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 650;
+            flex-wrap: wrap;
+        }
+
+        .breadcrumb span {
+            color: var(--border-strong);
+        }
+
+        .nav-right {
+            gap: 10px;
+        }
+
+        .status-chip,
+        .user-badge {
+            gap: 8px;
+            min-height: 34px;
+            padding: 7px 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 750;
+            white-space: nowrap;
+        }
+
+        .header {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 20px;
+            align-items: stretch;
+            margin-bottom: 20px;
+        }
+
+        .header-copy {
+            position: relative;
+            padding: 24px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+        }
+
+        .eyebrow {
+            color: var(--accent-strong);
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .header-title {
+            max-width: 820px;
+            color: var(--text);
+            font-size: clamp(26px, 3vw, 38px);
+            font-weight: 820;
+            line-height: 1.12;
+            margin-bottom: 12px;
+        }
+
+        .header-title-row,
+        .heading-with-help {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-title-row {
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .header-title-row .header-title {
+            margin-bottom: 0;
+        }
+
+        .help-tip-wrap {
+            position: relative;
+            z-index: 30;
+            display: inline-grid;
+            flex: 0 0 auto;
+        }
+
+        .help-tip {
+            width: 30px;
+            height: 30px;
+            display: grid;
+            place-items: center;
+            padding: 0;
+            border: 1px solid var(--border-strong);
+            border-radius: 50%;
+            background: var(--surface);
+            color: var(--accent-strong);
+            font-size: 14px;
+            font-weight: 900;
+            line-height: 1;
+            cursor: help;
+            box-shadow: 0 2px 7px rgba(22, 34, 29, 0.08);
+        }
+
+        .help-tip:hover,
+        .help-tip:focus-visible,
+        .help-tip[aria-expanded="true"] {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            outline: none;
+        }
+
+        .help-tooltip {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            width: min(310px, calc(100vw - 32px));
+            padding: 11px 12px;
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            background: #ffffff;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.45;
+            text-align: left;
+            box-shadow: 0 12px 30px rgba(22, 34, 29, 0.18);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-4px);
+            pointer-events: none;
+            transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
+        }
+
+        .help-tip-wrap.align-left .help-tooltip {
+            right: auto;
+            left: 0;
+        }
+
+        .help-tip-wrap:hover .help-tooltip,
+        .help-tip:focus-visible + .help-tooltip,
+        .help-tip[aria-expanded="true"] + .help-tooltip {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .header-subtitle {
+            max-width: 780px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .mode-tabs {
+            display: inline-flex;
+            max-width: 100%;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 20px;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface-muted);
+        }
+
+        .mode-tab {
+            padding: 10px 18px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--muted);
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .mode-tab.active {
+            background: var(--accent);
+            color: #ffffff;
+            box-shadow: 0 2px 7px rgba(0, 87, 80, 0.18);
+        }
+
+        .mode-tab:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.22);
+            outline-offset: 2px;
+        }
+
+        .annual-only,
+        .technoeconomic-only {
+            display: none;
+        }
+
+        body.dashboard-mode-annual .annual-only {
+            display: block;
+        }
+
+        body.dashboard-mode-annual #annualControls > .controls-header {
+            display: none;
+        }
+
+        body.dashboard-mode-technoeconomic .technoeconomic-only {
+            display: block;
+        }
+
+        body.dashboard-mode-annual .validation-only,
+        body.dashboard-mode-technoeconomic .validation-only {
+            display: none;
+        }
+

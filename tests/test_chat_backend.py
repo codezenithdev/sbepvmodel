@@ -9,13 +9,15 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
-import app
+from sbepv.api import config, job_store, plots, state
+from sbepv.agent import chat
+from sbepv.api import main as app
 
 
 class ChatBackendTests(unittest.TestCase):
     def setUp(self):
         os.environ["OPENAI_API_KEY"] = "test-placeholder"
-        app.JOBS.clear()
+        state.JOBS.clear()
         self.calls = []
 
         fake_client = types.SimpleNamespace(
@@ -40,7 +42,7 @@ class ChatBackendTests(unittest.TestCase):
         self.assertIn("model_run_status", timing)
 
     def test_completed_run_context_is_sent_without_secrets(self):
-        app.JOBS["job123"] = {
+        state.JOBS["job123"] = {
             "state": "done",
             "progress": 100,
             "stage": "Done",
@@ -59,7 +61,7 @@ class ChatBackendTests(unittest.TestCase):
             },
         }
 
-        reply, job_id, web_enabled = app._openai_chat_response(
+        reply, job_id, web_enabled = chat._openai_chat_response(
             app.ChatRequest(message="Summarize this run.", job_id="job123")
         )
 
@@ -77,9 +79,9 @@ class ChatBackendTests(unittest.TestCase):
         self.assertEqual(1_200, self.calls[0]["max_output_tokens"])
 
     def test_reference_question_enables_web_search(self):
-        app.JOBS["job123"] = {"state": "done", "result": {"stats": {}}}
+        state.JOBS["job123"] = {"state": "done", "result": {"stats": {}}}
 
-        _, _, web_enabled = app._openai_chat_response(
+        _, _, web_enabled = chat._openai_chat_response(
             app.ChatRequest(message="Give me references for this prediction.", job_id="job123")
         )
 
@@ -88,7 +90,7 @@ class ChatBackendTests(unittest.TestCase):
         self.assertIn(app.SCENARIO_TOOL, self.calls[0]["tools"])
 
     def test_dashboard_prediction_wording_does_not_enable_web_search(self):
-        app.JOBS["job123"] = {"state": "done", "result": {"stats": {}}}
+        state.JOBS["job123"] = {"state": "done", "result": {"stats": {}}}
 
         for message in (
             "Summarize the current run.",
@@ -97,14 +99,14 @@ class ChatBackendTests(unittest.TestCase):
         ):
             with self.subTest(message=message):
                 self.calls.clear()
-                _, _, web_enabled = app._openai_chat_response(
+                _, _, web_enabled = chat._openai_chat_response(
                     app.ChatRequest(message=message, job_id="job123")
                 )
                 self.assertFalse(web_enabled)
                 self.assertNotIn({"type": "web_search"}, self.calls[0]["tools"])
 
     def test_missing_run_still_returns_answerable_context(self):
-        reply, job_id, web_enabled = app._openai_chat_response(
+        reply, job_id, web_enabled = chat._openai_chat_response(
             app.ChatRequest(message="What does the model do?", job_id="missing")
         )
 
@@ -115,7 +117,7 @@ class ChatBackendTests(unittest.TestCase):
 
     def test_chat_response_reports_timestamp_gpt_and_completed_model_runtime(self):
         job_id = f"chat-timing-{uuid4().hex}"
-        app.JOBS[job_id] = {
+        state.JOBS[job_id] = {
             "state": "done",
             "progress": 100,
             "stage": "Done",
@@ -138,7 +140,7 @@ class ChatBackendTests(unittest.TestCase):
         self.assertEqual(timing["model_run_status"], "completed")
 
     def test_chat_response_without_model_run_reports_null_runtime(self):
-        with patch.object(app, "_latest_completed_job_id", return_value=None):
+        with patch.object(job_store, "_latest_completed_job_id", return_value=None):
             response = TestClient(app.app).post(
                 "/api/chat",
                 json={"message": "What does the model do?"},
@@ -151,7 +153,7 @@ class ChatBackendTests(unittest.TestCase):
         self.assertEqual(timing["model_run_status"], "not_run")
 
     def test_physical_iam_is_explicit_even_when_martin_ruiz_coefficient_is_null(self):
-        app._openai_chat_response(
+        chat._openai_chat_response(
             app.ChatRequest(
                 message="Which IAM model is selected?",
                 current_config={"iam_model": "physical", "iam_a_r": None},
@@ -166,7 +168,7 @@ class ChatBackendTests(unittest.TestCase):
         self.assertIn("Never describe Physical IAM as disabled", self.calls[0]["instructions"])
 
     def test_current_question_is_not_duplicated_in_recent_history(self):
-        app._openai_chat_response(
+        chat._openai_chat_response(
             app.ChatRequest(
                 message="Summarize this run.",
                 history=[
@@ -179,9 +181,9 @@ class ChatBackendTests(unittest.TestCase):
         self.assertEqual(1, input_text.count("Summarize this run."))
 
     def test_input_data_plots_are_rendered_from_historian_csv(self):
-        csv_path = app.OUTPUT_DIR / "_test_input_plot.csv"
-        measured_path = app.OUTPUT_DIR / "_test_job123_measured_power.png"
-        irradiance_path = app.OUTPUT_DIR / "_test_job123_irradiance.png"
+        csv_path = config.OUTPUT_DIR / "_test_input_plot.csv"
+        measured_path = config.OUTPUT_DIR / "_test_job123_measured_power.png"
+        irradiance_path = config.OUTPUT_DIR / "_test_job123_irradiance.png"
         for generated_path in (csv_path, measured_path, irradiance_path):
             self.addCleanup(generated_path.unlink, missing_ok=True)
         csv_path.write_text(
@@ -195,10 +197,12 @@ class ChatBackendTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        plots = app._render_input_data_plots(csv_path, app.OUTPUT_DIR / "_test_job123")
+        rendered = plots._render_input_data_plots(
+            csv_path, config.OUTPUT_DIR / "_test_job123"
+        )
 
-        self.assertEqual(plots["measured_power_png"], "/outputs/_test_job123_measured_power.png")
-        self.assertEqual(plots["irradiance_png"], "/outputs/_test_job123_irradiance.png")
+        self.assertEqual(rendered["measured_power_png"], "/outputs/_test_job123_measured_power.png")
+        self.assertEqual(rendered["irradiance_png"], "/outputs/_test_job123_irradiance.png")
         self.assertTrue(measured_path.is_file())
         self.assertTrue(irradiance_path.is_file())
 
@@ -263,9 +267,9 @@ class DashboardDeploymentTests(unittest.TestCase):
         self.assertIn("authentication configuration", health.json()["failed_checks"])
 
     def test_private_output_directories_are_blocked_case_insensitively(self):
-        marker = app.OUTPUT_DIR / ".agent_state" / "private-case-test.txt"
-        private_root_marker = app.OUTPUT_DIR / "private-root-test.sqlite3"
-        public_marker = app.OUTPUT_DIR / "public-output-test.csv"
+        marker = config.OUTPUT_DIR / ".agent_state" / "private-case-test.txt"
+        private_root_marker = config.OUTPUT_DIR / "private-root-test.sqlite3"
+        public_marker = config.OUTPUT_DIR / "public-output-test.csv"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("private", encoding="utf-8")
         private_root_marker.write_text("private-root", encoding="utf-8")

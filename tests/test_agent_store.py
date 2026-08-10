@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from agent_store import (
+from sbepv.store import (
     AgentStore,
     InvalidStateTransition,
     LeaseOwnershipLost,

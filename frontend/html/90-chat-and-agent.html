@@ -1,0 +1,145 @@
+        </main>
+    </div>
+
+    <button class="floating-chat-btn" id="chatToggle" type="button"
+        aria-label="Open Solar Agent. Drag to move." aria-controls="chatSidebar" aria-haspopup="dialog"
+        aria-expanded="false" title="Ask Solar Agent. Drag to move.">
+        <span class="chat-launch-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"></path></svg>
+        </span>
+        <span class="chat-launch-copy">
+            <span class="chat-launch-label">Ask Solar Agent</span>
+            <span class="chat-launch-hint">Insights &amp; scenarios</span>
+        </span>
+        <span class="chat-launch-status" aria-hidden="true"></span>
+    </button>
+
+    <div class="sidebar hidden" id="chatSidebar" role="dialog" aria-labelledby="solarAgentTitle" aria-describedby="solarAgentDescription">
+        <div class="sidebar-header" id="chatDragHandle" title="Drag to move the Solar Agent window">
+            <div class="sidebar-identity">
+                <span class="agent-brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"></path></svg>
+                </span>
+                <div class="sidebar-heading">
+                    <span class="sidebar-title" id="solarAgentTitle">Solar Agent</span>
+                    <span class="sidebar-subtitle" id="solarAgentDescription">Performance insights &amp; guided scenarios</span>
+                </div>
+            </div>
+            <div class="sidebar-header-actions">
+                <span class="help-tip-wrap">
+                    <button class="help-tip" type="button" aria-label="Solar Agent help" aria-describedby="solarAgentHelpTooltip" aria-expanded="false">?</button>
+                    <span class="help-tooltip" id="solarAgentHelpTooltip" role="tooltip">Ask about the active calibration or annual run. Solar Agent can explain results and prepare scenarios, but a scenario stays separate from the active baseline until you promote it.</span>
+                </span>
+                <button class="header-icon-btn" id="newChatBtn" type="button" aria-label="Start a new Solar Agent conversation" title="New conversation">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>
+                </button>
+                <button class="header-icon-btn" id="minimizeChat" type="button" aria-label="Minimize Solar Agent to view dashboard charts" title="Minimize Solar Agent">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path></svg>
+                </button>
+                <button class="close-btn" id="closeChat" type="button" aria-label="Close Solar Agent" title="Close Solar Agent">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+                </button>
+            </div>
+        </div>
+        <div class="agent-context">
+            <div class="agent-context-row">
+                <div class="agent-context-badge" id="agentContextBadge" title="Current Solar Agent context">
+                    <span class="agent-context-dot" aria-hidden="true"></span>
+                    <span class="agent-context-text" id="agentContextText">Calibration &middot; No baseline yet</span>
+                </div>
+                <button class="agent-activity-toggle conversation-history-toggle" id="chatHistoryBtn" type="button"
+                    aria-controls="chatHistory" aria-expanded="false" title="View conversations">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5M12 7v5l3 2"></path></svg>
+                    <span class="agent-activity-toggle-label">History</span>
+                    <span class="agent-activity-count" id="chatHistoryCount">0</span>
+                </button>
+                <button class="agent-activity-toggle hidden" id="agentActivityToggle" type="button"
+                    aria-controls="agentActivity" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"></path><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"></path></svg>
+                    <span class="agent-activity-toggle-label" id="agentActivityToggleLabel">Runs</span>
+                    <span class="agent-activity-count" id="agentActivityCount">0</span>
+                    <svg class="agent-activity-toggle-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"></path></svg>
+                </button>
+            </div>
+            <div class="agent-trust-line">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                <span>Uses the active dashboard. Scenario results stay separate until you promote them.</span>
+            </div>
+            <div class="chat-history-storage-status" id="chatHistoryStorageStatus" role="status" hidden></div>
+        </div>
+        <div class="agent-workspace">
+            <div class="agent-chat-pane" aria-label="Solar Agent conversation">
+                <div class="messages-container" id="messages" role="log" aria-live="polite" aria-relevant="additions text">
+                    <div class="chat-welcome">
+                        <div class="chat-welcome-mark" aria-hidden="true"></div>
+                        <div class="chat-welcome-copy">
+                            <div class="chat-welcome-title">Turn solar data into clear decisions</div>
+                            <p class="chat-welcome-description">Ask about performance, model accuracy, or explore a what-if scenario using the active dashboard context.</p>
+                        </div>
+                        <div class="chat-prompt-grid" aria-label="Suggested Solar Agent questions">
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Summarize this calibration window">Summarize this view</button>
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Why do measured and modeled values differ?">Explain modeled vs measured</button>
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Compare SolarEdge and Solectria">Compare both systems</button>
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Test what changes with backtracking off">Test backtracking off</button>
+                            <button class="chat-prompt-btn" type="button" data-chat-prompt="Run SolarEdge inverter efficiency from 0.96 to 1.00 by 0.01 and compare the results">Sweep inverter efficiency</button>
+                        </div>
+                        <div class="chat-welcome-note">Agent scenarios cannot replace the active baseline without your action.</div>
+                    </div>
+                </div>
+                <div class="input-area">
+                    <label class="sr-only" for="chatInput">Message Solar Agent</label>
+                    <div class="chat-composer-row">
+                        <textarea class="input-field chat-input" id="chatInput" rows="1" maxlength="4000"
+                            aria-describedby="chatComposerStatus" placeholder="Ask Solar Agent…"></textarea>
+                        <button class="send-btn" id="sendBtn" type="button" aria-label="Send message">
+                            <span class="send-label">Send</span>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19 0-14M6.5 10.5 12 5l5.5 5.5"></path></svg>
+                        </button>
+                    </div>
+                    <div class="chat-input-meta">
+                        <span class="chat-composer-status" id="chatComposerStatus" role="status" aria-live="polite">Enter to send &middot; Shift+Enter for a new line</span>
+                        <span class="chat-trust-note">Results stay separate until promoted</span>
+                    </div>
+                </div>
+            </div>
+            <section class="chat-history-pane hidden" id="chatHistory" aria-labelledby="chatHistoryHeading">
+                <div class="agent-activity-heading">
+                    <div class="agent-activity-heading-copy">
+                        <span class="agent-activity-eyebrow">Conversation archive</span>
+                        <h2 id="chatHistoryHeading">Conversations</h2>
+                        <span class="agent-activity-summary">Saved in this browser. New messages use the active dashboard context.</span>
+                    </div>
+                    <div class="agent-activity-heading-actions">
+                        <button class="agent-activity-back" id="chatHistoryBack" type="button">Back to chat</button>
+                    </div>
+                </div>
+                <div class="chat-history-body">
+                    <div class="chat-history-list" id="chatHistoryList" role="list"></div>
+                </div>
+            </section>
+            <section class="agent-activity hidden collapsed" id="agentActivity" aria-labelledby="agentActivityHeading">
+                <div class="agent-activity-heading">
+                    <div class="agent-activity-heading-copy">
+                        <span class="agent-activity-eyebrow">Run workspace</span>
+                        <span id="agentActivityHeading">Scenario runs</span>
+                        <span class="agent-activity-summary" id="agentActivitySummary">Compare time windows and model settings</span>
+                    </div>
+                    <div class="agent-activity-heading-actions">
+                        <button class="agent-activity-back" id="agentActivityBack" type="button">Back to chat</button>
+                        <button class="agent-refresh-btn" id="agentRefreshBtn" type="button" aria-label="Refresh scenario runs" title="Refresh scenario runs">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="agent-activity-filters" role="toolbar" aria-label="Filter scenario runs">
+                    <button class="agent-activity-filter selected" type="button" data-agent-activity-filter="all" aria-pressed="true">All <span data-agent-filter-count="all">0</span></button>
+                    <button class="agent-activity-filter" type="button" data-agent-activity-filter="review" aria-pressed="false">Review <span data-agent-filter-count="review">0</span></button>
+                    <button class="agent-activity-filter" type="button" data-agent-activity-filter="active" aria-pressed="false">Active <span data-agent-filter-count="active">0</span></button>
+                    <button class="agent-activity-filter" type="button" data-agent-activity-filter="complete" aria-pressed="false">Complete <span data-agent-filter-count="complete">0</span></button>
+                </div>
+                <div class="agent-activity-body" id="agentActivityBody">
+                    <div class="agent-activity-list" id="agentActivityList"></div>
+                </div>
+            </section>
+        </div>
+    </div>

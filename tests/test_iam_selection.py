@@ -10,9 +10,12 @@ import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
 
-import app
-import sbe_pv_model as model
-from agent_store import AgentStore
+from sbepv.api import state
+from sbepv.worker import run_annual
+from sbepv.worker import run_validation
+from sbepv.api import main as app
+from sbepv import model
+from sbepv.store import AgentStore
 
 
 class IamModelTests(unittest.TestCase):
@@ -270,7 +273,7 @@ class IamApiTests(unittest.TestCase):
         )
         legacy_run.start()
         self.addCleanup(legacy_run.stop)
-        app.JOBS.clear()
+        state.JOBS.clear()
         handle = tempfile.NamedTemporaryFile(
             prefix="iam-api-test-",
             suffix=".sqlite3",
@@ -279,9 +282,9 @@ class IamApiTests(unittest.TestCase):
         )
         handle.close()
         database = Path(handle.name)
-        original_store = app.AGENT_STORE
-        app.AGENT_STORE = AgentStore(database)
-        self.addCleanup(setattr, app, "AGENT_STORE", original_store)
+        original_store = state.AGENT_STORE
+        state.AGENT_STORE = AgentStore(database)
+        self.addCleanup(setattr, state, "AGENT_STORE", original_store)
         self.addCleanup(
             lambda: [
                 path.unlink(missing_ok=True)
@@ -290,7 +293,7 @@ class IamApiTests(unittest.TestCase):
         )
 
     def _start_validation(self, payload):
-        with patch.object(app, "_run_job", return_value=None):
+        with patch.object(run_validation, "_run_job", return_value=None):
             response = TestClient(app.app).post(
                 "/api/run",
                 json={
@@ -301,7 +304,7 @@ class IamApiTests(unittest.TestCase):
             )
         request = None
         if response.status_code == 200:
-            request = app.JOBS[response.json()["job_id"]]["request"]
+            request = state.JOBS[response.json()["job_id"]]["request"]
         return response, request
 
     def test_new_requests_default_to_physical(self):
@@ -388,7 +391,7 @@ class IamApiTests(unittest.TestCase):
         self.assertEqual(request["iam_a_r"], 0.15)
 
     def test_annual_endpoint_propagates_martin_ruiz_selection(self):
-        with patch.object(app, "_run_annual_job", return_value=None):
+        with patch.object(run_annual, "_run_annual_job", return_value=None):
             response = TestClient(app.app).post(
                 "/api/annual-run",
                 json={
@@ -400,7 +403,7 @@ class IamApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        request = app.JOBS[response.json()["job_id"]]["request"]
+        request = state.JOBS[response.json()["job_id"]]["request"]
         self.assertEqual(request["iam_model"], model.IAM_MODEL_MARTIN_RUIZ)
         self.assertEqual(request["iam_a_r"], 0.18)
 

@@ -1,7 +1,7 @@
 """Deterministic baseline-versus-scenario comparison and reporting.
 
 This module deliberately contains no language-model logic.  It reads the model
-workbooks produced by :mod:`sbe_pv_model`, verifies source provenance for
+workbooks produced by :mod:`sbepv.model`, verifies source provenance for
 same-interval comparisons, calculates all engineering deltas in Python, and
 creates the comparison workbook and charts consumed by the scenario-agent UI.
 """
@@ -165,7 +165,7 @@ def _normalize_exported_time_series_columns(
 
 
 def load_model_workbook(path: str | Path) -> ModelWorkbook:
-    """Load and validate a workbook written by ``sbe_pv_model.write_excel``."""
+    """Load and validate a workbook written by ``sbepv.model.write_excel``."""
 
     workbook_path = Path(path)
     if not workbook_path.is_file():

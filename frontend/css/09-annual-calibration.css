@@ -1,0 +1,341 @@
+        .annual-calibration-strip.unavailable {
+            background: #fffaf0;
+        }
+
+        .annual-calibration-strip.conflict {
+            border-bottom-color: #e7c36a;
+            background: var(--warning-soft);
+        }
+
+        .annual-calibration-mark {
+            width: 38px;
+            height: 38px;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            background: var(--success);
+            color: #ffffff;
+            font-size: 19px;
+            font-weight: 900;
+            line-height: 1;
+            box-shadow: 0 0 0 5px rgba(21, 128, 61, 0.09);
+        }
+
+        .annual-calibration-strip.loading .annual-calibration-mark {
+            background: var(--border-strong);
+            box-shadow: none;
+        }
+
+        .annual-calibration-strip.unavailable .annual-calibration-mark,
+        .annual-calibration-strip.conflict .annual-calibration-mark {
+            background: var(--warning);
+            box-shadow: 0 0 0 5px rgba(180, 83, 9, 0.09);
+        }
+
+        .annual-calibration-content {
+            min-width: 0;
+        }
+
+        .annual-calibration-title-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .annual-calibration-title-row h3 {
+            font-size: 16px;
+            font-weight: 850;
+        }
+
+        .annual-verification-badge,
+        .annual-setting-origin,
+        .annual-modified-count {
+            display: inline-flex;
+            align-items: center;
+            min-height: 22px;
+            padding: 3px 7px;
+            border: 1px solid rgba(21, 128, 61, 0.28);
+            border-radius: 999px;
+            background: #f2fbf5;
+            color: var(--success);
+            font-size: 10px;
+            font-weight: 820;
+            line-height: 1.2;
+        }
+
+        .annual-calibration-strip.unavailable .annual-verification-badge,
+        .annual-calibration-strip.conflict .annual-verification-badge {
+            border-color: rgba(180, 83, 9, 0.3);
+            background: #fff9ed;
+            color: var(--warning);
+        }
+
+        .annual-calibration-summary {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(150px, 1fr));
+            gap: 12px 18px;
+            align-items: end;
+            margin-top: 10px;
+        }
+
+        .annual-calibration-summary-item {
+            min-width: 0;
+            padding-right: 16px;
+            border-right: 1px solid var(--border);
+        }
+
+        .annual-calibration-summary-item span,
+        .annual-result-calibration-item span {
+            display: block;
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 780;
+            letter-spacing: 0.035em;
+            text-transform: uppercase;
+        }
+
+        .annual-calibration-summary-item strong,
+        .annual-result-calibration-item strong {
+            display: block;
+            margin-top: 3px;
+            overflow-wrap: anywhere;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 790;
+        }
+
+        .annual-calibration-copy {
+            margin-top: 10px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .annual-restore-btn {
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 800;
+            text-underline-offset: 2px;
+        }
+
+        .annual-settings-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin: -4px 0 15px;
+            padding: 10px 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .annual-settings-status {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 7px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .annual-modified-count {
+            border-color: var(--border);
+            background: var(--surface);
+            color: var(--muted-strong);
+        }
+
+        .annual-modified-count.has-changes {
+            border-color: rgba(180, 83, 9, 0.28);
+            background: var(--warning-soft);
+            color: var(--warning);
+        }
+
+        .annual-restore-btn {
+            padding: 6px 8px;
+            border: 1px solid var(--border-strong);
+            border-radius: 6px;
+            background: var(--surface);
+            cursor: pointer;
+        }
+
+        .annual-restore-btn:hover,
+        .annual-restore-btn:focus-visible {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            outline: none;
+        }
+
+        .annual-restore-btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
+        .annual-field-label-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+
+        .annual-setting-origin {
+            min-height: 18px;
+            padding: 2px 6px;
+            border-color: var(--border);
+            background: var(--surface);
+            color: var(--muted);
+            font-size: 9px;
+        }
+
+        .annual-setting-origin[hidden] {
+            display: none;
+        }
+
+        .annual-setting-origin.modified {
+            border-color: rgba(180, 83, 9, 0.32);
+            background: var(--warning-soft);
+            color: var(--warning);
+        }
+
+        .annual-setting-origin small {
+            margin-left: 4px;
+            color: inherit;
+            font-size: inherit;
+            font-weight: 700;
+        }
+
+        .checkbox-control .annual-setting-origin {
+            margin-left: auto;
+        }
+
+        .annual-setting-field.is-modified .date-input,
+        .annual-setting-field.is-modified.annual-iam-row,
+        .annual-setting-field.is-modified.iam-model-fieldset,
+        .checkbox-control.is-modified {
+            border-color: #d79a34;
+            background: #fffaf0;
+            box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.08);
+        }
+
+        .annual-option-grid.settings-options {
+            margin-bottom: 10px;
+        }
+
+        .annual-factor-coverage {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--border);
+            gap: 1px;
+        }
+
+        .annual-season-state {
+            min-width: 0;
+            padding: 11px 6px;
+            background: var(--surface);
+            text-align: center;
+        }
+
+        .annual-season-state strong,
+        .annual-season-state span {
+            display: block;
+        }
+
+        .annual-season-state strong {
+            color: var(--text);
+            font-size: 11px;
+        }
+
+        .annual-season-state span {
+            margin-top: 4px;
+            color: var(--success);
+            font-size: 10px;
+            font-weight: 780;
+        }
+
+        .annual-season-state.missing span {
+            color: var(--warning);
+        }
+
+        .annual-season-state.loading span {
+            color: var(--muted);
+        }
+
+        .annual-factor-table-wrap {
+            margin-top: 18px;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+
+        .annual-factor-table {
+            width: 100%;
+            min-width: 0;
+            table-layout: fixed;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+
+        .annual-factor-table th,
+        .annual-factor-table td {
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .annual-factor-table th:first-child,
+        .annual-factor-table td:first-child {
+            width: 44%;
+            text-align: left;
+        }
+
+        .annual-factor-table th {
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+            font-weight: 820;
+        }
+
+        .annual-factor-table tbody tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .annual-factor-missing {
+            color: var(--warning);
+            font-weight: 790;
+        }
+
+        .annual-factor-note {
+            margin-top: 14px;
+            padding: 11px 12px;
+            border: 1px solid #b9cdf9;
+            border-radius: 7px;
+            background: var(--info-soft);
+            color: #244d9a;
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .annual-factor-note.warning {
+            border-color: #e7c36a;
+            background: var(--warning-soft);
+            color: #674b08;
+        }
+
+        .annual-fallback-drawer {
+            grid-area: fallback;
+            position: relative;
+            display: none;
+            flex-direction: column;
+            width: 100%;
+            padding: 22px;
+            border: 1px solid #e7c36a;
+            border-left: 4px solid var(--warning);
+            border-radius: 10px;
+            background: var(--surface);
+            box-shadow: 0 10px 24px rgba(86, 62, 9, 0.1);
+        }
+
