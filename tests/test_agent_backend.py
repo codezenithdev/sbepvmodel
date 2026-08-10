@@ -19,6 +19,7 @@ from sbepv.agent import message_guards
 from sbepv.agent import scenario_math
 from sbepv.agent import tools
 from sbepv.api import proposals
+from sbepv.api import baselines
 from sbepv.api import main as app
 from sbepv.store import AgentStore, LeaseOwnershipLost
 from sbepv.reporting import sha256_file
@@ -216,6 +217,37 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 "stats": {"calibration_enabled": False},
             },
         )
+
+    @staticmethod
+    def annual_calibration_provenance(calibration_baseline: dict) -> dict:
+        profile = {
+            "schema_version": app.CALIBRATION_PROFILE_SCHEMA_VERSION,
+            "origin_job_id": calibration_baseline["id"],
+            "origin_source_sha256": calibration_baseline["source_hash"],
+            "origin_review_id": f"review-{calibration_baseline['id']}",
+            "seasonal_factors": {
+                season: {"solaredge": 1.02, "solectria": 0.98}
+                for season in ("winter", "spring", "summer", "fall")
+            },
+            "fit_metadata": {"method": "unit-test-reviewed-fit"},
+            "factor_driver_diagnostics": {"systems": {}},
+        }
+        profile_sha256 = app._json_sha256(profile)
+        return {
+            "calibration_profile": profile,
+            "calibration_application": {
+                "baseline_job_id": calibration_baseline["id"],
+                "baseline_review_id": f"review-{calibration_baseline['id']}",
+                "origin_profile_sha256": profile_sha256,
+                "resolved_profile_sha256": profile_sha256,
+                "origin_profile": profile,
+                "resolved_profile": profile,
+                "required_seasons": ["summer"],
+                "seasonal_substitution": None,
+                "server_confirmation": None,
+                "settings_deltas": [],
+            },
+        }
 
     def test_delete_scenario_endpoint_removes_record_and_output_files(self) -> None:
         job_id = "candidate-delete"
@@ -981,6 +1013,157 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 }
             ),
         )
+
+    def test_annual_sweep_confirmation_preserves_calibration_provenance(self) -> None:
+        calibration_baseline = self.completed_baseline(
+            job_id="annual-sweep-calibration"
+        )
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+        calibration = self.annual_calibration_provenance(calibration_baseline)
+        baseline = state.AGENT_STORE.update_job(
+            baseline["id"],
+            provenance=calibration,
+        )
+
+        _, action = tools._handle_iam_ar_sweep_tool(
+            app.ChatRequest(
+                message="Compare annual Martin-Ruiz a_r 0.1 to 0.3 by 0.1.",
+                job_id=baseline["id"],
+                active_mode="annual",
+                current_config=baseline["request"],
+            ),
+            {
+                "mode": "annual",
+                "start_a_r": 0.1,
+                "stop_a_r": 0.3,
+                "increment": 0.1,
+            },
+        )
+        proposal_ids = [item["proposal_id"] for item in action["proposals"]]
+        response = app.confirm_agent_sweep(
+            action["sweep"]["sweep_id"],
+            app.ProposalSweepConfirmRequest(proposal_ids=proposal_ids),
+        )
+
+        payload = json.loads(response.body)
+        self.assertEqual("job_batch_started", payload["action"]["type"])
+        for item in payload["action"]["jobs"]:
+            candidate = state.AGENT_STORE.get_job(item["job_id"])
+            self.assertEqual(
+                calibration["calibration_profile"],
+                candidate["provenance"]["calibration_profile"],
+            )
+            expected_deltas = app._calibration_setting_deltas(
+                baselines._baseline_transferable_settings(calibration_baseline),
+                candidate["request"],
+            )
+            self.assertEqual(
+                expected_deltas,
+                candidate["provenance"]["calibration_application"][
+                    "settings_deltas"
+                ],
+            )
+            self.assertEqual(
+                ["summer"],
+                candidate["provenance"]["calibration_application"][
+                    "required_seasons"
+                ],
+            )
+
+    def test_tampered_annual_calibration_provenance_blocks_confirmation(self) -> None:
+        calibration_baseline = self.completed_baseline(
+            job_id="tampered-annual-calibration"
+        )
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+        calibration = self.annual_calibration_provenance(calibration_baseline)
+        calibration["calibration_application"]["resolved_profile_sha256"] = "0" * 64
+        baseline = state.AGENT_STORE.update_job(
+            baseline["id"],
+            provenance=calibration,
+        )
+
+        _, action = tools._handle_scenario_tool(
+            app.ChatRequest(
+                message="Turn annual backtracking off.",
+                job_id=baseline["id"],
+                active_mode="annual",
+                current_config=baseline["request"],
+            ),
+            self.tool_arguments(backtrack=False),
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            app.confirm_agent_proposal(action["proposal"]["proposal_id"])
+        self.assertEqual(409, context.exception.status_code)
+        self.assertIn("provenance is invalid", str(context.exception.detail))
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
+
+    def test_annual_fallback_consent_is_not_reused_for_scenarios(self) -> None:
+        calibration_baseline = self.completed_baseline(
+            job_id="substituted-annual-calibration"
+        )
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+        calibration = self.annual_calibration_provenance(calibration_baseline)
+        calibration["calibration_application"]["seasonal_substitution"] = {
+            "source_season": "spring",
+            "target_season": "fall",
+            "explicitly_accepted": True,
+        }
+        calibration["calibration_application"]["server_confirmation"] = {
+            "accepted": True,
+            "confirmation_context_sha256": "1" * 64,
+        }
+        baseline = state.AGENT_STORE.update_job(
+            baseline["id"],
+            provenance=calibration,
+        )
+
+        _, action = tools._handle_scenario_tool(
+            app.ChatRequest(
+                message="Turn annual backtracking off.",
+                job_id=baseline["id"],
+                active_mode="annual",
+                current_config=baseline["request"],
+            ),
+            self.tool_arguments(backtrack=False),
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            app.confirm_agent_proposal(action["proposal"]["proposal_id"])
+        self.assertEqual(409, context.exception.status_code)
+        self.assertIn("fresh confirmation", str(context.exception.detail))
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
+
+    def test_embedded_annual_fallback_requires_fresh_confirmation(self) -> None:
+        calibration_baseline = self.completed_baseline(
+            job_id="embedded-substitution-calibration"
+        )
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+        calibration = self.annual_calibration_provenance(calibration_baseline)
+        calibration["calibration_profile"]["seasonal_substitution"] = {
+            "source_season": "spring",
+            "target_season": "fall",
+        }
+        baseline = state.AGENT_STORE.update_job(
+            baseline["id"],
+            provenance=calibration,
+        )
+
+        _, action = tools._handle_scenario_tool(
+            app.ChatRequest(
+                message="Turn annual backtracking off.",
+                job_id=baseline["id"],
+                active_mode="annual",
+                current_config=baseline["request"],
+            ),
+            self.tool_arguments(backtrack=False),
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            app.confirm_agent_proposal(action["proposal"]["proposal_id"])
+        self.assertEqual(409, context.exception.status_code)
+        self.assertIn("fresh confirmation", str(context.exception.detail))
+        self.assertEqual([], state.AGENT_STORE.list_jobs(kind="candidate"))
 
     def test_annual_sweep_confirmation_is_all_or_nothing_near_capacity(self) -> None:
         baseline = self.completed_baseline(mode="annual", reviewed=False)

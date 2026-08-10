@@ -259,6 +259,90 @@ def _annual_request_seasons(request: dict[str, Any]) -> tuple[str, ...]:
     return tuple(seasons)
 
 
+def _inherited_annual_calibration_provenance(
+    baseline: dict[str, Any],
+    *,
+    candidate_request: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate calibration provenance inherited by a same-input annual scenario."""
+
+    baseline_provenance = baseline.get("provenance") or {}
+    raw_profile = baseline_provenance.get("calibration_profile")
+    raw_application = baseline_provenance.get("calibration_application")
+    if raw_profile is None and raw_application is None:
+        return None
+    if not isinstance(raw_profile, dict) or not isinstance(raw_application, dict):
+        raise ValueError(
+            "The annual baseline calibration provenance is incomplete."
+        )
+    if (
+        raw_application.get("seasonal_substitution") is not None
+        or raw_application.get("server_confirmation") is not None
+    ):
+        raise ValueError(
+            "A seasonal substitution requires a fresh confirmation in the Annual form."
+        )
+
+    required_seasons = _annual_request_seasons(candidate_request)
+    profile = validate_seasonal_calibration_profile(
+        raw_profile,
+        required_seasons=required_seasons,
+    )
+    embedded_profile = validate_seasonal_calibration_profile(
+        raw_application.get("resolved_profile"),
+        required_seasons=required_seasons,
+    )
+    if (
+        profile.get("seasonal_substitution") is not None
+        or embedded_profile.get("seasonal_substitution") is not None
+    ):
+        raise ValueError(
+            "A seasonal substitution requires a fresh confirmation in the Annual form."
+        )
+    profile_sha256 = _json_sha256(profile)
+    if not secrets.compare_digest(
+        profile_sha256,
+        _json_sha256(embedded_profile),
+    ):
+        raise ValueError(
+            "The annual baseline calibration application does not match its profile."
+        )
+    recorded_sha256 = str(
+        raw_application.get("resolved_profile_sha256") or ""
+    ).strip().lower()
+    if not recorded_sha256 or not secrets.compare_digest(
+        profile_sha256,
+        recorded_sha256,
+    ):
+        raise ValueError(
+            "The annual baseline calibration profile fingerprint is invalid."
+        )
+
+    application = deepcopy(raw_application)
+    origin_job_id = str(application.get("baseline_job_id") or "").strip()
+    origin = _get_job_record(origin_job_id) if origin_job_id else None
+    if (
+        origin is None
+        or origin.get("mode") != "validation"
+        or origin.get("state") != "done"
+    ):
+        raise ValueError(
+            "The reviewed calibration baseline used by this annual run is unavailable."
+        )
+    application["settings_deltas"] = _calibration_setting_deltas(
+        _baseline_transferable_settings(origin),
+        candidate_request,
+    )
+    application["required_seasons"] = list(required_seasons)
+    application["resolved_profile"] = embedded_profile
+    application["resolved_profile_sha256"] = profile_sha256
+    return {
+        "calibration_profile": profile,
+        "calibration_application": application,
+    }
+
+
+
 def _baseline_transferable_settings(baseline: dict[str, Any]) -> dict[str, Any]:
     """Return the nine canonical settings shared by calibration and annual runs."""
 

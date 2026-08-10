@@ -374,20 +374,24 @@
             saveDashboardState();
         }
 
+        function invalidateAnnualRequestFromFormEdit() {
+            annualRequestRevision += 1;
+            clearAnnualFallbackConfirmation();
+            if (['starting', 'confirmation_required'].includes(annualRunState?.state)) {
+                annualRunState = null;
+                annualProgressWrap.classList.remove('visible');
+                resetAnnualRunBtn();
+            }
+            renderAnnualSettingDiffs();
+        }
+
         document.querySelectorAll('#analysisControls input, #analysisControls select').forEach((el) => {
             el.addEventListener('input', () => {
                 if (calibrationReviewWorkflowIsActive()) {
                     cancelCalibrationReview();
                 }
                 if (el.classList.contains('annual-input')) {
-                    annualRequestRevision += 1;
-                    clearAnnualFallbackConfirmation();
-                    if (['starting', 'confirmation_required'].includes(annualRunState?.state)) {
-                        annualRunState = null;
-                        annualProgressWrap.classList.remove('visible');
-                        resetAnnualRunBtn();
-                    }
-                    renderAnnualSettingDiffs();
+                    invalidateAnnualRequestFromFormEdit();
                 }
                 saveDashboardState();
                 updateAgentContext();
@@ -397,14 +401,7 @@
                     cancelCalibrationReview();
                 }
                 if (el.classList.contains('annual-input')) {
-                    annualRequestRevision += 1;
-                    clearAnnualFallbackConfirmation();
-                    if (['starting', 'confirmation_required'].includes(annualRunState?.state)) {
-                        annualRunState = null;
-                        annualProgressWrap.classList.remove('visible');
-                        resetAnnualRunBtn();
-                    }
-                    renderAnnualSettingDiffs();
+                    invalidateAnnualRequestFromFormEdit();
                 }
                 saveDashboardState();
                 updateAgentContext();
@@ -412,10 +409,12 @@
         });
         document.querySelectorAll('#annualControls input, #annualControls select').forEach((el) => {
             el.addEventListener('input', () => {
+                invalidateAnnualRequestFromFormEdit();
                 saveDashboardState();
                 updateAgentContext();
             });
             el.addEventListener('change', () => {
+                invalidateAnnualRequestFromFormEdit();
                 saveDashboardState();
                 updateAgentContext();
             });

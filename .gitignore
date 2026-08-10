@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 outputs/
+# Runtime output artifacts stay local, but the Sites download proxy is source.
+!app/outputs/
+!app/outputs/**
 *.log
 
 analysis/

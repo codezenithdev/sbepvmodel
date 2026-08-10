@@ -21,6 +21,7 @@ from sbepv.api import config, state
 from sbepv.api.baselines import (
     _active_model_jobs,
     _baseline_calibration_profile,
+    _inherited_annual_calibration_provenance,
     _reviewed_baseline_data_quality,
     _verified_baseline_source,
 )
@@ -225,6 +226,45 @@ def _proposal_confirmation_spec(
                 status_code=409,
                 detail="The baseline source fingerprint is no longer valid. Confirm a fresh baseline run.",
             )
+    if (
+        proposal.get("mode") == "annual"
+        and job_kind == "candidate"
+        and baseline is not None
+        and baseline.get("mode") == "annual"
+    ):
+        baseline_provenance = baseline.get("provenance") or {}
+        has_calibration_provenance = any(
+            baseline_provenance.get(field) is not None
+            for field in ("calibration_profile", "calibration_application")
+        )
+        if has_calibration_provenance:
+            if (
+                baseline.get("state") != "done"
+                or proposal.get("comparison_kind") != "same_input"
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "A calibrated annual baseline can only be reused for a "
+                        "same-input scenario. Run the current Annual form to "
+                        "resolve and confirm calibration for this request."
+                    ),
+                )
+            try:
+                inherited = _inherited_annual_calibration_provenance(
+                    baseline,
+                    candidate_request=effective_request,
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "The calibrated annual baseline provenance is invalid. "
+                        f"Run the current Annual form again: {exc}"
+                    ),
+                ) from exc
+            if inherited is not None:
+                provenance.update(inherited)
     if (
         proposal.get("mode") == "validation"
         and calibration_requested
