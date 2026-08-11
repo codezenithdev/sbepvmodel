@@ -18,6 +18,10 @@ def resolved_profile() -> dict:
         "origin_job_id": "reviewed-calibration-job",
         "origin_source_sha256": "a" * 64,
         "origin_review_id": "review-receipt",
+        "calibration_physics_version": model.CALIBRATION_PHYSICS_VERSION,
+        "calibration_physics_fingerprint": (
+            model.CALIBRATION_PHYSICS_FINGERPRINT
+        ),
         "solectria_physics_version": model.SOLECTRIA_PHYSICS_VERSION,
         "solectria_physics_fingerprint": model.SOLECTRIA_PHYSICS_FINGERPRINT,
         "seasonal_factors": {
@@ -117,6 +121,26 @@ class FrozenAnnualProfileTests(unittest.TestCase):
 class AnnualRunModelTests(unittest.TestCase):
     def test_run_rejects_missing_or_incompatible_physics_profile_before_io(self):
         for mutation, message in (
+            (
+                lambda profile: profile.pop("calibration_physics_version"),
+                "missing its calibration physics version",
+            ),
+            (
+                lambda profile: profile.__setitem__(
+                    "calibration_physics_version", "retired-physics"
+                ),
+                "incompatible calibration physics version",
+            ),
+            (
+                lambda profile: profile.pop("calibration_physics_fingerprint"),
+                "missing its calibration physics fingerprint",
+            ),
+            (
+                lambda profile: profile.__setitem__(
+                    "calibration_physics_fingerprint", "0" * 64
+                ),
+                "incompatible calibration physics fingerprint",
+            ),
             (
                 lambda profile: profile.pop("solectria_physics_fingerprint"),
                 "missing its Solectria physics fingerprint",
@@ -239,6 +263,58 @@ class AnnualRunModelTests(unittest.TestCase):
         self.assertEqual(
             progress_messages[-1],
             "Calibrated annual model predictions ready",
+        )
+
+    def test_frozen_factor_cannot_exceed_solectria_nameplate(self):
+        index = pd.DatetimeIndex(
+            ["2025-10-01 12:00"],
+            tz="America/Denver",
+        )
+        parsed = pd.DataFrame(
+            {
+                "timestamp_utc": index.tz_convert("UTC"),
+                "se_measured_power_w": [0.0],
+                "sol_measured_power_w": [0.0],
+            },
+            index=index,
+        )
+        profile = resolved_profile()
+        profile.pop("seasonal_substitution")
+        profile["seasonal_factors"]["fall"]["solectria"] = 2.0
+        captured: dict = {}
+
+        def fake_predict(frame, **_kwargs):
+            output = frame.copy()
+            output["se_predicted_power_w"] = [100_000.0]
+            output["sol_predicted_power_w"] = [200_000.0]
+            return output, "measured"
+
+        def capture_excel(frame, *_args, **_kwargs):
+            captured["frame"] = frame.copy()
+
+        with (
+            patch.object(model, "parse_midc_csv", return_value=(parsed, [])),
+            patch.object(model, "predict_ac_power", side_effect=fake_predict),
+            patch.object(model, "plot_results"),
+            patch.object(model, "plot_monthly_energy"),
+            patch.object(model, "write_excel", side_effect=capture_excel),
+        ):
+            model.run_model(
+                input_csv="ignored.csv",
+                output_base="ignored",
+                input_kind="midc",
+                annual_mode=True,
+                expected_interval_seconds=3_600,
+                calibration_profile=profile,
+            )
+
+        self.assertEqual(
+            captured["frame"]["sol_uncalibrated_power_w"].iloc[0],
+            200_000.0,
+        )
+        self.assertEqual(
+            captured["frame"]["sol_predicted_power_w"].iloc[0],
+            model.SOLECTRIA_INVERTER_AC_RATING_W,
         )
 
 

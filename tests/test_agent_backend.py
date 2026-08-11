@@ -157,6 +157,12 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         result = {
             "mode": mode,
             "stats": {
+                "calibration_physics_version": (
+                    model.CALIBRATION_PHYSICS_VERSION
+                ),
+                "calibration_physics_fingerprint": (
+                    model.CALIBRATION_PHYSICS_FINGERPRINT
+                ),
                 "solectria_physics_version": model.SOLECTRIA_PHYSICS_VERSION,
                 "solectria_physics_fingerprint": (
                     model.SOLECTRIA_PHYSICS_FINGERPRINT
@@ -234,6 +240,10 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             "origin_job_id": calibration_baseline["id"],
             "origin_source_sha256": calibration_baseline["source_hash"],
             "origin_review_id": f"review-{calibration_baseline['id']}",
+            "calibration_physics_version": model.CALIBRATION_PHYSICS_VERSION,
+            "calibration_physics_fingerprint": (
+                model.CALIBRATION_PHYSICS_FINGERPRINT
+            ),
             "solectria_physics_version": model.SOLECTRIA_PHYSICS_VERSION,
             "solectria_physics_fingerprint": (
                 model.SOLECTRIA_PHYSICS_FINGERPRINT

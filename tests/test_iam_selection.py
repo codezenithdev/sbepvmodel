@@ -151,9 +151,18 @@ class IamModelTests(unittest.TestCase):
                 "_uniform_module_curve",
                 side_effect=record_module_curve,
             ),
-            patch.object(model, "_uniform_string_max_power", return_value=1.0),
+            patch.object(
+                model,
+                "_uniform_string_curve",
+                return_value=(np.array([1.0, 0.0]), np.array([0.0, 1.0])),
+            ),
+            patch.object(
+                model,
+                "_common_mppt_power_point",
+                return_value=(300_000.0, 900.0, 300_000.0 / 900.0),
+            ) as common_mppt,
         ):
-            model.predict_ac_power(
+            output, _ = model.predict_ac_power(
                 frame,
                 iam_model=model.IAM_MODEL_MARTIN_RUIZ,
                 iam_a_r=0.4,
@@ -166,6 +175,12 @@ class IamModelTests(unittest.TestCase):
             model.IAM_MODEL_MARTIN_RUIZ,
         )
         self.assertEqual(modelchain.call_args.kwargs["iam_a_r"], 0.4)
+        self.assertEqual(common_mppt.call_count, 1)
+        self.assertEqual(len(common_mppt.call_args.args[0]), 10)
+        self.assertEqual(
+            output["sol_predicted_power_w"].iloc[0],
+            model.SOLECTRIA_INVERTER_AC_RATING_W,
+        )
 
     def test_martin_ruiz_dc_solver_skips_zero_and_preserves_nan_fallback(self):
         index = pd.date_range(
@@ -427,6 +442,22 @@ class IamDashboardMarkupTests(unittest.TestCase):
                 rf'<input[^>]*id="{re.escape(element_id)}"[^>]*value="physical"[^>]*checked',
             )
         self.assertGreaterEqual(self.html.count('value="martin_ruiz"'), 2)
+
+    def test_both_forms_disclose_xgi_single_mppt_defaults(self):
+        for element_id in (
+            "solectriaInverterEfficiency",
+            "annualSolectriaInverterEfficiency",
+        ):
+            self.assertRegex(
+                self.html,
+                rf'<input[^>]*id="{element_id}"[^>]*value="0\.985"',
+            )
+        self.assertGreaterEqual(
+            self.html.count("Single-MPPT string mismatch model"),
+            2,
+        )
+        self.assertGreaterEqual(self.html.count("860&ndash;1250 V"), 2)
+        self.assertGreaterEqual(self.html.count("250 kW nameplate"), 2)
 
     def test_reference_links_and_parity_disclosure_are_present(self):
         self.assertIn(

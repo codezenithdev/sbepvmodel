@@ -5,6 +5,11 @@ and Solectria arrays), with a calibration workflow over Bazefield measured data,
 annual simulation over MIDC weather data, and a browser dashboard with an embedded
 analyst agent.
 
+The Solectria path combines its ten 24-module string I-V curves in parallel at
+the installed XGI 1500-250 inverter's single MPPT, constrains operation to
+860-1250 V, defaults AC conversion to the documented 98.5% CEC efficiency, and
+enforces the 250 kW inverter nameplate separately from optional curtailment.
+
 ## Layout
 
 ```

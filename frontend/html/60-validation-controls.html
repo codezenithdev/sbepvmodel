@@ -97,7 +97,7 @@
                                     <h3 id="validationEfficiencyHeading">System efficiencies</h3>
                                     <span class="help-tip-wrap card-corner-help">
                                         <button class="help-tip" type="button" aria-label="Explain calibration system efficiency fields" aria-describedby="calibrationEfficiencyHelpTooltip" aria-expanded="false">?</button>
-                                        <span class="help-tooltip" id="calibrationEfficiencyHelpTooltip" role="tooltip">Enter decimal multipliers from 0 to 1. Inverter efficiency represents AC-conversion efficiency; balance of system covers other modeled losses. The model applies inverter × balance of system for each PV path.</span>
+                                        <span class="help-tooltip" id="calibrationEfficiencyHelpTooltip" role="tooltip">Enter decimal multipliers from 0 to 1. Inverter efficiency represents AC-conversion efficiency; balance of system covers other modeled losses. Solectria uses one common XGI MPPT from 860&ndash;1250 V, applies the efficiency multipliers, and remains capped at its 250 kW nameplate.</span>
                                     </span>
                                 </div>
                                 <p>Use decimal values where 1.0 equals 100%.</p>
@@ -127,12 +127,12 @@
                                     <span class="system-dot solectria-dot" aria-hidden="true"></span>
                                     <div>
                                         <h4 id="validationSolectriaHeading">Solectria</h4>
-                                        <p>String-level model</p>
+                                        <p>Single-MPPT string mismatch model</p>
                                     </div>
                                 </div>
                             <label class="control-field annual-efficiency-field">
                                 <span class="date-label">Inverter efficiency</span>
-                                <input type="number" class="date-input eff-input" id="solectriaInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                <input type="number" class="date-input eff-input" id="solectriaInverterEfficiency" min="0" max="1" step="0.001" value="0.985">
                             </label>
                             <label class="control-field annual-efficiency-field">
                                 <span class="date-label">Balance of system</span>

@@ -49,7 +49,7 @@ from sbepv.calibration import (
     apply_seasonal_calibration,
 )
 
-__version__ = "4"
+__version__ = "5"
 
 # -----------------------------------------------------------------------------
 # RUN SETTINGS (edit here -- no command-line prompts)
@@ -60,9 +60,18 @@ INPUT_IS_UTC = True  # historian writes UTC timestamps
 TIMEZONE = "America/Denver"  # local tz for display/indexing
 MAX_TEMPERATURE_INTERPOLATION_GAP_ROWS = 2
 
+# Solectria XGI 1500-250 nameplate constraints. The CEC efficiency is used as
+# the documented constant-efficiency approximation until a validated part-load
+# curve is available for this site.
+SOLECTRIA_INVERTER_MODEL = "Solectria XGI 1500-250"
+SOLECTRIA_INVERTER_MPPT_MIN_V = 860.0
+SOLECTRIA_INVERTER_MPPT_MAX_V = 1_250.0
+SOLECTRIA_INVERTER_AC_RATING_W = 250_000.0
+SOLECTRIA_INVERTER_CEC_EFFICIENCY = 0.985
+
 # AC conversion efficiencies (predicted DC * eff). 1.0 = no derate.
 SE_EFF = 1.0
-SOL_EFF = 1.0
+SOL_EFF = SOLECTRIA_INVERTER_CEC_EFFICIENCY
 DEFAULT_CURTAILMENT_LIMIT_KW = 125.0
 
 # Incidence-angle modifier. Physical is the canonical default; INCLUDE_IAM is
@@ -221,7 +230,8 @@ MODULE_NAME = "WAAREE_BIN_08_580"
 # frozen after a physically seeded, converged PVMismatch 4.1 two-diode fit. The
 # runtime builder never invokes the nonlinear solver, so a dependency update
 # cannot silently move the production electrical baseline.
-SOLECTRIA_PHYSICS_VERSION = "solectria-bin08-580-pvmismatch-v2"
+SOLECTRIA_PHYSICS_VERSION = "solectria-bin08-580-pvmismatch-v3"
+CALIBRATION_PHYSICS_VERSION = "sbe-stac1-calibration-physics-v1"
 SOLECTRIA_TWO_DIODE_COEFFICIENTS = (
     6.051338067069484e-12,
     7.246006548395709e-7,
@@ -289,12 +299,32 @@ def solectria_physics_manifest() -> dict[str, object]:
         "effective_band_gap_ev": SOLECTRIA_BAND_GAP_EV,
         "equivalent_cell_area_cm2": solectria_equivalent_cell_area_cm2(),
         "equivalent_series_cells": 72,
+        "pvmismatch": {
+            "curve_grid_points": int(pvm.pvconstants.NPTS),
+            "module_topology": "STD72",
+            "substring_count": 3,
+            "cells_per_substring": 24,
+            "substring_bypass_voltage_v": float(pvm.pvmodule.VBYPASS),
+        },
         "module_count": (
             SOLECTRIA_STRINGS * SOLECTRIA_BAYS_PER_STRING * MODULES_PER_BAY
         ),
         "string_layout": "10 strings x 4 bays x 6 modules",
         "string_tilts_deg": [list(row) for row in SOLECTRIA_TILT_ASBUILT],
-        "mppt_assumption": "each modeled string maximized independently",
+        "mppt_assumption": (
+            "ten strings combined in parallel at one common inverter voltage"
+        ),
+        "inverter": {
+            "model": SOLECTRIA_INVERTER_MODEL,
+            "mppt_count": 1,
+            "mppt_min_v": SOLECTRIA_INVERTER_MPPT_MIN_V,
+            "mppt_max_v": SOLECTRIA_INVERTER_MPPT_MAX_V,
+            "ac_rating_w": SOLECTRIA_INVERTER_AC_RATING_W,
+            "cec_efficiency_default": SOLECTRIA_INVERTER_CEC_EFFICIENCY,
+            "bos_efficiency_default": 1.0,
+            "dc_aggregation_algorithm": "parallel_iv_common_mppt_v1",
+            "conversion_model": "constant_efficiency_with_nameplate_clip",
+        },
         "rear_side_irradiance": "not modeled",
     }
 
@@ -314,10 +344,174 @@ def solectria_physics_fingerprint() -> str:
 SOLECTRIA_PHYSICS_FINGERPRINT = solectria_physics_fingerprint()
 
 
+def calibration_physics_manifest() -> dict[str, object]:
+    """Return the complete prediction contract bound to calibration factors.
+
+    Calibration factors cover both arrays, so compatibility must include every
+    shared and system-specific constant or algorithm that can change either
+    prediction. Runtime scenario settings are preserved separately with the
+    baseline; this manifest records their implementation and defaults.
+    """
+
+    shared_module_parameters = {
+        name: _module_parameter_float(name)
+        for name in (
+            "STC",
+            "PTC",
+            "A_c",
+            "N_s",
+            "I_sc_ref",
+            "V_oc_ref",
+            "I_mp_ref",
+            "V_mp_ref",
+            "alpha_sc",
+            "beta_oc",
+            "T_NOCT",
+            "a_ref",
+            "I_L_ref",
+            "I_o_ref",
+            "R_s",
+            "R_sh_ref",
+            "Adjust",
+            "gamma_r",
+        )
+    }
+    return {
+        "physics_version": CALIBRATION_PHYSICS_VERSION,
+        "model_version": __version__,
+        "dependencies": {
+            "pvlib": str(getattr(pvl, "__version__", "unknown")),
+            "pvmismatch": str(getattr(pvm, "__version__", "unknown")),
+        },
+        "input_weather": {
+            "input_is_utc": INPUT_IS_UTC,
+            "local_timezone": TIMEZONE,
+            "maximum_temperature_interpolation_gap_rows": (
+                MAX_TEMPERATURE_INTERPOLATION_GAP_ROWS
+            ),
+            "dhi_contract": "measured_when_finite_otherwise_ghi_dni_geometry",
+        },
+        "site": {"latitude": LAT, "longitude": LON},
+        "module": {
+            "name": MODULE_NAME,
+            "parameters": shared_module_parameters,
+            "rear_side_irradiance": "not modeled",
+        },
+        "tracker": {
+            "axis_azimuth_deg": AXIS_AZIMUTH,
+            "maximum_angle_deg": MAX_ANGLE,
+            "gcr": GCR,
+            "backtrack_default": BACKTRACK,
+            "implementation": "pvlib.SingleAxisTrackerMount",
+        },
+        "modelchain": {
+            "clearsky_model": "ineichen",
+            "transposition_model": "haydavies",
+            "solar_position_method": "nrel_numpy",
+            "airmass_model": "kastenyoung1989",
+            "dc_model": "cec",
+            "spectral_model": "no_loss",
+            "dc_ohmic_model": "no_loss",
+            "losses_model": "no_loss",
+            "placeholder_inverter_parameters": dict(INVERTER_PARAMETERS),
+            "modelchain_ac_output_consumed": False,
+        },
+        "temperature": {
+            "model": "sapm",
+            "parameters": dict(TEMPERATURE_MODEL_PARAMETERS),
+        },
+        "iam": {
+            "models": sorted(IAM_MODELS),
+            "default_model": IAM_MODEL_PHYSICAL,
+            "martin_ruiz_default_a_r": A_R,
+            "application_count": 1,
+            "implementation": "physical_in_modelchain_or_martin_ruiz_then_cec",
+        },
+        "solaredge": {
+            "module_count": (
+                SOLAREDGE_STRINGS
+                * SOLAREDGE_BAYS_PER_STRING
+                * MODULES_PER_BAY
+            ),
+            "string_count": SOLAREDGE_STRINGS,
+            "bays_per_string": SOLAREDGE_BAYS_PER_STRING,
+            "modules_per_bay": MODULES_PER_BAY,
+            "string_tilts_deg": [
+                list(row) for row in SOLAREDGE_TILT_ASBUILT
+            ],
+            "dc_aggregation_algorithm": "sum_individual_module_cec_pmp_v1",
+            "ac_conversion": {
+                "model": "request_efficiency_scalars",
+                "inverter_efficiency_default": SE_EFF,
+                "bos_efficiency_default": 1.0,
+            },
+            "hardware_clipping": "not modeled",
+        },
+        "solectria": solectria_physics_manifest(),
+        "post_prediction": {
+            "calibration": (
+                "denver_meteorological_season_scalar_per_system_caps_v2"
+            ),
+            "solectria_hardware_cap_stage": "before_and_after_calibration",
+            "factor_solver_caps": (
+                "solaredge_optional_user_cap;solectria_min_hardware_user_cap"
+            ),
+            "curtailment": "optional_predicted_ac_cap_after_calibration",
+            "default_curtailment_limit_kw": DEFAULT_CURTAILMENT_LIMIT_KW,
+        },
+    }
+
+
+def calibration_physics_fingerprint() -> str:
+    """Return the stable hash for both arrays and all shared physics."""
+
+    payload = json.dumps(
+        calibration_physics_manifest(),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+CALIBRATION_PHYSICS_FINGERPRINT = calibration_physics_fingerprint()
+
+
 def validate_calibration_profile_physics(
     profile: Mapping[str, object],
 ) -> None:
-    """Reject factors that were not fitted with this Solectria physics core."""
+    """Reject factors not fitted with the complete current prediction core."""
+
+    calibration_version = profile.get("calibration_physics_version")
+    calibration_fingerprint = profile.get("calibration_physics_fingerprint")
+    if not isinstance(calibration_version, str) or not calibration_version.strip():
+        raise ValueError(
+            "Calibration profile is missing its calibration physics version; "
+            "run a fresh reviewed calibration."
+        )
+    if (
+        not isinstance(calibration_fingerprint, str)
+        or not calibration_fingerprint.strip()
+    ):
+        raise ValueError(
+            "Calibration profile is missing its calibration physics fingerprint; "
+            "run a fresh reviewed calibration."
+        )
+    if not secrets.compare_digest(
+        calibration_version.strip(), CALIBRATION_PHYSICS_VERSION
+    ):
+        raise ValueError(
+            "Calibration profile uses an incompatible calibration physics "
+            "version; run a fresh reviewed calibration."
+        )
+    if not secrets.compare_digest(
+        calibration_fingerprint.strip().lower(),
+        CALIBRATION_PHYSICS_FINGERPRINT,
+    ):
+        raise ValueError(
+            "Calibration profile uses an incompatible calibration physics "
+            "fingerprint; run a fresh reviewed calibration."
+        )
 
     version = profile.get("solectria_physics_version")
     fingerprint = profile.get("solectria_physics_fingerprint")
@@ -1053,6 +1247,19 @@ def _uniform_string_max_power(
     pvconst: pvm.pvconstants.PVconstants,
 ) -> float:
     """Return max string power for four bay curves repeated six modules each."""
+    string_current, string_voltage = _uniform_string_curve(
+        bay_curves,
+        pvconst,
+    )
+    return float(np.nanmax(string_current * string_voltage))
+
+
+def _uniform_string_curve(
+    bay_curves: list[tuple[np.ndarray, np.ndarray, float]],
+    pvconst: pvm.pvconstants.PVconstants,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return one 24-module string I-V curve from its four bay curves."""
+
     module_current = np.asarray([curve[0] for curve in bay_curves])
     module_voltage = np.asarray([curve[1] for curve in bay_curves])
     mean_isc = float(np.mean([curve[2] for curve in bay_curves]))
@@ -1067,7 +1274,118 @@ def _uniform_string_max_power(
     # generic pvmismatch path interpolates the same curve six times; multiplying
     # its voltage after one interpolation gives the same series I-V curve.
     string_voltage = one_of_each_voltage * MODULES_PER_BAY
-    return float(np.nanmax(string_current * string_voltage))
+    return string_current, string_voltage
+
+
+def _common_mppt_power_point(
+    string_curves: list[tuple[np.ndarray, np.ndarray]],
+    pvconst: pvm.pvconstants.PVconstants,
+    *,
+    minimum_voltage: float = SOLECTRIA_INVERTER_MPPT_MIN_V,
+    maximum_voltage: float = SOLECTRIA_INVERTER_MPPT_MAX_V,
+) -> tuple[float, float, float]:
+    """Return system DC power, voltage, and current at the single MPPT.
+
+    The installed XGI inverter exposes one MPPT, so all ten strings operate at
+    one voltage. Their currents are summed in parallel before maximizing power,
+    and operating points outside the inverter's MPPT window are ineligible.
+    """
+
+    if not string_curves:
+        raise ValueError("Common MPPT requires at least one string curve.")
+    lower_limit = float(minimum_voltage)
+    upper_limit = float(maximum_voltage)
+    if (
+        not np.isfinite(lower_limit)
+        or not np.isfinite(upper_limit)
+        or lower_limit < 0.0
+        or upper_limit <= lower_limit
+    ):
+        raise ValueError("Common MPPT voltage limits must be finite and ordered.")
+
+    string_currents: list[np.ndarray] = []
+    string_voltages: list[np.ndarray] = []
+    curve_size: int | None = None
+    for current, voltage in string_curves:
+        current_values = np.asarray(current, dtype=float).reshape(-1)
+        voltage_values = np.asarray(voltage, dtype=float).reshape(-1)
+        if (
+            current_values.size < 2
+            or current_values.shape != voltage_values.shape
+            or not np.isfinite(current_values).all()
+            or not np.isfinite(voltage_values).all()
+        ):
+            raise ValueError("Each common-MPPT string curve must be finite and aligned.")
+        if curve_size is None:
+            curve_size = current_values.size
+        elif current_values.size != curve_size:
+            raise ValueError("Common-MPPT string curves must use one shared grid size.")
+        # PVMismatch legitimately repeats voltage samples where bypass clamps
+        # the reverse-bias part of a string curve. Descending samples are not
+        # valid input, but equal adjacent voltages are part of its native grid.
+        if np.any(np.diff(voltage_values) < 0.0):
+            raise ValueError(
+                "Each common-MPPT string voltage curve must be nondecreasing."
+            )
+        string_currents.append(current_values)
+        string_voltages.append(voltage_values)
+
+    parallel_current, parallel_voltage = pvconst.calcParallel(
+        np.stack(string_currents),
+        np.stack(string_voltages),
+        max(float(np.max(values)) for values in string_voltages),
+        min(float(np.min(values)) for values in string_voltages),
+    )
+    parallel_current = np.asarray(parallel_current, dtype=float).reshape(-1)
+    parallel_voltage = np.asarray(parallel_voltage, dtype=float).reshape(-1)
+    finite = np.isfinite(parallel_current) & np.isfinite(parallel_voltage)
+    if finite.sum() < 2:
+        return 0.0, float("nan"), 0.0
+    system_voltage = parallel_voltage[finite]
+    system_current = parallel_current[finite]
+    if np.any(np.diff(system_voltage) < 0.0):
+        raise ValueError("Combined common-MPPT voltage curve must be nondecreasing.")
+    system_voltage, unique_indices = np.unique(
+        system_voltage,
+        return_index=True,
+    )
+    system_current = system_current[unique_indices]
+    if system_voltage.size < 2:
+        return 0.0, float("nan"), 0.0
+
+    lower = max(lower_limit, float(system_voltage[0]))
+    upper = min(upper_limit, float(system_voltage[-1]))
+    if upper < lower:
+        return 0.0, float("nan"), 0.0
+
+    in_window = (system_voltage >= lower) & (system_voltage <= upper)
+    candidate_voltage = np.unique(
+        np.concatenate(([lower], system_voltage[in_window], [upper]))
+    )
+    candidate_current = np.interp(
+        candidate_voltage,
+        system_voltage,
+        system_current,
+    )
+    candidate_power = candidate_voltage * candidate_current
+    eligible = (
+        np.isfinite(candidate_power)
+        & (candidate_voltage >= lower_limit)
+        & (candidate_voltage <= upper_limit)
+        & (candidate_current >= 0.0)
+    )
+    if not eligible.any():
+        return 0.0, float("nan"), 0.0
+    eligible_indices = np.flatnonzero(eligible)
+    best_index = int(
+        eligible_indices[np.argmax(candidate_power[eligible_indices])]
+    )
+    best_power = max(0.0, float(candidate_power[best_index]))
+    return (
+        best_power,
+        float(candidate_voltage[best_index]),
+        max(0.0, float(candidate_current[best_index])),
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -1158,15 +1476,24 @@ def predict_ac_power(
             )
             for tilt in solectria_tilts
         }
-        for row in solectria_rows:
-            sol_dc[j] += _uniform_string_max_power(
+        string_curves = [
+            _uniform_string_curve(
                 [curves_by_tilt[tilt] for tilt in row],
                 pvm_mod.pvconst,
             )
+            for row in solectria_rows
+        ]
+        sol_dc[j], _, _ = _common_mppt_power_point(
+            string_curves,
+            pvm_mod.pvconst,
+        )
 
     out = df.copy()
     out["se_predicted_power_w"] = se_dc * float(se_eff)
-    out["sol_predicted_power_w"] = sol_dc * float(sol_eff)
+    out["sol_predicted_power_w"] = np.minimum(
+        sol_dc * float(sol_eff),
+        SOLECTRIA_INVERTER_AC_RATING_W,
+    )
     return out, dhi_source
 
 
@@ -1736,6 +2063,10 @@ def _calibration_lineage_rows(
             "origin_job_id",
             "origin_review_id",
             "origin_source_sha256",
+            "calibration_physics_version",
+            "calibration_physics_fingerprint",
+            "solectria_physics_version",
+            "solectria_physics_fingerprint",
         ):
             if key in calibration_factors:
                 values[key] = calibration_factors[key]
@@ -1961,7 +2292,7 @@ def run_model(
     backtrack: bool = BACKTRACK,
     solaredge_inverter_efficiency: float = 1.0,
     solaredge_bos_efficiency: float = 1.0,
-    solectria_inverter_efficiency: float = 1.0,
+    solectria_inverter_efficiency: float = SOL_EFF,
     solectria_bos_efficiency: float = 1.0,
     include_iam: bool | None = INCLUDE_IAM,
     iam_a_r: float | None = A_R,
@@ -2096,11 +2427,23 @@ def run_model(
                 expected_interval_seconds=expected_interval_seconds,
                 requested_start=requested_start,
                 requested_end=requested_end,
-                maximum_uncurtailed_power_w=(
-                    float(curtailment_limit_kw) * 1_000.0
-                    if curtailment_enabled and curtailment_limit_kw is not None
-                    else None
-                ),
+                maximum_predicted_power_w_by_system={
+                    "se": (
+                        float(curtailment_limit_kw) * 1_000.0
+                        if curtailment_enabled
+                        and curtailment_limit_kw is not None
+                        else None
+                    ),
+                    "sol": min(
+                        SOLECTRIA_INVERTER_AC_RATING_W,
+                        (
+                            float(curtailment_limit_kw) * 1_000.0
+                            if curtailment_enabled
+                            and curtailment_limit_kw is not None
+                            else SOLECTRIA_INVERTER_AC_RATING_W
+                        ),
+                    ),
+                },
             )
         data_quality_warnings.extend(calibration_factors.get("warnings") or [])
         if data_quality_context:
@@ -2116,6 +2459,12 @@ def run_model(
                     "Data-quality review retained: "
                     + ", ".join(str(value) for value in retained_issues)
                 )
+    # Seasonal factors correct the physics estimate but cannot create an
+    # operating point above the installed inverter's continuous AC nameplate.
+    df["sol_predicted_power_w"] = pd.to_numeric(
+        df["sol_predicted_power_w"],
+        errors="coerce",
+    ).clip(upper=SOLECTRIA_INVERTER_AC_RATING_W)
     if progress_cb:
         progress_cb(0.86, "Applying curtailment and integrating energy")
     active_curtailment_limit_kw = (
@@ -2239,8 +2588,16 @@ def run_model(
         "SOLAREDGE_STRINGS": SOLAREDGE_STRINGS,
         "SOLAREDGE_BAYS_PER_STRING": SOLAREDGE_BAYS_PER_STRING,
         "module_name": MODULE_NAME,
+        "calibration_physics_version": CALIBRATION_PHYSICS_VERSION,
+        "calibration_physics_fingerprint": CALIBRATION_PHYSICS_FINGERPRINT,
         "solectria_physics_version": SOLECTRIA_PHYSICS_VERSION,
         "solectria_physics_fingerprint": SOLECTRIA_PHYSICS_FINGERPRINT,
+        "solectria_inverter_model": SOLECTRIA_INVERTER_MODEL,
+        "solectria_mppt_count": 1,
+        "solectria_mppt_min_v": SOLECTRIA_INVERTER_MPPT_MIN_V,
+        "solectria_mppt_max_v": SOLECTRIA_INVERTER_MPPT_MAX_V,
+        "solectria_inverter_ac_rating_w": SOLECTRIA_INVERTER_AC_RATING_W,
+        "solectria_dc_aggregation": "parallel_iv_common_mppt_v1",
         "data_quality_warnings": " | ".join(data_quality_warnings) or "None",
         "calibration_method": (
             calibration_factors.get("method")
@@ -2358,8 +2715,16 @@ def run_model(
     return {
         "mode": "annual" if annual_mode else "validation",
         "model_version": __version__,
+        "calibration_physics_version": CALIBRATION_PHYSICS_VERSION,
+        "calibration_physics_fingerprint": CALIBRATION_PHYSICS_FINGERPRINT,
         "solectria_physics_version": SOLECTRIA_PHYSICS_VERSION,
         "solectria_physics_fingerprint": SOLECTRIA_PHYSICS_FINGERPRINT,
+        "solectria_inverter_model": SOLECTRIA_INVERTER_MODEL,
+        "solectria_mppt_count": 1,
+        "solectria_mppt_min_v": SOLECTRIA_INVERTER_MPPT_MIN_V,
+        "solectria_mppt_max_v": SOLECTRIA_INVERTER_MPPT_MAX_V,
+        "solectria_inverter_ac_rating_w": SOLECTRIA_INVERTER_AC_RATING_W,
+        "solectria_dc_aggregation": "parallel_iv_common_mppt_v1",
         "se_measured_kwh": None if annual_mode else _safe(se_meas),
         "se_predicted_kwh": _safe(se_pred),
         "sol_measured_kwh": None if annual_mode else _safe(sol_meas),

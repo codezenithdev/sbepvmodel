@@ -43,7 +43,7 @@ def _validate_current_physics_profile(
     *,
     required_seasons: tuple[str, ...] | list[str] = (),
 ) -> dict[str, Any]:
-    """Validate profile structure and its fit-time Solectria physics identity."""
+    """Validate profile structure and its complete fit-time physics identity."""
 
     canonical = validate_seasonal_calibration_profile(
         profile,
@@ -237,6 +237,12 @@ def _baseline_calibration_profile(
         "origin_job_id": str(baseline["id"]),
         "origin_source_sha256": str(baseline["source_hash"]),
         "origin_review_id": str(quality["review_id"]),
+        "calibration_physics_version": stats.get(
+            "calibration_physics_version"
+        ),
+        "calibration_physics_fingerprint": stats.get(
+            "calibration_physics_fingerprint"
+        ),
         "solectria_physics_version": stats.get(
             "solectria_physics_version"
         ),
@@ -420,6 +426,12 @@ def _public_current_calibration(bundle: dict[str, Any]) -> dict[str, Any]:
         "job_id": str(baseline["id"]),
         "origin_job_id": str(profile["origin_job_id"]),
         "review_id": str(quality["review_id"]),
+        "calibration_physics_version": profile[
+            "calibration_physics_version"
+        ],
+        "calibration_physics_fingerprint": profile[
+            "calibration_physics_fingerprint"
+        ],
         "solectria_physics_version": profile[
             "solectria_physics_version"
         ],

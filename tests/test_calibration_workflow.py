@@ -1006,6 +1006,48 @@ class CalibrationWorkflowTests(unittest.TestCase):
                 maximum_uncurtailed_power_w=10_000.0,
             )
 
+    def test_solectria_factor_solves_through_its_hardware_cap(self) -> None:
+        index = pd.date_range(
+            "2026-06-01 12:00:00",
+            periods=2,
+            freq="h",
+            tz="America/Denver",
+        )
+        frame = pd.DataFrame(
+            {
+                "se_measured_power_w": [100_000.0, 100_000.0],
+                "sol_measured_power_w": [200_000.0, 200_000.0],
+                "se_predicted_power_w": [100_000.0, 100_000.0],
+                "sol_predicted_power_w": [250_000.0, 50_000.0],
+            },
+            index=index,
+        )
+
+        calibrated, calibration, _ = apply_seasonal_calibration(
+            frame,
+            minimum_season_samples=1,
+            expected_interval_seconds=3_600,
+            maximum_predicted_power_w_by_system={
+                "se": None,
+                "sol": 250_000.0,
+            },
+        )
+        calibrated["sol_predicted_power_w"] = calibrated[
+            "sol_predicted_power_w"
+        ].clip(upper=250_000.0)
+        integrated = add_energy(
+            calibrated,
+            expected_interval_seconds=3_600,
+        )
+        observation = calibration["seasons"][0]["systems"]["solectria"]
+
+        self.assertAlmostEqual(observation["factor"], 3.0)
+        self.assertEqual(observation["energy_balance_status"], "balanced")
+        self.assertAlmostEqual(
+            integrated["sol_predicted_energy_kwh"].iloc[-1],
+            integrated["sol_measured_energy_kwh"].iloc[-1],
+        )
+
     def test_driver_diagnostics_uses_available_features_when_dhi_is_all_nan(
         self,
     ) -> None:

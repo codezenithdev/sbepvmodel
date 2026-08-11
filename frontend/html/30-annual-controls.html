@@ -84,7 +84,7 @@
                                         <h3 id="annualEfficiencyHeading">Inherited model settings</h3>
                                         <span class="help-tip-wrap card-corner-help">
                                             <button class="help-tip" type="button" aria-label="Explain annual system efficiency fields" aria-describedby="annualEfficiencyHelpTooltip" aria-expanded="false">?</button>
-                                            <span class="help-tooltip" id="annualEfficiencyHelpTooltip" role="tooltip">Enter decimal multipliers from 0 to 1. Inverter efficiency represents AC-conversion efficiency; balance of system covers other modeled losses. The model applies inverter × balance of system for each PV path.</span>
+                                            <span class="help-tooltip" id="annualEfficiencyHelpTooltip" role="tooltip">Enter decimal multipliers from 0 to 1. Inverter efficiency represents AC-conversion efficiency; balance of system covers other modeled losses. Solectria uses one common XGI MPPT from 860&ndash;1250 V, applies the efficiency multipliers, and remains capped at its 250 kW nameplate.</span>
                                         </span>
                                     </div>
                                     <p>Prefilled from calibration and editable for this annual run.</p>
@@ -156,7 +156,7 @@
                                         <span class="system-dot solectria-dot" aria-hidden="true"></span>
                                         <div>
                                             <h4 id="annualSolectriaHeading">Solectria</h4>
-                                            <p>String-level model</p>
+                                            <p>Single-MPPT string mismatch model</p>
                                         </div>
                                     </div>
                                     <label class="control-field annual-efficiency-field annual-setting-field" data-annual-setting-field="solectria_inverter_efficiency">
@@ -164,7 +164,7 @@
                                             <span class="date-label">Inverter efficiency</span>
                                             <span class="annual-setting-origin" data-annual-setting-origin="solectria_inverter_efficiency" hidden>From calibration</span>
                                         </span>
-                                        <input type="number" class="date-input eff-input annual-input" id="annualSolectriaInverterEfficiency" min="0" max="1" step="0.001" value="1.0">
+                                        <input type="number" class="date-input eff-input annual-input" id="annualSolectriaInverterEfficiency" min="0" max="1" step="0.001" value="0.985">
                                     </label>
                                     <label class="control-field annual-efficiency-field annual-setting-field" data-annual-setting-field="solectria_bos_efficiency">
                                         <span class="annual-field-label-row">

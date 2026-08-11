@@ -109,6 +109,12 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         if include_physics_identity:
             profile.update(
                 {
+                    "calibration_physics_version": (
+                        model.CALIBRATION_PHYSICS_VERSION
+                    ),
+                    "calibration_physics_fingerprint": (
+                        model.CALIBRATION_PHYSICS_FINGERPRINT
+                    ),
                     "solectria_physics_version": (
                         model.SOLECTRIA_PHYSICS_VERSION
                     ),
@@ -199,6 +205,14 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         self.assertTrue(payload["verified"])
         self.assertEqual(payload["job_id"], baseline["id"])
         self.assertEqual(payload["review_id"], "review-reviewed-calibration")
+        self.assertEqual(
+            payload["calibration_physics_version"],
+            model.CALIBRATION_PHYSICS_VERSION,
+        )
+        self.assertEqual(
+            payload["calibration_physics_fingerprint"],
+            model.CALIBRATION_PHYSICS_FINGERPRINT,
+        )
         self.assertEqual(
             payload["solectria_physics_version"],
             model.SOLECTRIA_PHYSICS_VERSION,

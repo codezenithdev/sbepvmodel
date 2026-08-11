@@ -28,7 +28,7 @@ class RunRequest(StrictRequest):
     backtrack: bool = model.BACKTRACK
     solaredge_inverter_efficiency: float = 1.0
     solaredge_bos_efficiency: float = 1.0
-    solectria_inverter_efficiency: float = 1.0
+    solectria_inverter_efficiency: float = model.SOL_EFF
     solectria_bos_efficiency: float = 1.0
     iam_model: Literal["physical", "martin_ruiz"] = "physical"
     include_iam: bool | None = Field(
@@ -56,7 +56,7 @@ class AnnualRunRequest(StrictRequest):
     backtrack: bool = model.BACKTRACK
     solaredge_inverter_efficiency: float = 1.0
     solaredge_bos_efficiency: float = 1.0
-    solectria_inverter_efficiency: float = 1.0
+    solectria_inverter_efficiency: float = model.SOL_EFF
     solectria_bos_efficiency: float = 1.0
     iam_model: Literal["physical", "martin_ruiz"] = "physical"
     include_iam: bool | None = Field(

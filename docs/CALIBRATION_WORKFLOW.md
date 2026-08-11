@@ -113,21 +113,24 @@ remaining reviewed row to calculate one auditable energy-ratio factor:
 applied factor = measured AC energy / uncalibrated modeled AC energy
 ```
 
-When curtailment is enabled, direct division alone would not account for the
-clipped operating ceiling. The workflow therefore solves the equivalent
-whole-season equation:
+The Solectria prediction is always subject to the installed XGI inverter's
+250 kW AC nameplate. When optional user curtailment is enabled, it adds a second
+operating ceiling. The workflow therefore solves the equivalent whole-season
+equation through each system's active cap:
 
 ```text
 sum(final predicted AC power × interval) = sum(measured AC power × interval)
-final predicted AC power = min(uncalibrated AC power × applied factor, curtailment limit)
+final predicted AC power = min(uncalibrated AC power × applied factor, active system cap)
 ```
 
-Without curtailment this reduces to the direct all-row measured/model energy
-ratio. With curtailment, the workflow solves the monotonic clipped-energy
-equation. Calibration stops with an actionable error if the measured target is
-physically unreachable under the selected cap or the model produces no positive
-energy. The result records the final factor, reviewed sample and hour coverage,
-target energy, predicted energy, and residual.
+For SolarEdge, the active cap is the optional user curtailment limit. For
+Solectria, it is the lower of the mandatory 250 kW hardware nameplate and an
+enabled user curtailment limit. A system with no active ceiling reduces to the
+direct all-row measured/model energy ratio; otherwise the workflow solves the
+monotonic clipped-energy equation. Calibration stops with an actionable error if
+the measured target is physically unreachable under the applicable cap or the
+model produces no positive energy. The result records the final factor, reviewed
+sample and hour coverage, target energy, predicted energy, and residual.
 
 The factor is applied timestamp by timestamp according to the local
 `America/Denver` season. Calibration fitting never uses a daylight-only sample

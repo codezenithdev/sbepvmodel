@@ -39,10 +39,23 @@ SOLAR_MODEL_KNOWLEDGE = {
             "Modeled as module-level optimization by summing pvlib module p_mp "
             "over the as-built bay tilts."
         ),
-        "Solectria": (
-            "Modeled as string-level mismatch using pvlib irradiance/temperature "
-            "inputs and pvmismatch string calculations over the as-built string layout."
-        ),
+        "Solectria": {
+            "description": (
+                "String-level mismatch using pvlib irradiance/temperature inputs "
+                "and pvmismatch over ten 24-module strings combined in parallel "
+                "at one common inverter MPPT."
+            ),
+            "inverter": {
+                "model": model.SOLECTRIA_INVERTER_MODEL,
+                "mppt_count": 1,
+                "mppt_min_v": model.SOLECTRIA_INVERTER_MPPT_MIN_V,
+                "mppt_max_v": model.SOLECTRIA_INVERTER_MPPT_MAX_V,
+                "default_cec_efficiency": (
+                    model.SOLECTRIA_INVERTER_CEC_EFFICIENCY
+                ),
+                "ac_rating_w": model.SOLECTRIA_INVERTER_AC_RATING_W,
+            },
+        },
     },
     "weather_inputs": (
         "Historian CSV provides measured inverter power plus DNI, GHI, DHI, "

@@ -1858,6 +1858,18 @@ def apply_frozen_seasonal_calibration(
         "origin_job_id": profile["origin_job_id"],
         "origin_source_sha256": profile["origin_source_sha256"],
         "origin_review_id": profile["origin_review_id"],
+        "calibration_physics_version": profile.get(
+            "calibration_physics_version"
+        ),
+        "calibration_physics_fingerprint": profile.get(
+            "calibration_physics_fingerprint"
+        ),
+        "solectria_physics_version": profile.get(
+            "solectria_physics_version"
+        ),
+        "solectria_physics_fingerprint": profile.get(
+            "solectria_physics_fingerprint"
+        ),
         "season_definition": (
             "meteorological: winter Dec-Feb, spring Mar-May, "
             "summer Jun-Aug, fall Sep-Nov"
@@ -1905,12 +1917,17 @@ def apply_seasonal_calibration(
     requested_start: Any | None = None,
     requested_end: Any | None = None,
     maximum_uncurtailed_power_w: float | None = None,
+    maximum_predicted_power_w_by_system: Mapping[
+        str, float | None
+    ] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
     """Calculate and apply per-season, per-system all-row energy factors.
 
     ``minimum_season_samples`` and ``minimum_season_hours`` remain accepted for
     compatibility with older callers. They no longer filter or replace a
-    seasonal factor: every reviewed row in each season contributes.
+    seasonal factor: every reviewed row in each season contributes. A per-system
+    maximum overrides the legacy shared maximum when solving through hardware or
+    curtailment caps; application remains in the caller's established cap stage.
     """
 
     required = {
@@ -1971,12 +1988,20 @@ def apply_seasonal_calibration(
             "systems": {},
         }
         for system in ("se", "sol"):
+            maximum_predicted_power_w = maximum_uncurtailed_power_w
+            if maximum_predicted_power_w_by_system is not None:
+                maximum_predicted_power_w = (
+                    maximum_predicted_power_w_by_system.get(
+                        system,
+                        maximum_uncurtailed_power_w,
+                    )
+                )
             balance = _energy_balance_observation(
                 output,
                 system=system,
                 row_mask=season_mask,
                 dt_hours=dt_hours,
-                maximum_predicted_power_w=maximum_uncurtailed_power_w,
+                maximum_predicted_power_w=maximum_predicted_power_w,
             )
             factor = float(balance["factor"])
             if factor < 0.5 or factor > 1.5:
