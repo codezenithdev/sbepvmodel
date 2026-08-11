@@ -660,27 +660,28 @@ def calibration_review_rows(
     issue_id: str,
     offset: int = 0,
     limit: int = 50,
+    all_rows: bool = False,
 ) -> JSONResponse:
-    """Return one bounded page of hash-verified rows for an issue."""
+    """Return bounded hash-verified rows, or all rows when explicitly requested."""
 
     with state._ORCHESTRATION_LOCK:
         record = _load_calibration_review(review_id)
-        try:
-            reporting.verify_source_sha256(record["source_path"], record["source_hash"])
-            page = quality_issue_rows(
-                record["source_path"],
-                record["report"],
-                issue_id,
-                offset=offset,
-                limit=limit,
-            )
-        except SourceFingerprintMismatch as exc:
-            raise HTTPException(
-                status_code=409,
-                detail="The reviewed Bazefield source changed; retrieve it again.",
-            ) from exc
-        except (KeyError, OSError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        page = quality_issue_rows(
+            record["source_path"],
+            record["report"],
+            issue_id,
+            offset=offset,
+            limit=None if all_rows else limit,
+        )
+        reporting.verify_source_sha256(record["source_path"], record["source_hash"])
+    except SourceFingerprintMismatch as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="The reviewed Bazefield source changed; retrieve it again.",
+        ) from exc
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return JSONResponse(page)
 
 

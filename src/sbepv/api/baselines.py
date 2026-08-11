@@ -32,10 +32,25 @@ from sbepv.api.job_store import _get_job_record
 from sbepv.api.schemas import ChatRequest, RunRequest
 from sbepv.api.request_context import _run_request_context
 from sbepv.api.validation import _validate_curtailment, _validate_run_request
-from sbepv import reporting
+from sbepv import model, reporting
 from sbepv.reporting import SourceFingerprintMismatch
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_current_physics_profile(
+    profile: dict[str, Any],
+    *,
+    required_seasons: tuple[str, ...] | list[str] = (),
+) -> dict[str, Any]:
+    """Validate profile structure and its fit-time Solectria physics identity."""
+
+    canonical = validate_seasonal_calibration_profile(
+        profile,
+        required_seasons=required_seasons,
+    )
+    model.validate_calibration_profile_physics(canonical)
+    return canonical
 
 
 def _active_model_jobs() -> list[dict[str, Any]]:
@@ -169,7 +184,7 @@ def _baseline_calibration_profile(
         "calibration_profile"
     )
     if existing is not None:
-        return validate_seasonal_calibration_profile(
+        return _validate_current_physics_profile(
             existing,
             required_seasons=required_seasons,
         )
@@ -222,11 +237,17 @@ def _baseline_calibration_profile(
         "origin_job_id": str(baseline["id"]),
         "origin_source_sha256": str(baseline["source_hash"]),
         "origin_review_id": str(quality["review_id"]),
+        "solectria_physics_version": stats.get(
+            "solectria_physics_version"
+        ),
+        "solectria_physics_fingerprint": stats.get(
+            "solectria_physics_fingerprint"
+        ),
         "seasonal_factors": factors,
         "fit_metadata": deepcopy(fit_metadata),
         "factor_driver_diagnostics": deepcopy(diagnostics),
     }
-    return validate_seasonal_calibration_profile(
+    return _validate_current_physics_profile(
         profile,
         required_seasons=required_seasons,
     )
@@ -284,11 +305,11 @@ def _inherited_annual_calibration_provenance(
         )
 
     required_seasons = _annual_request_seasons(candidate_request)
-    profile = validate_seasonal_calibration_profile(
+    profile = _validate_current_physics_profile(
         raw_profile,
         required_seasons=required_seasons,
     )
-    embedded_profile = validate_seasonal_calibration_profile(
+    embedded_profile = _validate_current_physics_profile(
         raw_application.get("resolved_profile"),
         required_seasons=required_seasons,
     )
@@ -375,7 +396,7 @@ def _current_calibration_bundle() -> dict[str, Any] | None:
     )
     if profile is None:
         return None
-    canonical_profile = validate_seasonal_calibration_profile(profile)
+    canonical_profile = _validate_current_physics_profile(profile)
     return {
         "promotion": deepcopy(promoted),
         "baseline": deepcopy(baseline),
@@ -399,6 +420,12 @@ def _public_current_calibration(bundle: dict[str, Any]) -> dict[str, Any]:
         "job_id": str(baseline["id"]),
         "origin_job_id": str(profile["origin_job_id"]),
         "review_id": str(quality["review_id"]),
+        "solectria_physics_version": profile[
+            "solectria_physics_version"
+        ],
+        "solectria_physics_fingerprint": profile[
+            "solectria_physics_fingerprint"
+        ],
         "promoted_at": promotion.get("promoted_at"),
         "receipt_url": f"/api/status/{baseline['id']}",
         "profile_sha256": bundle["profile_sha256"],

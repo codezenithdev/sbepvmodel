@@ -25,8 +25,10 @@ physics-model predictions directly.
    and every detected issue. **Show affected rows** loads hash-verified source
    rows lazily from
    `GET /api/calibration-reviews/{review_id}/rows?issue_id=...&offset=...&limit=...`.
-   The table is paginated rather than placing source values in the public review
-   summary.
+   The table starts with 50 rows and offers **Load more rows**, **Last 50
+   rows**, and **Load all rows**. Review timestamps, examples, and expiry times
+   are displayed in DST-aware `America/Denver` local time. Source values remain
+   canonical UTC and are not placed in the public review summary.
 5. Where both actions are technically valid, the recommended **Retain** or
    **Exclude** action is selected in the dropdown by default. The user can review
    the affected-row sample and change that choice. A choice applies to every
@@ -72,16 +74,17 @@ The review detects:
 - missing or non-numeric power and weather values;
 - values outside broad physical bounds;
 - near-zero plant power under strong irradiance;
-- plant power reported without irradiance;
-- isolated local spikes using a robust rolling-median/MAD test; and
+- plant power reported without irradiance; and
 - non-trivial sensor flatlines lasting roughly four hours or longer.
 
 Every issue has a stable ID, severity, affected columns and row count, sample
 timestamps where applicable, an allowed-action list, and a recommended action.
 The public report exposes only whether affected source rows are available. The
-row endpoint verifies the private snapshot hash and returns bounded pages (50
-rows per dashboard request, with an API maximum of 200), so large reviews do not
-inflate the initial response or browser storage.
+row endpoint verifies the private snapshot hash and returns bounded pages by
+default (50 rows per dashboard request, with an API maximum of 200), so large
+reviews do not inflate the initial response or browser storage. An explicit
+`all_rows=true` request returns the complete affected-row set only after the user
+selects **Load all rows**.
 The cleaned-row counts, decisions, raw-source SHA-256, and reviewed-source
 SHA-256 are carried into the result and Excel workbook for auditability.
 Nonexistent or repeated `America/Denver` boundary times at daylight-saving

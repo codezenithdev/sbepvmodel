@@ -18,6 +18,8 @@ def resolved_profile() -> dict:
         "origin_job_id": "reviewed-calibration-job",
         "origin_source_sha256": "a" * 64,
         "origin_review_id": "review-receipt",
+        "solectria_physics_version": model.SOLECTRIA_PHYSICS_VERSION,
+        "solectria_physics_fingerprint": model.SOLECTRIA_PHYSICS_FINGERPRINT,
         "seasonal_factors": {
             "winter": {"solaredge": 1.1, "solectria": 0.9},
             "spring": {"solaredge": 2.0, "solectria": 0.5},
@@ -113,6 +115,36 @@ class FrozenAnnualProfileTests(unittest.TestCase):
 
 
 class AnnualRunModelTests(unittest.TestCase):
+    def test_run_rejects_missing_or_incompatible_physics_profile_before_io(self):
+        for mutation, message in (
+            (
+                lambda profile: profile.pop("solectria_physics_fingerprint"),
+                "missing its Solectria physics fingerprint",
+            ),
+            (
+                lambda profile: profile.__setitem__(
+                    "solectria_physics_fingerprint", "0" * 64
+                ),
+                "incompatible Solectria physics fingerprint",
+            ),
+        ):
+            with self.subTest(message=message):
+                profile = resolved_profile()
+                mutation(profile)
+                with patch.object(
+                    model,
+                    "parse_midc_csv",
+                    side_effect=AssertionError("profile must fail before input IO"),
+                ):
+                    with self.assertRaisesRegex(ValueError, message):
+                        model.run_model(
+                            input_csv="unused.csv",
+                            output_base="unused",
+                            input_kind="midc",
+                            annual_mode=True,
+                            calibration_profile=profile,
+                        )
+
     def test_frozen_profile_applies_before_curtailment_without_refitting(self):
         index = pd.date_range(
             "2025-10-01 12:00",

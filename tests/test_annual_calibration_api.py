@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 from fastapi.testclient import TestClient
 
+from sbepv import model
 from sbepv.api import config, state
 from sbepv.worker import run_annual
 from sbepv.api import baselines
@@ -71,6 +72,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         from_date: str = "2025-01-01",
         to_date: str = "2025-09-01",
         settings: dict | None = None,
+        include_physics_identity: bool = True,
     ) -> dict:
         source_handle = tempfile.NamedTemporaryFile(
             prefix=f"{job_id}-",
@@ -104,6 +106,17 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             "fit_metadata": {"method": "unit-test-reviewed-fit"},
             "factor_driver_diagnostics": {"systems": {}},
         }
+        if include_physics_identity:
+            profile.update(
+                {
+                    "solectria_physics_version": (
+                        model.SOLECTRIA_PHYSICS_VERSION
+                    ),
+                    "solectria_physics_fingerprint": (
+                        model.SOLECTRIA_PHYSICS_FINGERPRINT
+                    ),
+                }
+            )
         request_model = app.RunRequest(
             from_date=from_date,
             from_time="00:00",
@@ -186,6 +199,14 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         self.assertTrue(payload["verified"])
         self.assertEqual(payload["job_id"], baseline["id"])
         self.assertEqual(payload["review_id"], "review-reviewed-calibration")
+        self.assertEqual(
+            payload["solectria_physics_version"],
+            model.SOLECTRIA_PHYSICS_VERSION,
+        )
+        self.assertEqual(
+            payload["solectria_physics_fingerprint"],
+            model.SOLECTRIA_PHYSICS_FINGERPRINT,
+        )
         self.assertEqual(payload["settings"], self._settings())
         self.assertEqual(
             payload["factor_coverage"],
@@ -197,6 +218,14 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         self.assertEqual(len(payload["profile_sha256"]), 64)
 
     def test_current_calibration_is_unavailable_without_reviewed_promotion(self):
+        response = self.client.get("/api/current-calibration")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"available": False})
+
+    def test_legacy_promoted_profile_is_unavailable_after_physics_repair(self):
+        self._completed_reviewed_baseline(include_physics_identity=False)
+
         response = self.client.get("/api/current-calibration")
 
         self.assertEqual(response.status_code, 200)

@@ -68,16 +68,6 @@ DOMAIN_BOUNDS = {
     "wind_speed": (-0.1, 50.0),
 }
 
-LOCAL_OUTLIER_FLOORS = {
-    "solaredge_measured_power": 55_000.0,
-    "solectria_measured_power": 55_000.0,
-    "dni": 600.0,
-    "ghi": 500.0,
-    "dhi": 350.0,
-    "temp_air": 12.0,
-    "wind_speed": 15.0,
-}
-
 SEASON_MONTHS = {
     "winter": "Dec-Feb",
     "spring": "Mar-May",
@@ -752,7 +742,6 @@ def inspect_historian_csv(
             missing_intervals += boundary_missing_intervals
 
     numeric: dict[str, pd.Series] = {}
-    invalid_or_missing_by_column: dict[str, set[int]] = {}
     for column in NUMERIC_COLUMNS:
         source_values = raw[column]
         converted = pd.to_numeric(source_values, errors="coerce")
@@ -766,10 +755,6 @@ def inspect_historian_csv(
         )
         missing_positions = _positions(missing_mask)
         invalid_numeric_positions = _positions(invalid_numeric_mask)
-        invalid_or_missing_by_column[column] = set(
-            missing_positions + invalid_numeric_positions
-        )
-
         if missing_positions:
             model_fallback = column in {"dhi", "temp_air", "wind_speed"}
             if column == "temp_air":
@@ -948,60 +933,6 @@ def inspect_historian_csv(
                 )
             )
 
-    # A centered Hampel-style check catches isolated local spikes while the
-    # generous absolute floors avoid treating ordinary solar ramps/clouds as
-    # outliers.
-    window = max(7, min(25, int(round((6 * 3600) / interval_seconds)) | 1))
-    if row_count >= window:
-        for column in NUMERIC_COLUMNS:
-            values = numeric[column].where(reviewable_row_mask)
-            rolling_median = values.rolling(
-                window=window, center=True, min_periods=max(4, window // 2)
-            ).median()
-            absolute_deviation = (values - rolling_median).abs()
-            rolling_mad = absolute_deviation.rolling(
-                window=window, center=True, min_periods=max(4, window // 2)
-            ).median()
-            threshold = pd.concat(
-                [
-                    rolling_mad * 1.4826 * 8.0,
-                    pd.Series(
-                        LOCAL_OUTLIER_FLOORS[column],
-                        index=values.index,
-                        dtype=float,
-                    ),
-                ],
-                axis=1,
-            ).max(axis=1)
-            outlier_mask = absolute_deviation > threshold
-            lower, upper = DOMAIN_BOUNDS[column]
-            outlier_mask &= values.between(lower, upper)
-            outlier_mask &= reviewable_row_mask
-            if invalid_or_missing_by_column[column]:
-                outlier_mask.iloc[
-                    sorted(invalid_or_missing_by_column[column])
-                ] = False
-            outlier_positions = _positions(outlier_mask)
-            if outlier_positions:
-                issues.append(
-                    _issue(
-                        issue_id=f"outlier.local.{column}",
-                        category="outlier",
-                        severity="medium",
-                        title=f"Isolated {COLUMN_LABELS[column]} spikes",
-                        description=(
-                            "A robust rolling-median check found values far from "
-                            "their local neighborhood. Real fast-changing conditions "
-                            "are possible, so these samples remain a user decision."
-                        ),
-                        positions=outlier_positions,
-                        columns=[column],
-                        allowed_actions=("retain", "exclude"),
-                        recommended_action="exclude",
-                        parsed_timestamps=parsed_utc,
-                    )
-                )
-
     for column in (*POWER_COLUMNS, *IRRADIANCE_COLUMNS):
         minimum = 1_000.0 if column in POWER_COLUMNS else 50.0
         flat_positions = _flatline_positions(
@@ -1138,9 +1069,9 @@ def quality_issue_rows(
     issue_id: str,
     *,
     offset: int = 0,
-    limit: int = BAD_ROW_PREVIEW_LIMIT,
+    limit: int | None = BAD_ROW_PREVIEW_LIMIT,
 ) -> dict[str, Any]:
-    """Return a bounded page of source rows affected by one review issue."""
+    """Return a page, or an explicitly requested full set, of affected rows."""
 
     normalized_issue_id = str(issue_id or "").strip()
     issues = {
@@ -1152,10 +1083,10 @@ def quality_issue_rows(
     if issue is None:
         raise ValueError("Unknown data-quality issue ID.")
     start = int(offset)
-    page_size = int(limit)
+    page_size = None if limit is None else int(limit)
     if start < 0:
         raise ValueError("Row offset must be zero or greater.")
-    if page_size < 1 or page_size > 200:
+    if page_size is not None and (page_size < 1 or page_size > 200):
         raise ValueError("Row page size must be between 1 and 200.")
 
     positions = sorted(
@@ -1164,7 +1095,11 @@ def quality_issue_rows(
             for position in issue.get("_row_positions", [])
         }
     )
-    selected_positions = positions[start : start + page_size]
+    selected_positions = (
+        positions[start:]
+        if page_size is None
+        else positions[start : start + page_size]
+    )
     raw = pd.read_csv(source_csv)
     rows = _affected_row_preview(
         raw,
@@ -1175,10 +1110,16 @@ def quality_issue_rows(
     return {
         "issue_id": normalized_issue_id,
         "offset": start,
-        "limit": page_size,
+        "limit": (
+            len(selected_positions) if page_size is None else page_size
+        ),
         "total_rows": len(positions),
         "rows": rows,
-        "next_offset": next_offset if next_offset < len(positions) else None,
+        "next_offset": (
+            next_offset
+            if page_size is not None and next_offset < len(positions)
+            else None
+        ),
     }
 
 

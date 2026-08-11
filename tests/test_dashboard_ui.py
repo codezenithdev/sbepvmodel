@@ -1,4 +1,7 @@
+import json
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime
@@ -380,6 +383,15 @@ class DashboardInteractionMarkupTests(unittest.TestCase):
             "'/api/calibration-reviews/' + encodeURIComponent(pendingCalibrationReview.review_id) + '/rows?'",
             "Array.isArray(page.rows)",
             "Load more rows",
+            "Last 50 rows",
+            "Show first 50 rows",
+            "Load all rows",
+            "Math.max(totalRows - rowPageSize, 0)",
+            "query.set('all_rows', 'true')",
+            'className = \'calibration-row-actions\'',
+            "showLast.hidden = totalRows <= rowPageSize",
+            "const renderBatchSize = mode === 'all' ? 250",
+            "await new Promise((resolve) => setTimeout(resolve, 0))",
             "calibrationReviewDecisions()",
             "renderCalibrationFactors(result)",
             "new AbortController()",
@@ -396,6 +408,77 @@ class DashboardInteractionMarkupTests(unittest.TestCase):
             "The receipt remains visible with this run.",
         ):
             self.assertIn(marker, self.html)
+
+    def test_calibration_review_timestamps_use_mountain_time(self):
+        signature = "function formatCalibrationReviewTimestamp(value)"
+        self.assertIn(signature, self.html)
+        formatter = self.html.split(signature, 1)[1].split(
+            "\n        function ",
+            1,
+        )[0]
+        for marker in (
+            "CALIBRATION_REVIEW_TIMEZONE = 'America/Denver'",
+            "timeZone: CALIBRATION_REVIEW_TIMEZONE",
+            "timeZoneName: 'short'",
+            "calendarCheck.getUTCFullYear()",
+            "actual.some((part, index) => part !== expected[index])",
+            "normalized + 'Z'",
+            "if (Number.isNaN(timestamp.getTime())) return text",
+        ):
+            self.assertIn(marker, self.html)
+        self.assertIn("calibrationReviewTimestampFormatter.format(timestamp)", formatter)
+        for call_site in (
+            "formatCalibrationReviewTimestamp(reviewPayload.expires_at)",
+            "calibrationRowCellText(column, value)",
+            "if (column === 'timestamp') return formatCalibrationReviewTimestamp(value)",
+            ".map(formatCalibrationReviewTimestamp)",
+            "Timestamp (Mountain)",
+            "Examples (Mountain): ",
+        ):
+            self.assertIn(call_site, self.html)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_calibration_review_timestamp_formatter_handles_dst_and_invalid_dates(self):
+        start = self.html.index("const CALIBRATION_REVIEW_TIMEZONE")
+        end = self.html.index(
+            "\n        function calibrationReviewIsExpired",
+            start,
+        )
+        formatter_source = self.html[start:end]
+        inputs = [
+            "2026-06-01 16:00:00",
+            "2026-12-01T16:00:00+00:00",
+            "2026-11-01T07:30:00Z",
+            "2026-11-01T08:30:00Z",
+            "not-a-timestamp",
+            "row 3",
+            "2026-02-31T00:00:00Z",
+        ]
+        script = (
+            formatter_source
+            + "\nconsole.log(JSON.stringify("
+            + json.dumps(inputs)
+            + ".map(formatCalibrationReviewTimestamp)));"
+        )
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(
+            json.loads(completed.stdout),
+            [
+                "Jun 1, 2026, 10:00:00 MDT",
+                "Dec 1, 2026, 09:00:00 MST",
+                "Nov 1, 2026, 01:30:00 MDT",
+                "Nov 1, 2026, 01:30:00 MST",
+                "not-a-timestamp",
+                "row 3",
+                "2026-02-31T00:00:00Z",
+            ],
+        )
 
     def test_calibration_factor_table_shows_only_coverage_and_final_factor(self):
         for marker in (

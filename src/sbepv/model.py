@@ -27,7 +27,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import copy, deepcopy
+import hashlib
 import json
+import secrets
 
 import numpy as np
 import pandas as pd
@@ -47,7 +49,7 @@ from sbepv.calibration import (
     apply_seasonal_calibration,
 )
 
-__version__ = "3"
+__version__ = "4"
 
 # -----------------------------------------------------------------------------
 # RUN SETTINGS (edit here -- no command-line prompts)
@@ -213,6 +215,134 @@ _modules["WAAREE_BIN_08_580"] = _modules.index.map(
 )
 MODULE_PARAMETERS = _modules["WAAREE_BIN_08_580"]
 MODULE_NAME = "WAAREE_BIN_08_580"
+
+# The installed module nameplate photographed at the site identifies BIN-08-580
+# and matches the configured STC points below. These cell-level coefficients were
+# frozen after a physically seeded, converged PVMismatch 4.1 two-diode fit. The
+# runtime builder never invokes the nonlinear solver, so a dependency update
+# cannot silently move the production electrical baseline.
+SOLECTRIA_PHYSICS_VERSION = "solectria-bin08-580-pvmismatch-v2"
+SOLECTRIA_TWO_DIODE_COEFFICIENTS = (
+    6.051338067069484e-12,
+    7.246006548395709e-7,
+    0.002562727221945137,
+    9.52605775638587,
+)
+SOLECTRIA_BAND_GAP_EV = 1.16
+SOLECTRIA_FIT_RESIDUAL_TOLERANCE = 1e-6
+SOLECTRIA_DATASHEET_RELATIVE_TOLERANCE = 0.005
+
+
+def _module_parameter_float(name: str) -> float:
+    return float(MODULE_PARAMETERS[name])
+
+
+def solectria_relative_alpha_isc() -> float:
+    """Return the relative 1/K coefficient expected by PVMismatch."""
+
+    return _module_parameter_float("alpha_sc") / _module_parameter_float(
+        "I_sc_ref"
+    )
+
+
+def solectria_equivalent_cell_area_cm2() -> float:
+    """Return module area divided over the configured equivalent series cells."""
+
+    return (
+        _module_parameter_float("A_c")
+        * 10_000.0
+        / _module_parameter_float("N_s")
+    )
+
+
+def solectria_physics_manifest() -> dict[str, object]:
+    """Return the immutable electrical/topology contract used for calibration."""
+
+    parameter_names = (
+        "STC",
+        "PTC",
+        "A_c",
+        "N_s",
+        "I_sc_ref",
+        "V_oc_ref",
+        "I_mp_ref",
+        "V_mp_ref",
+        "alpha_sc",
+        "beta_oc",
+        "T_NOCT",
+        "a_ref",
+        "I_L_ref",
+        "I_o_ref",
+        "R_s",
+        "R_sh_ref",
+        "Adjust",
+        "gamma_r",
+    )
+    return {
+        "physics_version": SOLECTRIA_PHYSICS_VERSION,
+        "module_name": MODULE_NAME,
+        "module_parameters": {
+            name: _module_parameter_float(name) for name in parameter_names
+        },
+        "two_diode_coefficients": list(SOLECTRIA_TWO_DIODE_COEFFICIENTS),
+        "relative_alpha_isc_per_k": solectria_relative_alpha_isc(),
+        "effective_band_gap_ev": SOLECTRIA_BAND_GAP_EV,
+        "equivalent_cell_area_cm2": solectria_equivalent_cell_area_cm2(),
+        "equivalent_series_cells": 72,
+        "module_count": (
+            SOLECTRIA_STRINGS * SOLECTRIA_BAYS_PER_STRING * MODULES_PER_BAY
+        ),
+        "string_layout": "10 strings x 4 bays x 6 modules",
+        "string_tilts_deg": [list(row) for row in SOLECTRIA_TILT_ASBUILT],
+        "mppt_assumption": "each modeled string maximized independently",
+        "rear_side_irradiance": "not modeled",
+    }
+
+
+def solectria_physics_fingerprint() -> str:
+    """Return a stable hash used to prevent cross-physics factor reuse."""
+
+    payload = json.dumps(
+        solectria_physics_manifest(),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+SOLECTRIA_PHYSICS_FINGERPRINT = solectria_physics_fingerprint()
+
+
+def validate_calibration_profile_physics(
+    profile: Mapping[str, object],
+) -> None:
+    """Reject factors that were not fitted with this Solectria physics core."""
+
+    version = profile.get("solectria_physics_version")
+    fingerprint = profile.get("solectria_physics_fingerprint")
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError(
+            "Calibration profile is missing its Solectria physics version; "
+            "run a fresh reviewed calibration."
+        )
+    if not isinstance(fingerprint, str) or not fingerprint.strip():
+        raise ValueError(
+            "Calibration profile is missing its Solectria physics fingerprint; "
+            "run a fresh reviewed calibration."
+        )
+    if not secrets.compare_digest(version.strip(), SOLECTRIA_PHYSICS_VERSION):
+        raise ValueError(
+            "Calibration profile uses an incompatible Solectria physics version; "
+            "run a fresh reviewed calibration."
+        )
+    if not secrets.compare_digest(
+        fingerprint.strip().lower(), SOLECTRIA_PHYSICS_FINGERPRINT
+    ):
+        raise ValueError(
+            "Calibration profile uses an incompatible Solectria physics "
+            "fingerprint; run a fresh reviewed calibration."
+        )
 
 # Our CSV column names -> the canonical names used internally.
 COLUMN_RENAME = {
@@ -654,34 +784,175 @@ def run_modelchain_for_axis_tilts(
 
 
 # -----------------------------------------------------------------------------
-# PVMISMATCH MODULE (two-diode fit)
+# PVMISMATCH MODULE (validated, frozen two-diode fit)
 # -----------------------------------------------------------------------------
-def build_pvmismatch_module() -> pvm.pvmodule.PVmodule:
-    """Create a pvmismatch PVmodule matching the CEC module."""
-    args = (
-        MODULE_PARAMETERS["I_sc_ref"],
-        MODULE_PARAMETERS["V_oc_ref"],
-        MODULE_PARAMETERS["I_mp_ref"],
-        MODULE_PARAMETERS["V_mp_ref"],
-        MODULE_PARAMETERS["N_s"],
-        1,
-        25,
+def fit_solectria_two_diode_coefficients(
+    *, residual_tolerance: float = SOLECTRIA_FIT_RESIDUAL_TOLERANCE
+) -> tuple[float, float, float, float]:
+    """Reproduce the offline fit and fail closed on solver or residual errors."""
+
+    number_series_cells = int(_module_parameter_float("N_s"))
+    initial = np.array(
+        [
+            _module_parameter_float("I_o_ref"),
+            1e-6,
+            _module_parameter_float("R_s") / number_series_cells,
+            _module_parameter_float("R_sh_ref") / number_series_cells,
+        ],
+        dtype=float,
     )
-    x, _ = gen_coeffs.gen_two_diode(*args)
+    coefficients, solver = gen_coeffs.gen_two_diode(
+        _module_parameter_float("I_sc_ref"),
+        _module_parameter_float("V_oc_ref"),
+        _module_parameter_float("I_mp_ref"),
+        _module_parameter_float("V_mp_ref"),
+        number_series_cells,
+        1,
+        25.0,
+        x0=initial,
+    )
+    values = np.asarray(coefficients, dtype=float)
+    residual_norm = float(np.linalg.norm(solver.fun))
+    if not bool(solver.success):
+        raise RuntimeError(
+            "WAAREE BIN-08-580 two-diode fit failed: "
+            f"status={solver.status}, message={solver.message!s}"
+        )
+    if not np.isfinite(residual_norm) or residual_norm > float(
+        residual_tolerance
+    ):
+        raise RuntimeError(
+            "WAAREE BIN-08-580 two-diode fit residual is too large: "
+            f"{residual_norm:.6g} > {float(residual_tolerance):.6g}"
+        )
+    if values.shape != (4,) or not bool(np.isfinite(values).all()):
+        raise RuntimeError(
+            "WAAREE BIN-08-580 two-diode fit returned invalid coefficients."
+        )
+    if bool((values <= 0.0).any()):
+        raise RuntimeError(
+            "WAAREE BIN-08-580 two-diode fit returned non-positive coefficients."
+        )
+    return tuple(float(value) for value in values)
+
+
+def _build_pvmismatch_module_from_coefficients(
+    coefficients: tuple[float, float, float, float],
+) -> pvm.pvmodule.PVmodule:
     pv_cell = pvm.pvcell.PVcell(
-        Isat1_T0=x[0],
-        Isat2_T0=x[1],
-        Rs=x[2],
-        Rsh=x[3],
-        Isc0_T0=MODULE_PARAMETERS["I_sc_ref"],
-        alpha_Isc=0.0005,
+        Isat1_T0=coefficients[0],
+        Isat2_T0=coefficients[1],
+        Rs=coefficients[2],
+        Rsh=coefficients[3],
+        Isc0_T0=_module_parameter_float("I_sc_ref"),
+        alpha_Isc=solectria_relative_alpha_isc(),
+        Eg=SOLECTRIA_BAND_GAP_EV,
         pvconst=pvm.pvconstants.PVconstants(),
     )
+    number_series_cells = int(_module_parameter_float("N_s"))
+    if number_series_cells != 72:
+        raise ValueError(
+            "The Solectria PVMismatch model is validated only for the "
+            "configured 72-equivalent-cell STD72 topology."
+        )
     return pvm.pvmodule.PVmodule(
         cell_pos=pvm.pvmodule.STD72,
-        cellArea=MODULE_PARAMETERS["A_c"],
-        pvcells=[pv_cell] * int(MODULE_PARAMETERS["N_s"]),
+        cellArea=solectria_equivalent_cell_area_cm2(),
+        pvcells=[pv_cell] * number_series_cells,
     )
+
+
+def solectria_module_power_point(
+    module: pvm.pvmodule.PVmodule,
+    *,
+    irradiance_suns: float = 1.0,
+    temperature_c: float = 25.0,
+) -> dict[str, float]:
+    """Evaluate one uniform module operating point."""
+
+    module.setSuns(float(irradiance_suns))
+    module.setTemps(float(temperature_c) + 273.15)
+    power = np.asarray(module.Pmod, dtype=float)
+    voltage = np.asarray(module.Vmod, dtype=float)
+    current = np.asarray(module.Imod, dtype=float)
+    maximum_index = int(np.nanargmax(power))
+    return {
+        "pmp_w": float(power[maximum_index]),
+        "vmp_v": float(voltage[maximum_index]),
+        "imp_a": float(current[maximum_index]),
+        "voc_v": float(np.asarray(module.Voc, dtype=float).sum()),
+        "isc_a": float(np.asarray(module.Isc, dtype=float).mean()),
+    }
+
+
+def validate_solectria_module(
+    module: pvm.pvmodule.PVmodule,
+    *,
+    relative_tolerance: float = SOLECTRIA_DATASHEET_RELATIVE_TOLERANCE,
+) -> dict[str, object]:
+    """Validate nameplate STC points and temperature response before use."""
+
+    stc = solectria_module_power_point(module)
+    targets = {
+        "pmp_w": _module_parameter_float("STC"),
+        "vmp_v": _module_parameter_float("V_mp_ref"),
+        "imp_a": _module_parameter_float("I_mp_ref"),
+        "voc_v": _module_parameter_float("V_oc_ref"),
+        "isc_a": _module_parameter_float("I_sc_ref"),
+    }
+    errors = {
+        name: abs(stc[name] / target - 1.0) for name, target in targets.items()
+    }
+    failed = {
+        name: error
+        for name, error in errors.items()
+        if not np.isfinite(error) or error > float(relative_tolerance)
+    }
+    if failed:
+        detail = ", ".join(
+            f"{name}={100.0 * error:.3f}%" for name, error in failed.items()
+        )
+        raise ValueError(
+            "WAAREE BIN-08-580 PVMismatch module misses datasheet tolerance: "
+            + detail
+        )
+
+    cold = solectria_module_power_point(module, temperature_c=0.0)
+    hot = solectria_module_power_point(module, temperature_c=65.0)
+    if not cold["pmp_w"] > stc["pmp_w"] > hot["pmp_w"]:
+        raise ValueError(
+            "WAAREE BIN-08-580 temperature response is non-physical: expected "
+            "Pmp(0 C) > Pmp(25 C) > Pmp(65 C)."
+        )
+    solectria_module_power_point(module)
+    return {
+        "physics_version": SOLECTRIA_PHYSICS_VERSION,
+        "physics_fingerprint": SOLECTRIA_PHYSICS_FINGERPRINT,
+        "stc": stc,
+        "targets": targets,
+        "relative_errors": errors,
+        "pmp_0c_w": cold["pmp_w"],
+        "pmp_65c_w": hot["pmp_w"],
+        "pmp_temperature_coefficient_pct_per_c": (
+            100.0 * (hot["pmp_w"] / stc["pmp_w"] - 1.0) / 40.0
+        ),
+        "voc_temperature_coefficient_v_per_c": (
+            (hot["voc_v"] - stc["voc_v"]) / 40.0
+        ),
+        "relative_alpha_isc_per_k": solectria_relative_alpha_isc(),
+        "cell_area_cm2": solectria_equivalent_cell_area_cm2(),
+        "band_gap_ev": SOLECTRIA_BAND_GAP_EV,
+    }
+
+
+def build_pvmismatch_module() -> pvm.pvmodule.PVmodule:
+    """Build and fail-closed validate the production Solectria module."""
+
+    module = _build_pvmismatch_module_from_coefficients(
+        SOLECTRIA_TWO_DIODE_COEFFICIENTS
+    )
+    validate_solectria_module(module)
+    return module
 
 
 def _uniform_series_topology(
@@ -1729,6 +2000,8 @@ def run_model(
         and effective_iam_a_r is not None
         and not np.isclose(effective_iam_a_r, A_R)
     )
+    if calibration_profile is not None:
+        validate_calibration_profile_physics(calibration_profile)
     application_context_supplied = calibration_application_context is not None
     if calibration_application_context is None:
         calibration_application: dict = {}
@@ -1966,6 +2239,8 @@ def run_model(
         "SOLAREDGE_STRINGS": SOLAREDGE_STRINGS,
         "SOLAREDGE_BAYS_PER_STRING": SOLAREDGE_BAYS_PER_STRING,
         "module_name": MODULE_NAME,
+        "solectria_physics_version": SOLECTRIA_PHYSICS_VERSION,
+        "solectria_physics_fingerprint": SOLECTRIA_PHYSICS_FINGERPRINT,
         "data_quality_warnings": " | ".join(data_quality_warnings) or "None",
         "calibration_method": (
             calibration_factors.get("method")
@@ -2082,6 +2357,9 @@ def run_model(
 
     return {
         "mode": "annual" if annual_mode else "validation",
+        "model_version": __version__,
+        "solectria_physics_version": SOLECTRIA_PHYSICS_VERSION,
+        "solectria_physics_fingerprint": SOLECTRIA_PHYSICS_FINGERPRINT,
         "se_measured_kwh": None if annual_mode else _safe(se_meas),
         "se_predicted_kwh": _safe(se_pred),
         "sol_measured_kwh": None if annual_mode else _safe(sol_meas),

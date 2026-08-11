@@ -68,7 +68,7 @@ pip install -r requirements.txt
 uvicorn sbepv.api.main:app --app-dir src --reload --port 8000
 ```
 
-Then open <http://127.0.0.1:8000>. Copy `env.example` to `.env` and fill in
+Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). Copy `env.example` to `.env` and fill in
 `BAZEFIELD_API_KEY` and `OPENAI_API_KEY` first; without them the dashboard loads but
 Bazefield retrieval and chat fail.
 

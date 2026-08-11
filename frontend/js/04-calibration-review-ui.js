@@ -9,6 +9,55 @@
             return card;
         }
 
+        const CALIBRATION_REVIEW_TIMEZONE = 'America/Denver';
+        const calibrationReviewTimestampFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: CALIBRATION_REVIEW_TIMEZONE,
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hourCycle: 'h23',
+            timeZoneName: 'short',
+        });
+
+        function formatCalibrationReviewTimestamp(value) {
+            if (value === null || value === undefined || value === '') return 'n/a';
+            const text = String(value).trim();
+            const components = text.match(
+                /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i
+            );
+            if (!components) return text;
+            const expected = components.slice(1, 7).map((part) => Number(part || 0));
+            const [year, month, day, hour, minute, second] = expected;
+            const calendarCheck = new Date(Date.UTC(
+                year,
+                month - 1,
+                day,
+                hour,
+                minute,
+                second
+            ));
+            if (year < 100) calendarCheck.setUTCFullYear(year);
+            const actual = [
+                calendarCheck.getUTCFullYear(),
+                calendarCheck.getUTCMonth() + 1,
+                calendarCheck.getUTCDate(),
+                calendarCheck.getUTCHours(),
+                calendarCheck.getUTCMinutes(),
+                calendarCheck.getUTCSeconds(),
+            ];
+            if (actual.some((part, index) => part !== expected[index])) return text;
+            const normalized = text.replace(' ', 'T');
+            const explicitTimestamp = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized)
+                ? normalized
+                : normalized + 'Z';
+            const timestamp = new Date(explicitTimestamp);
+            if (Number.isNaN(timestamp.getTime())) return text;
+            return calibrationReviewTimestampFormatter.format(timestamp);
+        }
+
         function calibrationReviewIsExpired(reviewPayload) {
             const expiresAt = Date.parse(String(reviewPayload?.expires_at || ''));
             return Number.isFinite(expiresAt) && expiresAt <= Date.now();
@@ -17,13 +66,13 @@
         function calibrationReviewExpiryText(reviewPayload) {
             const expiresAt = Date.parse(String(reviewPayload?.expires_at || ''));
             if (!Number.isFinite(expiresAt)) return '';
-            return new Date(expiresAt).toLocaleString();
+            return formatCalibrationReviewTimestamp(reviewPayload.expires_at);
         }
 
         function calibrationRowColumnLabel(column) {
             const labels = {
                 source_row: 'CSV row',
-                timestamp: 'Timestamp',
+                timestamp: 'Timestamp (Mountain)',
                 solaredge_measured_power: 'SolarEdge power',
                 solectria_measured_power: 'Solectria power',
                 dni: 'DNI',
@@ -35,8 +84,9 @@
             return labels[column] || String(column).replaceAll('_', ' ');
         }
 
-        function calibrationRowCellText(value) {
+        function calibrationRowCellText(column, value) {
             if (value === null || value === undefined || value === '') return '—';
+            if (column === 'timestamp') return formatCalibrationReviewTimestamp(value);
             if (typeof value === 'number') return value.toLocaleString();
             return String(value);
         }
@@ -70,74 +120,155 @@
             loadMore.className = 'calibration-row-toggle';
             loadMore.textContent = 'Load more rows';
             loadMore.hidden = true;
-            panel.append(note, wrap, loadMore);
+            const showLast = document.createElement('button');
+            showLast.type = 'button';
+            showLast.className = 'calibration-row-toggle';
+            showLast.textContent = 'Last 50 rows';
+            showLast.hidden = true;
+            const loadAll = document.createElement('button');
+            loadAll.type = 'button';
+            loadAll.className = 'calibration-row-toggle';
+            loadAll.textContent = 'Load all rows';
+            loadAll.hidden = true;
+            const rowActions = document.createElement('div');
+            rowActions.className = 'calibration-row-actions';
+            rowActions.append(loadMore, showLast, loadAll);
+            panel.append(note, wrap, rowActions);
 
             let nextOffset = 0;
             let totalRows = Number(issue.row_count || 0);
             let loading = false;
             let initialized = false;
+            let viewMode = 'first';
+            const rowPageSize = 50;
+            const rowActionButtons = [loadMore, showLast, loadAll];
 
-            const loadPage = async () => {
-                if (loading || nextOffset === null || !pendingCalibrationReview?.review_id) return;
-                loading = true;
-                toggle.disabled = true;
-                loadMore.disabled = true;
-                note.textContent = 'Loading affected rows…';
-                try {
-                    const query = new URLSearchParams({
-                        issue_id: issueId,
-                        offset: String(nextOffset),
-                        limit: '50',
+            const setRowLoading = (isLoading, message = '') => {
+                loading = isLoading;
+                rowActionButtons.forEach((button) => {
+                    button.disabled = isLoading;
+                });
+                if (message) note.textContent = message;
+            };
+
+            const updateRowActions = () => {
+                const displayedRows = body.children.length;
+                const allDisplayed = displayedRows >= totalRows;
+                loadMore.hidden = viewMode !== 'first' || nextOffset === null;
+                showLast.hidden = totalRows <= rowPageSize;
+                showLast.textContent = viewMode === 'last'
+                    ? 'Show first 50 rows'
+                    : 'Last 50 rows';
+                loadAll.hidden = viewMode === 'all' || allDisplayed;
+            };
+
+            const updateRowNote = () => {
+                const displayedRows = body.children.length.toLocaleString();
+                const total = totalRows.toLocaleString();
+                const prefix = viewMode === 'last'
+                    ? 'Showing the last ' + displayedRows + ' of ' + total
+                    : viewMode === 'all'
+                        ? 'Showing all ' + displayedRows + ' of ' + total
+                        : 'Showing ' + displayedRows + ' of ' + total;
+                note.textContent = prefix +
+                    ' affected source rows. Timestamps use Mountain Time. ' +
+                    'The decision applies to every affected row.';
+            };
+
+            const requestRows = async ({ offset, limit = rowPageSize, allRows = false }) => {
+                const query = new URLSearchParams({
+                    issue_id: issueId,
+                    offset: String(offset),
+                });
+                if (allRows) query.set('all_rows', 'true');
+                else query.set('limit', String(limit));
+                const response = await fetch(
+                    '/api/calibration-reviews/' + encodeURIComponent(pendingCalibrationReview.review_id) + '/rows?' + query.toString()
+                );
+                if (!response.ok) {
+                    let message = 'Could not load affected rows (' + response.status + ')';
+                    try {
+                        const error = await response.json();
+                        if (error.detail) message = String(error.detail);
+                    } catch (_) {}
+                    throw new Error(message);
+                }
+                return response.json();
+            };
+
+            const renderRowPage = async (page, { replace = false, mode = 'first' } = {}) => {
+                const rows = Array.isArray(page.rows) ? page.rows : [];
+                if (replace) {
+                    head.replaceChildren();
+                    body.replaceChildren();
+                    initialized = false;
+                }
+                if (!initialized && rows.length) {
+                    const headerRow = document.createElement('tr');
+                    Object.keys(rows[0]).forEach((column) => {
+                        const cell = document.createElement('th');
+                        cell.scope = 'col';
+                        cell.textContent = calibrationRowColumnLabel(column);
+                        headerRow.appendChild(cell);
                     });
-                    const response = await fetch(
-                        '/api/calibration-reviews/' + encodeURIComponent(pendingCalibrationReview.review_id) + '/rows?' + query.toString()
-                    );
-                    if (!response.ok) {
-                        let message = 'Could not load affected rows (' + response.status + ')';
-                        try {
-                            const error = await response.json();
-                            if (error.detail) message = String(error.detail);
-                        } catch (_) {}
-                        throw new Error(message);
-                    }
-                    const page = await response.json();
-                    const rows = Array.isArray(page.rows) ? page.rows : [];
-                    if (!initialized && rows.length) {
-                        const headerRow = document.createElement('tr');
-                        Object.keys(rows[0]).forEach((column) => {
-                            const cell = document.createElement('th');
-                            cell.scope = 'col';
-                            cell.textContent = calibrationRowColumnLabel(column);
-                            headerRow.appendChild(cell);
-                        });
-                        head.appendChild(headerRow);
-                    }
-                    rows.forEach((rowData) => {
+                    head.appendChild(headerRow);
+                }
+                const renderBatchSize = mode === 'all' ? 250 : Math.max(rows.length, 1);
+                for (let start = 0; start < rows.length; start += renderBatchSize) {
+                    const fragment = document.createDocumentFragment();
+                    rows.slice(start, start + renderBatchSize).forEach((rowData) => {
                         const row = document.createElement('tr');
-                        Object.values(rowData).forEach((value) => {
+                        Object.entries(rowData).forEach(([column, value]) => {
                             const cell = document.createElement('td');
-                            cell.textContent = calibrationRowCellText(value);
+                            cell.textContent = calibrationRowCellText(column, value);
                             row.appendChild(cell);
                         });
-                        body.appendChild(row);
+                        fragment.appendChild(row);
                     });
-                    initialized = true;
-                    totalRows = Number(page.total_rows || totalRows);
-                    nextOffset = page.next_offset === null || page.next_offset === undefined
-                        ? null
-                        : Number(page.next_offset);
-                    note.textContent = 'Showing ' + body.children.length.toLocaleString() + ' of ' + totalRows.toLocaleString() +
-                        ' affected source rows. The decision applies to every affected row.';
-                    loadMore.hidden = nextOffset === null;
+                    body.appendChild(fragment);
+                    const rendered = Math.min(start + renderBatchSize, rows.length);
+                    if (mode === 'all' && rendered < rows.length) {
+                        note.textContent = 'Rendering ' + rendered.toLocaleString() +
+                            ' of ' + rows.length.toLocaleString() + ' affected rows…';
+                        await new Promise((resolve) => setTimeout(resolve, 0));
+                    }
+                }
+                initialized = true;
+                viewMode = mode;
+                totalRows = Number(page.total_rows ?? totalRows);
+                nextOffset = mode === 'first' && page.next_offset !== null && page.next_offset !== undefined
+                    ? Number(page.next_offset)
+                    : null;
+                loadMore.textContent = 'Load more rows';
+                updateRowNote();
+                updateRowActions();
+            };
+
+            const loadRows = async ({
+                offset,
+                limit = rowPageSize,
+                replace = false,
+                mode = 'first',
+                allRows = false,
+                message = 'Loading affected rows…',
+            }) => {
+                if (loading || !pendingCalibrationReview?.review_id) return;
+                setRowLoading(true, message);
+                try {
+                    const page = await requestRows({ offset, limit, allRows });
+                    await renderRowPage(page, { replace, mode });
                 } catch (error) {
                     note.textContent = error.message || 'Could not load affected rows.';
-                    loadMore.hidden = false;
-                    loadMore.textContent = 'Retry loading rows';
+                    if (mode === 'first') loadMore.textContent = 'Retry loading rows';
+                    updateRowActions();
                 } finally {
-                    loading = false;
-                    toggle.disabled = false;
-                    loadMore.disabled = false;
+                    setRowLoading(false);
                 }
+            };
+
+            const loadPage = async () => {
+                if (nextOffset === null) return;
+                await loadRows({ offset: nextOffset });
             };
 
             toggle.addEventListener('click', async () => {
@@ -148,6 +279,26 @@
                 if (expanded && !initialized) await loadPage();
             });
             loadMore.addEventListener('click', loadPage);
+            showLast.addEventListener('click', async () => {
+                const showFirst = viewMode === 'last';
+                await loadRows({
+                    offset: showFirst ? 0 : Math.max(totalRows - rowPageSize, 0),
+                    replace: true,
+                    mode: showFirst ? 'first' : 'last',
+                    message: showFirst
+                        ? 'Loading the first 50 affected rows…'
+                        : 'Loading the last 50 affected rows…',
+                });
+            });
+            loadAll.addEventListener('click', async () => {
+                await loadRows({
+                    offset: 0,
+                    replace: true,
+                    mode: 'all',
+                    allRows: true,
+                    message: 'Loading all affected rows…',
+                });
+            });
             return { toggle, panel };
         }
 
@@ -199,7 +350,7 @@
             if (!issues.length) {
                 const clean = document.createElement('div');
                 clean.className = 'quality-panel ok';
-                clean.textContent = 'No discrepancies, missing values, outliers, gaps, or irregular patterns were detected. Continue to calculate the calibration factors.';
+                clean.textContent = 'No discrepancies, missing values, gaps, or irregular patterns were detected. Continue to calculate the calibration factors.';
                 calibrationIssueList.appendChild(clean);
             }
             issues.forEach((issue, issueIndex) => {
@@ -227,7 +378,9 @@
                 if (samples.length) {
                     const evidence = document.createElement('p');
                     evidence.className = 'calibration-issue-evidence';
-                    evidence.textContent = 'Examples: ' + samples.slice(0, 3).join(', ');
+                    evidence.textContent = 'Examples (Mountain): ' + samples.slice(0, 3)
+                        .map(formatCalibrationReviewTimestamp)
+                        .join(', ');
                     copy.appendChild(evidence);
                 }
                 const rowDisclosure = issue.affected_rows_available

@@ -14,6 +14,7 @@ from sbepv.calibration import (
     apply_quality_decisions,
     apply_seasonal_calibration,
     inspect_historian_csv,
+    quality_issue_rows,
     season_name,
     validate_seasonal_calibration_profile,
 )
@@ -125,6 +126,70 @@ class CalibrationWorkflowTests(unittest.TestCase):
         self.assertEqual(report["summary"]["missing_intervals"], 1)
         self.assertEqual(report["summary"]["status"], "action_required")
         self.assertFalse(report["summary"]["blocking"])
+
+    def test_quality_issue_rows_supports_tail_and_explicit_full_result(self) -> None:
+        row_count = 205
+        source = self._write_historian_csv(
+            pd.DataFrame(
+                {
+                    "timestamp": pd.date_range(
+                        "2026-06-01 00:00:00",
+                        periods=row_count,
+                        freq="min",
+                    ).strftime("%Y-%m-%d %H:%M:%S")
+                }
+            ),
+            "issue-rows.csv",
+        )
+        report = {
+            "issues": [
+                {"id": "test.issue", "_row_positions": list(range(row_count))}
+            ]
+        }
+
+        tail = quality_issue_rows(
+            source,
+            report,
+            "test.issue",
+            offset=row_count - 50,
+            limit=50,
+        )
+        self.assertEqual(len(tail["rows"]), 50)
+        self.assertEqual(tail["rows"][0]["source_row"], row_count - 48)
+        self.assertEqual(tail["rows"][-1]["source_row"], row_count + 1)
+        self.assertIsNone(tail["next_offset"])
+
+        full = quality_issue_rows(source, report, "test.issue", limit=None)
+        self.assertEqual(len(full["rows"]), row_count)
+        self.assertEqual(full["limit"], row_count)
+        self.assertIsNone(full["next_offset"])
+
+        with self.assertRaisesRegex(ValueError, "between 1 and 200"):
+            quality_issue_rows(source, report, "test.issue", limit=201)
+
+    def test_isolated_in_range_spikes_are_not_cleaning_issues(self) -> None:
+        timestamps = pd.date_range(
+            "2026-06-01 15:00:00",
+            periods=9,
+            freq="h",
+        ).strftime("%Y-%m-%d %H:%M:%S").tolist()
+        frame = self._valid_historian_frame(timestamps)
+        spike_row = frame.index[4]
+        frame.loc[spike_row, "solaredge_measured_power"] = 160_000.0
+        frame.loc[spike_row, "solectria_measured_power"] = 150_000.0
+        frame.loc[spike_row, "dni"] = 1_300.0
+        frame.loc[spike_row, "ghi"] = 1_100.0
+        frame.loc[spike_row, "dhi"] = 700.0
+        frame.loc[spike_row, "temp_air"] = 50.0
+        frame.loc[spike_row, "wind_speed"] = 30.0
+
+        report = inspect_historian_csv(
+            self._write_historian_csv(frame, "isolated-spikes.csv"),
+            expected_interval_seconds=3_600,
+        )
+
+        self.assertEqual(report["issues"], [])
+        self.assertEqual(report["summary"]["status"], "clean")
 
     def test_requested_window_detects_incomplete_edge_coverage(self) -> None:
         cases = {

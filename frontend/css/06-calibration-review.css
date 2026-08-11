@@ -225,6 +225,13 @@
             text-underline-offset: 2px;
         }
 
+        .calibration-row-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0 16px;
+        }
+
         .calibration-row-preview {
             grid-column: 1 / -1;
             min-width: 0;

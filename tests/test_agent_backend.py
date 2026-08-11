@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
+from sbepv import model
 from sbepv.api import config, plots, state
 from sbepv.worker import completion
 from sbepv.worker import run_validation
@@ -153,7 +154,15 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 for season in ("winter", "spring", "summer", "fall")
             ],
         }
-        result = {"mode": mode, "stats": {}}
+        result = {
+            "mode": mode,
+            "stats": {
+                "solectria_physics_version": model.SOLECTRIA_PHYSICS_VERSION,
+                "solectria_physics_fingerprint": (
+                    model.SOLECTRIA_PHYSICS_FINGERPRINT
+                ),
+            },
+        }
         if mode == "validation":
             result.update(
                 {
@@ -225,6 +234,10 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             "origin_job_id": calibration_baseline["id"],
             "origin_source_sha256": calibration_baseline["source_hash"],
             "origin_review_id": f"review-{calibration_baseline['id']}",
+            "solectria_physics_version": model.SOLECTRIA_PHYSICS_VERSION,
+            "solectria_physics_fingerprint": (
+                model.SOLECTRIA_PHYSICS_FINGERPRINT
+            ),
             "seasonal_factors": {
                 season: {"solaredge": 1.02, "solectria": 0.98}
                 for season in ("winter", "spring", "summer", "fall")

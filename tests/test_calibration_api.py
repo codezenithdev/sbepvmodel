@@ -241,6 +241,55 @@ class CalibrationReviewApiTests(unittest.TestCase):
         self.assertEqual(rows_response.status_code, 409, rows_response.text)
         self.assertIn("source changed", rows_response.json()["detail"])
 
+    def test_affected_row_endpoint_loads_all_rows_only_when_requested(self) -> None:
+        response = self._create_review()
+        self.assertEqual(response.status_code, 200, response.text)
+        review_id = response.json()["review_id"]
+        record_path = self.review_dir / f"{review_id}.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        source_path = Path(record["source_path"])
+        source_rows = pd.read_csv(source_path)
+        expanded_rows = pd.concat(
+            [source_rows.iloc[[1]]] * 205,
+            ignore_index=True,
+        )
+        expanded_rows.to_csv(source_path, index=False)
+        record["source_hash"] = sha256_file(source_path)
+        missing_dhi = next(
+            issue
+            for issue in record["report"]["issues"]
+            if issue["id"] == "missing.dhi"
+        )
+        missing_dhi["_row_positions"] = list(range(len(expanded_rows)))
+        missing_dhi["row_count"] = len(expanded_rows)
+        record_path.write_text(
+            json.dumps(record, allow_nan=False),
+            encoding="utf-8",
+        )
+
+        paged_response = self.client.get(
+            f"/api/calibration-reviews/{review_id}/rows",
+            params={"issue_id": "missing.dhi", "limit": 200},
+        )
+        self.assertEqual(paged_response.status_code, 200, paged_response.text)
+        self.assertEqual(len(paged_response.json()["rows"]), 200)
+        self.assertEqual(paged_response.json()["next_offset"], 200)
+
+        with patch.object(
+            app,
+            "quality_issue_rows",
+            wraps=app.quality_issue_rows,
+        ) as rows_loader:
+            rows_response = self.client.get(
+                f"/api/calibration-reviews/{review_id}/rows",
+                params={"issue_id": "missing.dhi", "all_rows": True},
+            )
+
+        self.assertEqual(rows_response.status_code, 200, rows_response.text)
+        self.assertIsNone(rows_loader.call_args.kwargs["limit"])
+        self.assertEqual(len(rows_response.json()["rows"]), 205)
+        self.assertIsNone(rows_response.json()["next_offset"])
+
     def test_uncalibrated_direct_run_is_available_without_legacy_flag(self) -> None:
         with patch.object(
             app,
