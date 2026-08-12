@@ -12,6 +12,7 @@ from typing import Any
 
 SCENARIO_OVERRIDE_FIELDS = (
     "mode",
+    "years",
     "from_date",
     "from_time",
     "to_date",
@@ -31,6 +32,7 @@ SCENARIO_OVERRIDE_FIELDS = (
 
 SCENARIO_FIELD_LABELS = {
     "mode": "Analysis mode",
+    "years": "MIDC years",
     "from_date": "Start date",
     "from_time": "Start time",
     "to_date": "End date",
@@ -73,11 +75,25 @@ SCENARIO_TOOL = {
             "mode": _nullable_schema(
                 "string", enum=["validation", "annual", None]
             ),
+            "years": _nullable_schema(
+                "array",
+                items={"type": "integer", "minimum": 2011},
+                minItems=1,
+            ),
             "from_date": _nullable_schema("string"),
             "from_time": _nullable_schema("string"),
             "to_date": _nullable_schema("string"),
             "to_time": _nullable_schema("string"),
-            "interval_value": _nullable_schema("integer", minimum=1),
+            "interval_value": _nullable_schema(
+                "integer",
+                minimum=1,
+                description=(
+                    "For annual runs, minute values are exactly 1, 2, 3, 4, 5, 6, "
+                    "8, 9, 10, 12, 15, 16, 18, 20, 24, 30, 32, 36, 40, 45, 48, "
+                    "or 60; hour values are 1, 2, 3, 4, 6, 8, 12, or 24; day value "
+                    "is 1. Annual selections may not exceed 1,048,575 model rows."
+                ),
+            ),
             "interval_unit": _nullable_schema(
                 "string", enum=["minutes", "hours", "days", None]
             ),

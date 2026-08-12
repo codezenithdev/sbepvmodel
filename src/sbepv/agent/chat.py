@@ -11,6 +11,7 @@ import json
 import logging
 import os
 from copy import deepcopy
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -20,13 +21,14 @@ from time import perf_counter
 from sbepv.agent.message_guards import _ambiguous_numeric_iam, _visible_iam_selection
 from sbepv.agent.prompts import SOLAR_AGENT_INSTRUCTIONS, SOLAR_MODEL_KNOWLEDGE
 from sbepv.agent.scenario_math import _normalise_config_keys
-from sbepv.agent.tool_schemas import PARAMETER_SWEEP_TOOL, SCENARIO_TOOL
+from sbepv.agent.tool_schemas import (
+    MAX_PARAMETER_SWEEP_VALUES,
+    PARAMETER_SWEEP_TOOL,
+    SCENARIO_TOOL,
+)
 from sbepv.agent import tools as agent_tools
-from sbepv.api import config, job_store, state
-from sbepv.api.config import OPENAI_MAX_RETRIES, OPENAI_TIMEOUT_SECONDS
-from sbepv.api.job_store import _get_job_record
+from sbepv.api import config, job_store, serializers, state
 from sbepv.api.schemas import ChatMessage, ChatRequest
-from sbepv.api.serializers import _chat_timing
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,7 @@ def _clean_chat_history(
 def _deduplicated_job_context(job: dict[str, Any]) -> dict[str, Any]:
     """Keep trusted fields while removing large values repeated in nested sections."""
 
-    result = deepcopy(job.get("result") or {})
+    result = serializers._public_value(job.get("result") or {})
     if not isinstance(result, dict):
         result = {}
     stats = result.get("stats")
@@ -71,12 +73,12 @@ def _deduplicated_job_context(job: dict[str, Any]) -> dict[str, Any]:
                 stats.pop(key, None)
         result["stats"] = stats
 
-    provenance = deepcopy(job.get("provenance") or {})
+    provenance = serializers._public_value(job.get("provenance") or {})
     if isinstance(provenance, dict):
         if provenance.get("data_quality") == result.get("data_quality"):
             provenance.pop("data_quality", None)
 
-    artifacts = deepcopy(job.get("artifacts") or {})
+    artifacts = serializers._public_value(job.get("artifacts") or {})
     if isinstance(artifacts, dict):
         workbook = artifacts.get("model_workbook")
         if isinstance(workbook, dict) and workbook.get("url") == result.get("excel"):
@@ -101,7 +103,7 @@ def _chat_run_context(
             "message": "No completed dashboard run is available yet.",
         }
 
-    job_record = _get_job_record(resolved_job_id)
+    job_record = job_store._get_job_record(resolved_job_id)
     job = None if job_record is None else {**job_record, **state.JOBS.get(resolved_job_id, {})}
     if job is None:
         return resolved_job_id, {
@@ -122,19 +124,177 @@ def _chat_run_context(
         "stage": job.get("stage", ""),
     }
     if "request" in job:
-        context["request"] = job["request"]
+        context["request"] = serializers._public_value(job["request"])
     if job.get("state") == "done":
         compact = _deduplicated_job_context(job)
         context["result"] = compact["result"]
         if job.get("comparison"):
-            context["comparison"] = job["comparison"]
+            context["comparison"] = serializers._public_value(job["comparison"])
         if compact["provenance"]:
             context["provenance"] = compact["provenance"]
         if compact["artifacts"]:
             context["artifacts"] = compact["artifacts"]
     elif job.get("state") == "error":
-        context["error"] = job.get("error", "Unknown error")
+        context["error"] = serializers._public_error(job.get("error"))
     return resolved_job_id, context
+
+
+def _recent_run_context(
+    active_mode: str | None,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Return a small durable run index for history-aware questions.
+
+    Full results stay attached only to the selected run.  This index is deliberately
+    compact so the agent can resolve references such as "the previous annual run"
+    without repeating large workbooks, plots, or diagnostic payloads.
+    """
+
+    activity_limit = max(0, min(int(limit), 10))
+    snapshot = state.AGENT_STORE.snapshot_state(
+        mode=None,
+        recent_limit=activity_limit * MAX_PARAMETER_SWEEP_VALUES,
+    )
+    request_fields = {
+        "years",
+        "from_date",
+        "from_time",
+        "to_date",
+        "to_time",
+        "interval_value",
+        "interval_unit",
+        "calibrate_model",
+        "backtrack",
+        "iam_model",
+        "iam_a_r",
+        "curtailment_enabled",
+        "curtailment_limit_kw",
+        "solaredge_inverter_efficiency",
+        "solaredge_bos_efficiency",
+        "solectria_inverter_efficiency",
+        "solectria_bos_efficiency",
+    }
+    def sweep_metadata(job: dict[str, Any]) -> dict[str, Any] | None:
+        provenance = job.get("provenance")
+        metadata = (
+            provenance.get("scenario_sweep")
+            if isinstance(provenance, dict)
+            else None
+        )
+        if (
+            isinstance(metadata, dict)
+            and metadata.get("type") == "parameter_sweep"
+            and str(metadata.get("sweep_id") or "").strip()
+        ):
+            return metadata
+        return None
+
+    def activity_key(job: dict[str, Any]) -> tuple[str, str]:
+        metadata = sweep_metadata(job)
+        if metadata is not None:
+            return "sweep", str(metadata["sweep_id"])
+        return "job", str(job.get("id") or "")
+
+    def compact_job(job: dict[str, Any]) -> dict[str, Any]:
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        stats = result.get("stats") if isinstance(result.get("stats"), dict) else {}
+        annual_rows = stats.get("annual_energy_by_year")
+        request = job.get("request") if isinstance(job.get("request"), dict) else {}
+        return {
+            "job_id": job.get("id"),
+            "kind": job.get("kind"),
+            "mode": job.get("mode"),
+            "state": job.get("state"),
+            "origin": "Solar Agent" if job.get("proposal_id") else "Dashboard",
+            "created_at": job.get("created_at"),
+            "completed_at": job.get("completed_at"),
+            "request": {
+                key: value for key, value in request.items() if key in request_fields
+            },
+            "metrics": {
+                "solaredge_predicted_kwh": stats.get("se_predicted_kwh"),
+                "solectria_predicted_kwh": stats.get("sol_predicted_kwh"),
+                "solaredge_model_delta_pct": stats.get("se_pct"),
+                "solectria_model_delta_pct": stats.get("sol_pct"),
+                "year_count": (
+                    len(annual_rows) if isinstance(annual_rows, list) else None
+                ),
+                "full_year_count": (
+                    sum(
+                        1
+                        for row in annual_rows
+                        if isinstance(row, dict)
+                        and (
+                            row.get("coverage") in {"complete", "full"}
+                            or row.get("is_complete_year") is True
+                            or row.get("coverage_status") == "complete"
+                            or row.get("complete_calendar_year") is True
+                            or row.get("cdf_eligible") is True
+                        )
+                    )
+                    if isinstance(annual_rows, list)
+                    else None
+                ),
+            },
+        }
+
+    terminal_jobs = snapshot["recent_jobs"]
+    selected_keys: list[tuple[str, str]] = []
+    for job in terminal_jobs:
+        key = activity_key(job)
+        if key not in selected_keys:
+            if len(selected_keys) >= activity_limit:
+                break
+            selected_keys.append(key)
+
+    selected_sweep_ids = [key for kind, key in selected_keys if kind == "sweep"]
+    if selected_sweep_ids:
+        jobs_by_id = {str(job["id"]): job for job in terminal_jobs}
+        for job in state.AGENT_STORE.list_parameter_sweep_jobs(selected_sweep_ids):
+            jobs_by_id.setdefault(str(job["id"]), job)
+        terminal_jobs = list(jobs_by_id.values())
+
+    summaries: list[dict[str, Any]] = []
+    for key in selected_keys:
+        members = [job for job in terminal_jobs if activity_key(job) == key]
+        if key[0] != "sweep":
+            summaries.append(compact_job(members[0]))
+            continue
+        metadata = sweep_metadata(members[0]) or {}
+        ordered_members = sorted(
+            members,
+            key=lambda job: int((sweep_metadata(job) or {}).get("index", 0)),
+        )
+        summaries.append(
+            {
+                "activity_type": "parameter_sweep",
+                "sweep_id": key[1],
+                "mode": members[0].get("mode"),
+                "state": (
+                    "done"
+                    if all(job.get("state") == "done" for job in members)
+                    and len(members) >= int(metadata.get("candidate_count") or 0)
+                    else "incomplete"
+                ),
+                "parameter": metadata.get("parameter"),
+                "candidate_count": metadata.get("candidate_count"),
+                "loaded_member_count": len(members),
+                "completed_at": max(
+                    (str(job.get("completed_at") or "") for job in members),
+                    default="",
+                ),
+                "members": [
+                    {
+                        "index": (sweep_metadata(job) or {}).get("index"),
+                        "value": (sweep_metadata(job) or {}).get("value"),
+                        **compact_job(job),
+                    }
+                    for job in ordered_members
+                ],
+            }
+        )
+    return summaries
 
 
 def _should_allow_web_search(message: str) -> bool:
@@ -237,7 +397,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             "web_search_enabled": False,
             "action": None,
         }
-        result["timing"] = _chat_timing(
+        result["timing"] = serializers._chat_timing(
             gpt_seconds=gpt_seconds, model_job_id=resolved_job_id
         )
         return result
@@ -269,6 +429,8 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         tools.append({"type": "web_search"})
     payload = {
         "question": req.message.strip(),
+        "context_generated_at": datetime.now(config.LOCAL_TZ).isoformat(),
+        "dashboard_timezone": str(config.LOCAL_TZ),
         "dashboard_run_context": run_context,
         "active_mode": req.active_mode,
         "visible_dashboard_configuration": _normalise_config_keys(
@@ -276,6 +438,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         ),
         "visible_iam_selection": _visible_iam_selection(req.current_config),
         "model_knowledge": SOLAR_MODEL_KNOWLEDGE,
+        "recent_runs": _recent_run_context(req.active_mode),
         "recent_chat_history": _clean_chat_history(
             req.history, current_message=req.message
         ),
@@ -291,8 +454,8 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
 
     try:
         client = OpenAI(
-            timeout=OPENAI_TIMEOUT_SECONDS,
-            max_retries=OPENAI_MAX_RETRIES,
+            timeout=config.OPENAI_TIMEOUT_SECONDS,
+            max_retries=config.OPENAI_MAX_RETRIES,
         )
     except TypeError:
         # Lightweight test doubles and older compatible clients may not expose
@@ -306,12 +469,13 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
                 {"max_tool_calls": 1, "parallel_tool_calls": False}
             )
         response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
+            model=config.OPENAI_MODEL,
             instructions=SOLAR_AGENT_INSTRUCTIONS,
             input=[user_input],
             tools=tools,
             store=False,
             max_output_tokens=1_200,
+            reasoning={"effort": config.OPENAI_REASONING_EFFORT},
             text={"verbosity": "low"},
             **request_options,
         )
@@ -385,7 +549,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             timing_job_id = jobs[0].get("job_id") if jobs else None
         elif action.get("type") in {"proposal", "proposal_batch"}:
             timing_job_id = None
-    result["timing"] = _chat_timing(
+    result["timing"] = serializers._chat_timing(
         gpt_seconds=gpt_seconds, model_job_id=timing_job_id
     )
     return result

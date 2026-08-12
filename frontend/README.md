@@ -17,9 +17,9 @@ the source and Render contracts; the latter validates the Vite/Cloudflare contra
 | Path | Contents |
 | --- | --- |
 | `dashboard.ts` | Vite assembler used by `app/route.ts` |
-| `css/` | 14 partials concatenated into the single `<style>` block |
-| `html/` | 9 markup partials plus `document.template.html` |
-| `js/` | 20 partials concatenated into the single classic `<script>` block |
+| `css/` | 15 partials concatenated into the single `<style>` block |
+| `html/` | 10 markup partials plus `document.template.html` |
+| `js/` | 21 partials concatenated into the single classic `<script>` block |
 
 `document.template.html` is the surrounding document with three slots:
 `{{CSS}}`, `{{MARKUP}}`, and `{{JS}}`. Both assemblers require each slot exactly

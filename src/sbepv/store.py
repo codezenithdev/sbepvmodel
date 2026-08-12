@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+SAVED_RESULTS_LIMIT = 10
 PROPOSAL_STATES = frozenset(
     {"pending", "confirmed", "superseded", "dismissed", "expired"}
 )
@@ -164,6 +165,9 @@ class AgentStore:
                     version = 2
                 if version < 3:
                     self._migrate_v3(connection)
+                    version = 3
+                if version < 4:
+                    self._migrate_v4(connection)
             finally:
                 connection.close()
 
@@ -330,6 +334,38 @@ class AgentStore:
             connection.rollback()
             raise
 
+    def _migrate_v4(self, connection: sqlite3.Connection) -> None:
+        """Add the bounded durable collection of explicitly saved results."""
+
+        applied_at = _timestamp(self._current_time())
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS saved_results (
+                    job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE RESTRICT,
+                    name TEXT NOT NULL,
+                    saved_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS saved_results_saved_at_idx
+                    ON saved_results(saved_at DESC, job_id DESC)
+                """
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (4, applied_at),
+            )
+            connection.execute("PRAGMA user_version = 4")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
     def _current_time(self) -> datetime:
         return _as_utc(self._now())
 
@@ -373,6 +409,11 @@ class AgentStore:
         for field in ("request", "result", "comparison", "provenance", "artifacts"):
             result[field] = _json_load(result.pop(f"{field}_json"))
         result["cancel_requested"] = bool(result["cancel_requested"])
+        # Older rows may predate interrupted jobs receiving ``completed_at``.
+        # Treat the interruption timestamp as their terminal timestamp so
+        # elapsed-duration consumers do not keep counting after the job stops.
+        if result["state"] == "interrupted" and not result.get("completed_at"):
+            result["completed_at"] = result.get("interrupted_at")
         return result
 
     @staticmethod
@@ -955,6 +996,44 @@ class AgentStore:
             ).fetchall()
         return [self._job_from_row(row) for row in rows]  # type: ignore[misc]
 
+    def list_parameter_sweep_jobs(
+        self,
+        sweep_ids: Sequence[str],
+        *,
+        mode: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return every terminal member of the requested parameter sweeps."""
+
+        if mode is not None:
+            self._validate_mode(mode)
+        normalized_ids = list(
+            dict.fromkeys(str(value).strip() for value in sweep_ids if str(value).strip())
+        )
+        if not normalized_ids:
+            return []
+        if len(normalized_ids) > 10:
+            raise ValueError("at most ten parameter sweeps can be loaded at once")
+
+        placeholders = ",".join("?" for _ in normalized_ids)
+        mode_clause = " AND mode = ?" if mode else ""
+        parameters: list[Any] = [*normalized_ids]
+        if mode:
+            parameters.append(mode)
+        with self._transaction() as connection:
+            rows = connection.execute(
+                "SELECT * FROM jobs "
+                "WHERE state IN ('done','error','cancelled','interrupted') "
+                "AND json_extract(provenance_json, '$.scenario_sweep.type') = "
+                "'parameter_sweep' "
+                "AND json_extract(provenance_json, '$.scenario_sweep.sweep_id') "
+                f"IN ({placeholders})"
+                + mode_clause
+                + " ORDER BY COALESCE(completed_at, interrupted_at, updated_at, "
+                "created_at) DESC, job_id DESC",
+                parameters,
+            ).fetchall()
+        return [self._job_from_row(row) for row in rows]  # type: ignore[misc]
+
     @staticmethod
     def _check_job_transition(current: str, requested: str) -> None:
         if requested == current:
@@ -1040,8 +1119,10 @@ class AgentStore:
                     assignments.append("completed_at = ?")
                     values.append(now_text)
                 elif state == "interrupted":
-                    assignments.extend(["interrupted_at = ?", "stage = ?"])
-                    values.extend([now_text, stage or "Interrupted"])
+                    assignments.extend(
+                        ["interrupted_at = ?", "completed_at = ?", "stage = ?"]
+                    )
+                    values.extend([now_text, now_text, stage or "Interrupted"])
                 if state == "done" and progress is None:
                     assignments.append("progress = 100")
                 if state in {"done", "error", "cancelled", "interrupted"}:
@@ -1228,7 +1309,7 @@ class AgentStore:
 
         now_text = _timestamp(self._current_time())
         clauses = ["state = 'running'"]
-        parameters: list[Any] = [now_text, now_text]
+        parameters: list[Any] = [now_text, now_text, now_text]
         if before is not None:
             clauses.append("COALESCE(heartbeat_at, started_at, updated_at) <= ?")
             parameters.append(_timestamp(before))
@@ -1237,7 +1318,7 @@ class AgentStore:
                 """
                 UPDATE jobs
                    SET state = 'interrupted', stage = 'Interrupted after service restart',
-                       interrupted_at = ?, updated_at = ?, worker_id = NULL,
+                       interrupted_at = ?, completed_at = ?, updated_at = ?, worker_id = NULL,
                        lease_token = NULL, heartbeat_at = NULL
                  WHERE """
                 + " AND ".join(clauses),
@@ -1282,6 +1363,142 @@ class AgentStore:
             ).fetchone()
         return self._job_from_row(updated)  # type: ignore[return-value]
 
+    @staticmethod
+    def _saved_result_record(
+        saved_row: sqlite3.Row,
+        job_row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        return {
+            "job_id": str(saved_row["job_id"]),
+            "name": str(saved_row["name"]),
+            "saved_at": str(saved_row["saved_at"]),
+            "updated_at": str(saved_row["updated_at"]),
+            "job": AgentStore._job_from_row(job_row),
+        }
+
+    @staticmethod
+    def _saved_result_name(name: str | None, *, fallback: str | None = None) -> str:
+        normalized = " ".join(str(name if name is not None else fallback or "").split())
+        if not normalized:
+            raise ValueError("saved result name must not be blank")
+        if len(normalized) > 120:
+            raise ValueError("saved result name must contain at most 120 characters")
+        return normalized
+
+    @staticmethod
+    def _default_saved_result_name(job: sqlite3.Row) -> str:
+        workflow = (
+            "Annual simulation"
+            if job["mode"] == "annual"
+            else "Calibration / validation"
+        )
+        terminal_time = str(job["completed_at"] or job["updated_at"] or "")
+        terminal_date = terminal_time[:10]
+        return f"{workflow} - {terminal_date}" if terminal_date else workflow
+
+    def save_result(self, job_id: str, *, name: str | None = None) -> dict[str, Any]:
+        """Idempotently add one completed result job to the saved collection."""
+
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            existing = connection.execute(
+                "SELECT * FROM saved_results WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if existing is not None:
+                job = connection.execute(
+                    "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+                ).fetchone()
+                return self._saved_result_record(existing, job)
+
+            job = connection.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise RecordNotFound(f"unknown job: {job_id}")
+            if job["state"] != "done" or job["result_json"] is None:
+                raise InvalidStateTransition(
+                    "only completed jobs with results can be saved"
+                )
+            count = int(
+                connection.execute("SELECT COUNT(*) FROM saved_results").fetchone()[0]
+            )
+            if count >= SAVED_RESULTS_LIMIT:
+                raise StoreConflict(
+                    f"at most {SAVED_RESULTS_LIMIT} results can be saved"
+                )
+            saved_name = self._saved_result_name(
+                name, fallback=self._default_saved_result_name(job)
+            )
+            connection.execute(
+                """
+                INSERT INTO saved_results(job_id, name, saved_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (job_id, saved_name, now_text, now_text),
+            )
+            saved = connection.execute(
+                "SELECT * FROM saved_results WHERE job_id = ?", (job_id,)
+            ).fetchone()
+        return self._saved_result_record(saved, job)
+
+    def list_saved_results(self) -> list[dict[str, Any]]:
+        """Return every saved result, newest save first."""
+
+        with self._transaction() as connection:
+            saved_rows = connection.execute(
+                """
+                SELECT * FROM saved_results
+                 ORDER BY saved_at DESC, job_id DESC
+                 LIMIT ?
+                """,
+                (SAVED_RESULTS_LIMIT,),
+            ).fetchall()
+            records = []
+            for saved in saved_rows:
+                job = connection.execute(
+                    "SELECT * FROM jobs WHERE job_id = ?", (saved["job_id"],)
+                ).fetchone()
+                records.append(self._saved_result_record(saved, job))
+        return records
+
+    def rename_saved_result(self, job_id: str, name: str) -> dict[str, Any]:
+        """Rename one saved result without changing its saved-order timestamp."""
+
+        saved_name = self._saved_result_name(name)
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            saved = connection.execute(
+                "SELECT * FROM saved_results WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if saved is None:
+                raise RecordNotFound(f"unknown saved result: {job_id}")
+            connection.execute(
+                "UPDATE saved_results SET name = ?, updated_at = ? WHERE job_id = ?",
+                (saved_name, now_text, job_id),
+            )
+            updated = connection.execute(
+                "SELECT * FROM saved_results WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            job = connection.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+        return self._saved_result_record(updated, job)
+
+    def remove_saved_result(self, job_id: str) -> dict[str, Any]:
+        """Remove a saved marker while preserving the underlying completed job."""
+
+        with self._transaction(write=True) as connection:
+            saved = connection.execute(
+                "SELECT * FROM saved_results WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if saved is None:
+                raise RecordNotFound(f"unknown saved result: {job_id}")
+            job = connection.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            connection.execute("DELETE FROM saved_results WHERE job_id = ?", (job_id,))
+        return self._saved_result_record(saved, job)
+
     def delete_job(self, job_id: str) -> dict[str, Any]:
         """Delete a terminal Solar Agent run.
 
@@ -1309,6 +1526,14 @@ class AgentStore:
             if row["state"] in {"queued", "running"}:
                 raise InvalidStateTransition(
                     "cancel the active run before deleting it"
+                )
+
+            saved = connection.execute(
+                "SELECT 1 FROM saved_results WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if saved is not None:
+                raise InvalidStateTransition(
+                    "remove the saved result before deleting this run"
                 )
 
             promotion = connection.execute(
@@ -1473,7 +1698,7 @@ class AgentStore:
         return [dict(row) for row in rows]
 
     def snapshot_state(
-        self, *, mode: str | None = None, recent_limit: int = 20
+        self, *, mode: str | None = None, recent_limit: int = 10
     ) -> dict[str, Any]:
         """Return the durable state needed by ``GET /api/agent/state``."""
 
@@ -1512,9 +1737,11 @@ class AgentStore:
             ).fetchall()
             recent_params = [*mode_parameters, max(int(recent_limit), 0)]
             recent = connection.execute(
-                "SELECT * FROM jobs WHERE 1 = 1"
+                "SELECT * FROM jobs "
+                "WHERE state IN ('done','error','cancelled','interrupted')"
                 + mode_clause
-                + " ORDER BY created_at DESC, job_id DESC LIMIT ?",
+                + " ORDER BY COALESCE(completed_at, interrupted_at, updated_at, "
+                "created_at) DESC, job_id DESC LIMIT ?",
                 recent_params,
             ).fetchall()
 
@@ -1543,6 +1770,7 @@ __all__ = [
     "MODES",
     "PROPOSAL_STATES",
     "RecordNotFound",
+    "SAVED_RESULTS_LIMIT",
     "SCHEMA_VERSION",
     "SchemaVersionError",
     "StoreConflict",

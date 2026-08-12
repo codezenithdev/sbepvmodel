@@ -66,6 +66,11 @@
                 dashboardShell.inert = modal;
                 if (modal) dashboardShell.setAttribute('aria-hidden', 'true');
                 else dashboardShell.removeAttribute('aria-hidden');
+                if (!modal && window.savedResultsDrawerReady === true && document.body.classList.contains('saved-results-open')) {
+                    dashboardShell.toggleAttribute('inert', true);
+                    dashboardShell.inert = true;
+                    dashboardShell.setAttribute('aria-hidden', 'true');
+                }
             }
         }
 

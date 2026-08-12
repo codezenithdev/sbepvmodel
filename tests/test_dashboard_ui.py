@@ -125,6 +125,324 @@ class CurtailmentDefaultTests(unittest.TestCase):
                 with self.assertRaises(app.HTTPException):
                     app._validate_curtailment(request)
 
+    def test_agent_state_exposes_ten_terminal_history_ids_separately(self):
+        for index in range(12):
+            job_id = f"history-{index:02d}"
+            state.AGENT_STORE.create_job(
+                job_id=job_id,
+                kind="baseline",
+                mode="annual",
+                request={"from_date": "2025-01-01", "to_date": "2025-12-31"},
+            )
+            state.AGENT_STORE.claim_next_queued_job()
+            state.AGENT_STORE.update_job(
+                job_id,
+                state="done",
+                result={"stats": {"se_predicted_kwh": index}},
+            )
+        state.AGENT_STORE.promote_job("history-00")
+        state.AGENT_STORE.create_job(
+            job_id="history-active",
+            kind="baseline",
+            mode="annual",
+            request={},
+        )
+        state.AGENT_STORE.claim_next_queued_job()
+        state.AGENT_STORE.create_job(
+            job_id="history-queued",
+            kind="baseline",
+            mode="annual",
+            request={},
+        )
+
+        response = app.agent_state(mode="annual")
+        payload = json.loads(response.body)
+
+        self.assertEqual(10, payload["history_limit"])
+        self.assertEqual(10, len(payload["recent_job_ids"]))
+        self.assertNotIn("history-00", payload["recent_job_ids"])
+        self.assertNotIn("history-active", payload["recent_job_ids"])
+        self.assertNotIn("history-queued", payload["recent_job_ids"])
+        jobs = {job["job_id"]: job for job in payload["jobs"]}
+        self.assertIn("history-00", jobs)  # promoted context, not history
+        self.assertIn("history-active", jobs)
+        self.assertIn("history-queued", jobs)
+        self.assertEqual("dashboard", jobs["history-00"]["origin"])
+
+    def test_agent_state_keeps_a_twelve_member_sweep_atomic(self):
+        sweep_id = "parameter-history-atomic"
+        for index in range(12):
+            job_id = f"sweep-history-{index:02d}"
+            state.AGENT_STORE.create_job(
+                job_id=job_id,
+                kind="candidate",
+                mode="annual",
+                request={"years": [2024]},
+                provenance={
+                    "scenario_sweep": {
+                        "type": "parameter_sweep",
+                        "sweep_id": sweep_id,
+                        "parameter": "curtailment_limit_kw",
+                        "index": index,
+                        "candidate_count": 12,
+                    }
+                },
+            )
+            state.AGENT_STORE.claim_next_queued_job()
+            state.AGENT_STORE.update_job(
+                job_id,
+                state="done",
+                result={"stats": {"se_predicted_kwh": index}},
+            )
+
+        response = app.agent_state(mode="annual")
+        payload = json.loads(response.body)
+
+        self.assertEqual(10, payload["history_limit"])
+        self.assertEqual(1, payload["recent_activity_count"])
+        self.assertEqual(12, len(payload["recent_job_ids"]))
+        self.assertEqual(
+            {f"sweep-history-{index:02d}" for index in range(12)},
+            set(payload["recent_job_ids"]),
+        )
+
+    def test_agent_state_expands_an_old_sweep_after_one_member_becomes_recent(self):
+        sweep_id = "parameter-history-retried"
+        sweep_job_ids = []
+        for index in range(12):
+            job_id = f"retried-sweep-{index:02d}"
+            sweep_job_ids.append(job_id)
+            state.AGENT_STORE.create_job(
+                job_id=job_id,
+                kind="candidate",
+                mode="annual",
+                request={"years": [2024]},
+                provenance={
+                    "scenario_sweep": {
+                        "type": "parameter_sweep",
+                        "sweep_id": sweep_id,
+                        "parameter": "curtailment_limit_kw",
+                        "index": index,
+                        "candidate_count": 12,
+                    }
+                },
+            )
+            if index == 0:
+                state.AGENT_STORE.cancel_job(job_id)
+            else:
+                state.AGENT_STORE.claim_next_queued_job()
+                state.AGENT_STORE.update_job(job_id, state="done")
+
+        for index in range(119):
+            job_id = f"newer-single-{index:03d}"
+            state.AGENT_STORE.create_job(
+                job_id=job_id,
+                kind="baseline",
+                mode="annual",
+                request={"years": [2024]},
+            )
+            state.AGENT_STORE.claim_next_queued_job()
+            state.AGENT_STORE.update_job(job_id, state="done")
+
+        state.AGENT_STORE.retry_job(sweep_job_ids[0])
+
+        queued_payload = json.loads(app.agent_state(mode="annual").body)
+        queued_job_ids = {job["job_id"] for job in queued_payload["jobs"]}
+        self.assertTrue(set(sweep_job_ids).issubset(queued_job_ids))
+        self.assertNotIn(sweep_job_ids[0], queued_payload["recent_job_ids"])
+
+        state.AGENT_STORE.claim_next_queued_job()
+        state.AGENT_STORE.update_job(sweep_job_ids[0], state="done")
+
+        payload = json.loads(app.agent_state(mode="annual").body)
+
+        self.assertEqual(10, payload["recent_activity_count"])
+        self.assertTrue(set(sweep_job_ids).issubset(payload["recent_job_ids"]))
+        self.assertEqual(21, len(payload["recent_job_ids"]))
+
+    def test_public_job_removes_local_paths_but_keeps_output_links(self):
+        private_root = str(config.OUTPUT_DIR.resolve())
+        public = app._public_job(
+            {
+                "id": "sanitized-history",
+                "state": "done",
+                "result": {
+                    "excel": "/outputs/safe.xlsx",
+                    "stats": {
+                        "excel": str(config.OUTPUT_DIR / "private.xlsx"),
+                        "input_csv": str(config.OUTPUT_DIR / "private.csv"),
+                    },
+                },
+                "provenance": {
+                    "baseline": {
+                        "job_id": "baseline",
+                        "workbook": str(config.OUTPUT_DIR / "baseline.xlsx"),
+                    },
+                    "files": [
+                        str(config.OUTPUT_DIR / "nested-private.csv"),
+                        "/outputs/safe.csv",
+                    ],
+                },
+                "artifacts": {
+                    "model_workbook": {
+                        "path": str(config.OUTPUT_DIR / "private.xlsx"),
+                        "url": "/outputs/safe.xlsx",
+                        "filename": "safe.xlsx",
+                    }
+                },
+                "error": (
+                    "Source file does not exist: "
+                    + str(config.OUTPUT_DIR / "private-source.csv")
+                ),
+            }
+        )
+
+        def nested_strings(value):
+            if isinstance(value, dict):
+                for item in value.values():
+                    yield from nested_strings(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from nested_strings(item)
+            elif isinstance(value, str):
+                yield value
+
+        self.assertFalse(
+            any(private_root in value for value in nested_strings(public))
+        )
+        self.assertEqual("/outputs/safe.xlsx", public["result"]["excel"])
+        self.assertNotIn("excel", public["result"]["stats"])
+        self.assertNotIn("input_csv", public["result"]["stats"])
+        self.assertNotIn("workbook", public["provenance"]["baseline"])
+        self.assertEqual(["/outputs/safe.csv"], public["provenance"]["files"])
+        self.assertNotIn("path", public["artifacts"]["model_workbook"])
+        self.assertEqual(
+            "/outputs/safe.xlsx",
+            public["artifacts"]["model_workbook"]["url"],
+        )
+        self.assertEqual(
+            "The run could not be completed. Check the server logs for details.",
+            public["error"],
+        )
+        unc_public = app._public_job(
+            {
+                "id": "sanitized-unc-error",
+                "state": "error",
+                "error": r"Failed opening \\fileserver\pv\secret.csv",
+            }
+        )
+        self.assertEqual(
+            "The run could not be completed. Check the server logs for details.",
+            unc_public["error"],
+        )
+
+    def test_saved_results_api_is_durable_safe_and_idempotent(self):
+        job = state.AGENT_STORE.create_job(
+            job_id="api-saved-result",
+            kind="manual",
+            mode="annual",
+            request={"years": [2025]},
+        )
+        state.AGENT_STORE.claim_next_queued_job()
+        private_source = str(config.OUTPUT_DIR / "private-source.csv")
+        state.AGENT_STORE.update_job(
+            job["id"],
+            state="done",
+            result={
+                "workbook_url": "/outputs/safe.xlsx",
+                "input_csv": private_source,
+                "detail": {"source": private_source},
+            },
+        )
+        client = TestClient(app.app)
+
+        created = client.post(
+            f"/api/saved-results/{job['id']}",
+            json={"name": "Annual reference"},
+        )
+        repeated = client.post(
+            f"/api/saved-results/{job['id']}",
+            json={"name": "Ignored idempotent rename"},
+        )
+        listed = client.get("/api/saved-results")
+
+        self.assertEqual(200, created.status_code)
+        self.assertEqual(created.json(), repeated.json())
+        self.assertEqual(10, listed.json()["limit"])
+        self.assertEqual(1, len(listed.json()["saved_results"]))
+        public_saved = listed.json()["saved_results"][0]
+        self.assertEqual(job["id"], public_saved["job_id"])
+        self.assertEqual("Annual reference", public_saved["name"])
+        self.assertEqual("done", public_saved["job"]["state"])
+        self.assertEqual(
+            "/outputs/safe.xlsx",
+            public_saved["job"]["result"]["workbook_url"],
+        )
+        self.assertNotIn(private_source, json.dumps(public_saved))
+
+        renamed = client.put(
+            f"/api/saved-results/{job['id']}",
+            json={"name": "  Annual   reference  "},
+        )
+        self.assertEqual(200, renamed.status_code)
+        self.assertEqual("Annual reference", renamed.json()["saved_result"]["name"])
+
+        protected = client.post(f"/api/jobs/{job['id']}/delete")
+        self.assertEqual(409, protected.status_code)
+        removed = client.delete(f"/api/saved-results/{job['id']}")
+        self.assertEqual(
+            {"job_id": job["id"], "removed": True},
+            removed.json(),
+        )
+        self.assertEqual(job["id"], state.AGENT_STORE.get_job(job["id"])["id"])
+        self.assertEqual([], client.get("/api/saved-results").json()["saved_results"])
+
+        default_job = state.AGENT_STORE.create_job(
+            job_id="api-default-saved-name",
+            kind="manual",
+            mode="validation",
+            request={},
+        )
+        state.AGENT_STORE.claim_next_queued_job()
+        state.AGENT_STORE.update_job(
+            default_job["id"], state="done", result={"energy_kwh": 1.0}
+        )
+        default_named = client.post(f"/api/saved-results/{default_job['id']}")
+        self.assertEqual(200, default_named.status_code)
+        self.assertTrue(
+            default_named.json()["saved_result"]["name"].startswith(
+                "Calibration / validation - "
+            )
+        )
+
+    def test_saved_results_api_rejects_ineligible_or_unknown_jobs(self):
+        queued = state.AGENT_STORE.create_job(
+            job_id="api-unsaveable",
+            kind="manual",
+            mode="annual",
+            request={},
+        )
+        client = TestClient(app.app)
+
+        self.assertEqual(
+            409,
+            client.post(f"/api/saved-results/{queued['id']}").status_code,
+        )
+        self.assertEqual(
+            404,
+            client.post("/api/saved-results/unknown-job").status_code,
+        )
+        self.assertEqual(
+            404,
+            client.put(
+                "/api/saved-results/unknown-job", json={"name": "Name"}
+            ).status_code,
+        )
+        self.assertEqual(
+            404,
+            client.delete("/api/saved-results/unknown-job").status_code,
+        )
+
 
 class ValidationWindowMetadataTests(unittest.TestCase):
     def test_validation_window_metadata_preserves_legacy_utc_and_dst_offsets(self):

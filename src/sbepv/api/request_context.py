@@ -108,5 +108,5 @@ def _annual_submission_request(
     request = AnnualRunRequest(**values)
     _validate_run_request(request)
     _validate_curtailment(request)
-    _annual_dates(request)
+    _annual_dates(request, allow_resolved_partial=True)
     return request, _run_request_context(request)

@@ -21,7 +21,7 @@ src/sbepv/            the Python package
   paths.py            repository-root discovery shared by everything below
   ingest/
     bazefield.py      Bazefield REST puller (stdlib only) + CLI
-    midc.py           MIDC hourly weather puller + CLI
+    midc.py           MIDC weather interval puller + CLI
   api/                the FastAPI application
     main.py           app construction, auth middleware, HTTP routes
     config.py         env-derived settings and paths  (import side effects, see below)
@@ -60,7 +60,7 @@ app/ lib/ worker/ build/          vinext frontend on Cloudflare Workers (TypeScr
 public/                           static assets, served by BOTH front doors
 deploy/render.yaml                Render service definition
 docs/                             deployment, calibration workflow, design QA
-tests/                            272 tests, stdlib unittest
+tests/                            stdlib unittest suite
 ```
 
 ## Running it
@@ -77,6 +77,27 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). Copy `env.example` to 
 `BAZEFIELD_API_KEY` and `OPENAI_API_KEY` first; without them the dashboard loads but
 Bazefield retrieval and chat fail.
 
+Annual Simulation accepts one or more SolarTAC years from 2011 through the current
+year. Supported minute intervals are the whole-minute divisors of a day from 1
+through 60 (including 1, 5, 15, 30, 45, and 60 minutes); supported hour intervals
+are 1, 2, 3, 4, 6, 8, 12, or 24 hours; 1 day is also supported. One-minute data
+creates about 525,600 rows for a full year. The server rejects combined selections
+above 1,048,575 rows before download so the complete time series remains exportable
+to Excel.
+The 2011 selection starts on February 11 and the current-year selection ends on
+the latest complete fixed-MST day; both remain labelled as partial periods and
+are excluded from the full-year empirical CDF. The source can be inspected in the
+[MIDC SolarTAC daily viewer](https://midcdmz.nlr.gov/apps/daily.pl?site=STAC&start=20110211&yr=2026&mo=7&dy=12).
+
+The dashboard restores active jobs and the ten newest terminal run activities from
+SQLite. Open **Ask Solar Agent → Runs → History** to inspect that automatic recent
+history. Completed calibration and annual results can also be pinned with **Save
+results**; the top-bar **Saved results** drawer keeps up to ten user-selected results
+available for view, rename, export, or removal without rerunning the model. Saved
+results are separate from the rolling recent-history limit. Set
+`PV_DASHBOARD_OUTPUT_DIR` to durable storage in deployments so that both collections
+and their generated artifacts survive service restarts.
+
 `--app-dir src` puts the package on `sys.path`. `pip install -e .` also works and
 makes the flag unnecessary.
 
@@ -86,8 +107,8 @@ makes the flag unnecessary.
 python -m unittest discover -v
 ```
 
-272 tests, one skipped (it needs MIDC reconciliation fixtures that are not in the
-repo). Run from the repository root.
+The suite has one expected skip because its MIDC reconciliation fixture is not in
+the repository. Run from the repository root.
 
 ## Editing the dashboard
 

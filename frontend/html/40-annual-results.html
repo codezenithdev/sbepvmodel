@@ -1,7 +1,7 @@
                 <section class="annual-results-shell" aria-labelledby="annualResultsHeading">
                     <div class="annual-results-heading">
                         <div>
-                            <h2 id="annualResultsHeading">Simulation results</h2>
+                            <h2 id="annualResultsHeading" tabindex="-1">Simulation results</h2>
                             <p>Headline production first, then model differences, coverage, and time-series detail.</p>
                         </div>
                         <span class="annual-results-note" id="annualResultsNote">Weather inputs render before annual predictions</span>
@@ -50,7 +50,7 @@
                     <article class="stat-card annual-stat-secondary">
                         <div class="stat-label">Model interval rows</div>
                         <div class="stat-value neutral" id="annualStatRows">--</div>
-                        <p class="stat-context">Right-labeled MIDC intervals across the requested dates.</p>
+                        <p class="stat-context">Right-labeled MIDC intervals across the selected years.</p>
                     </article>
                     <article class="stat-card annual-stat-secondary">
                         <div class="stat-label">Data quality</div>
@@ -60,12 +60,55 @@
                 </section>
 
                 <div class="annual-results-meta" id="annualResultsMeta" hidden>
-                    <div>Fixed MIDC range<strong id="annualResultRange">--</strong></div>
+                    <div>Resolved coverage span<strong id="annualResultRange">--</strong></div>
                     <div>Model interval<strong id="annualResultInterval">--</strong></div>
                     <div>Interval convention<strong>right-closed, right-labeled</strong></div>
                     <div>Plot timezone<strong>America/Denver</strong></div>
                 </div>
                 <div class="quality-panel ok" id="annualQualityPanel">Data-quality details will appear after a run.</div>
+
+                <section class="annual-year-results" id="annualYearResults" aria-labelledby="annualYearResultsHeading" hidden>
+                    <div class="annual-year-results-heading">
+                        <div>
+                            <h3 id="annualYearResultsHeading">Energy by MIDC year</h3>
+                            <p id="annualYearResultsSummary">Year-level predictions appear after a multi-year run.</p>
+                        </div>
+                    </div>
+                    <div class="annual-year-results-grid">
+                        <div class="annual-year-table-wrap" role="region" aria-label="Annual energy predictions by MIDC year" tabindex="0">
+                            <table class="annual-year-table">
+                                <caption>Predicted annual energy and source coverage for each selected MIDC year</caption>
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Year</th>
+                                        <th scope="col">Coverage</th>
+                                        <th scope="col">SolarEdge (kWh)</th>
+                                        <th scope="col">Solectria (kWh)</th>
+                                        <th scope="col">Combined (kWh)</th>
+                                        <th scope="col">Rows</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="annualYearResultRows"></tbody>
+                            </table>
+                        </div>
+                        <figure class="annual-cdf-card" id="annualCdfCard">
+                            <figcaption>
+                                <strong>Empirical cumulative distribution</strong>
+                                <span>Complete calendar years only</span>
+                            </figcaption>
+                            <div class="annual-cdf-legend" aria-label="Chart series line styles">
+                                <span class="solaredge">SolarEdge - solid</span>
+                                <span class="solectria">Solectria - dashed</span>
+                                <span class="combined">Combined - dotted</span>
+                            </div>
+                            <svg class="annual-cdf-chart" id="annualCdfChart" viewBox="0 0 720 360" role="img" aria-labelledby="annualCdfTitle annualCdfDescription" hidden>
+                                <title id="annualCdfTitle">Annual predicted energy empirical cumulative distribution</title>
+                                <desc id="annualCdfDescription">No complete-year distribution is available.</desc>
+                            </svg>
+                            <p class="annual-cdf-fallback" id="annualCdfFallback" role="status">Run at least two complete calendar years to view a distribution.</p>
+                        </figure>
+                    </div>
+                </section>
 
                 <section class="analysis-layout" aria-label="Annual simulation charts">
                     <div class="annual-charts-grid" id="annualChartGrid">
@@ -78,7 +121,7 @@
                             <div class="chart-placeholder" id="annualAcChartBox"><div class="chart-icon" id="annualAcIcon">AC</div><img class="chart-image" id="annualAcImg" alt="Annual predicted AC power chart" style="display:none;"></div>
                         </article>
                         <article class="chart-card">
-                            <div class="chart-header"><div><div class="chart-title">Cumulative Predicted Energy</div><div class="chart-meta">Predicted energy growth over the requested range</div></div><span class="chart-badge">Energy</span></div>
+                            <div class="chart-header"><div><div class="chart-title">Cumulative Predicted Energy</div><div class="chart-meta">Predicted energy growth across the selected years</div></div><span class="chart-badge">Energy</span></div>
                             <div class="chart-placeholder" id="annualEnergyChartBox"><div class="chart-icon" id="annualEnergyIcon">kWh</div><img class="chart-image" id="annualEnergyImg" alt="Annual cumulative predicted energy chart" style="display:none;"></div>
                         </article>
                         <article class="chart-card">

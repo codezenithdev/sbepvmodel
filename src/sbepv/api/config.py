@@ -77,6 +77,9 @@ CALIBRATION_REVIEW_MAX_ROWS = 200_000
 VALIDATION_RUN_MAX_RANGE = CALIBRATION_REVIEW_MAX_RANGE
 VALIDATION_RUN_MAX_ROWS = CALIBRATION_REVIEW_MAX_ROWS
 ANNUAL_RUN_MAX_DAYS = 3 * 366
+# Excel worksheets allow 1,048,576 rows including the header. Annual runs emit
+# one time-series row per interval, so reject requests that cannot be exported.
+ANNUAL_RUN_MAX_ROWS = 1_048_575
 MAX_ACTIVE_MODEL_JOBS = int(
     _bounded_env_number(
         "PV_DASHBOARD_MAX_ACTIVE_JOBS", 25, minimum=1, maximum=500
@@ -97,6 +100,19 @@ OPENAI_TIMEOUT_SECONDS = _bounded_env_number(
 OPENAI_MAX_RETRIES = int(
     _bounded_env_number("OPENAI_MAX_RETRIES", 0, minimum=0, maximum=5)
 )
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "high").strip().lower() or "high"
+OPENAI_REASONING_EFFORTS = frozenset({
+    "none",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+})
+if OPENAI_REASONING_EFFORT not in OPENAI_REASONING_EFFORTS:
+    logger.warning("Ignoring invalid OPENAI_REASONING_EFFORT value")
+    OPENAI_REASONING_EFFORT = "low"
 
 SERVER_SESSION_ID = uuid.uuid4().hex
 
@@ -104,4 +120,5 @@ UNIT_SECONDS = {"minutes": 60, "hours": 3600, "days": 86400}
 AUTH_REALM = "SB Energy Dashboard"
 
 LOCAL_TZ = ZoneInfo("America/Denver")  # matches model.TIMEZONE
+ANNUAL_TZ = ZoneInfo("Etc/GMT+7")  # MIDC source dates are fixed MST (UTC-7)
 UTC_TZ = ZoneInfo("UTC")

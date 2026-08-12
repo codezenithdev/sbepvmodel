@@ -56,9 +56,36 @@
             const promoted = data && data.promoted_baselines && typeof data.promoted_baselines === 'object'
                 ? data.promoted_baselines
                 : {};
+            const jobs = Array.isArray(data?.jobs) ? data.jobs.filter(Boolean) : [];
+            const requestedHistoryLimit = Number(data?.history_limit);
+            const historyLimit = Number.isInteger(requestedHistoryLimit) && requestedHistoryLimit > 0
+                ? Math.min(MAX_RECENT_AGENT_RUNS, requestedHistoryLimit)
+                : MAX_RECENT_AGENT_RUNS;
+            const hasRecentJobIds = Object.prototype.hasOwnProperty.call(data || {}, 'recent_job_ids');
+            const fallbackRecentJobIds = jobs
+                .filter(isAgentJobTerminal)
+                .sort((left, right) => agentActivityTimestamp(right) - agentActivityTimestamp(left))
+                .map((job) => String(job.job_id || ''))
+                .filter(Boolean);
+            const recentJobIds = (hasRecentJobIds && Array.isArray(data?.recent_job_ids)
+                ? data.recent_job_ids
+                : fallbackRecentJobIds)
+                .map((jobId) => String(jobId || ''))
+                .filter(Boolean);
+            const reportedActivityCount = Number(data?.recent_activity_count);
+            const jobsById = new Map(jobs.map((job) => [String(job.job_id || ''), job]));
+            const inferredActivityCount = new Set(recentJobIds.map((jobId) => {
+                const job = jobsById.get(String(jobId));
+                return job ? agentJobActivityKey(job) : 'job:' + String(jobId);
+            })).size;
             return {
                 proposals: Array.isArray(data?.proposals) ? data.proposals.filter(Boolean) : [],
-                jobs: Array.isArray(data?.jobs) ? data.jobs.filter(Boolean) : [],
+                jobs,
+                recent_job_ids: [...new Set(recentJobIds)],
+                recent_activity_count: Number.isInteger(reportedActivityCount) && reportedActivityCount >= 0
+                    ? Math.min(historyLimit, reportedActivityCount)
+                    : Math.min(historyLimit, inferredActivityCount),
+                history_limit: historyLimit,
                 promoted_baselines: {
                     validation: promoted.validation || null,
                     annual: promoted.annual || null,
@@ -93,7 +120,13 @@
             }
         }
 
-        function compactAgentRunWindow(request, mode) {
+        function normalizedAgentRequestYears(request) {
+            if (!Array.isArray(request?.years)) return [];
+            return [...new Set(request.years.map(Number).filter(Number.isInteger))]
+                .sort((left, right) => left - right);
+        }
+
+        function compactAgentResolvedDateWindow(request, mode) {
             const config = request || {};
             if (!config.from_date || !config.to_date) return 'Window unavailable';
             let dates;
@@ -114,13 +147,24 @@
             return dates + timeRange;
         }
 
+        function compactAgentRunWindow(request, mode) {
+            const years = mode === 'annual' ? normalizedAgentRequestYears(request) : [];
+            if (years.length) {
+                return years.join(', ') + ' · ' + years.length + (years.length === 1 ? ' year' : ' years');
+            }
+            return compactAgentResolvedDateWindow(request, mode);
+        }
+
         function agentActivityTimestamp(item) {
-            const value = item?.created_at || item?.started_at || item?.completed_at;
+            const value = isAgentJobTerminal(item)
+                ? item?.completed_at || item?.interrupted_at || item?.updated_at || item?.created_at
+                : item?.started_at || item?.created_at || item?.updated_at;
             const parsed = value ? Date.parse(value) : NaN;
             return Number.isFinite(parsed) ? parsed : 0;
         }
 
         function agentActivityPriority(entry) {
+            if (Number.isInteger(entry.activityPriority)) return entry.activityPriority;
             if (entry.type === 'proposal') return 0;
             if (entry.item?.state === 'running') return 1;
             if (entry.item?.state === 'queued') return 2;
@@ -132,8 +176,12 @@
             return [...items].sort((left, right) => {
                 const priorityDifference = agentActivityPriority(left) - agentActivityPriority(right);
                 if (priorityDifference) return priorityDifference;
-                const leftTime = agentActivityTimestamp(left.item);
-                const rightTime = agentActivityTimestamp(right.item);
+                const leftTime = Number.isFinite(left.activityTimestamp)
+                    ? left.activityTimestamp
+                    : agentActivityTimestamp(left.item);
+                const rightTime = Number.isFinite(right.activityTimestamp)
+                    ? right.activityTimestamp
+                    : agentActivityTimestamp(right.item);
                 if ([1, 2].includes(agentActivityPriority(left))) return leftTime - rightTime;
                 return rightTime - leftTime;
             });
@@ -142,22 +190,122 @@
         function getAgentActivityItems() {
             const proposals = Array.from(agentProposalSnapshots.values())
                 .filter((proposal) => !proposal.status || proposal.status === 'pending')
+                .filter((proposal) => !agentParameterSweepMetadata(proposal))
                 .map((proposal) => ({
                     type: 'proposal',
                     key: 'proposal:' + proposal.proposal_id,
                     item: proposal,
                 }));
-            const jobs = Array.from(agentJobSnapshots.values()).map((job) => ({
-                type: 'job',
-                key: 'job:' + job.job_id,
-                item: job,
-            }));
+            const jobs = Array.from(agentJobSnapshots.values())
+                .filter(isAgentJobInActivityWorkspace)
+                .filter((job) => !isAgentParameterSweepJob(job))
+                .map((job) => ({
+                    type: 'job',
+                    key: 'job:' + job.job_id,
+                    item: job,
+                }));
             return sortAgentActivityItems([...proposals, ...jobs]);
+        }
+
+        function agentHistoryLimit() {
+            const value = Number(agentServerState?.history_limit);
+            return Number.isInteger(value) && value > 0
+                ? Math.min(MAX_RECENT_AGENT_RUNS, value)
+                : MAX_RECENT_AGENT_RUNS;
+        }
+
+        function isAgentJobInActivityWorkspace(job) {
+            if (!job?.job_id) return false;
+            if (!isAgentJobTerminal(job)) return true;
+            const metadata = agentParameterSweepMetadata(job);
+            if (metadata) {
+                const activeMemberExists = Array.from(agentJobSnapshots.values()).some((item) => {
+                    const itemMetadata = agentParameterSweepMetadata(item);
+                    return itemMetadata?.sweep_id === metadata.sweep_id && !isAgentJobTerminal(item);
+                });
+                const pendingProposalExists = Array.from(agentProposalSnapshots.values()).some((proposal) => (
+                    agentParameterSweepMetadata(proposal)?.sweep_id === metadata.sweep_id &&
+                    (!proposal.status || proposal.status === 'pending')
+                ));
+                if (activeMemberExists || pendingProposalExists) return true;
+            }
+            const recentIds = new Set((agentServerState.recent_job_ids || []).map(String));
+            if (!recentIds.has(String(job.job_id))) return false;
+            return recentAgentActivityKeys().has(agentJobActivityKey(job));
+        }
+
+        function agentJobActivityKey(job) {
+            const metadata = agentParameterSweepMetadata(job);
+            return metadata?.sweep_id
+                ? 'sweep:' + String(metadata.sweep_id)
+                : 'job:' + String(job?.job_id || '');
+        }
+
+        function recentAgentActivityKeys() {
+            const keys = [];
+            const seen = new Set();
+            (agentServerState.recent_job_ids || []).forEach((jobId) => {
+                const job = agentJobSnapshots.get(String(jobId));
+                if (!job) return;
+                const key = agentJobActivityKey(job);
+                if (!key || seen.has(key)) return;
+                seen.add(key);
+                keys.push(key);
+            });
+            return new Set(keys.slice(0, agentHistoryLimit()));
+        }
+
+        function rememberTerminalAgentJob(job) {
+            if (!isAgentJobTerminal(job) || !job?.job_id) return;
+            const jobId = String(job.job_id);
+            const current = Array.isArray(agentServerState.recent_job_ids)
+                ? agentServerState.recent_job_ids.map(String)
+                : [];
+            agentServerState.recent_job_ids = [jobId, ...current.filter((item) => item !== jobId)];
+            agentServerState.recent_activity_count = recentAgentActivityKeys().size;
+        }
+
+        function moveAgentActivityToHistory(job = null) {
+            if (agentActivityFilter !== 'active') return false;
+            const terminalJob = isAgentJobTerminal(job) ? job : null;
+            const sweepMetadata = terminalJob ? agentParameterSweepMetadata(terminalJob) : null;
+            const sweepHasActiveMembers = sweepMetadata && Array.from(agentJobSnapshots.values()).some((item) => {
+                const metadata = agentParameterSweepMetadata(item);
+                return metadata?.sweep_id === sweepMetadata.sweep_id && !isAgentJobTerminal(item);
+            });
+            if (sweepHasActiveMembers) return false;
+            const activeJobsRemain = Array.from(agentJobSnapshots.values())
+                .filter(isAgentJobInActivityWorkspace)
+                .some((item) => !isAgentJobTerminal(item));
+            if (activeJobsRemain) return false;
+            agentActivityFilter = 'complete';
+            if (terminalJob) agentActivitySelection = 'job:' + terminalJob.job_id;
+            return true;
+        }
+
+        function reconcileAgentActivityFilterAfterRefresh() {
+            if (agentActivityFilter !== 'active') return;
+            const selectedJobId = agentActivitySelection?.startsWith('job:')
+                ? agentActivitySelection.slice(4)
+                : null;
+            const selectedJob = selectedJobId ? agentJobSnapshots.get(selectedJobId) : null;
+            if (isAgentJobTerminal(selectedJob) && isAgentJobInActivityWorkspace(selectedJob)) {
+                moveAgentActivityToHistory(selectedJob);
+                return;
+            }
+            const activeJobsRemain = Array.from(agentJobSnapshots.values())
+                .filter(isAgentJobInActivityWorkspace)
+                .some((item) => !isAgentJobTerminal(item));
+            if (activeJobsRemain) return;
+            const latestTerminal = (agentServerState.recent_job_ids || [])
+                .map((jobId) => agentJobSnapshots.get(String(jobId)))
+                .find(isAgentJobTerminal);
+            if (latestTerminal) moveAgentActivityToHistory(latestTerminal);
         }
 
         function agentActivityCategory(entry) {
             if (entry.type === 'proposal') return 'review';
-            return isAgentJobActive(entry.item) ? 'active' : 'complete';
+            return isAgentJobTerminal(entry.item) ? 'complete' : 'active';
         }
 
         function agentActivityMatchesFilter(entry, filter = agentActivityFilter) {
@@ -165,6 +313,10 @@
         }
 
         function formatAgentRunHighlight(field, value, request = {}) {
+            if (field === 'years') {
+                const years = normalizedAgentRequestYears({ years: value });
+                return years.length ? 'MIDC years ' + years.join(', ') : 'MIDC years not set';
+            }
             if (field === 'backtrack') return 'Backtracking ' + (value ? 'on' : 'off');
             if (field === 'curtailment_enabled') return value ? 'Curtailment on' : 'Curtailment off';
             if (field === 'curtailment_limit_kw') return 'Curtailment ' + formatAgentValue(value, 'kW');
@@ -194,6 +346,7 @@
             if (!baselineRequest || !request) return [];
             const fields = [
                 'backtrack',
+                'years',
                 'curtailment_enabled',
                 'curtailment_limit_kw',
                 'iam_model',
@@ -216,6 +369,9 @@
             let highlights = agentRunChangedValues(entry, request || {});
             if (!highlights.length && request) {
                 highlights = [];
+                if (normalizedAgentRequestYears(request).length) {
+                    highlights.push(formatAgentRunHighlight('years', request.years, request));
+                }
                 if (request.interval_value !== undefined || request.interval_unit) {
                     highlights.push(formatAgentRunHighlight('interval_value', request.interval_value, request));
                 }
@@ -234,12 +390,16 @@
 
         function agentRunConfigurationRows(request, mode) {
             if (!request || typeof request !== 'object') return [];
+            const annualYears = mode === 'annual' ? normalizedAgentRequestYears(request) : [];
             const rows = [
-                ['Window', compactAgentRunWindow(request, mode)],
+                [annualYears.length ? 'MIDC years' : 'Window', compactAgentRunWindow(request, mode)],
                 ['Interval', formatAgentValue(request.interval_value) + ' ' + String(request.interval_unit || '').trim()],
                 ['Backtracking', request.backtrack ? 'On' : 'Off'],
                 ['IAM', request.iam_model === 'martin_ruiz' ? 'Martin–Ruiz' : humanizeAgentField(request.iam_model || 'physical')],
             ];
+            if (annualYears.length && request.from_date && request.to_date) {
+                rows.splice(1, 0, ['Resolved coverage', compactAgentResolvedDateWindow(request, mode)]);
+            }
             if (request.curtailment_enabled) rows.push(['Curtailment', formatAgentValue(request.curtailment_limit_kw, 'kW')]);
             else rows.push(['Curtailment', 'Off']);
             if (request.iam_model === 'martin_ruiz' && request.iam_a_r !== null && request.iam_a_r !== undefined) {
@@ -322,8 +482,9 @@
             agentProposalSnapshots.set(proposal.proposal_id, proposal);
         }
 
-        function putAgentJob(job) {
+        function putAgentJob(job, options = {}) {
             if (!job || !job.job_id) return;
+            const hadPrevious = agentJobSnapshots.has(job.job_id);
             const previous = agentJobSnapshots.get(job.job_id) || {};
             const merged = { ...previous, ...job };
             agentJobSnapshots.set(job.job_id, merged);
@@ -331,6 +492,11 @@
             const parsed = startValue ? Date.parse(startValue) : NaN;
             if (!agentJobStartedAt.has(job.job_id)) {
                 agentJobStartedAt.set(job.job_id, Number.isFinite(parsed) ? parsed : Date.now());
+            }
+            const becameTerminal = isAgentJobTerminal(merged) && (!hadPrevious || !isAgentJobTerminal(previous));
+            if (becameTerminal && options?.recordTerminal !== false) {
+                rememberTerminalAgentJob(merged);
+                moveAgentActivityToHistory(merged);
             }
         }
 

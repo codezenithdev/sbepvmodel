@@ -1,0 +1,34 @@
+    <div class="saved-results-backdrop" id="savedResultsBackdrop" hidden></div>
+    <aside class="saved-results-drawer" id="savedResultsDrawer" role="dialog" aria-modal="true"
+        aria-labelledby="savedResultsHeading" aria-describedby="savedResultsDescription" hidden>
+        <header class="saved-results-header">
+            <div>
+                <h2 id="savedResultsHeading">Saved results</h2>
+                <p id="savedResultsDescription">Up to 10 results you chose to keep.</p>
+            </div>
+            <button class="saved-results-close" id="savedResultsCloseBtn" type="button" aria-label="Close saved results" title="Close saved results">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+            </button>
+        </header>
+
+        <div class="saved-results-toolbar">
+            <p class="saved-results-count" id="savedResultsCount">0 of 10 saved</p>
+            <div class="saved-results-tabs" role="tablist" aria-label="Filter saved results">
+                <button class="saved-results-tab selected" id="savedResultsTabAll" type="button" role="tab"
+                    aria-selected="true" aria-controls="savedResultsList" tabindex="0" data-saved-results-filter="all">All</button>
+                <button class="saved-results-tab" id="savedResultsTabValidation" type="button" role="tab"
+                    aria-selected="false" aria-controls="savedResultsList" tabindex="-1" data-saved-results-filter="validation">Calibration</button>
+                <button class="saved-results-tab" id="savedResultsTabAnnual" type="button" role="tab"
+                    aria-selected="false" aria-controls="savedResultsList" tabindex="-1" data-saved-results-filter="annual">Annual</button>
+            </div>
+        </div>
+
+        <div class="saved-results-live sr-only" id="savedResultsLive" role="status" aria-live="polite" aria-atomic="true"></div>
+        <div class="saved-results-body" id="savedResultsBody">
+            <div class="saved-results-list" id="savedResultsList" role="tabpanel" aria-labelledby="savedResultsTabAll" aria-busy="false"></div>
+        </div>
+
+        <footer class="saved-results-footer">
+            <span>Results are stored locally for this workspace. Manage or export from here.</span>
+        </footer>
+    </aside>

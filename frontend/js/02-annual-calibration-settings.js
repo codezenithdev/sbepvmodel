@@ -133,6 +133,7 @@
             if (!annualCalibrationBaseline?.settings) return;
             annualRequestRevision += 1;
             clearAnnualFallbackConfirmation();
+            clearAnnualSeasonalFallbackDisplay();
             applyAnnualCalibrationSettings(annualCalibrationBaseline.settings);
             renderAnnualSettingDiffs();
             saveDashboardState();
@@ -146,7 +147,75 @@
             return record && typeof record === 'object' ? record : null;
         }
 
+        function normalizeAnnualFallbackFactors(factors) {
+            if (!factors || typeof factors !== 'object') return null;
+            const readFactor = (system) => {
+                const systemValue = factors[system] ?? factors.systems?.[system];
+                const rawValue = systemValue && typeof systemValue === 'object'
+                    ? systemValue.factor
+                    : systemValue;
+                const value = Number(rawValue);
+                return Number.isFinite(value) ? value : null;
+            };
+            const solaredge = readFactor('solaredge');
+            const solectria = readFactor('solectria');
+            return solaredge !== null && solectria !== null
+                ? { solaredge, solectria }
+                : null;
+        }
+
+        function normalizeAnnualSeasonalFallbackDisplay(value) {
+            if (!value || typeof value !== 'object') return null;
+            const mapping = value.mapping && typeof value.mapping === 'object' ? value.mapping : {};
+            const sourceSeason = String(
+                value.source_season || value.from_season || mapping.source_season || mapping.from_season || ''
+            ).toLowerCase();
+            const targetSeason = String(
+                value.target_season || value.to_season || mapping.target_season || mapping.to_season || ''
+            ).toLowerCase();
+            const factors = normalizeAnnualFallbackFactors(
+                value.factors || value.spring_factors || value.seasonal_factors?.fall
+            );
+            if (sourceSeason !== 'spring' || targetSeason !== 'fall' || !factors) return null;
+            return {
+                source_season: 'spring',
+                target_season: 'fall',
+                factors,
+                baseline_job_id: value.baseline_job_id ? String(value.baseline_job_id) : null,
+                profile_sha256: value.profile_sha256 || value.origin_profile_sha256
+                    ? String(value.profile_sha256 || value.origin_profile_sha256)
+                    : null,
+                confirmation_context_sha256: value.confirmation_context_sha256
+                    ? String(value.confirmation_context_sha256)
+                    : null,
+            };
+        }
+
+        function activeAnnualSeasonalFallback(baseline) {
+            const fallback = annualSeasonalFallbackDisplay;
+            if (!fallback || !baseline) return null;
+            const baselineJobId = baseline.job_id ? String(baseline.job_id) : null;
+            const profileSha256 = baseline.profile_sha256 ? String(baseline.profile_sha256) : null;
+            if (fallback.baseline_job_id && baselineJobId && fallback.baseline_job_id !== baselineJobId) return null;
+            if (fallback.profile_sha256 && profileSha256 && fallback.profile_sha256 !== profileSha256) return null;
+            return fallback;
+        }
+
+        function setAnnualSeasonalFallbackDisplay(value, { render = true } = {}) {
+            annualSeasonalFallbackDisplay = normalizeAnnualSeasonalFallbackDisplay(value);
+            if (render) renderAnnualSeasonalFactors(annualCalibrationBaseline);
+            return annualSeasonalFallbackDisplay;
+        }
+
+        function clearAnnualSeasonalFallbackDisplay({ render = true } = {}) {
+            const changed = annualSeasonalFallbackDisplay !== null;
+            annualSeasonalFallbackDisplay = null;
+            if (changed && render) renderAnnualSeasonalFactors(annualCalibrationBaseline);
+        }
+
         function annualFactorValue(baseline, season, system) {
+            const fallback = activeAnnualSeasonalFallback(baseline);
+            if (fallback?.target_season === season) return fallback.factors[system] ?? null;
             const record = annualFactorRecord(baseline, season);
             if (!record) return null;
             const systemValue = record[system] ?? record.systems?.[system];
@@ -158,6 +227,8 @@
         }
 
         function annualSeasonCovered(baseline, season) {
+            const fallback = activeAnnualSeasonalFallback(baseline);
+            if (fallback?.target_season === season) return true;
             const coverage = baseline?.factor_coverage;
             if (Array.isArray(coverage)) {
                 const match = coverage.find((item) => (typeof item === 'string' ? item : item?.season) === season);
@@ -183,6 +254,7 @@
         }
 
         function renderAnnualSeasonalFactors(baseline, loading = false) {
+            const fallback = !loading ? activeAnnualSeasonalFallback(baseline) : null;
             const seasons = [
                 ['winter', 'Winter', 'Dec–Feb'],
                 ['spring', 'Spring', 'Mar–May'],
@@ -192,15 +264,20 @@
             seasons.forEach(([key]) => {
                 const state = document.querySelector('[data-annual-season="' + key + '"]');
                 const covered = !loading && !!baseline && annualSeasonCovered(baseline, key);
+                const substituted = fallback?.target_season === key;
                 state.classList.toggle('loading', loading);
                 state.classList.toggle('missing', !loading && !covered);
-                state.querySelector('span').textContent = loading ? 'Checking' : (covered ? 'Ready' : 'Missing');
+                state.classList.toggle('substituted', substituted);
+                state.querySelector('span').textContent = loading
+                    ? 'Checking'
+                    : (substituted ? 'Spring copied' : (covered ? 'Ready' : 'Missing'));
             });
             annualCalibrationElements.factorRows.replaceChildren();
             seasons.forEach(([key, label, months]) => {
                 const row = document.createElement('tr');
                 const seasonCell = document.createElement('td');
-                seasonCell.textContent = label + ' (' + months + ')';
+                const substituted = fallback?.target_season === key;
+                seasonCell.textContent = label + ' (' + months + ')' + (substituted ? ' · Spring copy' : '');
                 row.appendChild(seasonCell);
                 ['solaredge', 'solectria'].forEach((system) => {
                     const cell = document.createElement('td');
@@ -218,8 +295,10 @@
             } else if (!baseline) {
                 annualCalibrationElements.factorNote.textContent = 'No promoted calibration is available. This annual run will remain physics-only.';
                 annualCalibrationElements.factorNote.classList.add('warning');
+            } else if (fallback) {
+                annualCalibrationElements.factorNote.textContent = 'Fall now uses the exact Spring factors shown above for this annual run.';
             } else if (!annualSeasonCovered(baseline, 'fall') && annualSeasonCovered(baseline, 'spring')) {
-                annualCalibrationElements.factorNote.textContent = 'Fall is missing. If the annual dates require Fall, you will be asked to approve an exact Spring → Fall substitution before any job starts.';
+                annualCalibrationElements.factorNote.textContent = 'Fall is missing. If the selected MIDC years require Fall, you will be asked to approve an exact Spring → Fall substitution before any job starts.';
                 annualCalibrationElements.factorNote.classList.add('warning');
             } else {
                 annualCalibrationElements.factorNote.textContent = 'Available factors are frozen from the reviewed calibration and will not be refit against annual MIDC data.';
@@ -290,6 +369,7 @@
                 if (loadRevision !== annualBaselineLoadRevision) return null;
                 if (!baseline?.available) {
                     const hadBaseline = !!annualCalibrationBaselineJobId;
+                    clearAnnualSeasonalFallbackDisplay({ render: false });
                     annualCalibrationBaseline = null;
                     annualCalibrationBaselineJobId = null;
                     annualCalibrationProfileSha256 = null;
@@ -312,6 +392,7 @@
                 if (changed) {
                     annualRequestRevision += 1;
                     clearAnnualFallbackConfirmation();
+                    clearAnnualSeasonalFallbackDisplay({ render: false });
                 }
                 annualCalibrationBaseline = baseline;
                 annualCalibrationBaselineJobId = nextJobId;
@@ -366,6 +447,7 @@
         }
 
         function openAnnualFallbackConfirmation(body, detail, requestRevision) {
+            clearAnnualSeasonalFallbackDisplay();
             const mapping = detail?.mapping || {};
             const sourceSeason = String(mapping.source_season || '').toLowerCase();
             const targetSeason = String(mapping.target_season || '').toLowerCase();
@@ -386,6 +468,9 @@
                 confirmation_context_sha256: contextHash,
                 source_season: 'spring',
                 target_season: 'fall',
+                factors: { solaredge: solarEdge, solectria },
+                baseline_job_id: detail.baseline_job_id || annualCalibrationBaseline?.job_id || null,
+                profile_sha256: detail.profile_sha256 || annualCalibrationBaseline?.profile_sha256 || null,
             };
             const activeElement = document.activeElement;
             annualFallbackReturnFocus = activeElement
@@ -427,15 +512,47 @@
             }
         }
 
+        function estimateAnnualModelRows(years, intervalValue, intervalUnit) {
+            const secondsByUnit = { minutes: 60, hours: 3600, days: 86400 };
+            const intervalSeconds = intervalValue * (secondsByUnit[intervalUnit] || 0);
+            const selectedDays = years
+                .map(annualYearDateRange)
+                .filter(Boolean)
+                .reduce((total, range) => {
+                    const start = Date.parse(range.periodStart + 'T00:00:00Z');
+                    const end = Date.parse(range.periodEnd + 'T00:00:00Z');
+                    return total + Math.floor((end - start) / 86400000) + 1;
+                }, 0);
+            return intervalSeconds > 0
+                ? Math.ceil(selectedDays * 86400 / intervalSeconds)
+                : 0;
+        }
+
         function updateAnnualRuntimeWarning() {
-            const from = document.getElementById('annualFromDate').value;
-            const to = document.getElementById('annualToDate').value;
             const warning = document.getElementById('annualRuntimeWarning');
-            if (!from || !to) {
-                warning.classList.remove('visible');
-                return;
+            const years = readAnnualSelectedYears();
+            const intervalValue = Number(document.getElementById('annualIntervalValue').value);
+            const intervalUnit = document.getElementById('annualIntervalUnit').value;
+            const intervalSeconds = intervalValue * ({ minutes: 60, hours: 3600, days: 86400 }[intervalUnit] || 0);
+            const estimatedRows = estimateAnnualModelRows(years, intervalValue, intervalUnit);
+            const subHour = intervalSeconds > 0 && intervalSeconds < 3600;
+            const messages = [];
+            if (subHour) {
+                messages.push(
+                    intervalValue + '-minute resolution will produce approximately ' +
+                    estimatedRows.toLocaleString() + ' model rows for the selected years.'
+                );
             }
-            const days = Math.floor((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000) + 1;
-            warning.classList.toggle('visible', Number.isFinite(days) && days > 366);
+            if (estimatedRows > MAX_ANNUAL_MODEL_ROWS) {
+                messages.push(
+                    'This exceeds the ' + MAX_ANNUAL_MODEL_ROWS.toLocaleString() +
+                    '-row Excel export limit; select fewer years or a longer interval.'
+                );
+            }
+            if (years.length > 1) {
+                messages.push(years.length + ' years are selected; download and model time will increase.');
+            }
+            warning.textContent = messages.join(' ');
+            warning.classList.toggle('visible', messages.length > 0);
         }
 

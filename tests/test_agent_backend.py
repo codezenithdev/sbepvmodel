@@ -704,8 +704,130 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual([], state.AGENT_STORE.list_proposals())
         self.assertEqual(app.OPENAI_TIMEOUT_SECONDS, constructor_calls[0]["timeout"])
         self.assertEqual(app.OPENAI_MAX_RETRIES, constructor_calls[0]["max_retries"])
+        self.assertEqual(config.OPENAI_MODEL, api_calls[0]["model"])
+        self.assertEqual(
+            {"effort": config.OPENAI_REASONING_EFFORT},
+            api_calls[0]["reasoning"],
+        )
+        self.assertIn("max", config.OPENAI_REASONING_EFFORTS)
+        self.assertNotIn("minimal", config.OPENAI_REASONING_EFFORTS)
         self.assertEqual(1, api_calls[0]["max_tool_calls"])
         self.assertFalse(api_calls[0]["parallel_tool_calls"])
+
+    def test_recent_run_context_is_terminal_durable_and_capped_at_ten(self) -> None:
+        for index in range(11):
+            job_id = f"recent-{index:02d}"
+            state.AGENT_STORE.create_job(
+                job_id=job_id,
+                kind="baseline",
+                mode="annual",
+                request={
+                    "years": [2012 + index],
+                    "interval_value": 1,
+                    "interval_unit": "hours",
+                    "private_internal_value": "must-not-enter-agent-context",
+                },
+            )
+            claimed = state.AGENT_STORE.claim_next_queued_job()
+            self.assertEqual(job_id, claimed["id"])
+            state.AGENT_STORE.update_job(
+                job_id,
+                state="done",
+                result={
+                    "stats": {
+                        "annual_energy_by_year": [
+                            {
+                                "year": 2012 + index,
+                                "coverage_status": "complete",
+                                "complete_calendar_year": True,
+                                "cdf_eligible": True,
+                            }
+                        ]
+                    }
+                },
+            )
+        state.AGENT_STORE.create_job(
+            job_id="still-queued",
+            kind="baseline",
+            mode="annual",
+            request={"years": [2026]},
+        )
+
+        summaries = chat._recent_run_context("annual", limit=999)
+
+        self.assertEqual(10, len(summaries))
+        self.assertNotIn("still-queued", {row["job_id"] for row in summaries})
+        self.assertNotIn("recent-00", {row["job_id"] for row in summaries})
+        self.assertTrue(all(row["state"] == "done" for row in summaries))
+        self.assertTrue(all(row["origin"] == "Dashboard" for row in summaries))
+        self.assertEqual(1, summaries[0]["metrics"]["full_year_count"])
+        self.assertNotIn(
+            "private_internal_value", summaries[0]["request"]
+        )
+
+    def test_recent_run_context_keeps_a_twelve_member_sweep_atomic(self) -> None:
+        for index in range(12):
+            job_id = f"sweep-member-{index:02d}"
+            state.AGENT_STORE.create_job(
+                job_id=job_id,
+                kind="scenario",
+                mode="annual",
+                request={"years": [2024], "interval_value": 1, "interval_unit": "hours"},
+                provenance={
+                    "scenario_sweep": {
+                        "type": "parameter_sweep",
+                        "sweep_id": "sweep-twelve",
+                        "parameter": "curtailment_limit_kw",
+                        "candidate_count": 12,
+                        "index": index,
+                        "value": 100 + index,
+                    }
+                },
+            )
+            claimed = state.AGENT_STORE.claim_next_queued_job()
+            self.assertEqual(job_id, claimed["id"])
+            state.AGENT_STORE.update_job(
+                job_id,
+                state="done",
+                result={"stats": {"se_predicted_kwh": 1_000 + index}},
+            )
+
+        only_recent_member = state.AGENT_STORE.get_job("sweep-member-00")
+        with patch.object(
+            state.AGENT_STORE,
+            "snapshot_state",
+            return_value={"recent_jobs": [only_recent_member]},
+        ):
+            summaries = chat._recent_run_context("annual")
+
+        self.assertEqual(1, len(summaries))
+        sweep = summaries[0]
+        self.assertEqual("parameter_sweep", sweep["activity_type"])
+        self.assertEqual("done", sweep["state"])
+        self.assertEqual(12, sweep["candidate_count"])
+        self.assertEqual(12, sweep["loaded_member_count"])
+        self.assertEqual(list(range(12)), [row["index"] for row in sweep["members"]])
+
+    def test_recent_run_context_includes_both_dashboard_workflows(self) -> None:
+        for mode in ("validation", "annual"):
+            job_id = f"recent-{mode}"
+            request = (
+                self.validation_config()
+                if mode == "validation"
+                else {"years": [2024], "from_date": "2024-01-01", "to_date": "2024-12-31"}
+            )
+            state.AGENT_STORE.create_job(
+                job_id=job_id,
+                kind="baseline",
+                mode=mode,
+                request=request,
+            )
+            state.AGENT_STORE.claim_next_queued_job()
+            state.AGENT_STORE.update_job(job_id, state="done", result={"stats": {}})
+
+        summaries = chat._recent_run_context("annual")
+
+        self.assertEqual({"validation", "annual"}, {row["mode"] for row in summaries})
 
     def test_run_ranges_and_active_queue_are_bounded(self) -> None:
         with self.assertRaises(HTTPException) as validation_error:
@@ -741,6 +863,121 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 )
         self.assertEqual(429, queue_error.exception.status_code)
         self.assertIsNone(state.AGENT_STORE.get_job("queue-overflow"))
+
+    def test_annual_year_override_is_canonical_and_changes_input_identity(self) -> None:
+        baseline = {
+            "from_date": "2025-01-01",
+            "to_date": "2025-12-31",
+            "years": None,
+            "interval_value": 1,
+            "interval_unit": "hours",
+        }
+        overrides = scenario_math._apply_dependent_scenario_overrides(
+            {"years": [2024, 2011]}, baseline
+        )
+        candidate_values = {**baseline, **overrides}
+
+        _, candidate = scenario_math._canonical_request("annual", candidate_values)
+
+        self.assertEqual(candidate["years"], [2011, 2024])
+        self.assertEqual(candidate["from_date"], "2011-02-11")
+        self.assertEqual(candidate["to_date"], "2024-12-31")
+        self.assertFalse(
+            scenario_math._same_input_context("annual", baseline, candidate)
+        )
+
+    def test_annual_canonicalization_rejects_forged_partial_selected_year(self) -> None:
+        forged = {
+            "years": [2024],
+            "from_date": "2024-01-01",
+            "to_date": "2024-01-02",
+        }
+
+        with self.assertRaises(HTTPException):
+            scenario_math._canonical_request("annual", forged)
+
+        _, durable = scenario_math._canonical_request(
+            "annual",
+            forged,
+            allow_resolved_partial=True,
+        )
+        self.assertEqual(durable["to_date"], "2024-01-02")
+
+    def test_missing_baseline_cannot_defer_forged_partial_selected_year(self) -> None:
+        with self.assertRaises(HTTPException):
+            tools._handle_scenario_tool(
+                app.ChatRequest(
+                    message="Turn backtracking off.",
+                    active_mode="annual",
+                    current_config={
+                        "years": [2024],
+                        "from_date": "2024-01-01",
+                        "to_date": "2024-01-02",
+                    },
+                ),
+                self.tool_arguments(backtrack=False),
+            )
+
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(), [])
+
+    def test_annual_year_and_date_overrides_are_mutually_exclusive(self) -> None:
+        with self.assertRaises(HTTPException) as context:
+            scenario_math._apply_dependent_scenario_overrides(
+                {"years": [2024], "from_date": "2024-01-01"},
+                {"from_date": "2025-01-01", "to_date": "2025-12-31"},
+            )
+
+        self.assertEqual(context.exception.status_code, 422)
+        self.assertIn("cannot be combined", str(context.exception.detail))
+
+    def test_legacy_annual_date_override_clears_selected_years(self) -> None:
+        baseline = {
+            "years": [2024],
+            "from_date": "2024-01-01",
+            "to_date": "2024-12-31",
+        }
+
+        overrides = scenario_math._apply_dependent_scenario_overrides(
+            {"from_date": "2025-01-01", "to_date": "2025-12-31"}, baseline
+        )
+
+        self.assertIsNone(overrides["years"])
+
+    def test_validation_canonicalization_drops_inherited_annual_years(self) -> None:
+        request, candidate = scenario_math._canonical_request(
+            "validation",
+            self.validation_config(years=[2024]),
+        )
+
+        self.assertIsInstance(request, app.RunRequest)
+        self.assertNotIn("years", candidate)
+        self.assertEqual(candidate["from_date"], "2026-06-20")
+
+    def test_validation_scenario_rejects_explicit_midc_years(self) -> None:
+        baseline = self.completed_baseline()
+
+        with self.assertRaises(HTTPException) as context:
+            tools._handle_scenario_tool(
+                app.ChatRequest(
+                    message="Use MIDC year 2024 for validation.",
+                    job_id=baseline["id"],
+                    active_mode="validation",
+                    current_config=self.validation_config(),
+                ),
+                self.tool_arguments(years=[2024]),
+            )
+
+        self.assertEqual(context.exception.status_code, 422)
+        self.assertIn("only be changed for annual", str(context.exception.detail))
+
+    def test_scenario_tool_years_schema_is_strict_compatible_integer_array(self) -> None:
+        years = app.SCENARIO_TOOL["parameters"]["properties"]["years"]
+
+        self.assertEqual(years["type"], ["array", "null"])
+        self.assertEqual(years["items"], {"type": "integer", "minimum": 2011})
+        self.assertNotIn("uniqueItems", years)
+        self.assertEqual(app.SCENARIO_FIELD_LABELS["years"], "MIDC years")
 
     def test_strict_tool_schema_and_single_step_deterministic_action_response(self) -> None:
         baseline = self.completed_baseline()
@@ -1682,8 +1919,18 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 "comparison_type": "cross_run",
                 "systems": {"solaredge": {"delta_kwh": 12.5}},
             },
-            provenance={"comparability": "non-like-for-like"},
-            artifacts={"comparison_workbook": {"url": "/outputs/annual-compare.xlsx"}},
+            provenance={
+                "comparability": "non-like-for-like",
+                "baseline": {
+                    "workbook": str(self.root / "private-baseline.xlsx")
+                },
+            },
+            artifacts={
+                "comparison_workbook": {
+                    "path": str(self.root / "private-annual-compare.xlsx"),
+                    "url": "/outputs/annual-compare.xlsx",
+                }
+            },
         )
 
         resolved, context = chat._chat_run_context(None, "annual")
@@ -1700,6 +1947,33 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             context["artifacts"]["comparison_workbook"]["url"],
             "/outputs/annual-compare.xlsx",
         )
+        self.assertNotIn("path", context["artifacts"]["comparison_workbook"])
+        self.assertNotIn("workbook", context["provenance"]["baseline"])
+
+    def test_failed_chat_context_never_sends_local_paths_to_openai(self) -> None:
+        private_errors = (
+            r"Failed opening C:\Users\Alice\private.csv",
+            "Failed opening /var/data/outputs/private.csv",
+            r"Failed opening \\fileserver\pv\private.csv",
+        )
+        for index, private_error in enumerate(private_errors):
+            job_id = f"private-error-{index}"
+            state.AGENT_STORE.create_job(
+                job_id=job_id,
+                kind="baseline",
+                mode="validation",
+                request=self.validation_config(),
+            )
+            state.AGENT_STORE.claim_next_queued_job()
+            state.AGENT_STORE.update_job(job_id, state="error", error=private_error)
+
+            resolved, context = chat._chat_run_context(job_id, "validation")
+
+            self.assertEqual(job_id, resolved)
+            self.assertEqual(
+                "The run could not be completed. Check the server logs for details.",
+                context["error"],
+            )
 
     def test_disabled_scenario_actions_omit_tool_and_ignore_fabricated_call(self) -> None:
         fabricated = {

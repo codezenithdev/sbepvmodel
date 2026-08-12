@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import secrets
+from copy import deepcopy
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from sbepv import model
-from copy import deepcopy
-
 from sbepv.api import config, plots, state
 from sbepv.api.artifacts import (
     _job_attempt_prefix,
@@ -20,7 +21,7 @@ from sbepv.api.job_store import _check_job_cancelled, _get_job_record, _update_j
 from sbepv.api.plots import _render_midc_input_data_plots
 from sbepv.api.request_context import _iam_metadata
 from sbepv.api.schemas import AnnualRunRequest
-from sbepv.api.validation import _annual_dates, _annual_interval_seconds
+from sbepv.api.validation import _annual_interval_seconds, _annual_periods
 from sbepv.ingest import midc
 from sbepv import reporting
 from sbepv.reporting import sha256_file
@@ -55,9 +56,14 @@ def _run_annual_job(
         )
 
     try:
-        start_date, end_date = _annual_dates(req)
+        periods = _annual_periods(req, allow_resolved_partial=True)
         interval_seconds = _annual_interval_seconds(req)
-        interval_hours = interval_seconds // 3_600
+        interval_minutes = interval_seconds // 60
+        interval_hours = (
+            interval_seconds // 3_600
+            if interval_seconds % 3_600 == 0
+            else interval_seconds / 3_600
+        )
         attempt_prefix = _job_attempt_prefix(job_id, lease_token)
         csv_path = (
             Path(source_path)
@@ -67,52 +73,177 @@ def _run_annual_job(
         base_path = config.OUTPUT_DIR / attempt_prefix
         source_warnings: list[str] = []
         source_quality: dict[str, Any]
+        existing_record = _get_job_record(job_id) or {}
+        existing_provenance = dict(existing_record.get("provenance") or {})
+
+        def period_row_counts(frame: Any) -> list[dict[str, Any]]:
+            import pandas as pd
+
+            parsed_dates = pd.to_datetime(
+                frame[midc.DATE_COLUMN], format="%m/%d/%Y", errors="coerce"
+            ).dt.date
+            rows: list[dict[str, Any]] = []
+            for period in periods:
+                period_start = date.fromisoformat(str(period["period_start"]))
+                period_end = date.fromisoformat(str(period["period_end"]))
+                rows.append(
+                    {
+                        **deepcopy(period),
+                        "interval_rows": int(
+                            (
+                                (parsed_dates >= period_start)
+                                & (parsed_dates <= period_end)
+                            ).sum()
+                        ),
+                    }
+                )
+            return rows
 
         if source_path and expected_source_hash:
             set_progress(5, "Verifying cached annual source")
             source_hash = reporting.verify_source_sha256(csv_path, expected_source_hash)
             import pandas as pd
 
-            interval_rows = int(len(pd.read_csv(csv_path)))
-            source_quality = {
-                "raw_rows": None,
-                "hourly_rows": interval_rows if interval_seconds == 3_600 else None,
-                "interval_rows": interval_rows,
-                "interval_seconds": interval_seconds,
-                "chunk_count": None,
-                "missing_value_count": None,
-                "affected_hour_count": None,
-                "reused_verified_source": True,
-            }
+            cached_frame = pd.read_csv(csv_path)
+            interval_rows = int(len(cached_frame))
+            stored_audit = existing_provenance.get("annual_source_audit")
+            audit_matches = (
+                isinstance(stored_audit, dict)
+                and isinstance(stored_audit.get("source_sha256"), str)
+                and secrets.compare_digest(
+                    str(stored_audit["source_sha256"]).strip().lower(),
+                    str(source_hash).strip().lower(),
+                )
+                and stored_audit.get("interval_seconds") == interval_seconds
+                and isinstance(stored_audit.get("source_quality"), dict)
+                and isinstance(stored_audit.get("warnings"), list)
+            )
+            if audit_matches:
+                source_quality = deepcopy(stored_audit["source_quality"])
+                source_quality["reused_verified_source"] = True
+                source_warnings = [str(item) for item in stored_audit["warnings"]]
+            else:
+                source_quality = {
+                    "reference_url": midc.REFERENCE_URL,
+                    "raw_rows": None,
+                    "hourly_rows": interval_rows if interval_seconds == 3_600 else None,
+                    "interval_rows": interval_rows,
+                    "interval_seconds": interval_seconds,
+                    "data_request_count": None,
+                    "missing_value_count": None,
+                    "affected_interval_count": None,
+                    "partial_interval_count": None,
+                    "periods": period_row_counts(cached_frame),
+                    "reused_verified_source": True,
+                }
         else:
-            def download_progress(frac: float, msg: str) -> None:
-                set_progress(5 + int(frac * 20), msg)
+            import pandas as pd
 
-            set_progress(5, "Downloading MIDC minute data")
-            source = midc.fetch_hourly_data(
-                start_date,
-                end_date,
-                interval_seconds=interval_seconds,
-                progress_cb=download_progress,
+            interval_frames: list[Any] = []
+            raw_rows = 0
+            data_request_count = 0
+            missing_value_count = 0
+            affected_interval_count = 0
+            partial_interval_count = 0
+            period_quality: list[dict[str, Any]] = []
+            period_count = len(periods)
+            set_progress(
+                5,
+                f"Downloading MIDC data for {period_count} selected "
+                f"year{'s' if period_count != 1 else ''}",
+            )
+            for period_index, period in enumerate(periods, start=1):
+                period_start = date.fromisoformat(str(period["period_start"]))
+                period_end = date.fromisoformat(str(period["period_end"]))
+                period_year = int(period["year"])
+
+                def download_progress(
+                    frac: float,
+                    msg: str,
+                    *,
+                    index: int = period_index,
+                    year: int = period_year,
+                ) -> None:
+                    overall = ((index - 1) + max(0.0, min(1.0, frac))) / period_count
+                    set_progress(5 + int(overall * 20), f"{year}: {msg}")
+
+                source = midc.fetch_hourly_data(
+                    period_start,
+                    period_end,
+                    interval_seconds=interval_seconds,
+                    progress_cb=download_progress,
+                )
+                interval_frames.append(source.interval_data)
+                raw_rows += int(source.raw_rows)
+                data_request_count += int(source.data_request_count)
+                missing_value_count += int(source.missing_value_count)
+                affected_interval_count += int(source.affected_interval_count)
+                partial_interval_count += int(source.partial_interval_count)
+                source_warnings.extend(
+                    f"{period_year}: {warning}" for warning in source.warnings
+                )
+                period_quality.append(
+                    {
+                        **deepcopy(period),
+                        "raw_rows": int(source.raw_rows),
+                        "interval_rows": int(len(source.interval_data)),
+                        "data_request_count": int(source.data_request_count),
+                        "missing_value_count": int(source.missing_value_count),
+                        "affected_interval_count": int(source.affected_interval_count),
+                        "partial_interval_count": int(source.partial_interval_count),
+                    }
+                )
+
+            interval_data = pd.concat(interval_frames, ignore_index=True)
+            sort_dates = pd.to_datetime(
+                interval_data[midc.DATE_COLUMN],
+                format="%m/%d/%Y",
+                errors="coerce",
+            )
+            interval_data = (
+                interval_data.assign(_sort_date=sort_dates)
+                .sort_values(
+                    [
+                        "_sort_date",
+                        midc.HOUR_COLUMN,
+                        *(
+                            [midc.MINUTE_COLUMN]
+                            if midc.MINUTE_COLUMN in interval_data
+                            else []
+                        ),
+                    ],
+                    kind="stable",
+                )
+                .drop(columns="_sort_date")
+                .reset_index(drop=True)
             )
             _check_job_cancelled(
                 job_id, worker_id=worker_id, lease_token=lease_token
             )
             set_progress(27, "Saving exact MIDC interval source")
-            midc.write_csv_atomically(source.interval_data, csv_path)
+            midc.write_csv_atomically(interval_data, csv_path)
             source_hash = sha256_file(csv_path)
-            source_warnings = list(source.warnings)
             source_quality = {
-                "raw_rows": source.raw_rows,
+                "reference_url": midc.REFERENCE_URL,
+                "raw_rows": raw_rows,
                 "hourly_rows": (
-                    int(len(source.interval_data)) if interval_seconds == 3_600 else None
+                    int(len(interval_data)) if interval_seconds == 3_600 else None
                 ),
-                "interval_rows": int(len(source.interval_data)),
+                "interval_rows": int(len(interval_data)),
                 "interval_seconds": interval_seconds,
-                "chunk_count": source.chunk_count,
-                "missing_value_count": source.missing_value_count,
-                "affected_hour_count": source.affected_hour_count,
+                "data_request_count": data_request_count,
+                "missing_value_count": missing_value_count,
+                "affected_interval_count": affected_interval_count,
+                "partial_interval_count": partial_interval_count,
+                "periods": period_quality,
                 "reused_verified_source": False,
+            }
+            existing_provenance["annual_source_audit"] = {
+                "schema_version": 1,
+                "source_sha256": source_hash,
+                "interval_seconds": interval_seconds,
+                "source_quality": deepcopy(source_quality),
+                "warnings": deepcopy(source_warnings),
             }
         _update_job(
             job_id,
@@ -120,6 +251,7 @@ def _run_annual_job(
             lease_token=lease_token,
             source_path=str(csv_path.resolve()),
             source_hash=source_hash,
+            provenance=existing_provenance,
         )
         set_progress(28, "Rendering annual irradiance inputs")
         input_plots = _render_midc_input_data_plots(csv_path, base_path)
@@ -153,6 +285,7 @@ def _run_annual_job(
             expected_interval_seconds=interval_seconds,
             calibration_profile=calibration_profile,
             calibration_application_context=calibration_application_context,
+            annual_periods=periods,
         )
         warnings = list(
             dict.fromkeys([*source_warnings, *stats.get("data_quality_warnings", [])])
@@ -230,15 +363,23 @@ def _run_annual_job(
             "source_csv": _public_source_url(csv_path),
             "warnings": warnings,
             "source_quality": source_quality,
+            "annual_energy_by_year": deepcopy(
+                stats.get("annual_energy_by_year") or []
+            ),
+            "annual_energy_cdf": deepcopy(stats.get("annual_energy_cdf") or {}),
             "calibration_application": calibration_application,
             "window": {
                 "from": req.from_date,
                 "to": req.to_date,
+                "years": deepcopy(req.years),
+                "periods": deepcopy(periods),
                 "interval_value": req.interval_value,
                 "interval_unit": req.interval_unit,
                 "interval_seconds": interval_seconds,
+                "interval_minutes": interval_minutes,
                 "interval_hours": interval_hours,
                 "timezone": "MST (UTC-7)",
+                "interval_convention": "right-closed, right-labeled",
                 "hour_convention": "right-closed, right-labeled",
                 "backtrack": req.backtrack,
                 "solaredge_inverter_efficiency": req.solaredge_inverter_efficiency,

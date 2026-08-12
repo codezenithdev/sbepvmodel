@@ -8,13 +8,81 @@ rather than at each call site.
 from __future__ import annotations
 
 import math
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from sbepv.agent.tool_schemas import SCENARIO_FIELD_LABELS, SCENARIO_OVERRIDE_FIELDS
 from sbepv.api import config
 from sbepv.api.job_store import _get_job_record
+
+
+_PRIVATE_PATH_KEYS = {
+    "path",
+    "source_path",
+    "cleaned_source_path",
+    "input_csv",
+}
+_PRIVATE_METADATA_KEYS = {
+    "annual_source_audit",
+}
+_PRIVATE_PATH_FRAGMENT = re.compile(
+    r"(?i)(?:\\\\[^\\/\s]+[\\/][^\s]+|\b[a-z]:[\\/]|file:(?:/{0,3})|"
+    r"(?<![:/\w])/(?!/?(?:outputs|api)(?:/|$)))"
+)
+
+
+def _looks_like_private_path(value: str) -> bool:
+    text = value.strip()
+    if not text or text.startswith(("https://", "http://", "/outputs/", "/api/")):
+        return False
+    if text.lower().startswith("file:"):
+        return True
+    return PurePosixPath(text).is_absolute() or PureWindowsPath(text).is_absolute()
+
+
+def _contains_private_path(value: str) -> bool:
+    """Detect standalone or embedded server-local path text."""
+
+    return _looks_like_private_path(value) or bool(_PRIVATE_PATH_FRAGMENT.search(value))
+
+
+def _public_value(value: Any) -> Any:
+    """Recursively remove server-local filesystem details from a JSON value."""
+
+    if isinstance(value, dict):
+        public: dict[str, Any] = {}
+        for raw_key, item in value.items():
+            key = str(raw_key)
+            normalized_key = key.strip().lower()
+            if normalized_key in _PRIVATE_METADATA_KEYS:
+                continue
+            if normalized_key in _PRIVATE_PATH_KEYS or normalized_key.endswith("_path"):
+                continue
+            if isinstance(item, str) and _contains_private_path(item):
+                continue
+            public[key] = _public_value(item)
+        return public
+    if isinstance(value, (list, tuple)):
+        return [
+            _public_value(item)
+            for item in value
+            if not (isinstance(item, str) and _contains_private_path(item))
+        ]
+    if isinstance(value, str) and _contains_private_path(value):
+        return None
+    return deepcopy(value)
+
+
+def _public_error(value: Any) -> str:
+    """Return useful error text without exposing a server-local path."""
+
+    public_error = _public_value(str(value or "Unknown error"))
+    return public_error or (
+        "The run could not be completed. Check the server logs for details."
+    )
 
 
 def _public_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
@@ -63,8 +131,9 @@ def _public_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
 
 
 def _public_job(job: dict[str, Any]) -> dict[str, Any]:
-    artifacts = job.get("artifacts") or {}
-    input_plots = artifacts.get("input_plots") or job.get("input_plots")
+    internal_artifacts = job.get("artifacts") or {}
+    input_plots = internal_artifacts.get("input_plots") or job.get("input_plots")
+    artifacts = _public_value(internal_artifacts)
     elapsed_seconds: float | None = None
     started_at = job.get("started_at") or job.get("created_at")
     if started_at:
@@ -86,6 +155,7 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "job_id": job["id"],
         "kind": job.get("kind", "manual"),
+        "origin": "solar_agent" if job.get("proposal_id") else "dashboard",
         "proposal_id": job.get("proposal_id"),
         "baseline_job_id": job.get("baseline_id"),
         "mode": job.get("mode", "validation"),
@@ -97,17 +167,29 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
         "started_at": job.get("started_at"),
         "completed_at": job.get("completed_at"),
         "elapsed_seconds": elapsed_seconds,
-        "result": job.get("result"),
-        "comparison": job.get("comparison"),
-        "provenance": job.get("provenance"),
+        "result": _public_value(job.get("result")),
+        "comparison": _public_value(job.get("comparison")),
+        "provenance": _public_value(job.get("provenance")),
         "artifacts": artifacts,
-        "request": job.get("request"),
+        "request": _public_value(job.get("request")),
     }
     if input_plots:
-        payload["input_plots"] = input_plots
+        payload["input_plots"] = _public_value(input_plots)
     if job.get("error"):
-        payload["error"] = job["error"]
+        payload["error"] = _public_error(job["error"])
     return payload
+
+
+def _public_saved_result(saved_result: dict[str, Any]) -> dict[str, Any]:
+    """Return saved metadata plus the same path-safe job used by status APIs."""
+
+    return {
+        "job_id": str(saved_result["job_id"]),
+        "name": str(saved_result["name"]),
+        "saved_at": saved_result.get("saved_at"),
+        "updated_at": saved_result.get("updated_at"),
+        "job": _public_job(saved_result["job"]),
+    }
 
 
 def _chat_timing(

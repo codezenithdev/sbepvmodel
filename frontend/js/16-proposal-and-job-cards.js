@@ -276,7 +276,9 @@
                 }
             };
             agentProposalSnapshots.forEach((proposal) => addMember(proposal, 'proposals'));
-            agentJobSnapshots.forEach((job) => addMember(job, 'jobs'));
+            agentJobSnapshots.forEach((job) => {
+                if (isAgentJobInActivityWorkspace(job)) addMember(job, 'jobs');
+            });
             return Array.from(groups.values())
                 .map((group) => {
                     const latestJobsByIndex = new Map();
@@ -301,17 +303,19 @@
 
         function agentParameterSweepState(group) {
             if (group.proposals.length) return 'needs review';
-            if (group.jobs.some((job) => job.state === 'running' && !job.cancel_requested)) return 'running';
-            if (group.jobs.some((job) => job.state === 'queued' && !job.cancel_requested)) return 'queued';
+            if (group.jobs.some((job) => job.state === 'running')) return 'running';
+            if (group.jobs.some((job) => job.state === 'queued')) return 'queued';
+            const expected = Number(group.metadata?.candidate_count || 0);
+            if (expected > 0 && group.jobs.length < expected) return 'incomplete';
             if (group.jobs.some((job) => ['error', 'cancelled', 'interrupted'].includes(job.state))) return 'error';
-            if (group.jobs.length && group.jobs.every((job) => job.state === 'done')) return 'done';
-            return 'pending';
+            if (expected > 0 && group.jobs.length >= expected && group.jobs.every((job) => job.state === 'done')) return 'done';
+            return group.jobs.length ? 'incomplete' : 'pending';
         }
 
         function agentParameterSweepMatchesFilter(group, filter = agentActivityFilter) {
             if (filter === 'all') return true;
             if (filter === 'review') return group.proposals.length > 0;
-            const active = group.jobs.some(isAgentJobActive);
+            const active = group.jobs.some((job) => !isAgentJobTerminal(job));
             if (filter === 'active') return active;
             return filter === 'complete' && !group.proposals.length && !active;
         }
@@ -401,6 +405,8 @@
                 };
             });
             const errorCount = group.jobs.filter((job) => job.state !== 'done').length;
+            const expectedCount = Number(metadata.candidate_count || group.jobs.length);
+            const missingCount = Math.max(0, expectedCount - group.jobs.length);
             return normalizeChatActionCard({
                 kind: 'sweep_complete',
                 title: String(metadata.label || 'Parameter') + ' sweep comparison',
@@ -414,8 +420,8 @@
                 parameter: metadata.parameter,
                 values,
                 count: values.length,
-                candidate_count: metadata.candidate_count || group.jobs.length,
-                error_count: errorCount,
+                candidate_count: expectedCount,
+                error_count: errorCount + missingCount,
                 rows,
             });
         }
@@ -549,11 +555,14 @@
             title.className = 'agent-card-title';
             title.textContent = String(metadata.label || humanizeAgentField(metadata.parameter)) + ' sweep comparison';
             const completedJobs = group.jobs.filter((job) => job.state === 'done').length;
+            const expectedJobs = Number(metadata.candidate_count || group.jobs.length);
+            const availableJobs = group.jobs.length;
             const meta = document.createElement('div');
             meta.className = 'agent-card-meta';
             meta.textContent = (metadata.mode === 'annual' ? 'Annual' : 'Calibration') + ' · ' +
-                values.length + ' values · ' + completedJobs + '/' + Number(metadata.candidate_count || group.jobs.length) +
-                ' scenario runs complete · Baseline ' + shortAgentId(metadata.baseline_job_id);
+                values.length + ' values · ' + completedJobs + '/' + expectedJobs +
+                ' scenario runs complete · ' + availableJobs + '/' + expectedJobs +
+                ' available · Baseline ' + shortAgentId(metadata.baseline_job_id);
             heading.append(title, meta);
             head.append(heading, makeStatePill(agentParameterSweepState(group)));
             section.appendChild(head);
@@ -563,6 +572,13 @@
             note.textContent = 'Across the sweep rows, all other model inputs and source data stay fixed. Predicted energy and deltas are compared with the ' +
                 String(metadata.baseline_label || 'selected') + ' baseline; positive delta means more predicted energy.';
             section.appendChild(note);
+            if (agentParameterSweepState(group) === 'incomplete') {
+                const incomplete = document.createElement('div');
+                incomplete.className = 'agent-card-note cross-run';
+                incomplete.textContent = 'Incomplete sweep history: expected ' + expectedJobs +
+                    ' scenario runs; ' + availableJobs + ' are available.';
+                section.appendChild(incomplete);
+            }
 
             const referenceComparison = group.jobs.find((job) => job.state === 'done' && job.comparison)?.comparison || null;
             const table = document.createElement('table');
@@ -874,7 +890,9 @@
             const progressMeta = document.createElement('div');
             progressMeta.className = 'agent-progress-meta';
             const stage = document.createElement('span');
-            stage.textContent = job.stage || humanizeAgentField(job.state || 'queued');
+            stage.textContent = job.mode === 'annual'
+                ? annualUserFacingText(job.stage || humanizeAgentField(job.state || 'queued'))
+                : (job.stage || humanizeAgentField(job.state || 'queued'));
             const elapsed = document.createElement('span');
             elapsed.className = 'agent-elapsed';
             elapsed.dataset.startedAt = String(agentJobStartedAt.get(job.job_id) || Date.now());
@@ -900,6 +918,13 @@
                 error.className = 'agent-card-note cross-run';
                 error.textContent = String(job.error);
                 card.appendChild(error);
+            }
+            if (job.client_action_error) {
+                const actionError = document.createElement('div');
+                actionError.className = 'agent-card-note cross-run';
+                actionError.setAttribute('role', 'alert');
+                actionError.textContent = String(job.client_action_error);
+                card.appendChild(actionError);
             }
             if (job.state === 'done' && job.comparison) {
                 const comparisonCard = buildComparisonCard(job.comparison);
@@ -942,6 +967,14 @@
             if (['error', 'cancelled', 'interrupted'].includes(job.state)) {
                 actions.appendChild(makeAgentButton('Retry', '', () => retryAgentJob(job)));
             }
+            if (job.state === 'done') {
+                const viewResultsButton = makeAgentButton('View results', '', () => viewAgentJobResults(job.job_id, job.mode));
+                if (dashboardModeHasBlockingRun(job.mode, job.job_id)) {
+                    viewResultsButton.disabled = true;
+                    viewResultsButton.title = 'Finish or cancel the active run in this mode first.';
+                }
+                actions.appendChild(viewResultsButton);
+            }
             const isPromoted = agentServerState.promoted_baselines?.[job.mode] === job.job_id;
             const canPromote = job.mode === 'annual' || job.request?.calibrate_model !== false;
             if (job.state === 'done' && job.comparison) {
@@ -964,7 +997,16 @@
             const isScenarioRun = job.kind === 'candidate' && job.baseline_job_id;
             const isBaselineRun = ['baseline', 'manual'].includes(job.kind);
             if (((isScenarioRun && !isPromoted) || isBaselineRun) && !isAgentJobActive(job)) {
-                actions.appendChild(makeAgentButton('Delete run', 'danger', () => deleteAgentJob(job.job_id)));
+                const isSavedResult = window.savedResultsDrawerReady === true && !!savedResultByJobId(job.job_id);
+                if (isSavedResult) {
+                    const savedNotice = document.createElement('span');
+                    savedNotice.className = 'agent-state-pill done';
+                    savedNotice.textContent = 'Saved result';
+                    savedNotice.title = 'Remove this item from Saved results before deleting the run.';
+                    actions.appendChild(savedNotice);
+                } else {
+                    actions.appendChild(makeAgentButton('Delete run', 'danger', () => deleteAgentJob(job.job_id)));
+                }
             }
             if (actions.childElementCount) card.appendChild(actions);
             return card;

@@ -129,6 +129,14 @@
         const annualIamAr = document.getElementById('annualIamAr');
         const annualIamArGroup = document.getElementById('annualIamArGroup');
         const annualExcelLink = document.getElementById('annualExcelLink');
+        const annualYearElements = {
+            grid: document.getElementById('annualYearGrid'),
+            summary: document.getElementById('annualYearSelectionSummary'),
+            selectAllButton: document.getElementById('annualSelectAllYearsBtn'),
+            clearButton: document.getElementById('annualClearYearsBtn'),
+            fromDate: document.getElementById('annualFromDate'),
+            toDate: document.getElementById('annualToDate'),
+        };
         const annualCalibrationElements = {
             strip: document.getElementById('annualCalibrationStrip'),
             mark: document.getElementById('annualCalibrationMark'),
@@ -166,11 +174,34 @@
             settingDetails: document.getElementById('annualResultSettingDetails'),
             note: document.getElementById('annualResultsNote'),
         };
+        const annualYearResultElements = {
+            panel: document.getElementById('annualYearResults'),
+            summary: document.getElementById('annualYearResultsSummary'),
+            rows: document.getElementById('annualYearResultRows'),
+            cdfChart: document.getElementById('annualCdfChart'),
+            cdfDescription: document.getElementById('annualCdfDescription'),
+            cdfFallback: document.getElementById('annualCdfFallback'),
+        };
         const operationsNavLink = document.getElementById('operationsNavLink');
         const pvModelNavLink = document.getElementById('pvModelNavLink');
         const STORAGE_KEY = 'sb-energy-dashboard-state-v1';
         const CHAT_HISTORY_STORAGE_KEY = 'sb-energy-solar-agent-conversations-v1';
         const MAX_SAVED_CHAT_CONVERSATIONS = 20;
+        const MAX_RECENT_AGENT_RUNS = 10;
+        const ANNUAL_FIRST_YEAR = 2011;
+        const ANNUAL_FIRST_DATE = '2011-02-11';
+        const MAX_ANNUAL_MODEL_ROWS = 1048575;
+        const SUPPORTED_ANNUAL_INTERVALS = Object.freeze({
+            hours: new Set([1, 2, 3, 4, 6, 8, 12, 24]),
+            days: new Set([1]),
+        });
+
+        function isSupportedAnnualInterval(value, unit) {
+            if (unit === 'minutes') {
+                return Number.isInteger(value) && value >= 1 && value <= 60 && 1440 % value === 0;
+            }
+            return Number.isInteger(value) && !!SUPPORTED_ANNUAL_INTERVALS[unit]?.has(value);
+        }
         const DEFAULT_ASSISTANT_MESSAGE = "Ask about performance, model accuracy, or explore a what-if scenario using the active dashboard context.";
         let latestJobId = null;
         let latestInputPlots = null;
@@ -194,6 +225,7 @@
         let annualCalibrationBaselineJobId = null;
         let annualCalibrationProfileSha256 = null;
         let annualPendingFallback = null;
+        let annualSeasonalFallbackDisplay = null;
         let annualFallbackReturnFocus = null;
         let annualRequestRevision = 0;
         let annualBaselineLoadRevision = 0;
@@ -236,7 +268,14 @@
         let chatHydrationPending = true;
         const transientProtectedConversationIds = new Set();
         let serverSessionId = null;
-        let agentServerState = { proposals: [], jobs: [], promoted_baselines: { validation: null, annual: null } };
+        let agentServerState = {
+            proposals: [],
+            jobs: [],
+            recent_job_ids: [],
+            recent_activity_count: 0,
+            history_limit: MAX_RECENT_AGENT_RUNS,
+            promoted_baselines: { validation: null, annual: null },
+        };
         const agentJobPollTimers = new Map();
         const agentJobStartedAt = new Map();
         const agentJobSnapshots = new Map();

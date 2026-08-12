@@ -229,7 +229,7 @@
             quality.classList.toggle('warning', items.length > 0);
             quality.textContent = items.length ? items.length + ' warning' + (items.length === 1 ? '' : 's') : 'Complete';
             if (!items.length) {
-                panel.textContent = 'Complete hourly weather coverage; no fallback warnings were reported.';
+                panel.textContent = 'Complete weather coverage; no fallback warnings were reported.';
                 return;
             }
             panel.innerHTML = '<strong>Run completed with documented fallbacks:</strong><ul>' +

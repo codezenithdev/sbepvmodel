@@ -201,19 +201,24 @@
         window.addEventListener('pointerup', finishAgentActivityInteraction);
         window.addEventListener('pointercancel', finishAgentActivityInteraction);
 
-        function syncAgentActivityControls(items = getAgentActivityItems()) {
-            const pendingCount = items.filter((entry) => entry.type === 'proposal').length;
-            const runningCount = items.filter((entry) => entry.type === 'job' && entry.item.state === 'running' && !entry.item.cancel_requested).length;
-            const queuedCount = items.filter((entry) => entry.type === 'job' && entry.item.state === 'queued' && !entry.item.cancel_requested).length;
-            const activeCount = runningCount + queuedCount;
-            const completeCount = items.filter((entry) => entry.type === 'job' && !isAgentJobActive(entry.item)).length;
-            const totalCount = items.length;
+        function syncAgentActivityControls(items = getAgentActivityItems(), sweeps = getAgentParameterSweepGroups()) {
+            const pendingCount = items.filter((entry) => entry.type === 'proposal').length +
+                sweeps.filter((group) => group.proposals.length > 0).length;
+            const runningCount = items.filter((entry) => entry.type === 'job' && entry.item.state === 'running').length +
+                sweeps.filter((group) => agentParameterSweepState(group) === 'running').length;
+            const queuedCount = items.filter((entry) => entry.type === 'job' && entry.item.state === 'queued').length +
+                sweeps.filter((group) => agentParameterSweepState(group) === 'queued').length;
+            const activeCount = items.filter((entry) => entry.type === 'job' && !isAgentJobTerminal(entry.item)).length +
+                sweeps.filter((group) => !group.proposals.length && group.jobs.some((job) => !isAgentJobTerminal(job))).length;
+            const completeCount = items.filter((entry) => entry.type === 'job' && isAgentJobTerminal(entry.item)).length +
+                sweeps.filter((group) => !group.proposals.length && !group.jobs.some((job) => !isAgentJobTerminal(job))).length;
+            const totalCount = items.length + sweeps.length;
             const hasActivity = totalCount > 0;
             const summaryParts = [];
             if (pendingCount) summaryParts.push(pendingCount + (pendingCount === 1 ? ' awaiting review' : ' awaiting review'));
             if (runningCount) summaryParts.push(runningCount + ' running');
             if (queuedCount) summaryParts.push(queuedCount + ' queued');
-            summaryParts.push(items.filter((entry) => entry.type === 'job').length + ' recent runs');
+            summaryParts.push(completeCount + ' recent runs (max ' + agentHistoryLimit() + ')');
             agentActivitySummary.textContent = summaryParts.join(' · ');
             agentActivity.classList.toggle('hidden', !hasActivity);
             agentActivityToggle.classList.toggle('hidden', !hasActivity);
@@ -233,8 +238,36 @@
                 agentActivitySelection = null;
             }
             setAgentActivityOpen(agentActivityExpanded, false);
-            const actionable = summaryParts.slice(0, -1).join(', ') || totalCount + ' completed runs';
+            const actionable = summaryParts.slice(0, -1).join(', ') || completeCount + ' runs in history';
             agentActivityToggle.setAttribute('aria-label', (agentActivityExpanded ? 'Close' : 'Open') + ' scenario runs, ' + actionable);
+        }
+
+        function agentParameterSweepLogicalEntry(group) {
+            const state = agentParameterSweepState(group);
+            const activityPriority = state === 'needs review' ? 0
+                : state === 'running' ? 1
+                    : state === 'queued' ? 2
+                        : ['error', 'incomplete'].includes(state) ? 3 : 4;
+            const members = state === 'needs review'
+                ? group.proposals
+                : state === 'running'
+                    ? group.jobs.filter((job) => job.state === 'running')
+                    : state === 'queued'
+                        ? group.jobs.filter((job) => job.state === 'queued')
+                        : group.jobs.filter(isAgentJobTerminal);
+            const timestamps = members
+                .map(agentActivityTimestamp)
+                .filter((timestamp) => Number.isFinite(timestamp) && timestamp > 0);
+            const activityTimestamp = timestamps.length
+                ? ([1, 2].includes(activityPriority) ? Math.min(...timestamps) : Math.max(...timestamps))
+                : agentActivityTimestamp({ created_at: group.created_at });
+            return {
+                type: 'sweep',
+                key: 'sweep:' + group.sweep_id,
+                group,
+                activityPriority,
+                activityTimestamp,
+            };
         }
 
         function renderAgentActivity() {
@@ -247,10 +280,15 @@
                 agentActivitySelection = null;
             }
             const visibleItems = items.filter((entry) => agentActivityMatchesFilter(entry));
-            const visibleSweeps = getAgentParameterSweepGroups()
+            const sweeps = getAgentParameterSweepGroups();
+            const visibleSweeps = sweeps
                 .filter((group) => agentParameterSweepMatchesFilter(group));
+            const visibleActivities = sortAgentActivityItems([
+                ...visibleItems,
+                ...visibleSweeps.map(agentParameterSweepLogicalEntry),
+            ]);
             agentActivityList.innerHTML = '';
-            if (!visibleItems.length && !visibleSweeps.length) {
+            if (!visibleActivities.length) {
                 const empty = document.createElement('div');
                 empty.className = 'agent-activity-empty';
                 empty.textContent = agentActivityFilter === 'all'
@@ -258,8 +296,11 @@
                     : 'No runs match this filter.';
                 agentActivityList.appendChild(empty);
             } else {
-                visibleSweeps.forEach((group) => agentActivityList.appendChild(buildParameterSweepComparisonCard(group)));
-                visibleItems.forEach((entry) => agentActivityList.appendChild(buildAgentRunSummary(entry)));
+                visibleActivities.forEach((entry) => {
+                    agentActivityList.appendChild(entry.type === 'sweep'
+                        ? buildParameterSweepComparisonCard(entry.group)
+                        : buildAgentRunSummary(entry));
+                });
             }
             restoreAgentEditorState(editorState);
             restoreAgentActivityViewState(viewState);
@@ -269,7 +310,7 @@
                     .find((element) => element.dataset.agentRunRow === focusedKey)
                     ?.focus({ preventScroll: true });
             }
-            syncAgentActivityControls(items);
+            syncAgentActivityControls(items, sweeps);
             updateAgentElapsedLabels();
             updateAgentContext();
         }
@@ -385,7 +426,7 @@
                     const group = getAgentParameterSweepGroups().find((item) => item.sweep_id === sweepId);
                     const expected = Number(group?.metadata?.candidate_count || 0);
                     if (group && !group.proposals.length && group.jobs.length >= expected && group.jobs.every(isAgentJobTerminal)) {
-                        agentActivityFilter = 'complete';
+                        moveAgentActivityToHistory(data);
                     }
                 }
                 renderAgentJobUpdate(data);

@@ -48,6 +48,25 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         ):
             path.unlink(missing_ok=True)
 
+    def test_selected_current_period_uses_its_actual_months_for_seasons(self) -> None:
+        request = {
+            "years": [2026],
+            "from_date": "2026-01-01",
+            "to_date": "2026-08-10",
+        }
+
+        with patch.object(
+            baselines,
+            "_annual_periods",
+            return_value=[
+                {"period_start": "2026-01-01", "period_end": "2026-01-31"}
+            ],
+        ) as annual_periods:
+            seasons = baselines._annual_request_seasons(request)
+
+        self.assertEqual(seasons, ("winter",))
+        annual_periods.assert_called_once()
+
     @staticmethod
     def _settings(**overrides):
         values = {
@@ -483,7 +502,15 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         self.assertEqual(job["request"]["interval_unit"], "hours")
 
     def test_annual_interval_accepts_equivalent_supported_units(self):
-        for interval_value, interval_unit in ((60, "minutes"), (12, "hours"), (1, "days")):
+        for interval_value, interval_unit in (
+            (1, "minutes"),
+            (5, "minutes"),
+            (30, "minutes"),
+            (45, "minutes"),
+            (60, "minutes"),
+            (12, "hours"),
+            (1, "days"),
+        ):
             with self.subTest(interval_value=interval_value, interval_unit=interval_unit):
                 response = self.client.post(
                     "/api/annual-run",
@@ -499,9 +526,11 @@ class AnnualCalibrationApiTests(unittest.TestCase):
                 self.assertEqual(job["request"]["interval_value"], interval_value)
                 self.assertEqual(job["request"]["interval_unit"], interval_unit)
 
-    def test_annual_interval_rejects_sub_hour_non_divisor_and_over_day_values(self):
+    def test_annual_interval_rejects_unsafe_minute_and_over_day_values(self):
         invalid_intervals = (
-            (30, "minutes"),
+            (7, "minutes"),
+            (11, "minutes"),
+            (61, "minutes"),
             (5, "hours"),
             (25, "hours"),
             (2, "days"),
