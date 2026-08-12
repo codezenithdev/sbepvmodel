@@ -73,7 +73,7 @@
                                         <option value="days">days</option>
                                     </select>
                                 </span>
-                                <span class="limit-helper" id="annualIntervalHelp">Minute options: 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 16, 18, 20, 24, 30, 32, 36, 40, 45, 48, or 60. One-minute resolution is about 525,600 rows per full year. Selections must stay within the 1,048,575-row Excel export limit. Hour options: 1, 2, 3, 4, 6, 8, 12, or 24. Day option: 1.</span>
+                                <span class="limit-helper" id="annualIntervalHelp">15-minute and 1-hour intervals are preferred.</span>
                             </label>
                             <div class="annual-time-note">
                                 <span class="annual-time-dot" aria-hidden="true"></span>
@@ -234,11 +234,11 @@
                                     <p>Frozen per-system factors from the promoted calibration.</p>
                                 </div>
                             </div>
-                            <div class="annual-factor-coverage" id="annualFactorCoverage" aria-label="Calibration season coverage">
+                            <div class="annual-factor-coverage" id="annualFactorCoverage" aria-label="Calibration season coverage" aria-live="polite">
                                 <div class="annual-season-state loading" data-annual-season="winter"><strong>Winter</strong><span>Checking</span></div>
                                 <div class="annual-season-state loading" data-annual-season="spring"><strong>Spring</strong><span>Checking</span></div>
                                 <div class="annual-season-state loading" data-annual-season="summer"><strong>Summer</strong><span>Checking</span></div>
-                                <div class="annual-season-state loading" data-annual-season="fall"><strong>Fall</strong><span>Checking</span></div>
+                                <div class="annual-season-state loading" data-annual-season="fall" tabindex="-1"><strong>Fall</strong><span>Checking</span></div>
                             </div>
                             <div class="annual-factor-table-wrap">
                                 <table class="annual-factor-table">

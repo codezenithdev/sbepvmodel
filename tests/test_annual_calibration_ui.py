@@ -90,10 +90,13 @@ class AnnualCalibrationUiTests(unittest.TestCase):
             "1440 % value === 0",
             "const MAX_ANNUAL_MODEL_ROWS = 1048575",
             "function estimateAnnualModelRows(years, intervalValue, intervalUnit)",
-            "One-minute resolution is about 525,600 rows per full year",
-            "1,048,575-row Excel export limit",
+            "15-minute and 1-hour intervals are preferred.",
         ):
             self.assertIn(marker, self.html)
+        self.assertNotIn("Minute options:", self.html)
+        self.assertNotIn("One-minute resolution is about 525,600 rows", self.html)
+        self.assertNotIn("Hour options:", self.html)
+        self.assertNotIn("Day option:", self.html)
         annual_window = self.html.split(
             '<section class="annual-config-card annual-window-card"', 1
         )[1].split('<section class="annual-config-card annual-settings-card"', 1)[0]
@@ -249,6 +252,63 @@ class AnnualCalibrationUiTests(unittest.TestCase):
             submit.index("code === 'seasonal_fallback_confirmation_required'"),
             submit.index("annualLatestJobId = job_id"),
         )
+
+    def test_confirmed_fall_substitution_updates_coverage_and_factors(self) -> None:
+        for marker in (
+            "let annualSeasonalFallbackDisplay = null",
+            "function normalizeAnnualSeasonalFallbackDisplay(value)",
+            "function activeAnnualSeasonalFallback(baseline)",
+            "factors: { solaredge: solarEdge, solectria }",
+            "state.classList.toggle('substituted', substituted)",
+            "substituted ? 'Spring copied'",
+            "Fall now uses the exact Spring factors shown above for this annual run.",
+            'id="annualFactorCoverage" aria-label="Calibration season coverage" aria-live="polite"',
+            'data-annual-season="fall" tabindex="-1"',
+            "annualSeasonalFallbackDisplay,",
+            "saved.annualSeasonalFallbackDisplay",
+            ".annual-season-state.substituted",
+        ):
+            self.assertIn(marker, self.html)
+
+        factor_value = self.html.split(
+            "function annualFactorValue", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("activeAnnualSeasonalFallback(baseline)", factor_value)
+        self.assertIn("fallback.factors[system]", factor_value)
+
+        coverage = self.html.split(
+            "function annualSeasonCovered", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("fallback?.target_season === season", coverage)
+        self.assertIn("return true", coverage)
+
+        confirmation = self.html.split(
+            "async function confirmAnnualFallback()", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertLess(
+            confirmation.index("setAnnualSeasonalFallbackDisplay(pending)"),
+            confirmation.index("await submitAnnualRequest(pending.body"),
+        )
+        self.assertIn(
+            "document.querySelector('[data-annual-season=\"fall\"]')?.focus?.()",
+            confirmation,
+        )
+
+        invalidation = self.html.split(
+            "function invalidateAnnualRequestFromFormEdit()", 1
+        )[1].split("\n        document.querySelectorAll", 1)[0]
+        self.assertIn("clearAnnualSeasonalFallbackDisplay()", invalidation)
+
+        restore = self.html.split(
+            "function restoreAnnualCalibrationSettings()", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("clearAnnualSeasonalFallbackDisplay()", restore)
+
+        poll = self.html.split(
+            "async function pollAnnualStatus", 1
+        )[1].split("\n        runBtn.addEventListener", 1)[0]
+        self.assertIn("if (data.state === 'error') {\n                    clearAnnualSeasonalFallbackDisplay();", poll)
+        self.assertIn("if (data.state === 'cancelled' || data.state === 'interrupted') {\n                    clearAnnualSeasonalFallbackDisplay();", poll)
 
     def test_results_expose_both_outputs_and_application_audit(self) -> None:
         for marker in (

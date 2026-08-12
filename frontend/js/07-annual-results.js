@@ -34,6 +34,7 @@
             elements.panel.classList.toggle('visible', applied);
             elements.panel.classList.remove('fallback-used');
             if (!applied) {
+                if (result) clearAnnualSeasonalFallbackDisplay();
                 document.getElementById('annualStatSePhysicsCard').hidden = true;
                 document.getElementById('annualStatSolPhysicsCard').hidden = true;
                 elements.basis.textContent = 'Physics-only';
@@ -50,6 +51,17 @@
             const sourceSeason = String(substitution?.from_season || substitution?.source_season || '').toLowerCase();
             const targetSeason = String(substitution?.to_season || substitution?.target_season || '').toLowerCase();
             const fallbackUsed = sourceSeason === 'spring' && targetSeason === 'fall';
+            if (fallbackUsed) {
+                setAnnualSeasonalFallbackDisplay({
+                    ...substitution,
+                    factors: substitution?.factors || application.seasonal_factors?.fall,
+                    baseline_job_id: application.baseline_job_id,
+                    profile_sha256: application.origin_profile_sha256,
+                    confirmation_context_sha256: application.server_confirmation?.confirmation_context_sha256,
+                });
+            } else {
+                clearAnnualSeasonalFallbackDisplay();
+            }
             elements.panel.classList.toggle('fallback-used', fallbackUsed);
             elements.basis.textContent = 'Calibration-adjusted + physics-only';
             elements.source.textContent = [application.baseline_job_id, application.baseline_review_id].filter(Boolean).join(' · ') || '--';

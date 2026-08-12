@@ -59,6 +59,7 @@
             annualCalibrationBaseline = null;
             annualCalibrationBaselineJobId = null;
             annualCalibrationProfileSha256 = null;
+            annualSeasonalFallbackDisplay = null;
             annualRequestRevision += 1;
             clearAnnualFallbackConfirmation();
             let preservedConversation = activeChatConversation();
@@ -136,6 +137,7 @@
                     savedResultsDisplayedContext: window.getSavedResultsDisplayedContext?.() || null,
                     annualCalibrationBaselineJobId,
                     annualCalibrationProfileSha256,
+                    annualSeasonalFallbackDisplay,
                     annualForm: getAnnualFormState(),
                     technoeconomicForm: getTechnoeconomicFormState(),
                     activeChatConversationId,

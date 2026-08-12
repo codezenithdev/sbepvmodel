@@ -339,6 +339,7 @@
                     annualLatestJobId = null;
                     annualLatestResult = null;
                     annualRunState = null;
+                    clearAnnualSeasonalFallbackDisplay();
                     renderTechnoeconomicAnalysis(null);
                     clearAnnualImages();
                     renderAnnualQuality([]);

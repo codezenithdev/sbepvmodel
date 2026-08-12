@@ -225,6 +225,7 @@
         let annualCalibrationBaselineJobId = null;
         let annualCalibrationProfileSha256 = null;
         let annualPendingFallback = null;
+        let annualSeasonalFallbackDisplay = null;
         let annualFallbackReturnFocus = null;
         let annualRequestRevision = 0;
         let annualBaselineLoadRevision = 0;

@@ -132,6 +132,7 @@
                         annualProgressWrap.classList.remove('visible');
                         annualRunState = null;
                         clearAnnualFallbackConfirmation();
+                        clearAnnualSeasonalFallbackDisplay();
                         showAnnualError(message + ' No annual job was started.');
                         await loadCurrentCalibration({
                             forceSettings: true,
@@ -163,6 +164,7 @@
             } catch (e) {
                 if (requestRevision !== annualRequestRevision) return;
                 clearAnnualFallbackConfirmation();
+                clearAnnualSeasonalFallbackDisplay();
                 annualProgressWrap.classList.remove('visible');
                 annualRunState = null;
                 showAnnualError(e.message || 'Could not start annual simulation.');
@@ -177,6 +179,7 @@
             window.clearSavedResultsDisplayedJob?.('annual');
             annualRequestRevision += 1;
             clearAnnualFallbackConfirmation();
+            clearAnnualSeasonalFallbackDisplay();
             annualLatestJobId = null;
             annualLatestResult = null;
             clearAnnualImages();
@@ -193,7 +196,9 @@
             }
             annualFallbackElements.confirmButton.disabled = true;
             annualFallbackElements.confirmButton.textContent = 'Queuing...';
+            setAnnualSeasonalFallbackDisplay(pending);
             setAnnualFallbackVisible(false, { focus: false });
+            document.querySelector('[data-annual-season="fall"]')?.focus?.();
             await submitAnnualRequest(pending.body, {
                 requestRevision: pending.requestRevision,
                 acknowledgement: {
@@ -219,6 +224,7 @@
                         annualRunState = { state: 'missing', progress: 0, stage: 'Run is no longer available' };
                         annualLatestJobId = null;
                         annualLatestResult = null;
+                        clearAnnualSeasonalFallbackDisplay();
                         agentJobSnapshots.delete(jobId);
                         updateStoredChatActionCardStatus({ job_id: jobId }, 'unavailable');
                         renderAgentActivity();
@@ -250,6 +256,7 @@
                     return;
                 }
                 if (data.state === 'error') {
+                    clearAnnualSeasonalFallbackDisplay();
                     showAnnualError(data.error || 'Annual simulation failed.');
                     annualProgressWrap.classList.remove('visible');
                     saveDashboardState();
@@ -258,6 +265,7 @@
                     return;
                 }
                 if (data.state === 'cancelled' || data.state === 'interrupted') {
+                    clearAnnualSeasonalFallbackDisplay();
                     showAnnualError(data.state === 'interrupted' ? 'Annual run was interrupted and can be started again.' : 'Annual run was cancelled.');
                     annualProgressWrap.classList.remove('visible');
                     saveDashboardState();

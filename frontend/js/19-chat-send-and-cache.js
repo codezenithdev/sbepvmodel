@@ -160,6 +160,7 @@
                 annualLatestJobId = null;
                 annualLatestResult = null;
                 annualRunState = null;
+                clearAnnualSeasonalFallbackDisplay();
                 setAnnualExcelLink(null);
                 clearAnnualImages();
                 return;
@@ -310,6 +311,9 @@
             if (annualRunState?.state === 'confirmation_required') annualRunState = null;
             annualCalibrationBaselineJobId = saved.annualCalibrationBaselineJobId || null;
             annualCalibrationProfileSha256 = saved.annualCalibrationProfileSha256 || null;
+            annualSeasonalFallbackDisplay = normalizeAnnualSeasonalFallbackDisplay(
+                saved.annualSeasonalFallbackDisplay
+            );
             agentActivityExpanded = saved.agentActivityExpanded === true;
             agentActivityFilter = ['all', 'review', 'active', 'complete'].includes(saved.agentActivityFilter)
                 ? saved.agentActivityFilter
@@ -388,6 +392,7 @@
         function invalidateAnnualRequestFromFormEdit() {
             annualRequestRevision += 1;
             clearAnnualFallbackConfirmation();
+            clearAnnualSeasonalFallbackDisplay();
             if (['starting', 'confirmation_required'].includes(annualRunState?.state)) {
                 annualRunState = null;
                 annualProgressWrap.classList.remove('visible');

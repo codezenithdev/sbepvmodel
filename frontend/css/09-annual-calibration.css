@@ -264,6 +264,10 @@
             color: var(--muted);
         }
 
+        .annual-season-state.substituted {
+            background: var(--info-soft);
+        }
+
         .annual-factor-table-wrap {
             margin-top: 18px;
             overflow-x: auto;
