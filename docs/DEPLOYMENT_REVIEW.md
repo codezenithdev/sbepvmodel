@@ -63,7 +63,8 @@ Required secrets:
 Optional configuration:
 
 - `BAZEFIELD_BASE_URL`: defaults to `https://bazefield.sbenergy-us.com/Bazefield.Services/api/`.
-- `OPENAI_MODEL`: defaults in `app.py` if omitted.
+- `OPENAI_MODEL`: defaults in `sbepv.api.config` if omitted.
+- `OPENAI_REASONING_EFFORT`: defaults to `low` and may be tuned explicitly.
 
 Production should not commit real `.env` values. Configure these through the selected host's secret manager.
 

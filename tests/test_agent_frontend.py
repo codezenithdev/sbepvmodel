@@ -1,4 +1,7 @@
+import json
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -298,10 +301,15 @@ class AgentFrontendContractTests(unittest.TestCase):
         self.assertIn("renderExternalEvidence(content, options)", self.html)
 
     def test_validation_happens_before_results_are_cleared_and_modes_are_isolated(self):
-        for element_id in ("fromDate", "toDate", "annualFromDate", "annualToDate"):
+        for element_id in ("fromDate", "toDate"):
             self.assertRegex(
                 self.html,
                 rf'<input(?=[^>]*\bid="{element_id}")(?=[^>]*\brequired\b)[^>]*>',
+            )
+        for element_id in ("annualFromDate", "annualToDate"):
+            self.assertRegex(
+                self.html,
+                rf'<input(?=[^>]*\bid="{element_id}")(?=[^>]*\btype="hidden")[^>]*>',
             )
         self.assertRegex(
             self.html,
@@ -325,10 +333,242 @@ class AgentFrontendContractTests(unittest.TestCase):
             1,
         )[1].split("\n        async function pollAnnualStatus", 1)[0]
         self.assertLess(
-            annual_run.index("if (!fromDate || !toDate)"),
+            annual_run.index("const body = buildAnnualRequest()"),
             annual_run.index("annualLatestResult = null"),
         )
+        annual_builder = self.html.split("function buildAnnualRequest()", 1)[1].split(
+            "\n        function annualResponseMessage", 1
+        )[0]
+        self.assertLess(
+            annual_builder.index("if (!years.length)"),
+            annual_builder.index("const body ="),
+        )
         self.assertNotIn("parseInt(document.getElementById('intervalValue')", self.html)
+
+    def test_recent_history_is_bounded_and_completed_runs_restore_without_posting(self):
+        for marker in (
+            "const MAX_RECENT_AGENT_RUNS = 10",
+            "recent_job_ids:",
+            "history_limit:",
+            "function isAgentJobInActivityWorkspace(job)",
+            "function rememberTerminalAgentJob(job)",
+            "function moveAgentActivityToHistory(job = null)",
+            "if (sweepHasActiveMembers) return false",
+            "if (activeJobsRemain) return false",
+            "agentActivityFilter = 'complete'",
+            '>History <span data-agent-filter-count="complete">',
+            "View results",
+            "async function viewAgentJobResults(jobId, requestedMode = null)",
+        ):
+            self.assertIn(marker, self.html)
+        viewer = self.html.split("async function viewAgentJobResults(jobId, requestedMode = null)", 1)[1].split(
+            "\n        function handleAgentAction", 1
+        )[0]
+        self.assertIn("'/api/status/' + encodeURIComponent(jobId)", viewer)
+        self.assertIn("applyAnnualResult(job.result)", viewer)
+        self.assertIn("applyResult(job.result)", viewer)
+        self.assertIn("putAgentJob(job, { recordTerminal: false })", viewer)
+        self.assertIn("dashboardModeHasBlockingRun", viewer)
+        self.assertIn("hasCanonicalAnnualYears", viewer)
+        self.assertIn("legacyAnnualRequestYear(job.request)", viewer)
+        self.assertIn("legacy date-range result is read-only", viewer)
+        self.assertNotIn("postAgentAction", viewer)
+        self.assertNotIn("method: 'POST'", viewer)
+
+    def test_sweep_history_retains_all_member_ids_as_one_logical_activity(self):
+        normalize = self.html.split("function normalizeAgentState(data)", 1)[1].split(
+            "\n        function activeContextWindow", 1
+        )[0]
+        twelve_member_ids = [f"sweep-job-{index}" for index in range(12)]
+        self.assertEqual(12, len(twelve_member_ids))
+        self.assertIn("recent_job_ids: [...new Set(recentJobIds)]", normalize)
+        self.assertIn("recent_activity_count:", normalize)
+        self.assertNotIn(".slice(0, historyLimit)", normalize)
+        metadata = self.html.split("function agentParameterSweepMetadata(item)", 1)[1].split(
+            "\n        function isAgentParameterSweepJob", 1
+        )[0]
+        self.assertIn("metadata.type !== 'parameter_sweep'", metadata)
+        self.assertIn("!metadata.parameter", metadata)
+        self.assertIn("function recentAgentActivityKeys()", self.html)
+        self.assertIn("keys.slice(0, agentHistoryLimit())", self.html)
+        get_items = self.html.split("function getAgentActivityItems()", 1)[1].split(
+            "\n        function agentHistoryLimit", 1
+        )[0]
+        self.assertIn("!agentParameterSweepMetadata(proposal)", get_items)
+        self.assertIn("!isAgentParameterSweepJob(job)", get_items)
+        controls = self.html.split("function syncAgentActivityControls(", 1)[1].split(
+            "\n        function renderAgentActivity", 1
+        )[0]
+        self.assertIn("const totalCount = items.length + sweeps.length", controls)
+        remember = self.html.split("function rememberTerminalAgentJob(job)", 1)[1].split(
+            "\n        function moveAgentActivityToHistory", 1
+        )[0]
+        self.assertIn("[jobId, ...current.filter((item) => item !== jobId)]", remember)
+        self.assertNotIn(".slice(", remember)
+        transition = self.html.split("function moveAgentActivityToHistory(job = null)", 1)[1].split(
+            "\n        function reconcileAgentActivityFilterAfterRefresh", 1
+        )[0]
+        self.assertLess(
+            transition.index("if (activeJobsRemain) return false"),
+            transition.index("agentActivityFilter = 'complete'"),
+        )
+        for marker in (
+            "group.jobs.length < expected",
+            "group.jobs.length >= expected",
+            "Incomplete sweep history: expected ",
+            "availableJobs + '/' + expectedJobs",
+        ):
+            self.assertIn(marker, self.html)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_twelve_member_sweep_stays_one_frontend_activity_after_local_update(self):
+        terminal_helpers = self.html.split("function isAgentJobTerminal(job)", 1)[1].split(
+            "\n        async function readAgentResponse", 1
+        )[0]
+        normalize = self.html.split("function normalizeAgentState(data)", 1)[1].split(
+            "\n        function activeContextWindow", 1
+        )[0]
+        ordering = self.html.split("function agentActivityTimestamp(item)", 1)[1].split(
+            "\n        function getAgentActivityItems", 1
+        )[0]
+        activity_workspace = self.html.split("function getAgentActivityItems()", 1)[1].split(
+            "\n        function moveAgentActivityToHistory", 1
+        )[0]
+        sweep_groups = self.html.split("function agentParameterSweepMetadata(item)", 1)[1].split(
+            "\n        function parameterSweepSystemValues", 1
+        )[0]
+        jobs = [
+            {
+                "job_id": f"sweep-job-{index}",
+                "state": "done",
+                "completed_at": f"2026-08-10T12:{index:02d}:00Z",
+                "provenance": {
+                    "scenario_sweep": {
+                        "type": "parameter_sweep",
+                        "sweep_id": "sweep-12",
+                        "parameter": "curtailment_limit_kw",
+                        "index": index,
+                        "candidate_count": 12,
+                    }
+                },
+            }
+            for index in range(12)
+        ]
+        payload = {
+            "jobs": jobs,
+            "recent_job_ids": [job["job_id"] for job in jobs],
+            "recent_activity_count": 1,
+            "history_limit": 10,
+        }
+        script = f"""
+const MAX_RECENT_AGENT_RUNS = 10;
+function isAgentJobTerminal(job){terminal_helpers}
+function normalizeAgentState(data){normalize}
+function agentActivityTimestamp(item){ordering}
+function getAgentActivityItems(){activity_workspace}
+function agentParameterSweepMetadata(item){sweep_groups}
+const payload = {json.dumps(payload)};
+let agentServerState = normalizeAgentState(payload);
+const agentJobSnapshots = new Map(payload.jobs.map((job) => [job.job_id, job]));
+const agentProposalSnapshots = new Map();
+rememberTerminalAgentJob(payload.jobs[0]);
+const groups = getAgentParameterSweepGroups();
+console.log(JSON.stringify({{
+    ids: agentServerState.recent_job_ids.length,
+    reportedActivities: agentServerState.recent_activity_count,
+    activityKeys: recentAgentActivityKeys().size,
+    standaloneItems: getAgentActivityItems().length,
+    sweepGroups: groups.length,
+    sweepMembers: groups[0]?.jobs.length || 0,
+}}));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            {
+                "ids": 12,
+                "reportedActivities": 1,
+                "activityKeys": 1,
+                "standaloneItems": 0,
+                "sweepGroups": 1,
+                "sweepMembers": 12,
+            },
+            json.loads(completed.stdout),
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_new_single_completion_sorts_above_older_completed_sweep(self):
+        terminal_helpers = self.html.split("function isAgentJobTerminal(job)", 1)[1].split(
+            "\n        async function readAgentResponse", 1
+        )[0]
+        ordering = self.html.split("function agentActivityTimestamp(item)", 1)[1].split(
+            "\n        function getAgentActivityItems", 1
+        )[0]
+        sweep_state = self.html.split("function agentParameterSweepState(group)", 1)[1].split(
+            "\n        function agentParameterSweepMatchesFilter", 1
+        )[0]
+        sweep_entry = self.html.split("function agentParameterSweepLogicalEntry(group)", 1)[1].split(
+            "\n        function renderAgentActivity", 1
+        )[0]
+        script = f"""
+function isAgentJobTerminal(job){terminal_helpers}
+function agentActivityTimestamp(item){ordering}
+function agentParameterSweepState(group){sweep_state}
+function agentParameterSweepLogicalEntry(group){sweep_entry}
+const oldSweep = {{
+    sweep_id: 'old-sweep',
+    metadata: {{ candidate_count: 2 }},
+    proposals: [],
+    jobs: [
+        {{ state: 'done', created_at: '2026-08-01T00:00:00Z', completed_at: '2026-08-02T00:00:00Z' }},
+        {{ state: 'done', created_at: '2026-08-01T00:01:00Z', completed_at: '2026-08-03T00:00:00Z' }},
+    ],
+}};
+const newerSingle = {{
+    type: 'job',
+    key: 'job:newer',
+    item: {{ state: 'done', created_at: '2026-08-04T00:00:00Z', completed_at: '2026-08-05T00:00:00Z' }},
+}};
+const sweepEntry = agentParameterSweepLogicalEntry(oldSweep);
+const ordered = sortAgentActivityItems([sweepEntry, newerSingle]);
+console.log(JSON.stringify({{
+    keys: ordered.map((entry) => entry.key),
+    sweepTimestamp: new Date(sweepEntry.activityTimestamp).toISOString(),
+}}));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            {
+                "keys": ["job:newer", "sweep:old-sweep"],
+                "sweepTimestamp": "2026-08-03T00:00:00.000Z",
+            },
+            json.loads(completed.stdout),
+        )
+
+        renderer = self.html.split("function renderAgentActivity()", 1)[1].split(
+            "\n        function renderAgentJobUpdate", 1
+        )[0]
+        self.assertIn("...visibleSweeps.map(agentParameterSweepLogicalEntry)", renderer)
+        self.assertIn("const visibleActivities = sortAgentActivityItems", renderer)
+
+    def test_annual_run_summaries_show_explicit_selected_years(self):
+        for marker in (
+            "function normalizedAgentRequestYears(request)",
+            "return years.join(', ') + ' · ' + years.length",
+            "if (field === 'years')",
+            "'years',",
+            "['Resolved coverage', compactAgentResolvedDateWindow(request, mode)]",
+        ):
+            self.assertIn(marker, self.html)
 
         annual_controls = self.html.split(
             "document.querySelectorAll('#annualControls input, #annualControls select')",

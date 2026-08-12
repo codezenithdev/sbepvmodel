@@ -219,7 +219,7 @@
                 annualCalibrationElements.factorNote.textContent = 'No promoted calibration is available. This annual run will remain physics-only.';
                 annualCalibrationElements.factorNote.classList.add('warning');
             } else if (!annualSeasonCovered(baseline, 'fall') && annualSeasonCovered(baseline, 'spring')) {
-                annualCalibrationElements.factorNote.textContent = 'Fall is missing. If the annual dates require Fall, you will be asked to approve an exact Spring → Fall substitution before any job starts.';
+                annualCalibrationElements.factorNote.textContent = 'Fall is missing. If the selected MIDC years require Fall, you will be asked to approve an exact Spring → Fall substitution before any job starts.';
                 annualCalibrationElements.factorNote.classList.add('warning');
             } else {
                 annualCalibrationElements.factorNote.textContent = 'Available factors are frozen from the reviewed calibration and will not be refit against annual MIDC data.';
@@ -427,15 +427,47 @@
             }
         }
 
+        function estimateAnnualModelRows(years, intervalValue, intervalUnit) {
+            const secondsByUnit = { minutes: 60, hours: 3600, days: 86400 };
+            const intervalSeconds = intervalValue * (secondsByUnit[intervalUnit] || 0);
+            const selectedDays = years
+                .map(annualYearDateRange)
+                .filter(Boolean)
+                .reduce((total, range) => {
+                    const start = Date.parse(range.periodStart + 'T00:00:00Z');
+                    const end = Date.parse(range.periodEnd + 'T00:00:00Z');
+                    return total + Math.floor((end - start) / 86400000) + 1;
+                }, 0);
+            return intervalSeconds > 0
+                ? Math.ceil(selectedDays * 86400 / intervalSeconds)
+                : 0;
+        }
+
         function updateAnnualRuntimeWarning() {
-            const from = document.getElementById('annualFromDate').value;
-            const to = document.getElementById('annualToDate').value;
             const warning = document.getElementById('annualRuntimeWarning');
-            if (!from || !to) {
-                warning.classList.remove('visible');
-                return;
+            const years = readAnnualSelectedYears();
+            const intervalValue = Number(document.getElementById('annualIntervalValue').value);
+            const intervalUnit = document.getElementById('annualIntervalUnit').value;
+            const intervalSeconds = intervalValue * ({ minutes: 60, hours: 3600, days: 86400 }[intervalUnit] || 0);
+            const estimatedRows = estimateAnnualModelRows(years, intervalValue, intervalUnit);
+            const subHour = intervalSeconds > 0 && intervalSeconds < 3600;
+            const messages = [];
+            if (subHour) {
+                messages.push(
+                    intervalValue + '-minute resolution will produce approximately ' +
+                    estimatedRows.toLocaleString() + ' model rows for the selected years.'
+                );
             }
-            const days = Math.floor((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000) + 1;
-            warning.classList.toggle('visible', Number.isFinite(days) && days > 366);
+            if (estimatedRows > MAX_ANNUAL_MODEL_ROWS) {
+                messages.push(
+                    'This exceeds the ' + MAX_ANNUAL_MODEL_ROWS.toLocaleString() +
+                    '-row Excel export limit; select fewer years or a longer interval.'
+                );
+            }
+            if (years.length > 1) {
+                messages.push(years.length + ' years are selected; download and model time will increase.');
+            }
+            warning.textContent = messages.join(' ');
+            warning.classList.toggle('visible', messages.length > 0);
         }
 

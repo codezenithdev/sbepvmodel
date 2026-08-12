@@ -49,8 +49,13 @@ class CalibrationDecisionRequest(StrictRequest):
 
 
 class AnnualRunRequest(StrictRequest):
-    from_date: str  # YYYY-MM-DD, inclusive fixed MST date
-    to_date: str
+    # Legacy callers may still submit one inclusive fixed-MST date range.  The
+    # dashboard's multi-year workflow submits ``years`` instead; validation
+    # resolves that selection to immutable from/to bounds before the job is
+    # stored so a queued current-year run cannot grow after midnight.
+    from_date: str | None = None  # YYYY-MM-DD, inclusive fixed MST date
+    to_date: str | None = None
+    years: list[int] | None = None
     interval_value: int = 1
     interval_unit: Literal["minutes", "hours", "days"] = "hours"
     backtrack: bool = model.BACKTRACK
@@ -101,6 +106,16 @@ class ChatRequest(StrictRequest):
 
 class ProposalEditRequest(StrictRequest):
     overrides: dict[str, Any]
+
+
+class SavedResultCreateRequest(StrictRequest):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class SavedResultRenameRequest(StrictRequest):
+    name: str = Field(min_length=1, max_length=120)
+
+
 class ProposalSweepConfirmRequest(StrictRequest):
     proposal_ids: list[str] = Field(
         min_length=1, max_length=MAX_PARAMETER_SWEEP_VALUES

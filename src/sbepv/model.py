@@ -558,6 +558,9 @@ MIDC_COLUMNS = {
     "Avg Air Temperature [deg C]": "temp_air_c",
     "Avg Avg Wind Speed @ 10m [m/s]": "wind_speed_ms",
 }
+MIDC_OPTIONAL_COLUMNS = {
+    "MINUTE-MST": "minute_mst",
+}
 
 
 # -----------------------------------------------------------------------------
@@ -661,32 +664,45 @@ def parse_input_csv(path: str) -> pd.DataFrame:
 
 
 def parse_midc_csv(path: str) -> tuple[pd.DataFrame, list[str]]:
-    """Read dashboard-generated MIDC hourly data using fixed MST timestamps."""
+    """Read dashboard-generated MIDC interval data using fixed MST timestamps."""
     raw = pd.read_csv(path)
     missing_columns = sorted(set(MIDC_COLUMNS).difference(raw.columns))
     if missing_columns:
         raise ValueError(
             "MIDC file is missing required columns: " + ", ".join(missing_columns)
         )
-
-    raw = raw.rename(columns=MIDC_COLUMNS)
+    raw = raw.rename(columns={**MIDC_COLUMNS, **MIDC_OPTIONAL_COLUMNS})
     parsed_dates = pd.to_datetime(raw["date"], format="%m/%d/%Y", errors="coerce")
     hours = pd.to_numeric(raw["hour_mst"], errors="coerce")
-    valid_time = parsed_dates.notna() & hours.between(0, 23) & hours.mod(1).eq(0)
+    minutes = (
+        pd.to_numeric(raw["minute_mst"], errors="coerce")
+        if "minute_mst" in raw
+        else pd.Series(0, index=raw.index, dtype="int64")
+    )
+    valid_time = (
+        parsed_dates.notna()
+        & hours.between(0, 23)
+        & hours.mod(1).eq(0)
+        & minutes.between(0, 59)
+        & minutes.mod(1).eq(0)
+    )
     warnings: list[str] = []
     invalid_time_count = int((~valid_time).sum())
     if invalid_time_count:
         warnings.append(
-            f"Dropped {invalid_time_count} MIDC row(s) with invalid date/hour values."
+            f"Dropped {invalid_time_count} MIDC row(s) with invalid date/time values."
         )
     raw = raw.loc[valid_time].copy()
     parsed_dates = parsed_dates.loc[valid_time]
     hours = hours.loc[valid_time].astype(int)
+    minutes = minutes.loc[valid_time].astype(int)
     if raw.empty:
-        raise ValueError("MIDC file contains no valid date/hour rows.")
+        raise ValueError("MIDC file contains no valid date/time rows.")
 
     timestamp_mst = (
-        parsed_dates + pd.to_timedelta(hours, unit="h")
+        parsed_dates
+        + pd.to_timedelta(hours, unit="h")
+        + pd.to_timedelta(minutes, unit="m")
     ).dt.tz_localize("Etc/GMT+7")
     timestamp_local = timestamp_mst.dt.tz_convert(TIMEZONE)
 
@@ -704,7 +720,7 @@ def parse_midc_csv(path: str) -> tuple[pd.DataFrame, list[str]]:
             if count
         )
         warnings.append(
-            "Hourly MIDC gaps were filled for modeling "
+            "MIDC interval gaps were filled for modeling "
             f"({detail}): GHI/DNI use zero, temperature/wind interpolate, "
             "and DHI uses a solar-position-derived fallback."
         )
@@ -725,7 +741,7 @@ def parse_midc_csv(path: str) -> tuple[pd.DataFrame, list[str]]:
     data["timestamp_utc"] = data.index.tz_convert("UTC")
     data.index.name = "timestamp_local"
     if data.index.has_duplicates:
-        raise ValueError("MIDC date/hour keys contain duplicate timestamps.")
+        raise ValueError("MIDC date/time keys contain duplicate timestamps.")
     return data.sort_index(), warnings
 
 
@@ -1774,9 +1790,34 @@ def monthly_energy_table(
     *,
     calibrated: bool = False,
 ) -> pd.DataFrame:
-    """Return one annual energy summary row per local calendar month."""
-    se_monthly = df["se_predicted_energy_step_kwh"].resample("MS").sum()
-    sol_monthly = df["sol_predicted_energy_step_kwh"].resample("MS").sum()
+    """Return one annual energy summary row per fixed-MST source month."""
+    monthly_frame = df.copy()
+    monthly_index = pd.DatetimeIndex(monthly_frame.index)
+    if monthly_index.tz is None:
+        monthly_index = monthly_index.tz_localize(TIMEZONE)
+    monthly_frame.index = monthly_index.tz_convert("Etc/GMT+7")
+    # ``resample`` creates an empty bin for every month between the first and
+    # last timestamp.  Selected MIDC years can be noncontiguous, so retain only
+    # bins that contain source rows rather than reporting gap years as zero.
+    occupied_months = (
+        monthly_frame["se_predicted_energy_step_kwh"]
+        .resample("MS")
+        .size()
+        .loc[lambda counts: counts > 0]
+        .index
+    )
+    se_monthly = (
+        monthly_frame["se_predicted_energy_step_kwh"]
+        .resample("MS")
+        .sum()
+        .reindex(occupied_months)
+    )
+    sol_monthly = (
+        monthly_frame["sol_predicted_energy_step_kwh"]
+        .resample("MS")
+        .sum()
+        .reindex(occupied_months)
+    )
     sol_monthly = sol_monthly.reindex(se_monthly.index)
     energy_label = "calibrated" if calibrated else "predicted"
     se_column = f"SolarEdge_{energy_label}_kWh"
@@ -1800,20 +1841,148 @@ def monthly_energy_table(
         "sol_uncalibrated_energy_step_kwh",
     }.issubset(df.columns):
         result["SolarEdge_physics_only_kWh"] = (
-            df["se_uncalibrated_energy_step_kwh"]
+            monthly_frame["se_uncalibrated_energy_step_kwh"]
             .resample("MS")
             .sum()
             .reindex(se_monthly.index)
             .to_numpy()
         )
         result["Solectria_physics_only_kWh"] = (
-            df["sol_uncalibrated_energy_step_kwh"]
+            monthly_frame["sol_uncalibrated_energy_step_kwh"]
             .resample("MS")
             .sum()
             .reindex(se_monthly.index)
             .to_numpy()
         )
     return result
+
+
+def annual_energy_by_year(
+    df: pd.DataFrame,
+    periods: list[Mapping[str, object]] | None = None,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """Return per-period energy totals and an empirical complete-year CDF.
+
+    MIDC labels are fixed MST even while dashboard plots use America/Denver.
+    Convert the model index back to fixed MST before assigning rows to periods;
+    otherwise the final 23:00 MST interval of a summer day is displayed on the
+    following MDT date and can be attributed to the wrong requested period.
+    """
+
+    index = pd.DatetimeIndex(df.index)
+    if index.tz is None:
+        index = index.tz_localize(TIMEZONE)
+    fixed_mst = index.tz_convert("Etc/GMT+7")
+    fixed_dates = np.asarray(fixed_mst.date, dtype=object)
+
+    normalized_periods: list[dict[str, object]] = []
+    if periods:
+        normalized_periods = [dict(period) for period in periods]
+    elif len(fixed_mst):
+        for year in sorted(set(int(value) for value in fixed_mst.year)):
+            year_mask = fixed_mst.year == year
+            period_start = min(fixed_dates[year_mask])
+            period_end = max(fixed_dates[year_mask])
+            complete = (
+                period_start.isoformat() == f"{year:04d}-01-01"
+                and period_end.isoformat() == f"{year:04d}-12-31"
+            )
+            normalized_periods.append(
+                {
+                    "year": year,
+                    "period_start": period_start.isoformat(),
+                    "period_end": period_end.isoformat(),
+                    "coverage_status": "complete" if complete else "custom_range",
+                    "complete_calendar_year": complete,
+                    "cdf_eligible": complete,
+                }
+            )
+
+    def energy_total(mask: np.ndarray, column: str) -> float:
+        values = pd.to_numeric(df.loc[mask, column], errors="coerce")
+        return round(float(values.fillna(0.0).sum()), 1)
+
+    rows: list[dict[str, object]] = []
+    physics_columns = {
+        "se_uncalibrated_energy_step_kwh",
+        "sol_uncalibrated_energy_step_kwh",
+    }.issubset(df.columns)
+    for period in normalized_periods:
+        year = int(period["year"])
+        try:
+            period_start = pd.Timestamp(str(period["period_start"])).date()
+            period_end = pd.Timestamp(str(period["period_end"])).date()
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Annual energy periods require valid start/end dates.") from exc
+        mask = (fixed_dates >= period_start) & (fixed_dates <= period_end)
+        se_predicted = energy_total(mask, "se_predicted_energy_step_kwh")
+        sol_predicted = energy_total(mask, "sol_predicted_energy_step_kwh")
+        row: dict[str, object] = {
+            **period,
+            "year": year,
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "row_count": int(mask.sum()),
+            "se_predicted_kwh": se_predicted,
+            "sol_predicted_kwh": sol_predicted,
+            "combined_predicted_kwh": round(se_predicted + sol_predicted, 1),
+        }
+        if physics_columns:
+            se_physics = energy_total(mask, "se_uncalibrated_energy_step_kwh")
+            sol_physics = energy_total(mask, "sol_uncalibrated_energy_step_kwh")
+            row.update(
+                {
+                    "se_physics_only_kwh": se_physics,
+                    "sol_physics_only_kwh": sol_physics,
+                    "combined_physics_only_kwh": round(
+                        se_physics + sol_physics, 1
+                    ),
+                }
+            )
+        rows.append(row)
+
+    eligible = [row for row in rows if row.get("cdf_eligible") is True]
+    series: dict[str, list[dict[str, object]]] = {}
+    for series_name, energy_field in (
+        ("solaredge", "se_predicted_kwh"),
+        ("solectria", "sol_predicted_kwh"),
+        ("combined", "combined_predicted_kwh"),
+    ):
+        ordered = sorted(
+            eligible,
+            key=lambda row: (float(row[energy_field]), int(row["year"])),
+        )
+        count = len(ordered)
+        cumulative_probability_by_energy = {
+            float(row[energy_field]): round(rank / count, 6)
+            for rank, row in enumerate(ordered, start=1)
+        }
+        series[series_name] = [
+            {
+                "year": int(row["year"]),
+                "energy_kwh": float(row[energy_field]),
+                # Equal observations share P(X <= x), as required by an ECDF.
+                "cumulative_probability": cumulative_probability_by_energy[
+                    float(row[energy_field])
+                ],
+            }
+            for row in ordered
+        ]
+
+    cdf: dict[str, object] = {
+        "population": "complete_calendar_years",
+        "eligible_years": [int(row["year"]) for row in eligible],
+        "excluded_years": [
+            {
+                "year": int(row["year"]),
+                "reason": str(row.get("coverage_status") or "partial"),
+            }
+            for row in rows
+            if row.get("cdf_eligible") is not True
+        ],
+        "series": series,
+    }
+    return rows, cdf
 
 
 def plot_monthly_energy(
@@ -2254,6 +2423,30 @@ def write_excel(
             ).to_excel(
                 writer, sheet_name="monthly_energy", index=False
             )
+            annual_rows = list(meta.get("_annual_energy_by_year") or [])
+            pd.DataFrame(annual_rows).to_excel(
+                writer, sheet_name="annual_energy_by_year", index=False
+            )
+            annual_cdf = meta.get("_annual_energy_cdf") or {}
+            cdf_rows = [
+                {
+                    "series": series_name,
+                    **dict(point),
+                }
+                for series_name, points in dict(
+                    annual_cdf.get("series") or {}
+                ).items()
+                for point in points
+            ]
+            pd.DataFrame(
+                cdf_rows,
+                columns=[
+                    "series",
+                    "year",
+                    "energy_kwh",
+                    "cumulative_probability",
+                ],
+            ).to_excel(writer, sheet_name="annual_energy_cdf", index=False)
         if meta.get("calibration_enabled") is True:
             pd.DataFrame(
                 _calibration_lineage_rows(
@@ -2308,6 +2501,7 @@ def run_model(
     calibration_profile: dict | None = None,
     calibration_application_context: dict | None = None,
     calibrate_model: bool = True,
+    annual_periods: list[Mapping[str, object]] | None = None,
 ) -> dict:
     """Run the full model on input_csv, write PNGs + Excel, return a stats dict.
 
@@ -2518,6 +2712,19 @@ def run_model(
             calibrated=calibration_enabled,
         )
 
+    annual_energy_rows: list[dict[str, object]] = []
+    annual_energy_cdf: dict[str, object] = {
+        "population": "complete_calendar_years",
+        "eligible_years": [],
+        "excluded_years": [],
+        "series": {"solaredge": [], "solectria": [], "combined": []},
+    }
+    if annual_mode:
+        annual_energy_rows, annual_energy_cdf = annual_energy_by_year(
+            df,
+            annual_periods,
+        )
+
     seasonal_substitution = (
         deepcopy(calibration_factors.get("seasonal_substitution"))
         if calibration_factors
@@ -2659,6 +2866,8 @@ def run_model(
         "_calibration_application_context": deepcopy(
             calibration_application
         ),
+        "_annual_energy_by_year": deepcopy(annual_energy_rows),
+        "_annual_energy_cdf": deepcopy(annual_energy_cdf),
     }
     if progress_cb:
         progress_cb(0.97, "Creating Excel workbook")
@@ -2824,6 +3033,8 @@ def run_model(
         ),
         "curtailment_scope": "predicted_only",
         "n_rows": int(len(df)),
+        "annual_energy_by_year": deepcopy(annual_energy_rows),
+        "annual_energy_cdf": deepcopy(annual_energy_cdf),
         "ac_png": f"{output_base}_ac_power.png",
         "energy_png": f"{output_base}_cumulative_energy.png",
         "uncalibrated_ac_png": (

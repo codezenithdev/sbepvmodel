@@ -10,7 +10,7 @@
                 agentProposalSnapshots.clear();
                 agentJobSnapshots.clear();
                 agentServerState.proposals.forEach(putAgentProposal);
-                agentServerState.jobs.forEach(putAgentJob);
+                agentServerState.jobs.forEach((job) => putAgentJob(job, { recordTerminal: false }));
                 const missingBaselineIds = Object.values(agentServerState.promoted_baselines)
                     .filter((jobId) => jobId && !agentJobSnapshots.has(jobId));
                 await Promise.all(missingBaselineIds.map(async (jobId) => {
@@ -19,13 +19,14 @@
                             '/api/status/' + encodeURIComponent(jobId),
                             { cache: 'no-store' }
                         );
-                        if (baselineResponse.ok) putAgentJob(await baselineResponse.json());
+                        if (baselineResponse.ok) putAgentJob(await baselineResponse.json(), { recordTerminal: false });
                     } catch (_) {
                         // The context badge falls back gracefully if an old baseline is unavailable.
                     }
                 }));
                 await recoverSavedNonterminalActionJobs();
                 reconcileTerminalAgentCards();
+                reconcileAgentActivityFilterAfterRefresh();
                 renderAgentActivity();
                 Array.from(agentJobSnapshots.values()).forEach((job) => {
                     if (!isAgentJobTerminal(job)) scheduleAgentJobPoll(job.job_id, 250);
@@ -37,6 +38,115 @@
                 updateAgentContext();
             } finally {
                 agentRefreshBtn.disabled = false;
+            }
+        }
+
+        function dashboardModeHasBlockingRun(mode, targetJobId) {
+            const normalizedMode = mode === 'annual' ? 'annual' : 'validation';
+            const snapshotIsActive = Array.from(agentJobSnapshots.values()).some((job) => (
+                job.job_id !== targetJobId &&
+                (job.mode === 'annual' ? 'annual' : 'validation') === normalizedMode &&
+                !isAgentJobTerminal(job)
+            ));
+            if (snapshotIsActive) return true;
+            if (normalizedMode === 'annual') {
+                return !!annualLatestJobId && annualLatestJobId !== targetJobId &&
+                    ['starting', 'queued', 'running', 'monitoring_error', 'confirmation_required'].includes(annualRunState?.state);
+            }
+            return calibrationReviewWorkflowIsActive() || (
+                !!latestJobId && latestJobId !== targetJobId &&
+                ['queued', 'running', 'monitoring_error'].includes(currentRunState?.state)
+            );
+        }
+
+        function legacyAnnualRequestYear(request) {
+            if (!request || !isSupportedAnnualInterval(
+                Number(request.interval_value), request.interval_unit
+            )) return null;
+            for (let year = ANNUAL_FIRST_YEAR; year <= annualCurrentYear(); year += 1) {
+                const range = annualYearDateRange(year);
+                if (range && request.from_date === range.periodStart && request.to_date === range.periodEnd) {
+                    return year;
+                }
+            }
+            return null;
+        }
+
+        async function viewAgentJobResults(jobId, requestedMode = null) {
+            const snapshotMode = requestedMode || agentJobSnapshots.get(jobId)?.mode;
+            if (snapshotMode && dashboardModeHasBlockingRun(snapshotMode, jobId)) {
+                appendSystemNotice('Finish or cancel the active ' + (snapshotMode === 'annual' ? 'annual' : 'calibration') + ' run before viewing older results.');
+                return false;
+            }
+            try {
+                const response = await fetchWithDashboardTimeout(
+                    '/api/status/' + encodeURIComponent(jobId),
+                    { cache: 'no-store' }
+                );
+                const status = await readAgentResponse(response, 'Could not load this run.');
+                const job = { ...(agentJobSnapshots.get(jobId) || {}), ...status };
+                if (job.state !== 'done' || !job.result) {
+                    throw new Error('Results are not available for this run.');
+                }
+                if (dashboardModeHasBlockingRun(job.mode, jobId)) {
+                    appendSystemNotice('Finish or cancel the active ' + (job.mode === 'annual' ? 'annual' : 'calibration') + ' run before viewing older results.');
+                    return false;
+                }
+                // Loading an existing result is read-only. It must not promote an
+                // older saved/history item into the server-authoritative recent list.
+                putAgentJob(job, { recordTerminal: false });
+                const annual = job.mode === 'annual';
+                const hasCanonicalAnnualYears = annual && normalizedAgentRequestYears(job.request).length > 0;
+                const mappedLegacyAnnualYear = annual && !hasCanonicalAnnualYears
+                    ? legacyAnnualRequestYear(job.request)
+                    : null;
+                const annualRequestCanBeLoaded = hasCanonicalAnnualYears || mappedLegacyAnnualYear !== null;
+                if (!annual || annualRequestCanBeLoaded) {
+                    applyPromotedRequest(annual ? 'annual' : 'validation', mappedLegacyAnnualYear === null
+                        ? (job.request || {})
+                        : { ...(job.request || {}), years: [mappedLegacyAnnualYear] });
+                }
+                if (annual) {
+                    switchMode('annual', false);
+                    invalidateAnnualStatusPoll();
+                    annualLatestJobId = annualRequestCanBeLoaded ? jobId : null;
+                    annualLatestResult = annualRequestCanBeLoaded ? job.result : null;
+                    annualRunState = annualRequestCanBeLoaded
+                        ? { state: 'done', progress: 100, stage: job.stage || 'Done' }
+                        : null;
+                    annualProgressWrap.classList.remove('visible');
+                    resetAnnualRunBtn();
+                    if (job.input_plots) applyAnnualInputPlots(job.input_plots);
+                    applyAnnualResult(job.result);
+                    if (!annualRequestCanBeLoaded) {
+                        showAnnualError('This legacy date-range result is read-only. Select MIDC years before starting a new simulation.');
+                    }
+                } else {
+                    switchMode('validation', false);
+                    invalidateValidationStatusPoll();
+                    latestJobId = jobId;
+                    latestInputPlots = job.input_plots || job.result.input_plots || null;
+                    latestResult = job.result;
+                    currentRunState = { state: 'done', progress: 100, stage: job.stage || 'Done' };
+                    progressWrap.classList.remove('visible');
+                    resetRunBtn();
+                    const inputPlots = job.input_plots || job.result.input_plots;
+                    if (inputPlots) applyInputPlots(inputPlots);
+                    applyResult(job.result);
+                }
+                renderAgentActivity();
+                setAgentActivityOpen(false, false);
+                setChatOpen(false, { focus: false, persist: false });
+                saveDashboardState();
+                const heading = document.getElementById(annual ? 'annualResultsHeading' : 'validationResultsHeading');
+                window.requestAnimationFrame(() => {
+                    heading?.focus({ preventScroll: true });
+                    heading?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                });
+                return true;
+            } catch (error) {
+                appendSystemNotice(error.message || 'Could not load this run.', 'error');
+                return false;
             }
         }
 
@@ -210,6 +320,10 @@
             if (!job || (!isScenarioRun && !isBaselineRun) || isAgentJobActive(job)) return;
             const runLabel = isBaselineRun ? 'baseline' : 'scenario';
             if (!window.confirm('Delete this ' + runLabel + ' run and its generated files? This cannot be undone.')) return;
+            if (job.client_action_error) {
+                putAgentJob({ ...job, client_action_error: null }, { recordTerminal: false });
+                renderAgentActivity();
+            }
             try {
                 await postAgentAction('/api/jobs/' + encodeURIComponent(jobId) + '/delete');
                 const timer = agentJobPollTimers.get(jobId);
@@ -248,7 +362,13 @@
                 saveDashboardState();
                 await refreshAgentState(false);
             } catch (error) {
-                appendSystemNotice(error.message || 'Could not delete this scenario run.', 'error');
+                const message = error.message || 'Could not delete this scenario run.';
+                const current = agentJobSnapshots.get(jobId);
+                if (current) {
+                    putAgentJob({ ...current, client_action_error: message }, { recordTerminal: false });
+                    renderAgentActivity();
+                }
+                appendSystemNotice(message, 'error');
             }
         }
 

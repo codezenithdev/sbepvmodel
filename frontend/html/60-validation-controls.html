@@ -25,7 +25,7 @@
                         <div class="validation-window-grid">
                             <label class="control-field">
                                 <span class="date-label">Start date</span>
-                                <input type="date" class="date-input" id="fromDate" value="2026-06-20" required>
+                                <input type="date" class="date-input" id="fromDate" value="2025-12-12" required>
                             </label>
                             <label class="control-field">
                                 <span class="date-label">Start time (24-hour)</span>
@@ -33,7 +33,7 @@
                             </label>
                             <label class="control-field">
                                 <span class="date-label">End date</span>
-                                <input type="date" class="date-input" id="toDate" value="2026-06-27" required>
+                                <input type="date" class="date-input" id="toDate" required>
                             </label>
                             <label class="control-field">
                                 <span class="date-label">End time (24-hour)</span>
@@ -184,6 +184,10 @@
                     </p>
                     <div class="control-actions">
                         <a class="download-link hidden" id="excelLink" href="#" download>Export workbook</a>
+                        <button class="save-results-btn" id="saveValidationResultBtn" type="button"
+                            aria-controls="savedResultsDrawer" aria-haspopup="dialog" aria-expanded="false" disabled>
+                            Save results
+                        </button>
                         <button class="run-btn" id="runBtn">Run model</button>
                     </div>
                 </div>

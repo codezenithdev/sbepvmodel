@@ -121,7 +121,7 @@ def _model_worker_loop() -> None:
                 req = AnnualRunRequest(**record["request"])
                 _validate_run_request(req)
                 _validate_curtailment(req)
-                _annual_dates(req)
+                _annual_dates(req, allow_resolved_partial=True)
                 provenance = record.get("provenance") or {}
                 run_annual._run_annual_job(
                     job_id,

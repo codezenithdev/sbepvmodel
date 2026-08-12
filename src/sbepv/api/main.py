@@ -57,7 +57,7 @@ from sbepv.api.proposals import (
     _confirm_durable_proposals,
     _create_candidate_proposal,
 )
-from sbepv.api.serializers import _public_job, _public_proposal
+from sbepv.api.serializers import _public_job, _public_proposal, _public_saved_result
 from sbepv.worker import loop as worker_loop
 from sbepv.api.security import (
     _auth_required_response,
@@ -161,6 +161,8 @@ from sbepv.api.schemas import (
     ProposalEditRequest,
     ProposalSweepConfirmRequest,
     RunRequest,
+    SavedResultCreateRequest,
+    SavedResultRenameRequest,
     SeasonalFallbackAcknowledgement,
     StrictRequest,
 )
@@ -183,6 +185,7 @@ from sbepv.store import (
     LeaseOwnershipLost,
     QueueCapacityExceeded,
     RecordNotFound,
+    SAVED_RESULTS_LIMIT,
     StoreConflict,
 )
 from sbepv.reporting import (
@@ -904,9 +907,87 @@ def status(job_id: str) -> JSONResponse:
     return JSONResponse(_public_job(job))
 
 
+def _history_activity_key(job: dict[str, Any]) -> tuple[str, str]:
+    provenance = job.get("provenance") or {}
+    sweep = (
+        provenance.get("scenario_sweep")
+        if isinstance(provenance, dict)
+        else None
+    )
+    if isinstance(sweep, dict) and sweep.get("type") == "parameter_sweep":
+        sweep_id = str(sweep.get("sweep_id") or "").strip()
+        if sweep_id:
+            return "sweep", sweep_id
+    return "job", str(job.get("id") or "")
+
+
+def _recent_history_jobs(
+    terminal_jobs: list[dict[str, Any]], *, activity_limit: int
+) -> list[dict[str, Any]]:
+    """Keep the newest logical activities without splitting parameter sweeps."""
+
+    if activity_limit <= 0:
+        return []
+
+    selected_keys: list[tuple[str, str]] = []
+    selected_set: set[tuple[str, str]] = set()
+    for job in terminal_jobs:
+        key = _history_activity_key(job)
+        if key in selected_set:
+            continue
+        if len(selected_keys) >= activity_limit:
+            break
+        selected_keys.append(key)
+        selected_set.add(key)
+    return [
+        job for job in terminal_jobs if _history_activity_key(job) in selected_set
+    ]
+
+
 @app.get("/api/agent/state")
 def agent_state(mode: Literal["validation", "annual"] | None = None) -> JSONResponse:
-    snapshot = state.AGENT_STORE.snapshot_state(mode=mode, recent_limit=20)
+    history_limit = 10
+    # One logical sweep may contain MAX_PARAMETER_SWEEP_VALUES durable jobs.
+    # Read enough terminal rows to select ten logical activities atomically.
+    snapshot = state.AGENT_STORE.snapshot_state(
+        mode=mode,
+        recent_limit=history_limit * MAX_PARAMETER_SWEEP_VALUES,
+    )
+    recent_jobs = _recent_history_jobs(
+        snapshot.get("recent_jobs", []), activity_limit=history_limit
+    )
+    selected_sweep_ids = [
+        key
+        for kind, key in dict.fromkeys(
+            _history_activity_key(item) for item in recent_jobs
+        )
+        if kind == "sweep"
+    ]
+    if selected_sweep_ids:
+        jobs_by_id = {str(item["id"]): item for item in recent_jobs}
+        for item in state.AGENT_STORE.list_parameter_sweep_jobs(
+            selected_sweep_ids,
+            mode=mode,
+        ):
+            jobs_by_id.setdefault(str(item["id"]), item)
+        recent_jobs = list(jobs_by_id.values())
+    active_sweep_ids = [
+        key
+        for kind, key in dict.fromkeys(
+            _history_activity_key(item)
+            for item in [
+                snapshot.get("active_job"),
+                *snapshot.get("queued_jobs", []),
+            ]
+            if item
+        )
+        if kind == "sweep"
+    ]
+    active_sweep_terminal_members = (
+        state.AGENT_STORE.list_parameter_sweep_jobs(active_sweep_ids, mode=mode)
+        if active_sweep_ids
+        else []
+    )
     proposals = [
         _public_proposal(item) for item in snapshot.get("pending_proposals", [])
     ]
@@ -914,7 +995,8 @@ def agent_state(mode: Literal["validation", "annual"] | None = None) -> JSONResp
     for item in [
         snapshot.get("active_job"),
         *snapshot.get("queued_jobs", []),
-        *snapshot.get("recent_jobs", []),
+        *recent_jobs,
+        *active_sweep_terminal_members,
         *[
             baseline.get("job")
             for baseline in snapshot.get("current_baselines", {}).values()
@@ -929,6 +1011,13 @@ def agent_state(mode: Literal["validation", "annual"] | None = None) -> JSONResp
         {
             "proposals": proposals,
             "jobs": list(jobs_by_id.values()),
+            "recent_job_ids": [
+                str(item["id"]) for item in recent_jobs
+            ],
+            "recent_activity_count": len(
+                {_history_activity_key(item) for item in recent_jobs}
+            ),
+            "history_limit": history_limit,
             "promoted_baselines": baselines,
         }
     )
@@ -1078,6 +1167,11 @@ def edit_agent_proposal(
             raise HTTPException(status_code=409, detail="Only a pending proposal can be edited")
         overrides = _explicit_overrides(req.overrides)
         target_mode = overrides.pop("mode", prior["mode"])
+        if target_mode == "validation" and "years" in overrides:
+            raise HTTPException(
+                status_code=422,
+                detail="MIDC year selection can only be changed for annual runs.",
+            )
         validation_only = {"from_time", "to_time"}
         if target_mode == "annual" and validation_only.intersection(overrides):
             raise HTTPException(
@@ -1092,7 +1186,13 @@ def edit_agent_proposal(
         candidate_values = dict(prior["effective_request"])
         overrides = _apply_dependent_scenario_overrides(overrides, candidate_values)
         candidate_values.update(overrides)
-        _, candidate = _canonical_request(target_mode, candidate_values)
+        _, candidate = _canonical_request(
+            target_mode,
+            candidate_values,
+            allow_resolved_partial=(
+                target_mode == "annual" and "years" not in overrides
+            ),
+        )
         if prior.get("baseline_id"):
             baseline = _get_job_record(str(prior["baseline_id"]))
             if baseline is None:
@@ -1147,6 +1247,56 @@ def dismiss_agent_proposal(proposal_id: str) -> JSONResponse:
     except InvalidStateTransition as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return JSONResponse({"proposal": _public_proposal(proposal)})
+
+
+@app.get("/api/saved-results")
+def list_saved_results() -> JSONResponse:
+    saved_results = [
+        _public_saved_result(item)
+        for item in state.AGENT_STORE.list_saved_results()
+    ]
+    return JSONResponse(
+        {"saved_results": saved_results, "limit": SAVED_RESULTS_LIMIT}
+    )
+
+
+@app.post("/api/saved-results/{job_id}")
+def save_result(
+    job_id: str, req: SavedResultCreateRequest | None = None
+) -> JSONResponse:
+    try:
+        saved_result = state.AGENT_STORE.save_result(
+            job_id, name=req.name if req is not None else None
+        )
+    except RecordNotFound as exc:
+        raise HTTPException(status_code=404, detail="Unknown job id") from exc
+    except (InvalidStateTransition, StoreConflict) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse({"saved_result": _public_saved_result(saved_result)})
+
+
+@app.put("/api/saved-results/{job_id}")
+def rename_saved_result(
+    job_id: str, req: SavedResultRenameRequest
+) -> JSONResponse:
+    try:
+        saved_result = state.AGENT_STORE.rename_saved_result(job_id, req.name)
+    except RecordNotFound as exc:
+        raise HTTPException(status_code=404, detail="Unknown saved result") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse({"saved_result": _public_saved_result(saved_result)})
+
+
+@app.delete("/api/saved-results/{job_id}")
+def remove_saved_result(job_id: str) -> JSONResponse:
+    try:
+        state.AGENT_STORE.remove_saved_result(job_id)
+    except RecordNotFound as exc:
+        raise HTTPException(status_code=404, detail="Unknown saved result") from exc
+    return JSONResponse({"job_id": job_id, "removed": True})
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -1236,15 +1386,16 @@ def promote_model_job(job_id: str) -> JSONResponse:
     except InvalidStateTransition as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     job = promoted["job"]
+    public_job = _public_job(job)
     return JSONResponse(
         {
-            "job_id": job["id"],
-            "mode": job["mode"],
-            "result": job.get("result"),
-            "request": job.get("request"),
-            "comparison": job.get("comparison"),
-            "provenance": job.get("provenance"),
-            "artifacts": job.get("artifacts") or {},
+            "job_id": public_job["job_id"],
+            "mode": public_job["mode"],
+            "result": public_job.get("result"),
+            "request": public_job.get("request"),
+            "comparison": public_job.get("comparison"),
+            "provenance": public_job.get("provenance"),
+            "artifacts": public_job.get("artifacts") or {},
         }
     )
 

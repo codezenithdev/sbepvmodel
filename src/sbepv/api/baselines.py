@@ -29,9 +29,13 @@ from sbepv.calibration import (
     validate_seasonal_calibration_profile,
 )
 from sbepv.api.job_store import _get_job_record
-from sbepv.api.schemas import ChatRequest, RunRequest
+from sbepv.api.schemas import AnnualRunRequest, ChatRequest, RunRequest
 from sbepv.api.request_context import _run_request_context
-from sbepv.api.validation import _validate_curtailment, _validate_run_request
+from sbepv.api.validation import (
+    _annual_periods,
+    _validate_curtailment,
+    _validate_run_request,
+)
 from sbepv import model, reporting
 from sbepv.reporting import SourceFingerprintMismatch
 
@@ -262,27 +266,48 @@ def _baseline_calibration_profile(
 def _annual_request_seasons(request: dict[str, Any]) -> tuple[str, ...]:
     """Return Denver-local meteorological seasons in an inclusive annual range."""
 
-    try:
-        start = date.fromisoformat(str(request["from_date"]))
-        end = date.fromisoformat(str(request["to_date"]))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
-            "Annual request dates are unavailable for calibration coverage."
-        ) from exc
-    if end < start:
-        raise ValueError("Annual request end must not be before its start.")
-    cursor = date(start.year, start.month, 1)
-    final_month = date(end.year, end.month, 1)
+    if request.get("years") is not None:
+        try:
+            periods = _annual_periods(
+                AnnualRunRequest(**request),
+                allow_resolved_partial=True,
+            )
+        except (HTTPException, TypeError, ValueError) as exc:
+            raise ValueError(
+                "Annual selected-year periods are unavailable for calibration coverage."
+            ) from exc
+    else:
+        try:
+            start = date.fromisoformat(str(request["from_date"]))
+            end = date.fromisoformat(str(request["to_date"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "Annual request dates are unavailable for calibration coverage."
+            ) from exc
+        if end < start:
+            raise ValueError("Annual request end must not be before its start.")
+        periods = [
+            {
+                "period_start": start.isoformat(),
+                "period_end": end.isoformat(),
+            }
+        ]
+
     seasons: list[str] = []
-    while cursor <= final_month:
-        label = season_name(cursor)
-        if label not in seasons:
-            seasons.append(label)
-        cursor = (
-            date(cursor.year + 1, 1, 1)
-            if cursor.month == 12
-            else date(cursor.year, cursor.month + 1, 1)
-        )
+    for period in periods:
+        start = date.fromisoformat(str(period["period_start"]))
+        end = date.fromisoformat(str(period["period_end"]))
+        cursor = date(start.year, start.month, 1)
+        final_month = date(end.year, end.month, 1)
+        while cursor <= final_month:
+            label = season_name(cursor)
+            if label not in seasons:
+                seasons.append(label)
+            cursor = (
+                date(cursor.year + 1, 1, 1)
+                if cursor.month == 12
+                else date(cursor.year, cursor.month + 1, 1)
+            )
     return tuple(seasons)
 
 

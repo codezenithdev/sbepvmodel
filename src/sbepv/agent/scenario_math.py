@@ -62,7 +62,10 @@ def _normalise_config_keys(config: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _canonical_request(
-    mode: Literal["validation", "annual"], config: dict[str, Any]
+    mode: Literal["validation", "annual"],
+    config: dict[str, Any],
+    *,
+    allow_resolved_partial: bool = False,
 ) -> tuple[RunRequest | AnnualRunRequest, dict[str, Any]]:
     values = _normalise_config_keys(config)
     try:
@@ -73,11 +76,17 @@ def _canonical_request(
             values.pop("calibrate_model", None)
             request_model = AnnualRunRequest(**values)
         else:
+            # A cross-mode proposal may inherit this annual-only selector from
+            # the visible baseline; validation keeps the resolved date window.
+            values.pop("years", None)
             request_model = RunRequest(**values)
         _validate_run_request(request_model)
         _validate_curtailment(request_model)
         if isinstance(request_model, AnnualRunRequest):
-            _annual_dates(request_model)
+            _annual_dates(
+                request_model,
+                allow_resolved_partial=allow_resolved_partial,
+            )
     except HTTPException:
         raise
     except Exception as exc:
@@ -243,6 +252,24 @@ def _apply_dependent_scenario_overrides(
     overrides: dict[str, Any], baseline: dict[str, Any]
 ) -> dict[str, Any]:
     normalized = dict(overrides)
+    date_fields = {"from_date", "to_date"}
+    if "years" in normalized and date_fields.intersection(normalized):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "MIDC year selection cannot be combined with custom annual dates. "
+                "Use years or a legacy date range."
+            ),
+        )
+    if "years" in normalized:
+        # Selected years are authoritative.  Clear a legacy baseline's resolved
+        # bounds so annual validation can resolve the new immutable periods.
+        normalized["from_date"] = None
+        normalized["to_date"] = None
+    elif date_fields.intersection(normalized) and "years" in baseline:
+        # Retain legacy date overrides even when the visible baseline was made
+        # with the newer years selector.
+        normalized["years"] = None
     if normalized.get("iam_model") == "physical" and normalized.get("iam_a_r") is not None:
         raise HTTPException(
             status_code=422,
@@ -264,7 +291,13 @@ def _same_input_context(
     mode: str, baseline: dict[str, Any], candidate: dict[str, Any]
 ) -> bool:
     if mode == "annual":
-        keys = ("from_date", "to_date", "interval_value", "interval_unit")
+        keys = (
+            "from_date",
+            "to_date",
+            "years",
+            "interval_value",
+            "interval_unit",
+        )
     else:
         keys = (
             "from_date",

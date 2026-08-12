@@ -17,6 +17,9 @@
         function setChatOpen(open, options = {}) {
             const focus = options.focus !== false;
             const persist = options.persist !== false;
+            if (open && window.savedResultsDrawerReady === true) {
+                setSavedResultsOpen(false, { focus: false });
+            }
             if (open && focus) lastChatTrigger = document.activeElement;
             chatSidebar.classList.toggle('hidden', !open);
             chatToggle.classList.toggle('hidden', open);
@@ -165,6 +168,7 @@
             latestInputPlots = null;
             latestResult = null;
             currentRunState = null;
+            applyValidationDateDefaults();
             setExcelLink(null);
             clearRunImages();
             renderValidationRunContext(null);
@@ -213,7 +217,9 @@
                     return;
                 }
                 const data = await readAgentResponse(response, 'Could not verify the cached run.');
-                putAgentJob(data);
+                // Cache verification is read-only; it must not make an older
+                // restored/saved job look newly recent in the Runs workspace.
+                putAgentJob(data, { recordTerminal: false });
                 if (data.state === 'done' && data.result) {
                     if (annual) {
                         annualLatestResult = data.result;
@@ -319,6 +325,10 @@
             ]);
 
             applyFormState(saved.form);
+            const hasRestoredValidationContext = !!latestJobId || !!latestResult || !!pendingCalibrationReview;
+            if (!hasRestoredValidationContext) {
+                applyValidationDateDefaults();
+            }
             applyAnnualFormState(saved.annualForm);
             applyTechnoeconomicFormState(saved.technoeconomicForm);
             await loadCurrentCalibration();
@@ -332,6 +342,7 @@
             if (annualLatestResult) {
                 applyAnnualResult(annualLatestResult, false);
             }
+            window.restoreSavedResultsDisplayedContext?.(saved.savedResultsDisplayedContext);
             if (
                 pendingCalibrationReview &&
                 (

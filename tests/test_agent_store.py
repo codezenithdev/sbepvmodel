@@ -15,6 +15,7 @@ from sbepv.store import (
     LeaseOwnershipLost,
     QueueCapacityExceeded,
     RecordNotFound,
+    SAVED_RESULTS_LIMIT,
     SCHEMA_VERSION,
     SchemaVersionError,
     StoreConflict,
@@ -112,7 +113,7 @@ class AgentStoreTests(unittest.TestCase):
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
         self.assertEqual(SCHEMA_VERSION, version)
-        self.assertEqual([(1,), (2,), (3,)], migrations)
+        self.assertEqual([(1,), (2,), (3,), (4,)], migrations)
 
     def test_newer_schema_is_rejected(self) -> None:
         other_path = self.db_path.with_name(f"{self.db_path.stem}-future.sqlite3")
@@ -325,6 +326,44 @@ class AgentStoreTests(unittest.TestCase):
         self.assertEqual(job["request"], retried["request"])
         self.assertEqual(profile, retried["provenance"])
         self.assertEqual(job["id"], self.store.claim_next_queued_job()["id"])
+
+    def test_interrupted_job_uses_interruption_as_terminal_time(self) -> None:
+        job = self.store.create_job(
+            job_id="elapsed-interrupted",
+            kind="manual",
+            mode="validation",
+            request={},
+        )
+        running = self.store.claim_next_queued_job()
+        self.assertEqual(job["id"], running["id"])
+        started_at = datetime.fromisoformat(running["started_at"])
+
+        self.clock.advance(minutes=7)
+        self.assertEqual(1, self.store.mark_stale_running_jobs_interrupted())
+        interrupted = self.store.get_job(job["id"])
+
+        self.assertEqual("interrupted", interrupted["state"])
+        self.assertEqual(interrupted["interrupted_at"], interrupted["completed_at"])
+        self.assertEqual(
+            timedelta(minutes=7),
+            datetime.fromisoformat(interrupted["completed_at"]) - started_at,
+        )
+
+        self.clock.advance(hours=3)
+        reopened = AgentStore(self.db_path, now=self.clock)
+        restored = reopened.get_job(job["id"])
+        self.assertEqual(interrupted["completed_at"], restored["completed_at"])
+
+        # Existing databases may contain interrupted rows written before
+        # ``completed_at`` was populated. Their decoded terminal time must still
+        # stop at ``interrupted_at``.
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute(
+                "UPDATE jobs SET completed_at = NULL WHERE job_id = ?", (job["id"],)
+            )
+            connection.commit()
+        legacy = AgentStore(self.db_path, now=self.clock).get_job(job["id"])
+        self.assertEqual(interrupted["interrupted_at"], legacy["completed_at"])
 
     def test_stale_cutoff_leaves_recent_running_job_untouched(self) -> None:
         self.store.create_job(
@@ -670,7 +709,184 @@ class AgentStoreTests(unittest.TestCase):
         self.assertEqual([proposal["id"]], [p["id"] for p in snapshot["pending_proposals"]])
         self.assertEqual([queued["id"]], [j["id"] for j in snapshot["queued_jobs"]])
         self.assertIsNone(snapshot["active_job"])
-        self.assertGreaterEqual(len(snapshot["recent_jobs"]), 2)
+        self.assertEqual([baseline["id"]], [j["id"] for j in snapshot["recent_jobs"]])
+
+    def test_snapshot_caps_terminal_history_without_counting_active_jobs(self) -> None:
+        long_running = self.store.create_job(
+            job_id="terminal-latest",
+            kind="manual",
+            mode="validation",
+            request={"marker": "created-first"},
+        )
+        claimed = self.store.claim_next_queued_job()
+        self.assertEqual(long_running["id"], claimed["id"])
+
+        cancelled_ids = []
+        for index in range(11):
+            self.clock.advance(minutes=1)
+            cancelled = self.store.create_job(
+                job_id=f"terminal-{index:02d}",
+                kind="manual",
+                mode="validation",
+                request={"marker": index},
+            )
+            cancelled_ids.append(cancelled["id"])
+            self.store.cancel_job(cancelled["id"])
+
+        # This job was created first but terminated last. Terminal history must
+        # therefore order by its terminal timestamp, not by creation time.
+        self.clock.advance(minutes=1)
+        self.store.update_job(long_running["id"], state="done", result={"ok": True})
+
+        active = self.store.create_job(
+            job_id="active-job",
+            kind="manual",
+            mode="validation",
+            request={},
+        )
+        queued = self.store.create_job(
+            job_id="queued-job",
+            kind="manual",
+            mode="validation",
+            request={},
+        )
+        self.assertEqual(active["id"], self.store.claim_next_queued_job()["id"])
+
+        snapshot = self.store.snapshot_state(mode="validation")
+
+        expected_history = [long_running["id"], *reversed(cancelled_ids[2:])]
+        self.assertEqual(10, len(snapshot["recent_jobs"]))
+        self.assertEqual(
+            expected_history,
+            [job["id"] for job in snapshot["recent_jobs"]],
+        )
+        self.assertEqual(active["id"], snapshot["active_job"]["id"])
+        self.assertEqual([queued["id"]], [job["id"] for job in snapshot["queued_jobs"]])
+        self.assertTrue(
+            all(
+                job["state"] in {"done", "error", "cancelled", "interrupted"}
+                for job in snapshot["recent_jobs"]
+            )
+        )
+        self.assertEqual(14, len(self.store.list_jobs()))
+
+    def test_terminal_history_and_results_survive_store_reopen(self) -> None:
+        completed = self.complete_job(job_id="durable-completed")
+        self.clock.advance(minutes=1)
+        cancelled = self.store.create_job(
+            job_id="durable-cancelled",
+            kind="manual",
+            mode="annual",
+            request={"mode": "annual"},
+        )
+        self.store.cancel_job(cancelled["id"])
+
+        reopened = AgentStore(self.db_path, now=self.clock)
+        restored = reopened.get_job(completed["id"])
+        snapshot = reopened.snapshot_state()
+
+        self.assertEqual(completed["request"], restored["request"])
+        self.assertEqual(completed["result"], restored["result"])
+        self.assertEqual(completed["provenance"], restored["provenance"])
+        self.assertEqual(completed["artifacts"], restored["artifacts"])
+        self.assertEqual(
+            [cancelled["id"], completed["id"]],
+            [job["id"] for job in snapshot["recent_jobs"]],
+        )
+
+    def test_saved_results_require_a_completed_job_with_a_result(self) -> None:
+        queued = self.store.create_job(
+            job_id="save-queued",
+            kind="manual",
+            mode="validation",
+            request={},
+        )
+        with self.assertRaises(InvalidStateTransition):
+            self.store.save_result(queued["id"])
+        self.store.cancel_job(queued["id"])
+
+        no_result = self.store.create_job(
+            job_id="save-no-result",
+            kind="manual",
+            mode="validation",
+            request={},
+        )
+        self.store.claim_next_queued_job()
+        self.store.update_job(no_result["id"], state="done")
+        with self.assertRaises(InvalidStateTransition):
+            self.store.save_result(no_result["id"])
+        with self.assertRaises(RecordNotFound):
+            self.store.save_result("missing-job")
+
+        completed = self.complete_job(job_id="save-completed")
+        saved = self.store.save_result(completed["id"], name="  First   result  ")
+        self.clock.advance(minutes=5)
+        repeated = self.store.save_result(completed["id"], name="Ignored rename")
+
+        self.assertEqual("First result", saved["name"])
+        self.assertEqual(saved, repeated)
+        self.assertEqual(1, len(self.store.list_saved_results()))
+
+        annual = self.complete_job(job_id="save-default-name", mode="annual")
+        default_named = self.store.save_result(annual["id"])
+        self.assertEqual(
+            "Annual simulation - 2026-07-20", default_named["name"]
+        )
+
+    def test_saved_results_are_bounded_and_list_newest_first(self) -> None:
+        saved_ids = []
+        for index in range(SAVED_RESULTS_LIMIT):
+            completed = self.complete_job(job_id=f"saved-{index:02d}")
+            self.store.save_result(completed["id"])
+            saved_ids.append(completed["id"])
+            self.clock.advance(minutes=1)
+
+        overflow = self.complete_job(job_id="saved-overflow")
+        with self.assertRaises(StoreConflict):
+            self.store.save_result(overflow["id"])
+
+        self.assertEqual(
+            list(reversed(saved_ids)),
+            [item["job_id"] for item in self.store.list_saved_results()],
+        )
+
+    def test_saved_result_rename_remove_and_job_delete_protection(self) -> None:
+        completed = self.complete_job(job_id="saved-protected")
+        saved = self.store.save_result(completed["id"])
+        self.clock.advance(minutes=1)
+
+        renamed = self.store.rename_saved_result(
+            completed["id"], "  Annual   reference  "
+        )
+        self.assertEqual("Annual reference", renamed["name"])
+        self.assertEqual(saved["saved_at"], renamed["saved_at"])
+        self.assertNotEqual(saved["updated_at"], renamed["updated_at"])
+        with self.assertRaises(InvalidStateTransition):
+            self.store.delete_job(completed["id"])
+
+        removed = self.store.remove_saved_result(completed["id"])
+        self.assertEqual(completed["id"], removed["job_id"])
+        self.assertEqual(completed["id"], self.store.get_job(completed["id"])["id"])
+        self.assertEqual(completed["id"], self.store.delete_job(completed["id"])["id"])
+        self.assertEqual([], self.store.list_saved_results())
+
+    def test_saved_result_survives_history_eviction_and_store_reopen(self) -> None:
+        completed = self.complete_job(job_id="saved-durable")
+        self.store.save_result(completed["id"], name="Durable result")
+
+        for index in range(11):
+            self.clock.advance(minutes=1)
+            newer = self.complete_job(job_id=f"newer-{index:02d}")
+            self.assertEqual("done", newer["state"])
+
+        self.assertNotIn(
+            completed["id"],
+            [job["id"] for job in self.store.snapshot_state()["recent_jobs"]],
+        )
+        reopened = AgentStore(self.db_path, now=self.clock)
+        saved_results = reopened.list_saved_results()
+        self.assertEqual([completed["id"]], [item["job_id"] for item in saved_results])
+        self.assertEqual(completed["result"], saved_results[0]["job"]["result"])
 
 
 if __name__ == "__main__":

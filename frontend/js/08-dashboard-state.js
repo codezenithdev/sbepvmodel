@@ -55,6 +55,7 @@
             annualLatestJobId = null;
             annualLatestResult = null;
             annualRunState = null;
+            window.resetSavedResultsDisplayedJobs?.();
             annualCalibrationBaseline = null;
             annualCalibrationBaselineJobId = null;
             annualCalibrationProfileSha256 = null;
@@ -77,7 +78,14 @@
             agentActivityExpanded = false;
             agentActivityFilter = 'all';
             agentActivitySelection = null;
-            agentServerState = { proposals: [], jobs: [], promoted_baselines: { validation: null, annual: null } };
+            agentServerState = {
+                proposals: [],
+                jobs: [],
+                recent_job_ids: [],
+                recent_activity_count: 0,
+                history_limit: MAX_RECENT_AGENT_RUNS,
+                promoted_baselines: { validation: null, annual: null },
+            };
             agentProposalSnapshots.clear();
             agentJobSnapshots.clear();
             rebuildAgentCompletionCardIndex();
@@ -97,6 +105,7 @@
             renderAnnualQuality([]);
             renderAnnualResultCalibration(null);
             renderAnnualCalibrationBaseline(null, { state: 'loading' });
+            applyValidationDateDefaults();
             renderAgentActivity();
             renderChatMessages();
             renderChatHistory();
@@ -124,6 +133,7 @@
                     annualLatestJobId,
                     annualLatestResult,
                     annualRunState,
+                    savedResultsDisplayedContext: window.getSavedResultsDisplayedContext?.() || null,
                     annualCalibrationBaselineJobId,
                     annualCalibrationProfileSha256,
                     annualForm: getAnnualFormState(),
@@ -179,9 +189,11 @@
                 stage,
                 cancel_requested: false,
                 request: { ...request },
+                origin: 'dashboard',
                 created_at: new Date().toISOString(),
             });
             agentActivityFilter = 'active';
+            agentActivitySelection = 'job:' + jobId;
             renderAgentActivity();
         }
 

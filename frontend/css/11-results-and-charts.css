@@ -376,3 +376,250 @@
             text-transform: uppercase;
         }
 
+        .annual-year-results {
+            display: grid;
+            gap: 14px;
+            margin: 18px 0;
+            padding: 18px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface-muted);
+        }
+
+        .annual-year-results[hidden] {
+            display: none;
+        }
+
+        .annual-year-results-heading h3 {
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 830;
+        }
+
+        .annual-year-results-heading p {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .annual-year-results-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+            gap: 14px;
+            align-items: stretch;
+        }
+
+        .annual-year-table-wrap {
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: #ffffff;
+        }
+
+        .annual-year-table-wrap:focus-visible {
+            outline: 3px solid rgba(37, 99, 235, 0.26);
+            outline-offset: 2px;
+        }
+
+        .annual-year-table {
+            width: 100%;
+            min-width: 700px;
+            border-collapse: collapse;
+            color: var(--text);
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .annual-year-table caption {
+            width: 1px;
+            height: 1px;
+            position: absolute;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+        }
+
+        .annual-year-table th,
+        .annual-year-table td {
+            padding: 10px 11px;
+            border-bottom: 1px solid var(--border);
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .annual-year-table th:first-child,
+        .annual-year-table td:first-child,
+        .annual-year-table th:nth-child(2),
+        .annual-year-table td:nth-child(2) {
+            text-align: left;
+        }
+
+        .annual-year-table thead th {
+            background: var(--surface-strong);
+            color: var(--muted-strong);
+            font-size: 9px;
+            font-weight: 830;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .annual-year-table tbody tr:last-child th,
+        .annual-year-table tbody tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .annual-year-table tbody tr.partial {
+            background: var(--warning-soft);
+        }
+
+        .annual-year-cell {
+            display: grid;
+            gap: 2px;
+        }
+
+        .annual-year-cell strong {
+            font-size: 12px;
+        }
+
+        .annual-year-cell span,
+        .annual-coverage-label span {
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 650;
+        }
+
+        .annual-coverage-label {
+            display: grid;
+            gap: 2px;
+            color: var(--success);
+            font-weight: 800;
+        }
+
+        .annual-coverage-label.partial {
+            color: var(--warning);
+        }
+
+        .annual-cdf-card {
+            min-width: 0;
+            display: grid;
+            grid-template-rows: auto auto minmax(220px, 1fr);
+            gap: 10px;
+            margin: 0;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: #ffffff;
+        }
+
+        .annual-cdf-card figcaption {
+            display: grid;
+            gap: 2px;
+        }
+
+        .annual-cdf-card figcaption strong {
+            color: var(--text);
+            font-size: 13px;
+        }
+
+        .annual-cdf-card figcaption span {
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .annual-cdf-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            color: var(--muted-strong);
+            font-size: 9px;
+            font-weight: 760;
+        }
+
+        .annual-cdf-legend span {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .annual-cdf-legend span::before {
+            content: '';
+            width: 14px;
+            height: 3px;
+            border-radius: 999px;
+            background: currentColor;
+        }
+
+        .annual-cdf-legend .solectria::before {
+            height: 0;
+            border-top: 3px dashed currentColor;
+            border-radius: 0;
+            background: none;
+        }
+
+        .annual-cdf-legend .combined::before {
+            height: 0;
+            border-top: 3px dotted currentColor;
+            border-radius: 0;
+            background: none;
+        }
+
+        .annual-cdf-legend .solaredge {
+            color: var(--accent);
+        }
+
+        .annual-cdf-legend .solectria {
+            color: var(--info);
+        }
+
+        .annual-cdf-legend .combined {
+            color: var(--warning);
+        }
+
+        .annual-cdf-chart {
+            width: 100%;
+            min-height: 220px;
+            align-self: center;
+            overflow: visible;
+        }
+
+        .annual-cdf-chart[hidden] {
+            display: none;
+        }
+
+        .annual-cdf-fallback {
+            align-self: center;
+            padding: 22px 16px;
+            border: 1px dashed var(--border-strong);
+            border-radius: 8px;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.5;
+            text-align: center;
+        }
+
+        .annual-cdf-fallback[hidden] {
+            display: none;
+        }
+
+        @media (max-width: 1180px) {
+            .annual-year-results-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .annual-cdf-card {
+                min-height: 340px;
+            }
+        }
+
+        @media (max-width: 560px) {
+            .annual-year-results {
+                padding: 13px;
+            }
+
+            .annual-cdf-card {
+                min-height: 300px;
+                padding: 12px;
+            }
+        }
+

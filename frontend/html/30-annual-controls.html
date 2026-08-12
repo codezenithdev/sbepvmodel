@@ -3,7 +3,7 @@
                         <div class="annual-heading-copy">
                             <p class="annual-kicker">Long-range forecast</p>
                             <h2 class="section-title">Annual simulation</h2>
-                            <p class="section-subtitle">Carry the promoted, reviewed calibration into a long-range forecast while keeping annual dates independent.</p>
+                            <p class="section-subtitle">Carry the promoted, reviewed calibration into a long-range forecast while keeping selected MIDC years independent.</p>
                         </div>
                     </div>
 
@@ -32,7 +32,7 @@
                         <span class="caution-mark" aria-hidden="true">!</span>
                         <div>
                             <strong>Allow approximately 5–6 hours for a full-year simulation.</strong>
-                            <p>Completion time depends on the requested date range and source-data availability; longer ranges may take more time.</p>
+                            <p>Completion time depends on the selected MIDC years and source-data availability; more years take longer.</p>
                         </div>
                     </div> -->
 
@@ -41,38 +41,45 @@
                             <div class="annual-card-heading">
                                 <span class="annual-step" aria-hidden="true">1</span>
                                 <div>
-                                    <h3 id="annualWindowHeading">Annual forecast dates</h3>
-                                    <p>Dates stay independent from the inherited calibration window.</p>
+                                    <h3 id="annualWindowHeading">Selected MIDC years</h3>
+                                    <p>Years stay independent from the inherited calibration window.</p>
                                 </div>
                             </div>
 
-                            <div class="annual-date-grid">
-                                <label class="control-field">
-                                    <span class="date-label">Start date</span>
-                                    <input type="date" class="date-input annual-input" id="annualFromDate" value="2025-01-01" required>
-                                </label>
-                                <label class="control-field">
-                                    <span class="date-label">End date</span>
-                                    <input type="date" class="date-input annual-input" id="annualToDate" value="2025-12-31" required>
-                                </label>
-                                <label class="control-field annual-interval-field">
-                                    <span class="date-label">Time interval</span>
-                                    <span class="interval-row">
-                                        <input type="number" class="date-input annual-input" id="annualIntervalValue" value="1" min="1" step="1" inputmode="numeric">
-                                        <select class="date-input annual-input" id="annualIntervalUnit">
-                                            <option value="minutes">minutes</option>
-                                            <option value="hours" selected>hours</option>
-                                            <option value="days">days</option>
-                                        </select>
+                            <fieldset class="annual-year-fieldset" aria-describedby="annualYearHelp annualYearSelectionSummary">
+                                <legend>Available MIDC years</legend>
+                                <div class="annual-year-toolbar">
+                                    <span class="annual-year-selection-summary" id="annualYearSelectionSummary" role="status" aria-live="polite">Loading available years...</span>
+                                    <span class="annual-year-actions">
+                                        <button class="annual-year-action" id="annualSelectAllYearsBtn" type="button">Select all</button>
+                                        <button class="annual-year-action" id="annualClearYearsBtn" type="button">Clear</button>
                                     </span>
-                                    <span class="limit-helper">Use a whole-hour interval that divides one day; 1 hour is recommended.</span>
-                                </label>
-                            </div>
+                                </div>
+                                <div class="annual-year-grid" id="annualYearGrid"></div>
+                                <p class="annual-year-help" id="annualYearHelp">
+                                    MIDC STAC data begins February 11, 2011. The current year runs through the latest complete day and is reported as partial.
+                                    <a href="https://midcdmz.nlr.gov/apps/daily.pl?site=STAC&amp;start=20110211&amp;yr=2026&amp;mo=7&amp;dy=12" target="_blank" rel="noopener noreferrer">View the MIDC STAC source and requirements</a>.
+                                </p>
+                            </fieldset>
+                            <input type="hidden" id="annualFromDate" value="2025-01-01">
+                            <input type="hidden" id="annualToDate" value="2025-12-31">
+                            <label class="control-field annual-interval-field">
+                                <span class="date-label">Time interval</span>
+                                <span class="interval-row">
+                                    <input type="number" class="date-input annual-input" id="annualIntervalValue" value="1" min="1" step="1" inputmode="numeric" aria-describedby="annualIntervalHelp">
+                                    <select class="date-input annual-input" id="annualIntervalUnit" aria-describedby="annualIntervalHelp">
+                                        <option value="minutes">minutes</option>
+                                        <option value="hours" selected>hours</option>
+                                        <option value="days">days</option>
+                                    </select>
+                                </span>
+                                <span class="limit-helper" id="annualIntervalHelp">Minute options: 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 16, 18, 20, 24, 30, 32, 36, 40, 45, 48, or 60. One-minute resolution is about 525,600 rows per full year. Selections must stay within the 1,048,575-row Excel export limit. Hour options: 1, 2, 3, 4, 6, 8, 12, or 24. Day option: 1.</span>
+                            </label>
                             <div class="annual-time-note">
                                 <span class="annual-time-dot" aria-hidden="true"></span>
                                 Mountain Standard Time (MST, UTC-7)</div>
                             <div class="runtime-warning" id="annualRuntimeWarning">
-                                This range is longer than 366 days. Downloading minute data and running the model may take a long time, but the range is allowed.
+                                Several years are selected. Downloading MIDC data and running each annual model may take a long time.
                             </div>
                         </section>
 
@@ -281,6 +288,10 @@
                         </p>
                         <div class="control-actions">
                             <a class="download-link hidden" id="annualExcelLink" href="#" download>Export workbook</a>
+                            <button class="save-results-btn" id="saveAnnualResultBtn" type="button"
+                                aria-controls="savedResultsDrawer" aria-haspopup="dialog" aria-expanded="false" disabled>
+                                Save results
+                            </button>
                             <button class="run-btn" id="annualRunBtn" type="button">Review &amp; run annual simulation</button>
                         </div>
                     </div>

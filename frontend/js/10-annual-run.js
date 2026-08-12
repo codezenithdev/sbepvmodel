@@ -21,30 +21,28 @@
 
         function buildAnnualRequest() {
             annualErrorBanner.classList.remove('visible');
-            const fromDate = document.getElementById('annualFromDate').value;
-            const toDate = document.getElementById('annualToDate').value;
-            if (!fromDate || !toDate) {
-                showAnnualError('Choose both a start date and an end date.');
-                return null;
-            }
-            if (fromDate > toDate) {
-                showAnnualError('Start date must be on or before end date.');
+            const years = readAnnualSelectedYears();
+            if (!years.length) {
+                showAnnualError('Select at least one MIDC year.');
+                (annualYearElements.grid.querySelector('input:not(:disabled)') || annualYearElements.selectAllButton).focus();
                 return null;
             }
             const intervalInput = document.getElementById('annualIntervalValue');
             const intervalUnitInput = document.getElementById('annualIntervalUnit');
             const intervalValue = Number(intervalInput.value);
             const intervalUnit = intervalUnitInput.value;
-            const unitSeconds = { minutes: 60, hours: 3600, days: 86400 }[intervalUnit];
-            const intervalSeconds = intervalValue * unitSeconds;
-            const intervalHours = intervalSeconds / 3600;
-            if (!Number.isInteger(intervalValue) || intervalValue < 1) {
-                showAnnualError('Time interval must be a whole number of at least 1.');
+            if (!isSupportedAnnualInterval(intervalValue, intervalUnit)) {
+                showAnnualError('Choose a whole-minute interval from 1 to 60 that divides evenly into a day, a listed whole-hour divisor of one day, or 1 day.');
                 intervalInput.focus();
                 return null;
             }
-            if (!Number.isFinite(intervalSeconds) || !Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 24 || 24 % intervalHours !== 0) {
-                showAnnualError('Annual Simulation requires a whole-hour interval from 1 hour to 1 day that divides evenly into 24 hours.');
+            const estimatedRows = estimateAnnualModelRows(years, intervalValue, intervalUnit);
+            if (estimatedRows > MAX_ANNUAL_MODEL_ROWS) {
+                showAnnualError(
+                    'This selection would produce approximately ' + estimatedRows.toLocaleString() +
+                    ' rows. Select fewer years or a longer interval to stay within the ' +
+                    MAX_ANNUAL_MODEL_ROWS.toLocaleString() + '-row Excel export limit.'
+                );
                 intervalInput.focus();
                 return null;
             }
@@ -71,8 +69,7 @@
                 return null;
             }
             const body = {
-                from_date: fromDate,
-                to_date: toDate,
+                years,
                 interval_value: intervalValue,
                 interval_unit: intervalUnit,
                 backtrack: document.getElementById('annualBacktrack').checked,
@@ -156,7 +153,11 @@
                 setAnnualExcelLink(null);
                 setAnnualProgress(0, 'Queued...');
                 annualRunBtn.textContent = 'Running...';
-                registerDirectRun(job_id, 'annual', body, 0, 'Annual simulation queued');
+                registerDirectRun(job_id, 'annual', {
+                    ...body,
+                    from_date: annualYearElements.fromDate.value,
+                    to_date: annualYearElements.toDate.value,
+                }, 0, 'Annual simulation queued');
                 saveDashboardState();
                 pollAnnualStatus(job_id, statusPollRevision);
             } catch (e) {
@@ -171,14 +172,9 @@
         }
 
         async function runAnnualAnalysis() {
-            const fromDate = document.getElementById('annualFromDate').value;
-            const toDate = document.getElementById('annualToDate').value;
-            if (!fromDate || !toDate) {
-                showAnnualError('Choose both a start date and an end date.');
-                return;
-            }
             const body = buildAnnualRequest();
             if (!body) return;
+            window.clearSavedResultsDisplayedJob?.('annual');
             annualRequestRevision += 1;
             clearAnnualFallbackConfirmation();
             annualLatestJobId = null;
@@ -332,6 +328,21 @@
         calibrateModel.addEventListener('change', syncCalibrationMode);
         iamModelRadios.forEach((radio) => radio.addEventListener('change', syncIamAr));
         annualRunBtn.addEventListener('click', runAnnualAnalysis);
+        annualYearElements.selectAllButton.addEventListener('click', () => {
+            const years = Array.from(annualYearElements.grid.querySelectorAll('input[type="checkbox"]:not(:disabled)'))
+                .map((input) => Number(input.value))
+                .filter(Number.isInteger);
+            setAnnualSelectedYears(years);
+            invalidateAnnualRequestFromFormEdit();
+            saveDashboardState();
+            updateAgentContext();
+        });
+        annualYearElements.clearButton.addEventListener('click', () => {
+            setAnnualSelectedYears([]);
+            invalidateAnnualRequestFromFormEdit();
+            saveDashboardState();
+            updateAgentContext();
+        });
         annualCalibrationElements.restoreButton.addEventListener('click', restoreAnnualCalibrationSettings);
         annualFallbackElements.confirmButton.addEventListener('click', confirmAnnualFallback);
         annualFallbackElements.cancelButton.addEventListener('click', cancelAnnualFallbackConfirmation);
@@ -366,6 +377,8 @@
         annualIamModelRadios.forEach((radio) => radio.addEventListener('change', syncAnnualIamAr));
         document.getElementById('annualFromDate').addEventListener('change', updateAnnualRuntimeWarning);
         document.getElementById('annualToDate').addEventListener('change', updateAnnualRuntimeWarning);
+        document.getElementById('annualIntervalValue').addEventListener('input', updateAnnualRuntimeWarning);
+        document.getElementById('annualIntervalUnit').addEventListener('change', updateAnnualRuntimeWarning);
         syncCurtailmentLimit();
         syncCalibrationMode();
         syncIamAr();

@@ -32,6 +32,7 @@
                 return;
             }
 
+            window.clearSavedResultsDisplayedJob?.('validation');
             const statusPollRevision = invalidateValidationStatusPoll();
             latestJobId = null;
             abortCalibrationReviewRequests();

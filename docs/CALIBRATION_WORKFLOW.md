@@ -181,6 +181,11 @@ current promoted, reviewed calibration. The annual run inherits the baseline's
 backtracking, efficiency, IAM, and curtailment settings as editable starting
 values. Any edits are recorded as explicit differences from the calibration
 settings. Annual dates remain independent of the historian calibration window.
+The annual interval can use any supported whole-minute divisor of a day from 1
+through 60 minutes, a supported whole-hour interval, or one day. Sub-hour source
+snapshots carry both fixed-MST hour and minute keys. A one-minute full year is
+about 525,600 rows; combined selections above 1,048,575 rows are rejected before
+download so the complete time series remains exportable to Excel.
 
 The annual weather data is never used to refit calibration factors. The model
 first produces its physics-only prediction with the submitted annual settings,

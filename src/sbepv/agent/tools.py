@@ -55,6 +55,11 @@ def _handle_scenario_tool(
     target_mode = overrides.pop("mode", req.active_mode)
     if target_mode not in {"validation", "annual"}:
         raise HTTPException(status_code=422, detail="Unsupported analysis mode.")
+    if target_mode == "validation" and "years" in overrides:
+        raise HTTPException(
+            status_code=422,
+            detail="MIDC year selection can only be changed for annual runs.",
+        )
     validation_only = {"from_time", "to_time"}
     if target_mode == "annual" and validation_only.intersection(overrides):
         raise HTTPException(
@@ -120,7 +125,13 @@ def _handle_scenario_tool(
         overrides = _apply_dependent_scenario_overrides(overrides, baseline_request)
         candidate_values = dict(baseline_request)
         candidate_values.update(overrides)
-        _, candidate = _canonical_request(target_mode, candidate_values)
+        _, candidate = _canonical_request(
+            target_mode,
+            candidate_values,
+            allow_resolved_partial=(
+                target_mode == "annual" and "years" not in overrides
+            ),
+        )
         changes = _scenario_changes(baseline_request, candidate)
         baseline_mode = str(baseline.get("mode", req.active_mode))
         if baseline_mode != target_mode:
@@ -272,7 +283,11 @@ def _handle_parameter_sweep_tool(
                     {parameter: value}, baseline_request
                 )
             )
-            _, candidate = _canonical_request(target_mode, candidate_values)
+            _, candidate = _canonical_request(
+                target_mode,
+                candidate_values,
+                allow_resolved_partial=target_mode == "annual",
+            )
             changes = _scenario_changes(baseline_request, candidate)
             if not changes:
                 baseline_index = index

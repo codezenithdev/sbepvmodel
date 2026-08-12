@@ -55,6 +55,151 @@
             return { fromDate, toDate };
         }
 
+        function dateIsoInTimeZone(value = new Date(), timeZone = 'America/Denver') {
+            const parts = new Intl.DateTimeFormat('en-US', {
+                timeZone,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+            }).formatToParts(value);
+            const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+            return values.year + '-' + values.month + '-' + values.day;
+        }
+
+        function shiftIsoDate(isoDate, days) {
+            const value = new Date(String(isoDate) + 'T12:00:00Z');
+            value.setUTCDate(value.getUTCDate() + Number(days || 0));
+            return value.toISOString().slice(0, 10);
+        }
+
+        function applyValidationDateDefaults() {
+            const fromInput = document.getElementById('fromDate');
+            const toInput = document.getElementById('toDate');
+            const today = dateIsoInTimeZone();
+            fromInput.value = '2025-12-12';
+            fromInput.max = today;
+            toInput.value = today;
+            toInput.max = today;
+        }
+
+        function annualCurrentYear(value = new Date()) {
+            return Number(dateIsoInTimeZone(value, 'Etc/GMT+7').slice(0, 4));
+        }
+
+        function annualLatestAvailableDate(value = new Date()) {
+            return shiftIsoDate(dateIsoInTimeZone(value, 'Etc/GMT+7'), -1);
+        }
+
+        function annualYearDateRange(year) {
+            const numericYear = Number(year);
+            const currentYear = annualCurrentYear();
+            if (!Number.isInteger(numericYear) || numericYear < ANNUAL_FIRST_YEAR || numericYear > currentYear) return null;
+            const periodStart = numericYear === ANNUAL_FIRST_YEAR
+                ? ANNUAL_FIRST_DATE
+                : numericYear + '-01-01';
+            let periodEnd = numericYear + '-12-31';
+            let coverageStatus = numericYear === ANNUAL_FIRST_YEAR ? 'partial_start' : 'complete';
+            if (numericYear === currentYear) {
+                periodEnd = annualLatestAvailableDate();
+                coverageStatus = 'year_to_date';
+                if (!periodEnd.startsWith(String(currentYear))) return null;
+            }
+            return {
+                year: numericYear,
+                periodStart,
+                periodEnd,
+                coverageStatus,
+                completeCalendarYear: coverageStatus === 'complete',
+            };
+        }
+
+        function formatAnnualPickerDate(isoDate) {
+            const value = new Date(String(isoDate) + 'T00:00:00Z');
+            return new Intl.DateTimeFormat('en-US', {
+                month: 'short',
+                day: 'numeric',
+                timeZone: 'UTC',
+            }).format(value);
+        }
+
+        function readAnnualSelectedYears() {
+            return Array.from(annualYearElements.grid.querySelectorAll('input[type="checkbox"]:checked'))
+                .map((input) => Number(input.value))
+                .filter(Number.isInteger)
+                .sort((left, right) => left - right);
+        }
+
+        function updateAnnualYearSelectionSummary() {
+            const years = readAnnualSelectedYears();
+            const ranges = years.map(annualYearDateRange).filter(Boolean);
+            annualYearElements.fromDate.value = ranges[0]?.periodStart || '';
+            annualYearElements.toDate.value = ranges[ranges.length - 1]?.periodEnd || '';
+            const partialCount = ranges.filter((range) => !range.completeCalendarYear).length;
+            annualYearElements.summary.textContent = years.length
+                ? years.length + (years.length === 1 ? ' year selected' : ' years selected') +
+                    (partialCount ? ' - ' + partialCount + (partialCount === 1 ? ' partial year' : ' partial years') : ' - complete-year coverage')
+                : 'No years selected';
+            annualYearElements.clearButton.disabled = years.length === 0;
+            annualYearElements.selectAllButton.disabled = years.length === annualYearElements.grid.querySelectorAll('input:not(:disabled)').length;
+            updateAnnualRuntimeWarning();
+        }
+
+        function setAnnualSelectedYears(years) {
+            const selected = new Set((Array.isArray(years) ? years : []).map(Number));
+            annualYearElements.grid.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+                input.checked = selected.has(Number(input.value));
+            });
+            updateAnnualYearSelectionSummary();
+        }
+
+        function initializeAnnualYearSelector() {
+            if (annualYearElements.grid.childElementCount) {
+                updateAnnualYearSelectionSummary();
+                return;
+            }
+            const currentYear = annualCurrentYear();
+            for (let year = currentYear; year >= ANNUAL_FIRST_YEAR; year -= 1) {
+                const range = annualYearDateRange(year);
+                const option = document.createElement('label');
+                option.className = 'annual-year-option';
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.className = 'annual-input annual-year-checkbox';
+                input.name = 'annualYears';
+                input.value = String(year);
+                input.disabled = !range;
+                input.checked = year === currentYear - 1;
+                const copy = document.createElement('span');
+                copy.className = 'annual-year-option-copy';
+                const yearText = document.createElement('span');
+                yearText.className = 'annual-year-option-year';
+                yearText.textContent = String(year);
+                copy.appendChild(yearText);
+                if (range && !range.completeCalendarYear) {
+                    const note = document.createElement('span');
+                    note.className = 'annual-year-option-note';
+                    note.textContent = range.coverageStatus === 'partial_start'
+                        ? 'Partial - starts ' + formatAnnualPickerDate(range.periodStart)
+                        : 'Partial - through ' + formatAnnualPickerDate(range.periodEnd);
+                    copy.appendChild(note);
+                }
+                if (!range) {
+                    const note = document.createElement('span');
+                    note.className = 'annual-year-option-note';
+                    note.textContent = 'No complete day available';
+                    copy.appendChild(note);
+                }
+                input.addEventListener('change', updateAnnualYearSelectionSummary);
+                option.append(input, copy);
+                annualYearElements.grid.appendChild(option);
+            }
+            if (!readAnnualSelectedYears().length) {
+                const firstAvailable = annualYearElements.grid.querySelector('input:not(:disabled)');
+                if (firstAvailable) firstAvailable.checked = true;
+            }
+            updateAnnualYearSelectionSummary();
+        }
+
         function showImage(imgId, iconId, boxId, url, cacheBust = true) {
             const img = document.getElementById(imgId);
             img.onload = () => {
@@ -126,12 +271,16 @@
             clearImage('annualAcImg', 'annualAcIcon', 'annualAcChartBox');
             clearImage('annualEnergyImg', 'annualEnergyIcon', 'annualEnergyChartBox');
             clearImage('annualMonthlyImg', 'annualMonthlyIcon', 'annualMonthlyChartBox');
+            clearAnnualYearResults();
         }
 
         function fmtPct(v) {
             if (v === null || v === undefined) return 'n/a';
             return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
         }
+
+        applyValidationDateDefaults();
+        initializeAnnualYearSelector();
 
         function getFormState() {
             return {
@@ -184,6 +333,7 @@
 
         function getAnnualFormState() {
             return {
+                years: readAnnualSelectedYears(),
                 fromDate: document.getElementById('annualFromDate').value,
                 toDate: document.getElementById('annualToDate').value,
                 intervalValue: document.getElementById('annualIntervalValue').value,
@@ -205,8 +355,9 @@
             const setValue = (id, value) => {
                 if (value !== undefined && value !== null) document.getElementById(id).value = value;
             };
-            setValue('annualFromDate', form.fromDate);
-            setValue('annualToDate', form.toDate);
+            if (Array.isArray(form.years)) {
+                setAnnualSelectedYears(form.years);
+            }
             setValue('annualIntervalValue', form.intervalValue);
             setValue('annualIntervalUnit', form.intervalUnit);
             setValue('annualCurtailmentLimitKw', form.curtailmentLimitKw);
@@ -267,6 +418,7 @@
                 interval_value: positiveIntegerOrNull(form.intervalValue),
                 interval_unit: form.intervalUnit,
             };
+            if (annual) config.years = [...form.years];
             if (!annual) {
                 config.calibrate_model = !!form.calibrateModel;
                 config.from_time = form.fromTime;
@@ -302,6 +454,7 @@
                 iamAr: requestValue(request, 'iam_a_r', 'iamAr'),
                 intervalValue: requestValue(request, 'interval_value', 'intervalValue'),
                 intervalUnit: requestValue(request, 'interval_unit', 'intervalUnit'),
+                years: requestValue(request, 'years', 'years'),
             };
             if (mode === 'annual') {
                 applyAnnualFormState(mapped);
@@ -318,11 +471,13 @@
                 excelLink.classList.add('hidden');
                 excelLink.removeAttribute('href');
                 excelLink.removeAttribute('download');
+                if (window.savedResultsDrawerReady) syncSavedResultsControls();
                 return;
             }
             excelLink.href = url;
             excelLink.download = filename || 'SB_Energy_Model_Results.xlsx';
             excelLink.classList.remove('hidden');
+            if (window.savedResultsDrawerReady) syncSavedResultsControls();
         }
 
         function setAnnualExcelLink(url, filename) {
@@ -330,11 +485,13 @@
                 annualExcelLink.classList.add('hidden');
                 annualExcelLink.removeAttribute('href');
                 annualExcelLink.removeAttribute('download');
+                if (window.savedResultsDrawerReady) syncSavedResultsControls();
                 return;
             }
             annualExcelLink.href = url;
             annualExcelLink.download = filename || 'SB_Energy_Annual_Simulation.xlsx';
             annualExcelLink.classList.remove('hidden');
+            if (window.savedResultsDrawerReady) syncSavedResultsControls();
         }
 
         function applyInputPlots(inputPlots, cacheBust = true) {

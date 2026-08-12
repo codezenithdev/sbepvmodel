@@ -46,6 +46,7 @@ function isAllowedApiPath(path: string[]): boolean {
       "annual-run",
       "chat",
       "calibration-reviews",
+      "saved-results",
     ].includes(path[0]);
   }
 
@@ -53,7 +54,8 @@ function isAllowedApiPath(path: string[]): boolean {
   if (path.length === 2) {
     return (
       (path[0] === "status" && isSafeId(path[1])) ||
-      (path[0] === "agent" && path[1] === "state")
+      (path[0] === "agent" && path[1] === "state") ||
+      (path[0] === "saved-results" && isSafeId(path[1]))
     );
   }
 

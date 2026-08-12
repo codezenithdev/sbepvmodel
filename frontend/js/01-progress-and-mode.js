@@ -7,11 +7,16 @@
             progressStage.textContent = stage || '';
         }
 
+        function annualUserFacingText(value) {
+            return String(value || '').replace(/\bchunks?\b/gi, 'data');
+        }
+
         function setAnnualProgress(pct, stage) {
+            const bounded = Math.min(100, Math.max(0, Number(pct) || 0));
             annualProgressWrap.classList.add('visible');
-            annualProgressFill.style.width = pct + '%';
-            annualProgressPct.textContent = pct + '%';
-            annualProgressStage.textContent = stage || '';
+            annualProgressFill.style.width = bounded + '%';
+            annualProgressPct.textContent = Math.round(bounded) + '%';
+            annualProgressStage.textContent = annualUserFacingText(stage);
         }
 
         function showError(msg) {
@@ -20,7 +25,7 @@
         }
 
         function showAnnualError(msg) {
-            annualErrorBanner.textContent = 'Warning: ' + msg;
+            annualErrorBanner.textContent = 'Warning: ' + annualUserFacingText(msg);
             annualErrorBanner.classList.add('visible');
         }
 
