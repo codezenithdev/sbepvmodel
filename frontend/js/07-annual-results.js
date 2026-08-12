@@ -143,7 +143,7 @@
         function clearAnnualYearResults() {
             annualYearResultElements.panel.hidden = true;
             annualYearResultElements.rows.replaceChildren();
-            annualYearResultElements.cdfChart.hidden = true;
+            annualYearResultElements.cdfChart.toggleAttribute('hidden', true);
             annualYearResultElements.cdfFallback.hidden = false;
             annualYearResultElements.cdfFallback.textContent = 'Run at least two complete calendar years to view a distribution.';
             Array.from(annualYearResultElements.cdfChart.children).forEach((child) => {
@@ -168,7 +168,7 @@
                 if (!['title', 'desc'].includes(child.tagName.toLowerCase())) child.remove();
             });
             if (eligible.length < 2) {
-                chart.hidden = true;
+                chart.toggleAttribute('hidden', true);
                 fallback.hidden = false;
                 if (!eligible.length) {
                     fallback.textContent = 'No complete calendar years were returned. Partial years remain in the table and are excluded from the CDF.';
@@ -204,7 +204,7 @@
             }).filter((item) => item.sampleCount >= 2);
             const allValues = series.flatMap((item) => item.values.map((point) => point.value));
             if (!series.length || allValues.length < 2) {
-                chart.hidden = true;
+                chart.toggleAttribute('hidden', true);
                 fallback.hidden = false;
                 fallback.textContent = 'Complete years were returned, but at least two numeric energy values are required to draw the CDF.';
                 annualYearResultElements.cdfDescription.textContent = 'Complete-year energy values are insufficient for a distribution.';
@@ -301,7 +301,7 @@
             annualYearResultElements.cdfDescription.textContent =
                 'Empirical cumulative distributions for SolarEdge (solid), Solectria (dashed), and combined (dotted) predicted energy across complete years ' + includedYears + '.' +
                 (excludedYears.length ? ' Partial years excluded: ' + excludedYears.join(', ') + '.' : '');
-            chart.hidden = false;
+            chart.toggleAttribute('hidden', false);
             fallback.hidden = true;
         }
 

@@ -159,6 +159,7 @@ class AnnualCalibrationUiTests(unittest.TestCase):
             'aria-labelledby="annualCdfTitle annualCdfDescription"',
             "function renderAnnualYearResults(result)",
             "function renderAnnualEnergyCdf(rows)",
+            "chart.toggleAttribute('hidden', false)",
             "row.cdfEligible && row.complete",
             "eligible.length < 2",
             "last.probability = probability",
