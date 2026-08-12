@@ -381,6 +381,242 @@ class CalibrationWorkflowTests(unittest.TestCase):
         self.assertAlmostEqual(float(parsed["temp_air_c"].iloc[1]), 20.2)
         self.assertNotIn("calibration_fit_eligible", parsed.columns)
 
+    def test_validation_weather_preflight_repairs_and_audits_short_gaps(
+        self,
+    ) -> None:
+        frame = self._valid_historian_frame(
+            [
+                "2026-06-01 15:00:00",
+                "2026-06-01 16:00:00",
+                "2026-06-01 17:00:00",
+            ]
+        )
+        frame["wind_speed"] = [-0.1, -999.0, 4.0]
+        frame["temp_air"] = [20.0, -80.0, 22.0]
+
+        parsed = parse_input_csv(
+            str(self._write_historian_csv(frame, "validation-weather.csv")),
+            validation_weather_preflight=True,
+        )
+
+        self.assertEqual(len(parsed), 3)
+        self.assertEqual(float(parsed["wind_speed_ms"].iloc[0]), 0.0)
+        self.assertEqual(float(parsed["wind_speed_ms"].iloc[1]), 2.0)
+        self.assertEqual(float(parsed["temp_air_c"].iloc[1]), 21.0)
+        preflight = parsed.attrs["historian_preflight"]
+        self.assertEqual(preflight["policy"], "validation_weather_preflight_v1")
+        self.assertEqual(preflight["input_row_count"], 3)
+        self.assertEqual(preflight["usable_row_count"], 3)
+        self.assertEqual(preflight["coverage_pct"], 100.0)
+        self.assertEqual(preflight["wind_clamped_count"], 1)
+        self.assertEqual(preflight["wind_invalid_count"], 1)
+        self.assertEqual(preflight["temperature_invalid_count"], 1)
+        self.assertEqual(preflight["wind_interpolated_count"], 1)
+        self.assertEqual(preflight["temperature_interpolated_count"], 1)
+        events = {
+            (event["column"], event["action"]): event
+            for event in preflight["events"]
+        }
+        self.assertEqual(
+            events[("wind_speed_ms", "clamped")]["original_value"],
+            -0.1,
+        )
+        self.assertEqual(
+            events[("wind_speed_ms", "interpolated")]["original_value"],
+            -999.0,
+        )
+        self.assertEqual(
+            events[("wind_speed_ms", "interpolated")]["final_value"],
+            2.0,
+        )
+        self.assertEqual(
+            events[("temp_air_c", "interpolated")]["original_value"],
+            -80.0,
+        )
+        self.assertEqual(
+            events[("temp_air_c", "interpolated")]["final_value"],
+            21.0,
+        )
+
+    def test_validation_weather_preflight_counts_missing_internal_interval(
+        self,
+    ) -> None:
+        frame = self._valid_historian_frame(
+            [
+                "2026-06-01 15:00:00",
+                "2026-06-01 17:00:00",
+            ]
+        )
+
+        parsed = parse_input_csv(
+            str(self._write_historian_csv(frame, "validation-internal-gap.csv")),
+            validation_weather_preflight=True,
+            expected_interval_seconds=3_600,
+            requested_start="2026-06-01T15:00:00",
+            requested_end="2026-06-01T18:00:00",
+        )
+
+        self.assertEqual(len(parsed), 2)
+        preflight = parsed.attrs["historian_preflight"]
+        self.assertEqual(preflight["source_row_count"], 2)
+        self.assertEqual(preflight["expected_interval_count"], 3)
+        self.assertEqual(preflight["input_row_count"], 3)
+        self.assertEqual(preflight["missing_interval_count"], 1)
+        self.assertEqual(preflight["omitted_row_count"], 1)
+        self.assertEqual(preflight["usable_row_count"], 2)
+        self.assertEqual(preflight["coverage_pct"], 66.667)
+        missing_events = [
+            event
+            for event in preflight["events"]
+            if event["action"] == "omitted_missing_interval"
+        ]
+        self.assertEqual(len(missing_events), 1)
+        self.assertEqual(missing_events[0]["column"], "timestamp")
+        self.assertEqual(
+            pd.Timestamp(missing_events[0]["timestamp"]).tz_convert("UTC"),
+            pd.Timestamp("2026-06-01T16:00:00Z"),
+        )
+        self.assertTrue(
+            any("missing 1 expected" in warning for warning in preflight["warnings"])
+        )
+
+    def test_validation_weather_preflight_counts_leading_and_trailing_gaps(
+        self,
+    ) -> None:
+        frame = self._valid_historian_frame(
+            [
+                "2026-06-01 16:00:00",
+                "2026-06-01 17:00:00",
+            ]
+        )
+
+        parsed = parse_input_csv(
+            str(self._write_historian_csv(frame, "validation-edge-gaps.csv")),
+            validation_weather_preflight=True,
+            expected_interval_seconds=3_600,
+            requested_start="2026-06-01T15:00:00",
+            requested_end="2026-06-01T19:00:00",
+        )
+
+        preflight = parsed.attrs["historian_preflight"]
+        self.assertEqual(len(parsed), 2)
+        self.assertEqual(preflight["expected_interval_count"], 4)
+        self.assertEqual(preflight["missing_interval_count"], 2)
+        self.assertEqual(preflight["omitted_row_count"], 2)
+        self.assertEqual(preflight["coverage_pct"], 50.0)
+        omitted_utc = {
+            pd.Timestamp(timestamp).tz_convert("UTC")
+            for timestamp in preflight["omitted_timestamps"]
+        }
+        self.assertEqual(
+            omitted_utc,
+            {
+                pd.Timestamp("2026-06-01T15:00:00Z"),
+                pd.Timestamp("2026-06-01T18:00:00Z"),
+            },
+        )
+
+    def test_validation_weather_preflight_does_not_bridge_timestamp_gap(
+        self,
+    ) -> None:
+        frame = self._valid_historian_frame(
+            [
+                "2026-06-01 15:00:00",
+                "2026-06-01 17:00:00",
+            ]
+        )
+        frame.loc[1, "wind_speed"] = -999.0
+
+        parsed = parse_input_csv(
+            str(self._write_historian_csv(frame, "validation-no-bridge.csv")),
+            validation_weather_preflight=True,
+            expected_interval_seconds=3_600,
+            requested_start="2026-06-01T15:00:00",
+            requested_end="2026-06-01T18:00:00",
+        )
+
+        preflight = parsed.attrs["historian_preflight"]
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(preflight["missing_interval_count"], 1)
+        self.assertEqual(preflight["wind_invalid_count"], 1)
+        self.assertEqual(preflight["wind_interpolated_count"], 0)
+        self.assertEqual(preflight["omitted_row_count"], 2)
+        self.assertEqual(preflight["coverage_pct"], 33.333)
+        invalid_event = next(
+            event
+            for event in preflight["events"]
+            if event["column"] == "wind_speed_ms"
+        )
+        self.assertEqual(invalid_event["action"], "omitted")
+        self.assertEqual(invalid_event["original_value"], -999.0)
+
+    def test_validation_weather_preflight_omits_long_gaps_from_all_series(
+        self,
+    ) -> None:
+        timestamps = pd.date_range(
+            "2026-06-01 15:00:00",
+            periods=5,
+            freq="h",
+        ).strftime("%Y-%m-%d %H:%M:%S").tolist()
+        frame = self._valid_historian_frame(timestamps)
+        frame.loc[1:3, "wind_speed"] = -1999.0
+
+        parsed = parse_input_csv(
+            str(self._write_historian_csv(frame, "validation-long-gap.csv")),
+            validation_weather_preflight=True,
+        )
+
+        self.assertEqual(len(parsed), 2)
+        self.assertEqual(
+            parsed["se_measured_power_w"].tolist(),
+            [50_000.0, 54_000.0],
+        )
+        self.assertEqual(
+            parsed["sol_measured_power_w"].tolist(),
+            [45_000.0, 48_600.0],
+        )
+        preflight = parsed.attrs["historian_preflight"]
+        self.assertEqual(preflight["omitted_row_count"], 3)
+        self.assertEqual(preflight["usable_row_count"], 2)
+        self.assertEqual(preflight["coverage_pct"], 40.0)
+        self.assertEqual(len(preflight["omitted_timestamps"]), 3)
+        omitted_events = [
+            event
+            for event in preflight["events"]
+            if event["action"] == "omitted"
+        ]
+        self.assertEqual(len(omitted_events), 3)
+        self.assertTrue(
+            all(event["original_value"] == -1999.0 for event in omitted_events)
+        )
+        self.assertTrue(
+            all(event["final_value"] is None for event in omitted_events)
+        )
+        self.assertIn("Measured and predicted totals use the same rows", preflight["warnings"][-1])
+
+    def test_validation_weather_preflight_rejects_all_unusable_rows(
+        self,
+    ) -> None:
+        frame = self._valid_historian_frame(
+            [
+                "2026-06-01 15:00:00",
+                "2026-06-01 16:00:00",
+                "2026-06-01 17:00:00",
+            ]
+        )
+        frame["wind_speed"] = -1999.0
+
+        with self.assertRaisesRegex(ValueError, "no usable rows"):
+            parse_input_csv(
+                str(
+                    self._write_historian_csv(
+                        frame,
+                        "validation-all-unusable.csv",
+                    )
+                ),
+                validation_weather_preflight=True,
+            )
+
     def test_historian_parser_rejects_unbounded_or_all_missing_weather(
         self,
     ) -> None:

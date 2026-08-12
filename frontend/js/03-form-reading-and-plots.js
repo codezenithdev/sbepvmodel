@@ -264,6 +264,7 @@
             clearImage('energyImg', 'energyIcon', 'energyChartBox');
             clearImage('acImg', 'acIcon', 'acChartBox');
             clearUncalibratedPlots();
+            validationPreflightPanel.hidden = true;
         }
 
         function clearAnnualImages() {

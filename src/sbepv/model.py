@@ -59,6 +59,11 @@ OUTPUT_BASE = "stac1_model"
 INPUT_IS_UTC = True  # historian writes UTC timestamps
 TIMEZONE = "America/Denver"  # local tz for display/indexing
 MAX_TEMPERATURE_INTERPOLATION_GAP_ROWS = 2
+VALIDATION_WEATHER_INTERPOLATION_GAP_ROWS = 2
+VALIDATION_WIND_CLAMP_MIN_MS = -0.1
+VALIDATION_WIND_MAX_MS = 50.0
+VALIDATION_TEMPERATURE_MIN_C = -40.0
+VALIDATION_TEMPERATURE_MAX_C = 60.0
 
 # Solectria XGI 1500-250 nameplate constraints. The CEC efficiency is used as
 # the documented constant-efficiency approximation until a validated part-load
@@ -588,8 +593,355 @@ def _bounded_temperature_interpolation(values: pd.Series) -> pd.Series:
     return interpolated
 
 
-def parse_input_csv(path: str) -> pd.DataFrame:
-    """Read stac1.csv, rename to canonical columns, index by local (tz-aware) time."""
+def _bounded_validation_weather_interpolation(
+    values: pd.Series,
+    *,
+    continuity_mask: pd.Series | None = None,
+) -> tuple[pd.Series, pd.Series]:
+    """Repair only short missing runs and return the repaired-cell mask."""
+
+    numeric = pd.to_numeric(values, errors="coerce").replace(
+        [np.inf, -np.inf], np.nan
+    )
+    if continuity_mask is not None:
+        continuous = continuity_mask.reindex(numeric.index, fill_value=False).astype(
+            bool
+        )
+        result = numeric.copy()
+        repaired = pd.Series(False, index=numeric.index, dtype=bool)
+        segment_ids = (~continuous).cumsum()
+        for segment_id in segment_ids.loc[continuous].unique():
+            segment_mask = continuous & segment_ids.eq(segment_id)
+            segment_result, segment_repaired = (
+                _bounded_validation_weather_interpolation(
+                    numeric.loc[segment_mask]
+                )
+            )
+            result.loc[segment_mask] = segment_result
+            repaired.loc[segment_mask] = segment_repaired
+        return result, repaired
+
+    missing = numeric.isna()
+    if not missing.any() or missing.all():
+        return numeric, pd.Series(False, index=numeric.index, dtype=bool)
+    groups = missing.ne(missing.shift(fill_value=False)).cumsum()
+    missing_run_lengths = missing.groupby(groups).transform("sum")
+    interpolated = numeric.interpolate(limit_direction="both")
+    long_gap = missing & (
+        missing_run_lengths
+        > int(VALIDATION_WEATHER_INTERPOLATION_GAP_ROWS)
+    )
+    interpolated.loc[long_gap] = np.nan
+    return interpolated, missing & interpolated.notna()
+
+
+def _validation_preflight_grid(
+    df: pd.DataFrame,
+    *,
+    expected_interval_seconds: int | None,
+    requested_start: str | None,
+    requested_end: str | None,
+) -> tuple[pd.DataFrame, pd.Series, dict[str, object]]:
+    """Align historian rows to the expected end-exclusive validation grid."""
+
+    if (requested_start is None) != (requested_end is None):
+        raise ValueError(
+            "requested_start and requested_end must be supplied together."
+        )
+
+    out = df.copy()
+    source_row_count = int(len(out))
+    source_present = pd.Series(True, index=out.index, dtype=bool)
+    grid_metadata: dict[str, object] = {
+        "source_row_count": source_row_count,
+        "expected_interval_count": source_row_count,
+        "missing_interval_count": 0,
+        "expected_interval_seconds": (
+            int(expected_interval_seconds)
+            if expected_interval_seconds is not None
+            else None
+        ),
+        "requested_start": requested_start,
+        "requested_end": requested_end,
+    }
+    if expected_interval_seconds is None:
+        if requested_start is not None:
+            raise ValueError(
+                "expected_interval_seconds is required when validation coverage "
+                "boundaries are supplied."
+            )
+        return out, source_present, grid_metadata
+
+    interval_seconds = int(expected_interval_seconds)
+    if interval_seconds <= 0:
+        raise ValueError("expected_interval_seconds must be positive.")
+    if out.index.has_duplicates:
+        raise ValueError(
+            "Historian validation contains duplicate timestamps; review or "
+            "exclude duplicate rows before retrying."
+        )
+
+    def utc_timestamp(value: str, *, field_name: str) -> pd.Timestamp:
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{field_name} must be a valid timestamp.") from exc
+        if pd.isna(timestamp):
+            raise ValueError(f"{field_name} must be a valid timestamp.")
+        if timestamp.tzinfo is None:
+            return timestamp.tz_localize("UTC")
+        return timestamp.tz_convert("UTC")
+
+    if requested_start is not None and requested_end is not None:
+        start_utc = utc_timestamp(requested_start, field_name="requested_start")
+        end_utc = utc_timestamp(requested_end, field_name="requested_end")
+        if start_utc >= end_utc:
+            raise ValueError("requested_start must be before requested_end.")
+        expected_utc = pd.date_range(
+            start=start_utc,
+            end=end_utc,
+            freq=pd.to_timedelta(interval_seconds, unit="s"),
+            inclusive="left",
+        )
+    else:
+        observed_utc = out.index.tz_convert("UTC")
+        expected_utc = pd.date_range(
+            start=observed_utc.min(),
+            end=observed_utc.max(),
+            freq=pd.to_timedelta(interval_seconds, unit="s"),
+        )
+
+    expected_local = expected_utc.tz_convert(out.index.tz)
+    expected_local.name = out.index.name
+    source_present = source_present.reindex(
+        expected_local, fill_value=False
+    ).astype(bool)
+    out = out.reindex(expected_local)
+    # Reconstitute canonical UTC timestamps for synthetic missing-grid rows.
+    out["timestamp_utc"] = expected_utc
+
+    missing_interval_count = int((~source_present).sum())
+    grid_metadata.update(
+        {
+            "source_row_count": int(source_present.sum()),
+            "expected_interval_count": int(len(expected_local)),
+            "missing_interval_count": missing_interval_count,
+            "expected_interval_seconds": interval_seconds,
+            "requested_start": start_utc.isoformat() if requested_start else None,
+            "requested_end": end_utc.isoformat() if requested_end else None,
+        }
+    )
+    return out, source_present, grid_metadata
+
+
+def _historian_validation_weather_preflight(
+    df: pd.DataFrame,
+    *,
+    expected_interval_seconds: int | None = None,
+    requested_start: str | None = None,
+    requested_end: str | None = None,
+) -> pd.DataFrame:
+    """Apply the automatic, auditable weather policy for validation runs."""
+
+    out, source_present, grid_metadata = _validation_preflight_grid(
+        df,
+        expected_interval_seconds=expected_interval_seconds,
+        requested_start=requested_start,
+        requested_end=requested_end,
+    )
+    input_row_count = int(len(out))
+    missing_interval = ~source_present
+    original_wind = out["wind_speed_ms"].copy()
+    original_temperature = out["temp_air_c"].copy()
+
+    wind_clamped = original_wind.ge(VALIDATION_WIND_CLAMP_MIN_MS) & (
+        original_wind < 0.0
+    )
+    wind_invalid = (original_wind < VALIDATION_WIND_CLAMP_MIN_MS) | (
+        original_wind > VALIDATION_WIND_MAX_MS
+    )
+    temperature_invalid = (
+        original_temperature < VALIDATION_TEMPERATURE_MIN_C
+    ) | (original_temperature > VALIDATION_TEMPERATURE_MAX_C)
+
+    out.loc[wind_clamped, "wind_speed_ms"] = 0.0
+    out.loc[wind_invalid, "wind_speed_ms"] = np.nan
+    out.loc[temperature_invalid, "temp_air_c"] = np.nan
+
+    wind_needing_repair = out["wind_speed_ms"].isna() & source_present
+    temperature_needing_repair = out["temp_air_c"].isna() & source_present
+    out["wind_speed_ms"], wind_interpolated = (
+        _bounded_validation_weather_interpolation(
+            out["wind_speed_ms"], continuity_mask=source_present
+        )
+    )
+    out["temp_air_c"], temperature_interpolated = (
+        _bounded_validation_weather_interpolation(
+            out["temp_air_c"], continuity_mask=source_present
+        )
+    )
+    wind_interpolated &= source_present
+    temperature_interpolated &= source_present
+
+    omitted = missing_interval | out[["temp_air_c", "wind_speed_ms"]].isna().any(
+        axis=1
+    )
+
+    def timestamp_text(position: int) -> str:
+        return pd.Timestamp(out.index[position]).isoformat()
+
+    def audit_value(value: object) -> float | None:
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return numeric_value if np.isfinite(numeric_value) else None
+
+    events: list[dict[str, object]] = []
+    for position in np.flatnonzero(missing_interval.to_numpy()):
+        events.append(
+            {
+                "timestamp": timestamp_text(int(position)),
+                "column": "timestamp",
+                "action": "omitted_missing_interval",
+                "original_value": None,
+                "final_value": None,
+            }
+        )
+    for position in np.flatnonzero(wind_clamped.to_numpy()):
+        events.append(
+            {
+                "timestamp": timestamp_text(int(position)),
+                "column": "wind_speed_ms",
+                "action": "clamped",
+                "original_value": audit_value(original_wind.iloc[position]),
+                "final_value": 0.0,
+            }
+        )
+    for column, original, needing_repair, interpolated in (
+        (
+            "wind_speed_ms",
+            original_wind,
+            wind_needing_repair,
+            wind_interpolated,
+        ),
+        (
+            "temp_air_c",
+            original_temperature,
+            temperature_needing_repair,
+            temperature_interpolated,
+        ),
+    ):
+        for position in np.flatnonzero(needing_repair.to_numpy()):
+            repaired = bool(interpolated.iloc[position])
+            events.append(
+                {
+                    "timestamp": timestamp_text(int(position)),
+                    "column": column,
+                    "action": "interpolated" if repaired else "omitted",
+                    "original_value": audit_value(original.iloc[position]),
+                    "final_value": (
+                        audit_value(out[column].iloc[position])
+                        if repaired
+                        else None
+                    ),
+                }
+            )
+
+    usable_row_count = input_row_count - int(omitted.sum())
+    if usable_row_count <= 0:
+        raise ValueError(
+            "Historian validation has no usable rows after the bounded weather "
+            "preflight. Air temperature must be within -40 to 60 C and wind "
+            "speed must be within -0.1 to 50 m/s, with no gap longer than 2 "
+            "consecutive intervals."
+        )
+
+    coverage_pct = round(usable_row_count / input_row_count * 100.0, 3)
+    wind_interpolated_count = int(wind_interpolated.sum())
+    temperature_interpolated_count = int(temperature_interpolated.sum())
+    omitted_row_count = int(omitted.sum())
+    warnings: list[str] = []
+    missing_interval_count = int(missing_interval.sum())
+    if missing_interval_count:
+        warnings.append(
+            f"Validation source is missing {missing_interval_count} expected "
+            "historian interval row(s); those intervals were omitted from both "
+            "measured and predicted totals."
+        )
+    if int(wind_clamped.sum()):
+        warnings.append(
+            "Validation weather preflight clamped "
+            f"{int(wind_clamped.sum())} slightly negative wind-speed interval(s) "
+            "to 0 m/s."
+        )
+    if wind_interpolated_count or temperature_interpolated_count:
+        warnings.append(
+            "Validation weather preflight interpolated only bounded gaps of at "
+            f"most {VALIDATION_WEATHER_INTERPOLATION_GAP_ROWS} consecutive "
+            f"interval(s): wind={wind_interpolated_count}, "
+            f"air temperature={temperature_interpolated_count}."
+        )
+    if omitted_row_count:
+        warnings.append(
+            f"Validation omitted {omitted_row_count} expected historian interval "
+            "row(s) because source data was absent or wind speed or air "
+            "temperature remained unusable after bounded repair. Measured and "
+            "predicted totals use the same rows; "
+            f"usable coverage is {coverage_pct:.3f}%."
+        )
+
+    invalid_timestamps = {
+        "wind_speed_ms": [
+            timestamp_text(int(position))
+            for position in np.flatnonzero(wind_invalid.to_numpy())
+        ],
+        "temp_air_c": [
+            timestamp_text(int(position))
+            for position in np.flatnonzero(temperature_invalid.to_numpy())
+        ],
+    }
+    omitted_timestamps = [
+        timestamp_text(int(position))
+        for position in np.flatnonzero(omitted.to_numpy())
+    ]
+    preflight = {
+        "policy": "validation_weather_preflight_v1",
+        "input_row_count": input_row_count,
+        **grid_metadata,
+        "usable_row_count": usable_row_count,
+        "omitted_row_count": omitted_row_count,
+        "coverage_pct": coverage_pct,
+        "wind_clamped_count": int(wind_clamped.sum()),
+        "wind_invalid_count": int(wind_invalid.sum()),
+        "temperature_invalid_count": int(temperature_invalid.sum()),
+        "wind_missing_count": int(
+            (original_wind.isna() & source_present).sum()
+        ),
+        "temperature_missing_count": int(
+            (original_temperature.isna() & source_present).sum()
+        ),
+        "wind_interpolated_count": wind_interpolated_count,
+        "temperature_interpolated_count": temperature_interpolated_count,
+        "invalid_timestamps": invalid_timestamps,
+        "omitted_timestamps": omitted_timestamps,
+        "events": events,
+        "warnings": warnings,
+    }
+    result = out.loc[~omitted].copy()
+    result.attrs["historian_preflight"] = preflight
+    return result
+
+
+def parse_input_csv(
+    path: str,
+    *,
+    validation_weather_preflight: bool = False,
+    expected_interval_seconds: int | None = None,
+    requested_start: str | None = None,
+    requested_end: str | None = None,
+) -> pd.DataFrame:
+    """Read historian CSV and index it by local timezone-aware timestamps."""
     df = pd.read_csv(path)
     df = df.rename(columns=COLUMN_RENAME)
     df = df.dropna(subset=["timestamp"]).copy()
@@ -649,6 +1001,13 @@ def parse_input_csv(path: str) -> pd.DataFrame:
 
     df["dni_wm2"] = df["dni_wm2"].fillna(0.0)
     df["ghi_wm2"] = df["ghi_wm2"].fillna(0.0)
+    if validation_weather_preflight:
+        return _historian_validation_weather_preflight(
+            df,
+            expected_interval_seconds=expected_interval_seconds,
+            requested_start=requested_start,
+            requested_end=requested_end,
+        )
     df["temp_air_c"] = _bounded_temperature_interpolation(df["temp_air_c"])
     unfilled_temperature_rows = int(df["temp_air_c"].isna().sum())
     if unfilled_temperature_rows:
@@ -710,9 +1069,26 @@ def parse_midc_csv(path: str) -> tuple[pd.DataFrame, list[str]]:
     for column in ("ghi_wm2", "dni_wm2", "dhi_wm2", "temp_air_c", "wind_speed_ms"):
         data[column] = pd.to_numeric(raw[column], errors="coerce").to_numpy()
 
-    missing_counts = data[
-        ["ghi_wm2", "dni_wm2", "dhi_wm2", "temp_air_c", "wind_speed_ms"]
-    ].isna().sum()
+    weather_columns = [
+        "ghi_wm2",
+        "dni_wm2",
+        "dhi_wm2",
+        "temp_air_c",
+        "wind_speed_ms",
+    ]
+    unavailable_rows = data[weather_columns].isna().all(axis=1)
+    unavailable_count = int(unavailable_rows.sum())
+    if unavailable_count:
+        warnings.append(
+            f"Omitted {unavailable_count} MIDC interval row(s) with no available "
+            "weather measurements; no zero-generation or weather proxy was "
+            "fabricated."
+        )
+        data = data.loc[~unavailable_rows].copy()
+    if data.empty:
+        raise ValueError("MIDC file contains no usable weather rows.")
+
+    missing_counts = data[weather_columns].isna().sum()
     if int(missing_counts.sum()):
         detail = ", ".join(
             f"{column}={int(count)}"
@@ -2067,6 +2443,100 @@ def _audit_value(value: object) -> object:
         return str(value)
 
 
+def _json_safe_audit(value: object) -> object:
+    """Recursively normalize audit metadata for API and workbook output."""
+
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, (float, np.floating)):
+        numeric = float(value)
+        return numeric if np.isfinite(numeric) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_safe_audit(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe_audit(item) for item in value]
+    return str(value)
+
+
+def _historian_preflight_rows(summary: Mapping[str, object]) -> list[dict]:
+    """Flatten validation preflight metadata into a reviewable Excel audit."""
+
+    columns = (
+        "record_type",
+        "parameter",
+        "value",
+        "timestamp",
+        "column",
+        "action",
+        "original_value",
+        "final_value",
+    )
+
+    def row(**values: object) -> dict:
+        return {
+            column: _audit_value(_json_safe_audit(values.get(column)))
+            for column in columns
+        }
+
+    rows = [
+        row(record_type="summary", parameter=str(key), value=value)
+        for key, value in summary.items()
+        if key not in {"events", "warnings", "invalid_timestamps", "omitted_timestamps"}
+    ]
+    rows.extend(
+        row(record_type="warning", parameter="warning", value=warning)
+        for warning in summary.get("warnings") or []
+    )
+
+    events = summary.get("events") or []
+    for event in events:
+        if not isinstance(event, Mapping):
+            continue
+        rows.append(
+            row(
+                record_type="event",
+                timestamp=event.get("timestamp"),
+                column=event.get("column"),
+                action=event.get("action"),
+                original_value=event.get("original_value"),
+                final_value=event.get("final_value"),
+            )
+        )
+
+    # Retain a useful audit for older or independently produced summaries that
+    # have timestamp lists but no detailed event records.
+    if not events:
+        invalid_timestamps = summary.get("invalid_timestamps") or {}
+        if isinstance(invalid_timestamps, Mapping):
+            for column, timestamps in invalid_timestamps.items():
+                for timestamp in timestamps or []:
+                    rows.append(
+                        row(
+                            record_type="event",
+                            timestamp=timestamp,
+                            column=column,
+                            action="marked_invalid",
+                        )
+                    )
+        for timestamp in summary.get("omitted_timestamps") or []:
+            rows.append(
+                row(
+                    record_type="event",
+                    timestamp=timestamp,
+                    action="omitted_interval",
+                )
+            )
+
+    return rows or [row(record_type="summary", parameter="status", value="none")]
+
+
 def _first_present(mapping: Mapping[str, object], names: tuple[str, ...]) -> object:
     for name in names:
         if name in mapping:
@@ -2279,6 +2749,7 @@ def write_excel(
     data_quality_context = (
         data_quality_context or meta.get("_data_quality_context")
     )
+    historian_preflight = meta.get("_historian_preflight")
     calibration_application_context = (
         calibration_application_context
         or meta.get("_calibration_application_context")
@@ -2416,6 +2887,20 @@ def write_excel(
             pd.DataFrame(quality_rows).to_excel(
                 writer, sheet_name="data_quality_review", index=False
             )
+        if isinstance(historian_preflight, Mapping):
+            pd.DataFrame(
+                _historian_preflight_rows(historian_preflight),
+                columns=[
+                    "record_type",
+                    "parameter",
+                    "value",
+                    "timestamp",
+                    "column",
+                    "action",
+                    "original_value",
+                    "final_value",
+                ],
+            ).to_excel(writer, sheet_name="historian_preflight", index=False)
         if annual_mode:
             monthly_energy_table(
                 df,
@@ -2545,10 +3030,36 @@ def run_model(
         requested_end = quality_source.get("requested_end")
 
     data_quality_warnings: list[str] = []
+    historian_preflight: dict[str, object] | None = None
     if input_kind == "midc":
         df, data_quality_warnings = parse_midc_csv(input_csv)
     elif input_kind == "historian":
-        df = parse_input_csv(input_csv)
+        df = parse_input_csv(
+            input_csv,
+            validation_weather_preflight=(
+                not annual_mode and not calibrate_model
+            ),
+            expected_interval_seconds=expected_interval_seconds,
+            requested_start=requested_start,
+            requested_end=requested_end,
+        )
+        raw_preflight = df.attrs.get("historian_preflight")
+        if isinstance(raw_preflight, Mapping):
+            normalized_preflight = _json_safe_audit(raw_preflight)
+            if isinstance(normalized_preflight, dict):
+                historian_preflight = normalized_preflight
+        preflight_warnings = df.attrs.get("historian_preflight_warnings")
+        if not isinstance(preflight_warnings, (list, tuple)):
+            preflight_warnings = (
+                historian_preflight.get("warnings", [])
+                if historian_preflight
+                else []
+            )
+        data_quality_warnings.extend(
+            str(warning)
+            for warning in preflight_warnings
+            if str(warning).strip()
+        )
     else:
         raise ValueError(f"Unsupported model input kind: {input_kind}")
     def prediction_progress(frac: float, msg: str) -> None:
@@ -2653,6 +3164,7 @@ def run_model(
                     "Data-quality review retained: "
                     + ", ".join(str(value) for value in retained_issues)
                 )
+    data_quality_warnings = list(dict.fromkeys(data_quality_warnings))
     # Seasonal factors correct the physics estimate but cannot create an
     # operating point above the installed inverter's continuous AC nameplate.
     df["sol_predicted_power_w"] = pd.to_numeric(
@@ -2752,6 +3264,15 @@ def run_model(
         if calibration_factors
         else None
     )
+    historian_preflight_run_info = (
+        {
+            key: value
+            for key, value in historian_preflight.items()
+            if key not in {"events", "invalid_timestamps", "omitted_timestamps"}
+        }
+        if historian_preflight is not None
+        else None
+    )
 
     meta = {
         "script": "sbe_pv_model.py",
@@ -2806,6 +3327,15 @@ def run_model(
         "solectria_inverter_ac_rating_w": SOLECTRIA_INVERTER_AC_RATING_W,
         "solectria_dc_aggregation": "parallel_iv_common_mppt_v1",
         "data_quality_warnings": " | ".join(data_quality_warnings) or "None",
+        "historian_preflight": (
+            json.dumps(
+                historian_preflight_run_info,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            if historian_preflight is not None
+            else "None"
+        ),
         "calibration_method": (
             calibration_factors.get("method")
             if calibration_factors
@@ -2862,6 +3392,7 @@ def run_model(
         "_calibration_factors": calibration_factors,
         "_factor_driver_diagnostics": factor_driver_diagnostics,
         "_data_quality_context": data_quality_context,
+        "_historian_preflight": deepcopy(historian_preflight),
         "_calibration_profile": deepcopy(calibration_profile),
         "_calibration_application_context": deepcopy(
             calibration_application
@@ -3007,6 +3538,7 @@ def run_model(
         ),
         "factor_driver_diagnostics": factor_driver_diagnostics,
         "data_quality_review": data_quality_context,
+        "historian_preflight": deepcopy(historian_preflight),
         "predicted_difference_kwh": _safe(predicted_difference),
         "predicted_difference_pct": _safe(predicted_difference_pct, 2),
         "dhi_source": dhi_source,

@@ -143,6 +143,69 @@
             return Number.isFinite(number) ? (number * 100).toFixed(1) + '%' : 'n/a';
         }
 
+        function validationPreflightCopy(summary) {
+            if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return null;
+            const finiteCount = (value) => {
+                const number = Number(value);
+                return Number.isFinite(number) && number >= 0 ? Math.round(number) : 0;
+            };
+            const inputRows = finiteCount(summary.input_row_count);
+            const usableRows = finiteCount(summary.usable_row_count);
+            const omittedRows = finiteCount(summary.omitted_row_count);
+            const interpolatedCells = finiteCount(summary.wind_interpolated_count) +
+                finiteCount(summary.temperature_interpolated_count);
+            const clampedCells = finiteCount(summary.wind_clamped_count);
+            const suppliedCoverage = Number(summary.coverage_pct);
+            const coverage = Number.isFinite(suppliedCoverage)
+                ? suppliedCoverage
+                : (inputRows ? usableRows / inputRows * 100 : null);
+            const coverageText = Number.isFinite(coverage)
+                ? coverage.toLocaleString(undefined, { maximumFractionDigits: 1 }) + '% usable coverage'
+                : 'Usable coverage unavailable';
+            const changed = omittedRows + interpolatedCells + clampedCells;
+            const details = [];
+            if (inputRows) {
+                details.push(usableRows.toLocaleString() + ' of ' + inputRows.toLocaleString() + ' intervals modeled');
+            }
+            if (omittedRows) details.push(omittedRows.toLocaleString() + ' omitted');
+            if (interpolatedCells) details.push(interpolatedCells.toLocaleString() + ' weather cells interpolated');
+            if (clampedCells) details.push(clampedCells.toLocaleString() + ' tiny negative wind values clamped to zero');
+            if (!changed) details.push('no weather correction was required');
+            return {
+                ok: changed === 0,
+                title: changed ? 'Validation completed with ' + coverageText : 'Validation weather preflight passed',
+                detail: details.join('; ') + '. Measured and predicted totals use the same usable intervals.',
+            };
+        }
+
+        function renderValidationPreflight(result) {
+            const stats = result?.stats || {};
+            const summary = result?.historian_preflight || stats.historian_preflight;
+            const copy = validationPreflightCopy(summary);
+            if (!copy) {
+                const uncalibrated = result && (
+                    result?.window?.calibrate_model === false ||
+                    stats.calibration_enabled === false
+                );
+                if (!uncalibrated) {
+                    validationPreflightPanel.hidden = true;
+                    return;
+                }
+                validationPreflightPanel.classList.remove('ok');
+                validationPreflightPanel.textContent =
+                    'Weather preflight audit is unavailable for this older result. Re-run validation to verify usable coverage.';
+                validationPreflightPanel.hidden = false;
+                return;
+            }
+            validationPreflightPanel.classList.toggle('ok', copy.ok);
+            const title = document.createElement('strong');
+            title.textContent = copy.title + ': ';
+            const detail = document.createElement('span');
+            detail.textContent = copy.detail;
+            validationPreflightPanel.replaceChildren(title, detail);
+            validationPreflightPanel.hidden = false;
+        }
+
         function renderValidationRunContext(result) {
             const windowData = result?.window;
             if (!windowData) {
@@ -185,6 +248,7 @@
 
         function applyResult(result, cacheBust = true) {
             renderValidationRunContext(result);
+            renderValidationPreflight(result);
             if (!result || !result.stats) return;
             const s = result.stats;
             const calibrated = s.calibration_enabled === true || !!s.calibration_factors;

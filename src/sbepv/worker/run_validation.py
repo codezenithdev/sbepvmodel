@@ -148,6 +148,8 @@ def _run_job(
             "input_plots": state.JOBS[job_id].get("input_plots"),
             "source_csv": _public_source_url(csv_path),
             "data_quality": data_quality_context,
+            "historian_preflight": stats.get("historian_preflight"),
+            "warnings": list(stats.get("data_quality_warnings") or []),
             "calibration_factors": stats.get("calibration_factors"),
             "factor_driver_diagnostics": stats.get(
                 "factor_driver_diagnostics"

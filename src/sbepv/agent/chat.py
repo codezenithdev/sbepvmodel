@@ -196,6 +196,19 @@ def _recent_run_context(
             return "sweep", str(metadata["sweep_id"])
         return "job", str(job.get("id") or "")
 
+    def annual_row_is_full_year(row: dict[str, Any]) -> bool:
+        # New annual results make source coverage authoritative through
+        # ``cdf_eligible``.  Only fall back to legacy boundary-only fields for
+        # records created before that field existed.
+        if "cdf_eligible" in row:
+            return row.get("cdf_eligible") is True
+        return bool(
+            row.get("coverage") in {"complete", "full"}
+            or row.get("is_complete_year") is True
+            or row.get("coverage_status") == "complete"
+            or row.get("complete_calendar_year") is True
+        )
+
     def compact_job(job: dict[str, Any]) -> dict[str, Any]:
         result = job.get("result") if isinstance(job.get("result"), dict) else {}
         stats = result.get("stats") if isinstance(result.get("stats"), dict) else {}
@@ -225,13 +238,7 @@ def _recent_run_context(
                         1
                         for row in annual_rows
                         if isinstance(row, dict)
-                        and (
-                            row.get("coverage") in {"complete", "full"}
-                            or row.get("is_complete_year") is True
-                            or row.get("coverage_status") == "complete"
-                            or row.get("complete_calendar_year") is True
-                            or row.get("cdf_eligible") is True
-                        )
+                        and annual_row_is_full_year(row)
                     )
                     if isinstance(annual_rows, list)
                     else None

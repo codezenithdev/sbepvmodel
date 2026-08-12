@@ -62,6 +62,7 @@ class MidcFetchResult:
     affected_interval_count: int
     interval_seconds: int = 3_600
     partial_interval_count: int = 0
+    unavailable_interval_count: int = 0
 
     @property
     def chunk_count(self) -> int:
@@ -103,6 +104,12 @@ class MidcFetchResult:
                 f"Averaged available readings in {self.partial_interval_count} "
                 "interval(s) that contained fewer than the expected one-minute "
                 "MIDC source samples."
+            )
+        if self.unavailable_interval_count:
+            messages.append(
+                f"Omitted {self.unavailable_interval_count} interval(s) with no "
+                "available MIDC weather readings; no zero-generation or weather "
+                "proxy was used."
             )
         return messages
 
@@ -188,6 +195,81 @@ def parse_api_csv(csv_text: str) -> pd.DataFrame:
     if source.empty:
         raise MidcError("MIDC API returned column headers but no data rows.")
     return source.loc[:, RAW_REQUIRED_COLUMNS].copy()
+
+
+def _missing_begin_date(csv_text: str) -> date | None:
+    """Return the unavailable begin date from a known MIDC error document.
+
+    MIDC reports a missing daily source file as a small HTML/text response with
+    HTTP 200.  Keep this recognizer deliberately narrow so a malformed CSV or a
+    different server error is never mistaken for an ordinary coverage gap.
+    """
+
+    match = re.search(
+        r"(?:Unable\s+to\s+open\s+|No\s+data\s+found\s+for\s+begin\s+date\s+of\s+)"
+        r"(\d{8})(?:\.TXT)?",
+        csv_text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d").date()
+    except ValueError:
+        return None
+
+
+def _suggested_available_dates(csv_text: str) -> list[date]:
+    """Extract human-readable closest-date links from a MIDC error document."""
+
+    candidates: set[date] = set()
+    for month, day, year in re.findall(r"\b(\d{2})/(\d{2})/(\d{4})\b", csv_text):
+        try:
+            candidates.add(date(int(year), int(month), int(day)))
+        except ValueError:
+            continue
+    return sorted(candidates)
+
+
+def _download_chunk_with_leading_gap_recovery(
+    start_date: date,
+    end_date: date,
+) -> tuple[pd.DataFrame, int]:
+    """Download one chunk, advancing past unavailable leading source days.
+
+    A request beginning inside the STAC outage spanning late 2022/early 2023
+    returns an HTTP-200 error document instead of the later rows that do exist.
+    Retry at the next server-suggested date (or the next day when the suggestion
+    is only a prior date).  Aggregation still uses the original requested bounds,
+    so skipped intervals remain explicit all-null coverage rows rather than being
+    synthesized from zero generation or a weather proxy.
+    """
+
+    cursor = start_date
+    request_count = 0
+    while cursor <= end_date:
+        csv_text = download_api_csv(cursor, end_date)
+        request_count += 1
+        try:
+            return parse_api_csv(csv_text), request_count
+        except MidcError:
+            missing_date = _missing_begin_date(csv_text)
+            if missing_date != cursor:
+                raise
+            later_suggestions = [
+                candidate
+                for candidate in _suggested_available_dates(csv_text)
+                if cursor < candidate <= end_date
+            ]
+            cursor = (
+                later_suggestions[0]
+                if later_suggestions
+                else cursor + timedelta(days=1)
+            )
+    # An entire trailing chunk can fall inside a source outage.  Return an empty
+    # schema-compatible frame so the caller can preserve that chunk as explicit
+    # unavailable coverage when another chunk did contain usable source rows.
+    return pd.DataFrame(columns=RAW_REQUIRED_COLUMNS), request_count
 
 
 def _validated_interval_seconds(interval_seconds: int) -> int:
@@ -319,6 +401,7 @@ def aggregate_interval_frame(
             & valid_sample_counts.lt(expected_samples_per_interval)
         ).any(axis=1).sum()
     )
+    unavailable_interval_count = int(valid_sample_counts.eq(0).all(axis=1).sum())
     intervals = grouped.reindex(full_index)
     missing_value_count = int(intervals.isna().sum().sum())
     affected_interval_count = int(intervals.isna().any(axis=1).sum())
@@ -339,6 +422,7 @@ def aggregate_interval_frame(
         :, list(MEASUREMENT_COLUMNS.values())
     ].round(4)
     output.attrs["partial_interval_count"] = partial_interval_count
+    output.attrs["unavailable_interval_count"] = unavailable_interval_count
     output.attrs["expected_samples_per_interval"] = expected_samples_per_interval
     return output, dropped_timestamp_rows, missing_value_count, affected_interval_count
 
@@ -406,6 +490,7 @@ def fetch_interval_data(
     source_start_date = max(start_date - timedelta(days=1), FIRST_AVAILABLE_DATE)
     chunks = _date_chunks(source_start_date, end_date, chunk_days)
     parsed_chunks: list[pd.DataFrame] = []
+    data_request_count = 0
     for index, (chunk_start, chunk_end) in enumerate(chunks, start=1):
         if progress_cb:
             progress_cb(
@@ -413,10 +498,18 @@ def fetch_interval_data(
                 f"Downloading MIDC data {index}/{len(chunks)} "
                 f"({chunk_start:%m/%d/%Y}-{chunk_end:%m/%d/%Y})...",
             )
-        parsed_chunks.append(
-            parse_api_csv(download_api_csv(chunk_start, chunk_end))
+        parsed_chunk, chunk_request_count = _download_chunk_with_leading_gap_recovery(
+            chunk_start,
+            chunk_end,
         )
+        if not parsed_chunk.empty:
+            parsed_chunks.append(parsed_chunk)
+        data_request_count += chunk_request_count
 
+    if not parsed_chunks:
+        raise MidcError(
+            "MIDC API returned no available source data for the requested date range."
+        )
     source = pd.concat(parsed_chunks, ignore_index=True)
     if progress_cb:
         interval_label = (
@@ -432,17 +525,19 @@ def fetch_interval_data(
         source, start_date, end_date, seconds
     )
     partial = int(interval_data.attrs.get("partial_interval_count", 0))
+    unavailable = int(interval_data.attrs.get("unavailable_interval_count", 0))
     if progress_cb:
         progress_cb(1.0, "MIDC interval data ready")
     return MidcFetchResult(
         hourly=interval_data,
         raw_rows=int(len(source)),
-        data_request_count=len(chunks),
+        data_request_count=data_request_count,
         dropped_timestamp_rows=dropped,
         missing_value_count=missing,
         affected_interval_count=affected,
         interval_seconds=seconds,
         partial_interval_count=partial,
+        unavailable_interval_count=unavailable,
     )
 
 

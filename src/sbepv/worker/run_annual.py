@@ -30,6 +30,93 @@ from sbepv.worker import completion
 logger = logging.getLogger(__name__)
 
 
+def _periods_with_source_coverage(
+    periods: list[dict[str, object]],
+    period_quality: list[dict[str, Any]],
+    interval_seconds: int,
+) -> tuple[list[dict[str, object]], list[dict[str, Any]]]:
+    """Attach post-download source coverage to requested annual periods.
+
+    Request validation can establish calendar boundaries, but only the downloaded
+    MIDC source can establish whether every interval inside those boundaries had
+    usable measurements.  Unknown source coverage is deliberately treated as
+    incomplete so a legacy cached artifact cannot enter the complete-year CDF by
+    inference alone.
+    """
+
+    intervals_per_day = 86_400 // int(interval_seconds)
+    quality_by_year = {
+        int(row["year"]): deepcopy(row)
+        for row in period_quality
+        if isinstance(row, dict) and row.get("year") is not None
+    }
+    enriched_periods: list[dict[str, object]] = []
+    enriched_quality: list[dict[str, Any]] = []
+
+    for original in periods:
+        period = deepcopy(original)
+        year = int(period["year"])
+        period_start = date.fromisoformat(str(period["period_start"]))
+        period_end = date.fromisoformat(str(period["period_end"]))
+        source_expected = ((period_end - period_start).days + 1) * intervals_per_day
+        annual_expected = (
+            (date(year, 12, 31) - date(year, 1, 1)).days + 1
+        ) * intervals_per_day
+        quality = quality_by_year.get(year, {})
+
+        try:
+            interval_rows = int(quality["interval_rows"])
+            unavailable = int(quality["unavailable_interval_count"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            source_covered: int | None = None
+            source_coverage_pct: float | None = None
+            annual_coverage_pct: float | None = None
+            source_complete = False
+            quality["unavailable_interval_count"] = None
+        else:
+            # Normally the downloader materializes every requested interval and
+            # unavailable rows are all-null.  A reconstructed legacy audit may
+            # instead count omitted rows as unavailable, so use the larger of the
+            # explicit count and the row deficit without double-counting either.
+            effective_unavailable = max(
+                max(0, unavailable),
+                max(0, source_expected - interval_rows),
+            )
+            source_covered = source_expected - min(
+                source_expected, effective_unavailable
+            )
+            quality["unavailable_interval_count"] = (
+                source_expected - source_covered
+            )
+            source_coverage_pct = round(
+                source_covered / source_expected * 100.0, 3
+            )
+            annual_coverage_pct = round(
+                source_covered / annual_expected * 100.0, 3
+            )
+            source_complete = source_covered == source_expected
+
+        date_complete = period.get("complete_calendar_year") is True
+        period.update(
+            {
+                "source_expected_interval_count": source_expected,
+                "source_covered_interval_count": source_covered,
+                "source_coverage_pct": source_coverage_pct,
+                "annual_expected_interval_count": annual_expected,
+                "annual_coverage_pct": annual_coverage_pct,
+                "source_complete": source_complete,
+                "cdf_eligible": bool(date_complete and source_complete),
+            }
+        )
+        if date_complete and not source_complete:
+            period["coverage_status"] = "incomplete_source"
+
+        enriched_periods.append(period)
+        enriched_quality.append({**quality, **deepcopy(period)})
+
+    return enriched_periods, enriched_quality
+
+
 def _run_annual_job(
     job_id: str,
     req: AnnualRunRequest,
@@ -82,19 +169,36 @@ def _run_annual_job(
             parsed_dates = pd.to_datetime(
                 frame[midc.DATE_COLUMN], format="%m/%d/%Y", errors="coerce"
             ).dt.date
+            measurement_columns = list(midc.MEASUREMENT_COLUMNS.values())
+            has_measurements = all(column in frame for column in measurement_columns)
             rows: list[dict[str, Any]] = []
             for period in periods:
                 period_start = date.fromisoformat(str(period["period_start"]))
                 period_end = date.fromisoformat(str(period["period_end"]))
+                period_mask = (parsed_dates >= period_start) & (
+                    parsed_dates <= period_end
+                )
+                interval_rows = int(period_mask.sum())
+                source_expected = (
+                    (period_end - period_start).days + 1
+                ) * (86_400 // interval_seconds)
+                if has_measurements:
+                    covered_rows = int(
+                        frame.loc[period_mask, measurement_columns]
+                        .notna()
+                        .any(axis=1)
+                        .sum()
+                    )
+                    unavailable_interval_count: int | None = max(
+                        0, source_expected - min(source_expected, covered_rows)
+                    )
+                else:
+                    unavailable_interval_count = None
                 rows.append(
                     {
                         **deepcopy(period),
-                        "interval_rows": int(
-                            (
-                                (parsed_dates >= period_start)
-                                & (parsed_dates <= period_end)
-                            ).sum()
-                        ),
+                        "interval_rows": interval_rows,
+                        "unavailable_interval_count": unavailable_interval_count,
                     }
                 )
             return rows
@@ -106,6 +210,7 @@ def _run_annual_job(
 
             cached_frame = pd.read_csv(csv_path)
             interval_rows = int(len(cached_frame))
+            cached_period_quality = period_row_counts(cached_frame)
             stored_audit = existing_provenance.get("annual_source_audit")
             audit_matches = (
                 isinstance(stored_audit, dict)
@@ -120,6 +225,18 @@ def _run_annual_job(
             )
             if audit_matches:
                 source_quality = deepcopy(stored_audit["source_quality"])
+                stored_periods = {
+                    int(row["year"]): deepcopy(row)
+                    for row in source_quality.get("periods") or []
+                    if isinstance(row, dict) and row.get("year") is not None
+                }
+                source_quality["periods"] = [
+                    {
+                        **stored_periods.get(int(row["year"]), {}),
+                        **row,
+                    }
+                    for row in cached_period_quality
+                ]
                 source_quality["reused_verified_source"] = True
                 source_warnings = [str(item) for item in stored_audit["warnings"]]
             else:
@@ -133,7 +250,7 @@ def _run_annual_job(
                     "missing_value_count": None,
                     "affected_interval_count": None,
                     "partial_interval_count": None,
-                    "periods": period_row_counts(cached_frame),
+                    "periods": cached_period_quality,
                     "reused_verified_source": True,
                 }
         else:
@@ -145,6 +262,7 @@ def _run_annual_job(
             missing_value_count = 0
             affected_interval_count = 0
             partial_interval_count = 0
+            unavailable_interval_count = 0
             period_quality: list[dict[str, Any]] = []
             period_count = len(periods)
             set_progress(
@@ -179,6 +297,7 @@ def _run_annual_job(
                 missing_value_count += int(source.missing_value_count)
                 affected_interval_count += int(source.affected_interval_count)
                 partial_interval_count += int(source.partial_interval_count)
+                unavailable_interval_count += int(source.unavailable_interval_count)
                 source_warnings.extend(
                     f"{period_year}: {warning}" for warning in source.warnings
                 )
@@ -191,6 +310,9 @@ def _run_annual_job(
                         "missing_value_count": int(source.missing_value_count),
                         "affected_interval_count": int(source.affected_interval_count),
                         "partial_interval_count": int(source.partial_interval_count),
+                        "unavailable_interval_count": int(
+                            source.unavailable_interval_count
+                        ),
                     }
                 )
 
@@ -235,16 +357,33 @@ def _run_annual_job(
                 "missing_value_count": missing_value_count,
                 "affected_interval_count": affected_interval_count,
                 "partial_interval_count": partial_interval_count,
+                "unavailable_interval_count": unavailable_interval_count,
                 "periods": period_quality,
                 "reused_verified_source": False,
             }
-            existing_provenance["annual_source_audit"] = {
-                "schema_version": 1,
-                "source_sha256": source_hash,
-                "interval_seconds": interval_seconds,
-                "source_quality": deepcopy(source_quality),
-                "warnings": deepcopy(source_warnings),
-            }
+
+        periods, enriched_period_quality = _periods_with_source_coverage(
+            periods,
+            list(source_quality.get("periods") or []),
+            interval_seconds,
+        )
+        source_quality["periods"] = enriched_period_quality
+        unavailable_counts = [
+            row.get("unavailable_interval_count")
+            for row in enriched_period_quality
+        ]
+        source_quality["unavailable_interval_count"] = (
+            sum(int(value) for value in unavailable_counts)
+            if all(value is not None for value in unavailable_counts)
+            else None
+        )
+        existing_provenance["annual_source_audit"] = {
+            "schema_version": 2,
+            "source_sha256": source_hash,
+            "interval_seconds": interval_seconds,
+            "source_quality": deepcopy(source_quality),
+            "warnings": deepcopy(source_warnings),
+        }
         _update_job(
             job_id,
             worker_id=worker_id,

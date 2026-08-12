@@ -384,6 +384,14 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                     "ac_png": str(self.root / "lease-output-ac.png"),
                     "energy_png": str(self.root / "lease-output-energy.png"),
                     "excel": str(self.root / "lease-output.xlsx"),
+                    "historian_preflight": {
+                        "policy": "validation_weather_preflight_v1",
+                        "coverage_pct": 99.0,
+                        "omitted_row_count": 1,
+                    },
+                    "data_quality_warnings": [
+                        "Validation omitted 1 unusable weather interval."
+                    ],
                 },
             ) as model_call,
             patch.object(completion, "_finish_model_job") as finish_call,
@@ -407,6 +415,14 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertEqual("worker-a", finish_call.call_args.kwargs["worker_id"])
         self.assertEqual(
             claimed["lease_token"], finish_call.call_args.kwargs["lease_token"]
+        )
+        completed_result = finish_call.call_args.args[1]
+        self.assertEqual(
+            99.0, completed_result["historian_preflight"]["coverage_pct"]
+        )
+        self.assertEqual(
+            ["Validation omitted 1 unusable weather interval."],
+            completed_result["warnings"],
         )
 
     def test_delete_removes_artifacts_from_every_lease_attempt(self) -> None:
@@ -764,6 +780,36 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         self.assertNotIn(
             "private_internal_value", summaries[0]["request"]
         )
+
+    def test_recent_run_context_prefers_explicit_source_coverage_eligibility(self) -> None:
+        state.AGENT_STORE.create_job(
+            job_id="source-partial-year",
+            kind="baseline",
+            mode="annual",
+            request={"years": [2023], "interval_value": 1, "interval_unit": "hours"},
+        )
+        claimed = state.AGENT_STORE.claim_next_queued_job()
+        self.assertEqual("source-partial-year", claimed["id"])
+        state.AGENT_STORE.update_job(
+            "source-partial-year",
+            state="done",
+            result={
+                "stats": {
+                    "annual_energy_by_year": [
+                        {
+                            "year": 2023,
+                            "coverage_status": "incomplete_source",
+                            "complete_calendar_year": True,
+                            "cdf_eligible": False,
+                        }
+                    ]
+                }
+            },
+        )
+
+        summaries = chat._recent_run_context("annual")
+
+        self.assertEqual(0, summaries[0]["metrics"]["full_year_count"])
 
     def test_recent_run_context_keeps_a_twelve_member_sweep_atomic(self) -> None:
         for index in range(12):

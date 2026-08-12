@@ -99,13 +99,19 @@
         function normalizedAnnualEnergyRow(row) {
             const complete = row.complete_calendar_year === true;
             const cdfEligibilityProvided = Object.prototype.hasOwnProperty.call(row, 'cdf_eligible');
+            const sourceCompletenessProvided = Object.prototype.hasOwnProperty.call(row, 'source_complete');
+            const sourceComplete = sourceCompletenessProvided ? row.source_complete === true : null;
             return {
                 year: Number(row.year),
                 periodStart: row.period_start || row.from_date || null,
                 periodEnd: row.period_end || row.to_date || null,
                 coverageStatus: String(row.coverage_status || row.coverage || (complete ? 'complete' : 'partial')),
                 complete,
-                cdfEligible: cdfEligibilityProvided ? row.cdf_eligible === true : complete,
+                cdfEligible: sourceComplete === true &&
+                    (cdfEligibilityProvided ? row.cdf_eligible === true : complete),
+                sourceComplete,
+                sourceCoveragePct: annualRowNumber(row, ['source_coverage_pct']),
+                annualCoveragePct: annualRowNumber(row, ['annual_coverage_pct']),
                 rowCount: annualRowNumber(row, ['row_count', 'interval_rows', 'coverage_rows']),
                 solarEdge: annualRowNumber(row, ['se_predicted_kwh', 'solaredge_predicted_kwh', 'solar_edge_predicted_kwh']),
                 solectria: annualRowNumber(row, ['sol_predicted_kwh', 'solectria_predicted_kwh']),
@@ -135,6 +141,18 @@
                 ? formatAnnualResultDate(row.periodStart) + ' - ' + formatAnnualResultDate(row.periodEnd)
                 : 'Dates unavailable';
             if (row.complete && row.cdfEligible) return { label: 'Complete', detail: dateRange };
+            if (row.coverageStatus === 'incomplete_source' || (row.complete && row.sourceComplete === false)) {
+                const coverage = Number.isFinite(row.sourceCoveragePct)
+                    ? row.sourceCoveragePct.toLocaleString(undefined, { maximumFractionDigits: 1 }) + '% source coverage'
+                    : 'Incomplete MIDC source coverage';
+                return { label: 'Partial source', detail: coverage + ' - ' + dateRange };
+            }
+            if (row.complete && row.sourceComplete === null) {
+                return {
+                    label: 'Coverage unknown',
+                    detail: 'Re-run to verify MIDC source coverage - ' + dateRange,
+                };
+            }
             if (row.coverageStatus === 'year_to_date') return { label: 'Year to date', detail: dateRange };
             if (row.coverageStatus === 'partial_start') return { label: 'Partial start', detail: dateRange };
             return { label: 'Partial', detail: dateRange };

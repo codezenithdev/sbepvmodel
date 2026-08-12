@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 import unittest
 
 from sbepv import dashboard
@@ -161,6 +164,10 @@ class AnnualCalibrationUiTests(unittest.TestCase):
             "function renderAnnualEnergyCdf(rows)",
             "chart.toggleAttribute('hidden', false)",
             "row.cdfEligible && row.complete",
+            "sourceCoveragePct: annualRowNumber(row, ['source_coverage_pct'])",
+            "row.coverageStatus === 'incomplete_source' || (row.complete && row.sourceComplete === false)",
+            "label: 'Partial source'",
+            "'% source coverage'",
             "eligible.length < 2",
             "last.probability = probability",
             "sampleCount: rankedValues.length",
@@ -170,6 +177,11 @@ class AnnualCalibrationUiTests(unittest.TestCase):
             "combined (dotted)",
         ):
             self.assertIn(marker, self.html)
+
+        self.assertIn(
+            "Source gaps are assessed after download; affected years remain visible as partial",
+            self.html,
+        )
 
     def test_validation_dates_reset_after_cached_form_restore(self) -> None:
         for marker in (
@@ -359,6 +371,123 @@ class AnnualCalibrationUiTests(unittest.TestCase):
         self.assertNotIn(
             "financing assumptions are intentionally left to the user for this placeholder.",
             technoeconomic_panel,
+        )
+
+    def test_technoeconomic_requires_complete_source_coverage(self) -> None:
+        for marker in (
+            "function technoeconomicIsFullYear(result)",
+            "result?.annual_energy_by_year || result?.stats?.annual_energy_by_year",
+            "annualRows.length !== 1",
+            "annualRow.source_complete === true",
+            "annualRow.cdf_eligible === true",
+            "function technoeconomicSourceCoverageIssue(result)",
+            "'Incomplete MIDC source coverage'",
+            "'Source coverage verification required'",
+        ):
+            self.assertIn(marker, self.html)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_annual_source_coverage_helpers_fail_closed_in_node(self) -> None:
+        normalization = self.html.split("function annualRowNumber(row, names)", 1)[
+            1
+        ].split("\n        function formatAnnualEnergy", 1)[0]
+        coverage = self.html.split("function formatAnnualResultDate(value)", 1)[
+            1
+        ].split("\n        function clearAnnualYearResults", 1)[0]
+        script = f"""
+function annualRowNumber(row, names){normalization}
+function formatAnnualResultDate(value){coverage}
+const base = {{
+    year: 2022,
+    period_start: '2022-01-01',
+    period_end: '2022-12-31',
+    complete_calendar_year: true,
+    coverage_status: 'complete',
+    cdf_eligible: true,
+}};
+const complete = normalizedAnnualEnergyRow({{...base, source_complete: true}});
+const partial = normalizedAnnualEnergyRow({{
+    ...base,
+    source_complete: false,
+    source_coverage_pct: 97.785,
+    coverage_status: 'incomplete_source',
+    cdf_eligible: false,
+}});
+const legacy = normalizedAnnualEnergyRow(base);
+console.log(JSON.stringify({{
+    completeEligible: complete.cdfEligible,
+    partialEligible: partial.cdfEligible,
+    partialCopy: annualCoverageCopy(partial),
+    legacyEligible: legacy.cdfEligible,
+    legacyCopy: annualCoverageCopy(legacy),
+}}));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            {
+                "completeEligible": True,
+                "partialEligible": False,
+                "partialCopy": {
+                    "label": "Partial source",
+                    "detail": "97.8% source coverage - Jan 1 - Dec 31",
+                },
+                "legacyEligible": False,
+                "legacyCopy": {
+                    "label": "Coverage unknown",
+                    "detail": "Re-run to verify MIDC source coverage - Jan 1 - Dec 31",
+                },
+            },
+            json.loads(completed.stdout),
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_technoeconomic_source_coverage_helpers_in_node(self) -> None:
+        helpers = self.html.split("function technoeconomicIsFullYear(result)", 1)[
+            1
+        ].split("\n        function formatTechnoeconomicEnergy", 1)[0]
+        script = f"""
+function technoeconomicIsFullYear(result){helpers}
+const base = {{
+    complete_calendar_year: true,
+    cdf_eligible: true,
+    source_complete: true,
+}};
+const wrap = (row) => ({{annual_energy_by_year: [row]}});
+const legacy = {{complete_calendar_year: true, cdf_eligible: true}};
+console.log(JSON.stringify({{
+    complete: technoeconomicIsFullYear(wrap(base)),
+    partial: technoeconomicIsFullYear(wrap({{...base, source_complete: false, cdf_eligible: false}})),
+    legacy: technoeconomicIsFullYear(wrap(legacy)),
+    partialIssue: technoeconomicSourceCoverageIssue(wrap({{
+        ...base,
+        source_complete: false,
+        source_coverage_pct: 98.059,
+        cdf_eligible: false,
+    }})),
+    legacyIssue: technoeconomicSourceCoverageIssue(wrap(legacy)),
+}}));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(completed.stdout)
+        self.assertTrue(payload["complete"])
+        self.assertFalse(payload["partial"])
+        self.assertFalse(payload["legacy"])
+        self.assertEqual(
+            "Incomplete MIDC source coverage", payload["partialIssue"]["title"]
+        )
+        self.assertIn("98.1% source coverage", payload["partialIssue"]["detail"])
+        self.assertEqual(
+            "Source coverage verification required", payload["legacyIssue"]["title"]
         )
 
 

@@ -89,22 +89,38 @@
         }
 
         function technoeconomicIsFullYear(result) {
-            const from = String(result?.window?.from || '');
-            const to = String(result?.window?.to || '');
-            const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(from);
-            if (!match || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return false;
-            const year = Number(match[1]);
-            const monthIndex = Number(match[2]) - 1;
-            const day = Number(match[3]);
-            const start = new Date(Date.UTC(year, monthIndex, day));
-            if (
-                start.getUTCFullYear() !== year ||
-                start.getUTCMonth() !== monthIndex ||
-                start.getUTCDate() !== day
-            ) return false;
-            const expectedEnd = new Date(Date.UTC(year + 1, monthIndex, day));
-            expectedEnd.setUTCDate(expectedEnd.getUTCDate() - 1);
-            return expectedEnd.toISOString().slice(0, 10) === to;
+            const annualRows = result?.annual_energy_by_year || result?.stats?.annual_energy_by_year;
+            if (!Array.isArray(annualRows) || annualRows.length !== 1 ||
+                !annualRows[0] || typeof annualRows[0] !== 'object') return false;
+            const annualRow = annualRows[0];
+            return annualRow.complete_calendar_year === true &&
+                annualRow.source_complete === true &&
+                annualRow.cdf_eligible === true;
+        }
+
+        function technoeconomicSourceCoverageIssue(result) {
+            const annualRows = result?.annual_energy_by_year || result?.stats?.annual_energy_by_year;
+            if (!Array.isArray(annualRows) || annualRows.length !== 1 ||
+                !annualRows[0] || typeof annualRows[0] !== 'object') return null;
+            const annualRow = annualRows[0];
+            if (annualRow.complete_calendar_year !== true) return null;
+            if (!Object.prototype.hasOwnProperty.call(annualRow, 'source_complete')) {
+                return {
+                    title: 'Source coverage verification required',
+                    detail: 'This saved result predates MIDC source-coverage tracking. Re-run it before using annualized cost metrics.',
+                };
+            }
+            if (annualRow.source_complete === false) {
+                const coverageValue = Number(annualRow.source_coverage_pct);
+                const coverage = Number.isFinite(coverageValue)
+                    ? coverageValue.toLocaleString(undefined, { maximumFractionDigits: 1 }) + '% source coverage. '
+                    : '';
+                return {
+                    title: 'Incomplete MIDC source coverage',
+                    detail: coverage + 'The calendar-year result remains visible, but annualized cost metrics require a complete-source year.',
+                };
+            }
+            return null;
         }
 
         function formatTechnoeconomicEnergy(value) {
@@ -190,15 +206,20 @@
             }
 
             if (!fullYear) {
+                const sourceCoverageIssue = technoeconomicSourceCoverageIssue(result);
                 const periodLabel = dayCount === null ? 'an unverified period' : dayCount + ' days';
                 setTechnoeconomicSourceState(
                     'warning',
-                    'Full-year simulation required',
-                    (range ? range + ' covers ' : 'The latest result covers ') + periodLabel +
-                        '. Run an inclusive one-calendar-year window before combining production with annualized costs.'
+                    sourceCoverageIssue?.title || 'Full-year simulation required',
+                    sourceCoverageIssue?.detail ||
+                        ((range ? range + ' covers ' : 'The latest result covers ') + periodLabel +
+                        '. Run an inclusive one-calendar-year window before combining production with annualized costs.')
                 );
-                technoeconomicElements.lcoeStatus.textContent = 'Unavailable because the latest production result is not a verified full year.';
-                technoeconomicElements.lcooStatus.textContent = 'Unavailable because the latest production result is not a verified full year.';
+                const unavailableReason = sourceCoverageIssue
+                    ? 'Unavailable because complete MIDC source coverage was not verified.'
+                    : 'Unavailable because the latest production result is not a verified full year.';
+                technoeconomicElements.lcoeStatus.textContent = unavailableReason;
+                technoeconomicElements.lcooStatus.textContent = unavailableReason;
                 return;
             }
 

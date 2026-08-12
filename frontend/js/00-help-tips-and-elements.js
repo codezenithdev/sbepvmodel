@@ -73,6 +73,7 @@
         const validationRunContext = document.getElementById('validationRunContext');
         const validationRunContextRange = document.getElementById('validationRunContextRange');
         const validationRunContextTimezone = document.getElementById('validationRunContextTimezone');
+        const validationPreflightPanel = document.getElementById('validationPreflightPanel');
         const validationRunContextEfficiencyValues = {
             solaredge_inverter_efficiency: document.getElementById('validationRunContextSeInverter'),
             solaredge_bos_efficiency: document.getElementById('validationRunContextSeBos'),

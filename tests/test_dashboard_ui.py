@@ -591,6 +591,10 @@ class DashboardInteractionMarkupTests(unittest.TestCase):
         plots_index = self.html.index('class="analysis-layout"', summaries_index)
         self.assertLess(context_index, summaries_index)
         self.assertLess(context_index, plots_index)
+        self.assertLess(
+            self.html.index('id="validationPreflightPanel"'),
+            summaries_index,
+        )
 
         for element_id in (
             "validationRunContextRange",
@@ -671,6 +675,54 @@ class DashboardInteractionMarkupTests(unittest.TestCase):
         self.assertGreaterEqual(
             self.html.count("renderValidationRunContext(null)"),
             2,
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_validation_weather_preflight_copy_reports_shared_coverage(self):
+        helper = self.html.split(
+            "function validationPreflightCopy(summary)", 1
+        )[1].split("\n        function renderValidationPreflight", 1)[0]
+        script = f"""
+function validationPreflightCopy(summary){helper}
+const partial = validationPreflightCopy({{
+    input_row_count: 5831,
+    usable_row_count: 5776,
+    omitted_row_count: 55,
+    coverage_pct: 99.057,
+    wind_interpolated_count: 1,
+    temperature_interpolated_count: 1,
+    wind_clamped_count: 0,
+}});
+const clean = validationPreflightCopy({{
+    input_row_count: 24,
+    usable_row_count: 24,
+    omitted_row_count: 0,
+    coverage_pct: 100,
+}});
+console.log(JSON.stringify({{partial, clean}}));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(completed.stdout)
+        self.assertFalse(payload["partial"]["ok"])
+        self.assertEqual(
+            "Validation completed with 99.1% usable coverage",
+            payload["partial"]["title"],
+        )
+        self.assertIn(
+            "5,776 of 5,831 intervals modeled", payload["partial"]["detail"]
+        )
+        self.assertIn("55 omitted", payload["partial"]["detail"])
+        self.assertIn(
+            "2 weather cells interpolated", payload["partial"]["detail"]
+        )
+        self.assertTrue(payload["clean"]["ok"])
+        self.assertEqual(
+            "Validation weather preflight passed", payload["clean"]["title"]
         )
 
     def test_validation_run_context_has_responsive_layout(self):
@@ -928,6 +980,24 @@ class CalibrationOptInModelTests(unittest.TestCase):
             se_predicted_power_w=[4_500.0, 5_500.0],
             sol_predicted_power_w=[3_500.0, 4_500.0],
         )
+        preflight = {
+            "policy": "validation_weather_preflight_v1",
+            "input_row_count": 3,
+            "usable_row_count": 2,
+            "omitted_row_count": 1,
+            "coverage_pct": 66.667,
+            "warnings": ["Validation omitted 1 unusable weather interval."],
+            "events": [
+                {
+                    "timestamp": "2026-06-01T11:00:00-06:00",
+                    "column": "wind_speed_ms",
+                    "action": "omitted",
+                    "original_value": -1999.0,
+                    "final_value": None,
+                }
+            ],
+        }
+        parsed.attrs["historian_preflight"] = preflight
         metadata = {}
         progress_messages = []
 
@@ -936,7 +1006,9 @@ class CalibrationOptInModelTests(unittest.TestCase):
             metadata.update(meta)
 
         with (
-            patch.object(model, "parse_input_csv", return_value=parsed),
+            patch.object(
+                model, "parse_input_csv", return_value=parsed
+            ) as parser,
             patch.object(
                 model,
                 "predict_ac_power",
@@ -952,11 +1024,20 @@ class CalibrationOptInModelTests(unittest.TestCase):
                 output_base="ignored",
                 calibrate_model=False,
                 expected_interval_seconds=3_600,
+                requested_start="2026-06-01T18:00:00",
+                requested_end="2026-06-01T20:00:00",
                 progress_cb=lambda _fraction, message: progress_messages.append(message),
             )
 
         fit.assert_not_called()
         frozen.assert_not_called()
+        parser.assert_called_once_with(
+            "ignored.csv",
+            validation_weather_preflight=True,
+            expected_interval_seconds=3_600,
+            requested_start="2026-06-01T18:00:00",
+            requested_end="2026-06-01T20:00:00",
+        )
         self.assertFalse(result["calibration_enabled"])
         self.assertIsNone(result["calibration_factors"])
         self.assertIsNone(result["factor_driver_diagnostics"])
@@ -964,6 +1045,15 @@ class CalibrationOptInModelTests(unittest.TestCase):
         self.assertEqual(result["uncalibrated"]["se_predicted_kwh"], 10.0)
         self.assertFalse(metadata["calibration_enabled"])
         self.assertEqual(metadata["calibration_method"], "not_applied")
+        self.assertEqual(preflight, result["historian_preflight"])
+        self.assertEqual(preflight, metadata["_historian_preflight"])
+        self.assertIn(
+            "Validation omitted 1 unusable weather interval.",
+            result["data_quality_warnings"],
+        )
+        public_preflight = json.loads(metadata["historian_preflight"])
+        self.assertEqual(1, public_preflight["omitted_row_count"])
+        self.assertNotIn("events", public_preflight)
         plots.assert_called_once()
         self.assertFalse(plots.call_args.kwargs["calibrated"])
         self.assertEqual(progress_messages[-1], "Uncalibrated model predictions ready")
@@ -1044,6 +1134,75 @@ class WorkbookExportContractTests(unittest.TestCase):
             self.assertIn("sol_predicted_energy_kwh", headers)
             self.assertNotIn("se_calibrated_power_w", headers)
             self.assertNotIn("sol_calibrated_energy_kwh", headers)
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_historian_preflight_sheet_retains_detailed_audit_events(self):
+        path = config.OUTPUT_DIR / "_test_historian_preflight_audit.xlsx"
+        preflight = {
+            "policy": "validation_weather_preflight_v1",
+            "input_row_count": 2,
+            "usable_row_count": 1,
+            "omitted_row_count": 1,
+            "coverage_pct": 50.0,
+            "warnings": ["One interval was omitted."],
+            "events": [
+                {
+                    "timestamp": "2026-06-20T06:00:00-06:00",
+                    "column": "wind_speed_ms",
+                    "action": "interpolated",
+                    "original_value": -1999.0,
+                    "final_value": 2.0,
+                },
+                {
+                    "timestamp": "2026-06-20T07:00:00-06:00",
+                    "column": "temp_air_c",
+                    "action": "omitted",
+                    "original_value": -80.3,
+                    "final_value": None,
+                },
+            ],
+        }
+        try:
+            model.write_excel(
+                self._time_series_frame(),
+                str(path),
+                {
+                    "calibration_enabled": False,
+                    "annual_mode": False,
+                    "historian_preflight": json.dumps(
+                        {
+                            key: value
+                            for key, value in preflight.items()
+                            if key != "events"
+                        },
+                        sort_keys=True,
+                    ),
+                    "_historian_preflight": preflight,
+                },
+            )
+
+            with pd.ExcelFile(path) as workbook:
+                self.assertIn("historian_preflight", workbook.sheet_names)
+                audit = pd.read_excel(
+                    workbook, sheet_name="historian_preflight"
+                )
+                run_info = pd.read_excel(workbook, sheet_name="run_info")
+
+            events = audit.loc[audit["record_type"].eq("event")]
+            self.assertEqual(2, len(events))
+            self.assertEqual(
+                ["interpolated", "omitted"], events["action"].tolist()
+            )
+            self.assertEqual(
+                ["wind_speed_ms", "temp_air_c"], events["column"].tolist()
+            )
+            self.assertEqual(-1999.0, events.iloc[0]["original_value"])
+            self.assertEqual(2.0, events.iloc[0]["final_value"])
+            self.assertTrue(pd.isna(events.iloc[1]["final_value"]))
+            self.assertIn(
+                "historian_preflight", run_info["parameter"].tolist()
+            )
         finally:
             path.unlink(missing_ok=True)
 

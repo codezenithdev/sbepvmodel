@@ -125,6 +125,7 @@ class MidcReferenceHourTests(unittest.TestCase):
         )
 
         self.assertEqual(intervals.attrs["partial_interval_count"], 2)
+        self.assertEqual(intervals.attrs["unavailable_interval_count"], 94)
         self.assertEqual(intervals.attrs["expected_samples_per_interval"], 15)
         self.assertEqual(affected, 94)
         self.assertEqual(missing_values, 94 * len(midc.MEASUREMENT_COLUMNS))
@@ -169,6 +170,85 @@ class MidcReferenceHourTests(unittest.TestCase):
         self.assertEqual(result.missing_value_count, 0)
         self.assertEqual(result.affected_interval_count, 0)
         self.assertTrue(any("fewer than" in warning for warning in result.warnings))
+
+    def test_missing_chunk_boundary_recovers_to_next_available_source_date(self):
+        unavailable_december = (
+            "Error: Unable to open 20221231.TXT, this data may not exist.\n"
+            "The closest available date is 12/23/2022."
+        )
+        unavailable_january = (
+            "Error: Unable to open 20230101.TXT, this data may not exist.\n"
+            "The closest available date is 01/08/2023."
+        )
+        available = raw_csv([raw_row(8, 0, 10.0, year=2023)])
+
+        def response(start, _end):
+            return {
+                date(2022, 12, 31): unavailable_december,
+                date(2023, 1, 1): unavailable_january,
+                date(2023, 1, 8): available,
+            }[start]
+
+        with patch.object(midc, "download_api_csv", side_effect=response) as download:
+            result = midc.fetch_hourly_data(
+                date(2023, 1, 1),
+                date(2023, 1, 8),
+            )
+
+        self.assertEqual(
+            [call.args[0] for call in download.call_args_list],
+            [date(2022, 12, 31), date(2023, 1, 1), date(2023, 1, 8)],
+        )
+        self.assertEqual(result.data_request_count, 3)
+        self.assertGreater(result.unavailable_interval_count, 0)
+        self.assertTrue(
+            any("no zero-generation" in warning for warning in result.warnings)
+        )
+
+    def test_fully_unavailable_trailing_chunk_is_recorded_not_rejected(self):
+        responses = {
+            date(2024, 12, 31): raw_csv(
+                [raw_row(366, 2359, 5.0, year=2024)]
+            ),
+            date(2025, 1, 1): raw_csv([raw_row(1, 2359, 10.0)]),
+            date(2025, 1, 2): (
+                "Error: Unable to open 20250102.TXT, this data may not exist."
+            ),
+        }
+
+        with patch.object(
+            midc,
+            "download_api_csv",
+            side_effect=lambda start, _end: responses[start],
+        ) as download:
+            result = midc.fetch_hourly_data(
+                date(2025, 1, 1),
+                date(2025, 1, 2),
+                chunk_days=1,
+            )
+
+        self.assertEqual(
+            [call.args[0] for call in download.call_args_list],
+            [date(2024, 12, 31), date(2025, 1, 1), date(2025, 1, 2)],
+        )
+        self.assertEqual(result.data_request_count, 3)
+        self.assertGreater(result.unavailable_interval_count, 0)
+        self.assertEqual(len(result.interval_data), 48)
+
+    def test_all_unavailable_chunks_still_fail_clearly(self):
+        with patch.object(
+            midc,
+            "download_api_csv",
+            side_effect=lambda start, _end: (
+                "Error: No data found for begin date of "
+                f"{start:%Y%m%d}."
+            ),
+        ):
+            with self.assertRaisesRegex(midc.MidcError, "no available source data"):
+                midc.fetch_hourly_data(
+                    date(2025, 1, 1),
+                    date(2025, 1, 1),
+                )
 
     def test_first_available_date_does_not_request_prior_day_and_marks_boundary(self):
         timestamps = pd.date_range(
@@ -338,6 +418,30 @@ class MidcModelInputTests(unittest.TestCase):
         self.assertEqual(parsed["temp_air_c"].tolist(), [10.0, 12.0, 14.0])
         self.assertEqual(parsed["wind_speed_ms"].tolist(), [1.0, 2.0, 3.0])
 
+    def test_all_weather_empty_intervals_are_omitted_without_fabrication(self):
+        measurements = list(midc.MEASUREMENT_COLUMNS.values())
+        frame = pd.DataFrame(
+            {
+                midc.DATE_COLUMN: ["01/01/2023"] * 3,
+                midc.HOUR_COLUMN: [0, 1, 2],
+                **{
+                    column: [10.0, np.nan, 20.0]
+                    for column in measurements
+                },
+            }
+        )
+        path = config.OUTPUT_DIR / "_test_midc_unavailable_interval.csv"
+        try:
+            frame.to_csv(path, index=False)
+            parsed, warnings = model.parse_midc_csv(str(path))
+        finally:
+            path.unlink(missing_ok=True)
+
+        self.assertEqual(parsed.index.tz_convert("Etc/GMT+7").hour.tolist(), [0, 2])
+        self.assertEqual(parsed["ghi_wm2"].tolist(), [10.0, 20.0])
+        self.assertTrue(any("Omitted 1 MIDC interval" in item for item in warnings))
+        self.assertTrue(any("no zero-generation" in item for item in warnings))
+
     def test_monthly_labels_remain_year_qualified_for_multi_year_runs(self):
         index = pd.DatetimeIndex(
             ["2025-12-31 23:00", "2026-01-01 00:00"], tz="America/Denver"
@@ -430,6 +534,42 @@ class MidcModelInputTests(unittest.TestCase):
         self.assertEqual(
             cdf["series"]["combined"],
             [{"year": 2024, "energy_kwh": 42.0, "cumulative_probability": 1.0}],
+        )
+
+    def test_annual_energy_cdf_excludes_full_dates_with_incomplete_source(self):
+        fixed_mst = pd.DatetimeIndex(
+            ["2022-01-01 00:00", "2024-01-01 00:00"],
+            tz="Etc/GMT+7",
+        )
+        frame = pd.DataFrame(
+            {
+                "se_predicted_energy_step_kwh": [10.0, 20.0],
+                "sol_predicted_energy_step_kwh": [5.0, 10.0],
+            },
+            index=fixed_mst.tz_convert("America/Denver"),
+        )
+        source_partial = validation._annual_period_record(
+            2022, date(2022, 1, 1), date(2022, 12, 31)
+        )
+        source_partial.update(
+            {
+                "coverage_status": "incomplete_source",
+                "source_complete": False,
+                "cdf_eligible": False,
+            }
+        )
+        complete = validation._annual_period_record(
+            2024, date(2024, 1, 1), date(2024, 12, 31)
+        )
+
+        rows, cdf = model.annual_energy_by_year(frame, [source_partial, complete])
+
+        self.assertTrue(rows[0]["complete_calendar_year"])
+        self.assertFalse(rows[0]["source_complete"])
+        self.assertEqual(cdf["eligible_years"], [2024])
+        self.assertEqual(
+            cdf["excluded_years"],
+            [{"year": 2022, "reason": "incomplete_source"}],
         )
 
     def test_annual_energy_cdf_assigns_equal_values_equal_probability(self):
@@ -609,6 +749,76 @@ class AnnualApiTests(unittest.TestCase):
             [period["cdf_eligible"] for period in periods],
             [False, True, False],
         )
+
+    def test_downloaded_source_gaps_make_full_date_years_cdf_ineligible(self):
+        periods = [
+            validation._annual_period_record(
+                2011, date(2011, 2, 11), date(2011, 12, 31)
+            ),
+            validation._annual_period_record(
+                2022, date(2022, 1, 1), date(2022, 12, 31)
+            ),
+            validation._annual_period_record(
+                2023, date(2023, 1, 1), date(2023, 12, 31)
+            ),
+            validation._annual_period_record(
+                2024, date(2024, 1, 1), date(2024, 12, 31)
+            ),
+        ]
+        quality = [
+            {"year": 2011, "interval_rows": 7_776, "unavailable_interval_count": 14},
+            {"year": 2022, "interval_rows": 8_760, "unavailable_interval_count": 194},
+            {"year": 2023, "interval_rows": 8_760, "unavailable_interval_count": 170},
+            {"year": 2024, "interval_rows": 8_784, "unavailable_interval_count": 0},
+        ]
+
+        enriched, enriched_quality = run_annual._periods_with_source_coverage(
+            periods, quality, 3_600
+        )
+
+        by_year = {int(period["year"]): period for period in enriched}
+        self.assertEqual(by_year[2011]["coverage_status"], "partial_start")
+        self.assertEqual(by_year[2011]["source_expected_interval_count"], 7_776)
+        self.assertEqual(by_year[2011]["source_covered_interval_count"], 7_762)
+        self.assertEqual(by_year[2011]["annual_expected_interval_count"], 8_760)
+        self.assertEqual(by_year[2011]["annual_coverage_pct"], 88.607)
+        self.assertFalse(by_year[2011]["cdf_eligible"])
+
+        self.assertEqual(by_year[2022]["coverage_status"], "incomplete_source")
+        self.assertEqual(by_year[2022]["source_covered_interval_count"], 8_566)
+        self.assertEqual(by_year[2022]["source_coverage_pct"], 97.785)
+        self.assertFalse(by_year[2022]["source_complete"])
+        self.assertFalse(by_year[2022]["cdf_eligible"])
+
+        self.assertEqual(by_year[2023]["coverage_status"], "incomplete_source")
+        self.assertEqual(by_year[2023]["source_covered_interval_count"], 8_590)
+        self.assertEqual(by_year[2023]["source_coverage_pct"], 98.059)
+        self.assertFalse(by_year[2023]["cdf_eligible"])
+
+        self.assertEqual(by_year[2024]["coverage_status"], "complete")
+        self.assertEqual(by_year[2024]["annual_expected_interval_count"], 8_784)
+        self.assertEqual(by_year[2024]["annual_coverage_pct"], 100.0)
+        self.assertTrue(by_year[2024]["source_complete"])
+        self.assertTrue(by_year[2024]["cdf_eligible"])
+        self.assertEqual(
+            [row["source_covered_interval_count"] for row in enriched_quality],
+            [7_762, 8_566, 8_590, 8_784],
+        )
+
+    def test_unknown_cached_source_coverage_is_not_assumed_complete(self):
+        period = validation._annual_period_record(
+            2024, date(2024, 1, 1), date(2024, 12, 31)
+        )
+
+        enriched, _ = run_annual._periods_with_source_coverage(
+            [period], [{"year": 2024, "interval_rows": 8_784}], 3_600
+        )
+
+        self.assertEqual(enriched[0]["coverage_status"], "incomplete_source")
+        self.assertIsNone(enriched[0]["source_covered_interval_count"])
+        self.assertIsNone(enriched[0]["source_coverage_pct"])
+        self.assertFalse(enriched[0]["source_complete"])
+        self.assertFalse(enriched[0]["cdf_eligible"])
 
     def test_selected_years_reject_duplicates_and_out_of_range_values(self):
         for years in ([2024, 2024], [2010], [2027]):
@@ -988,7 +1198,7 @@ class AnnualApiTests(unittest.TestCase):
                 patch.object(
                     run_annual, "_render_midc_input_data_plots", return_value={}
                 ),
-                patch.object(model, "run_model", return_value=stats),
+                patch.object(model, "run_model", return_value=stats) as rerun_model,
             ):
                 run_annual._run_annual_job(
                     job_id,
@@ -998,8 +1208,21 @@ class AnnualApiTests(unittest.TestCase):
                 )
 
             refetch.assert_not_called()
+            cached_period = rerun_model.call_args.kwargs["annual_periods"][0]
+            self.assertEqual(cached_period["source_expected_interval_count"], 96)
+            self.assertEqual(cached_period["source_covered_interval_count"], 1)
+            self.assertEqual(cached_period["source_coverage_pct"], 1.042)
+            self.assertFalse(cached_period["source_complete"])
+            self.assertFalse(cached_period["cdf_eligible"])
             completed = state.AGENT_STORE.get_job(job_id)
             self.assertEqual(completed["state"], "done")
+            self.assertEqual(
+                completed["provenance"]["annual_source_audit"]["schema_version"],
+                2,
+            )
+            self.assertEqual(
+                completed["result"]["window"]["periods"][0], cached_period
+            )
             self.assertEqual(
                 completed["result"]["source_quality"]["partial_interval_count"],
                 1,
