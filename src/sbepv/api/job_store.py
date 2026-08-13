@@ -12,7 +12,11 @@ import logging
 from typing import Any
 
 from sbepv.api import state
-from sbepv.store import AgentStoreError, LeaseOwnershipLost
+from sbepv.store import (
+    TECHNOECONOMIC_ID_PREFIX,
+    AgentStoreError,
+    LeaseOwnershipLost,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +38,41 @@ def _cache_job_record(record: dict[str, Any]) -> dict[str, Any]:
     return cached
 
 
-def _get_job_record(job_id: str) -> dict[str, Any] | None:
-    try:
-        record = state.AGENT_STORE.get_job(job_id)
-    except AgentStoreError:
-        logger.exception("Could not read durable job %s", job_id)
-        record = None
+def _get_durable_model_job_record(job_id: str) -> dict[str, Any] | None:
+    """Return only a durable model job, never TEA work or a cache-only row.
+
+    Promotion, model completion, and comparison publication use this stricter
+    lookup.  Those workflows mutate durable model state and therefore must not
+    inherit the legacy cache fallback provided by :func:`_get_job_record`.
+    """
+
+    normalized_job_id = str(job_id)
+    if normalized_job_id.startswith(TECHNOECONOMIC_ID_PREFIX):
+        return None
+    record = state.AGENT_STORE.get_job(normalized_job_id)
     if record is not None:
         _cache_job_record(record)
+    return record
+
+
+def _get_job_record(job_id: str) -> dict[str, Any] | None:
+    normalized_job_id = str(job_id)
+    # TEA has its own durable registry and API surface.  In particular, never
+    # let a stale or adversarial compatibility-cache entry make a ``tea_`` id
+    # look like a model job after the authoritative model lookup misses it.
+    if normalized_job_id.startswith(TECHNOECONOMIC_ID_PREFIX):
+        return None
+    try:
+        record = _get_durable_model_job_record(normalized_job_id)
+    except AgentStoreError:
+        logger.exception("Could not read durable job %s", normalized_job_id)
+        record = None
+    if record is not None:
         return record
-    cached = state.JOBS.get(job_id)
+    cached = state.JOBS.get(normalized_job_id)
     if cached is None:
         return None
-    return {"id": job_id, **cached}
+    return {"id": normalized_job_id, **cached}
 
 
 def _update_job(

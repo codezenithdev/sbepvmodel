@@ -24,6 +24,7 @@ _PRIVATE_PATH_KEYS = {
     "source_path",
     "cleaned_source_path",
     "input_csv",
+    "storage_key",
 }
 _PRIVATE_METADATA_KEYS = {
     "annual_source_audit",

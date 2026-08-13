@@ -66,9 +66,12 @@ OUTPUT_DIR = _configured_output_dir()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CALIBRATION_REVIEW_DIR = OUTPUT_DIR / ".calibration_reviews"
 CALIBRATION_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+ANNUAL_SOURCE_ARTIFACT_DIR = OUTPUT_DIR / ".annual_sources"
+ANNUAL_SOURCE_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 PRIVATE_OUTPUT_DIRS = (
     (OUTPUT_DIR / ".agent_state").resolve(),
     CALIBRATION_REVIEW_DIR.resolve(),
+    ANNUAL_SOURCE_ARTIFACT_DIR.resolve(),
 )
 PUBLIC_OUTPUT_SUFFIXES = frozenset({".csv", ".png", ".xlsx"})
 CALIBRATION_REVIEW_TTL = timedelta(hours=24)

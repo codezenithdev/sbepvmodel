@@ -1586,17 +1586,17 @@ truth and both Python/Vite assemblers must remain equivalent.
 
 ### Phase 2 — durable persistence and immutable source snapshot
 
-- [ ] Add schema-v5 sibling TEA job table and migration tests.
-- [ ] Add source eligibility verification and canonical snapshot/hash construction.
-- [ ] Freeze per-system Wdc manifests, cost/design basis, evidence, degradation, and
+- [X] Add schema-v5 sibling TEA job table and migration tests.
+- [X] Add source eligibility verification and canonical snapshot/hash construction.
+- [X] Freeze per-system Wdc manifests, cost/design basis, evidence, degradation, and
   any commercial-transfer declaration atomically with the source snapshot.
-- [ ] Add immutability triggers and terminal write protection.
-- [ ] Add create/read/claim/heartbeat/cancel/interruption/retry/delete methods.
-- [ ] Make global capacity and oldest-first claiming atomic across model and TEA
+- [X] Add immutability triggers and terminal write protection.
+- [X] Add create/read/claim/heartbeat/cancel/interruption/retry/delete methods.
+- [X] Make global capacity and oldest-first claiming atomic across model and TEA
   tables; reserve the `tea_` identifier namespace.
-- [ ] Prove TEA IDs cannot enter current baselines, promotions, proposals,
+- [X] Prove TEA IDs cannot enter current baselines, promotions, proposals,
   comparisons, saved model results, or Solar Agent model history.
-- [ ] Run persistence/source tests and report results for approval.
+- [X] Run persistence/source tests and report results for approval.
 
 ### Phase 3 — API and worker
 

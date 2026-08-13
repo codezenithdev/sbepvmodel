@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from sbepv import model
-from sbepv.api import config, state
+from sbepv.api import config, state, technoeconomic as technoeconomic_api
 from sbepv.api.artifacts import (
     _job_attempt_prefix,
     _output_url,
@@ -383,6 +383,14 @@ def _run_annual_job(
             "source_quality": deepcopy(source_quality),
             "warnings": deepcopy(source_warnings),
         }
+        source_artifact = technoeconomic_api.harden_annual_source_artifact(
+            csv_path,
+            source_hash,
+            annual_job_id=job_id,
+        )
+        existing_provenance["annual_source_artifact"] = deepcopy(source_artifact)
+        capacity_manifest = model.capacity_manifest()
+        existing_provenance["capacity_manifest"] = deepcopy(capacity_manifest)
         _update_job(
             job_id,
             worker_id=worker_id,
@@ -419,6 +427,7 @@ def _run_annual_job(
             dict.fromkeys([*source_warnings, *stats.get("data_quality_warnings", [])])
         )
         stats["data_quality_warnings"] = warnings
+        stats["capacity_manifest"] = deepcopy(capacity_manifest)
         model_application = stats.get("calibration_application")
         calibration_application: dict[str, Any] = (
             {
@@ -490,10 +499,12 @@ def _run_annual_job(
             "source_csv": _public_source_url(csv_path),
             "warnings": warnings,
             "source_quality": source_quality,
+            "annual_source_artifact": deepcopy(source_artifact),
             "annual_energy_by_year": deepcopy(
                 stats.get("annual_energy_by_year") or []
             ),
             "annual_energy_cdf": deepcopy(stats.get("annual_energy_cdf") or {}),
+            "capacity_manifest": deepcopy(capacity_manifest),
             "calibration_application": calibration_application,
             "window": {
                 "from": req.from_date,

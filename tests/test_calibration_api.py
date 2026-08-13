@@ -386,7 +386,9 @@ class CalibrationReviewApiTests(unittest.TestCase):
         self.assertEqual(identical["data_quality"], first["data_quality"])
         self.assertEqual(len(self.store.list_jobs(limit=10)), 1)
 
-        self.store.update_job(first["job_id"], state="running")
+        claimed = self.store.claim_next_queued_job()
+        self.assertIsNotNone(claimed)
+        self.assertEqual(first["job_id"], claimed["id"])
         running_response = self.client.post(
             f"/api/calibration-reviews/{review_id}/run",
             json={"decisions": decisions},

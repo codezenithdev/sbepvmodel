@@ -1269,6 +1269,8 @@ def list_saved_results() -> JSONResponse:
 def save_result(
     job_id: str, req: SavedResultCreateRequest | None = None
 ) -> JSONResponse:
+    if job_store._get_durable_model_job_record(job_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown job id")
     try:
         saved_result = state.AGENT_STORE.save_result(
             job_id, name=req.name if req is not None else None
@@ -1357,7 +1359,7 @@ def delete_model_job(job_id: str) -> JSONResponse:
 
 @app.post("/api/jobs/{job_id}/promote")
 def promote_model_job(job_id: str) -> JSONResponse:
-    candidate = _get_job_record(job_id)
+    candidate = job_store._get_durable_model_job_record(job_id)
     if candidate is None:
         raise HTTPException(status_code=404, detail="Unknown job id")
     if candidate.get("mode") == "validation":
