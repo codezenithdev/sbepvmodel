@@ -269,6 +269,32 @@ class DashboardDeploymentTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
 
+    def test_cors_preflight_allows_every_frontend_api_method(self):
+        client = TestClient(app.app)
+        for method in ("GET", "POST", "PUT", "DELETE"):
+            with self.subTest(method=method):
+                response = client.options(
+                    "/api/saved-results/example-job",
+                    headers={
+                        "Origin": "http://localhost:3000",
+                        "Access-Control-Request-Method": method,
+                        "Access-Control-Request-Headers": "content-type",
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200, response.text)
+                allowed_methods = {
+                    item.strip()
+                    for item in response.headers[
+                        "access-control-allow-methods"
+                    ].split(",")
+                }
+                self.assertIn(method, allowed_methods)
+                self.assertEqual(
+                    response.headers["access-control-allow-origin"],
+                    "http://localhost:3000",
+                )
+
     def test_partial_basic_auth_configuration_fails_closed(self):
         with patch.dict(
             os.environ,

@@ -117,6 +117,30 @@ def _verified_baseline_source(
     return str(source_path), str(source_hash)
 
 
+def _has_current_annual_temporal_semantics(
+    baseline: dict[str, Any] | None,
+) -> bool:
+    """Return whether a completed annual job used today's time semantics."""
+
+    if (
+        not baseline
+        or baseline.get("state") != "done"
+        or baseline.get("mode") != "annual"
+    ):
+        return False
+    stats = ((baseline.get("result") or {}).get("stats") or {})
+    version = stats.get("annual_temporal_semantics_version")
+    fingerprint = stats.get("annual_temporal_semantics_fingerprint")
+    return (
+        version == model.ANNUAL_TEMPORAL_SEMANTICS_VERSION
+        and isinstance(fingerprint, str)
+        and secrets.compare_digest(
+            fingerprint.strip().lower(),
+            model.ANNUAL_TEMPORAL_SEMANTICS_FINGERPRINT,
+        )
+    )
+
+
 def _reviewed_baseline_data_quality(
     baseline: dict[str, Any],
 ) -> dict[str, Any] | None:

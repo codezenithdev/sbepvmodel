@@ -359,8 +359,7 @@
             if (Array.isArray(form.years)) {
                 setAnnualSelectedYears(form.years);
             }
-            setValue('annualIntervalValue', form.intervalValue);
-            setValue('annualIntervalUnit', form.intervalUnit);
+            applyAnnualIntervalFormState(form.intervalValue, form.intervalUnit);
             setValue('annualCurtailmentLimitKw', form.curtailmentLimitKw);
             setValue('annualSolaredgeInverterEfficiency', form.solaredgeInverterEfficiency);
             setValue('annualSolaredgeBosEfficiency', form.solaredgeBosEfficiency);

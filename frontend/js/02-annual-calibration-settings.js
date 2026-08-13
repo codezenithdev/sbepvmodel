@@ -404,7 +404,7 @@
                 });
                 saveDashboardState();
                 return baseline;
-            } catch (error) {
+            } catch {
                 if (loadRevision !== annualBaselineLoadRevision) return null;
                 annualCalibrationBaseline = null;
                 renderAnnualCalibrationBaseline(null, {
@@ -513,7 +513,7 @@
         }
 
         function estimateAnnualModelRows(years, intervalValue, intervalUnit) {
-            const secondsByUnit = { minutes: 60, hours: 3600, days: 86400 };
+            const secondsByUnit = { minutes: 60, hours: 3600 };
             const intervalSeconds = intervalValue * (secondsByUnit[intervalUnit] || 0);
             const selectedDays = years
                 .map(annualYearDateRange)
@@ -528,12 +528,42 @@
                 : 0;
         }
 
+        function syncAnnualIntervalConstraints() {
+            const intervalInput = document.getElementById('annualIntervalValue');
+            const intervalUnit = document.getElementById('annualIntervalUnit').value;
+            intervalInput.max = intervalUnit === 'minutes' ? '60' : '1';
+        }
+
+        function applyAnnualIntervalFormState(value, unit) {
+            const intervalInput = document.getElementById('annualIntervalValue');
+            const intervalUnitInput = document.getElementById('annualIntervalUnit');
+            const numericValue = Number(value);
+            const normalizedUnit = String(unit || '');
+            if (isSupportedAnnualInterval(numericValue, normalizedUnit)) {
+                intervalInput.value = String(numericValue);
+                intervalUnitInput.value = normalizedUnit;
+            } else {
+                intervalInput.value = '1';
+                intervalUnitInput.value = 'hours';
+            }
+            syncAnnualIntervalConstraints();
+        }
+
+        function normalizeAnnualIntervalControls() {
+            const intervalInput = document.getElementById('annualIntervalValue');
+            const intervalUnitInput = document.getElementById('annualIntervalUnit');
+            if (!isSupportedAnnualInterval(Number(intervalInput.value), intervalUnitInput.value)) {
+                intervalInput.value = '1';
+            }
+            syncAnnualIntervalConstraints();
+        }
+
         function updateAnnualRuntimeWarning() {
             const warning = document.getElementById('annualRuntimeWarning');
             const years = readAnnualSelectedYears();
             const intervalValue = Number(document.getElementById('annualIntervalValue').value);
             const intervalUnit = document.getElementById('annualIntervalUnit').value;
-            const intervalSeconds = intervalValue * ({ minutes: 60, hours: 3600, days: 86400 }[intervalUnit] || 0);
+            const intervalSeconds = intervalValue * ({ minutes: 60, hours: 3600 }[intervalUnit] || 0);
             const estimatedRows = estimateAnnualModelRows(years, intervalValue, intervalUnit);
             const subHour = intervalSeconds > 0 && intervalSeconds < 3600;
             const messages = [];

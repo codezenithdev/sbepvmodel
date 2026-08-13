@@ -16,7 +16,7 @@ import secrets
 
 from fastapi.responses import JSONResponse
 
-from sbepv.api.config import AUTH_REALM
+from sbepv.api import config
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def _auth_required_response() -> JSONResponse:
     return JSONResponse(
         {"detail": "Authentication required."},
         status_code=401,
-        headers={"WWW-Authenticate": f'Basic realm="{AUTH_REALM}"'},
+        headers={"WWW-Authenticate": f'Basic realm="{config.AUTH_REALM}"'},
     )
 
 

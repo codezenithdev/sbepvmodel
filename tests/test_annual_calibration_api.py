@@ -453,29 +453,29 @@ class AnnualCalibrationApiTests(unittest.TestCase):
 
     def test_annual_interval_is_persisted_and_bound_to_fallback_confirmation(self):
         baseline = self._completed_reviewed_baseline()
-        six_hour_detail = self._request_confirmation(
+        sixty_minute_detail = self._request_confirmation(
             baseline["id"],
-            interval_value=6,
-            interval_unit="hours",
+            interval_value=60,
+            interval_unit="minutes",
         )
-        three_hour_detail = self._request_confirmation(
+        thirty_minute_detail = self._request_confirmation(
             baseline["id"],
-            interval_value=3,
-            interval_unit="hours",
+            interval_value=30,
+            interval_unit="minutes",
         )
         self.assertNotEqual(
-            six_hour_detail["confirmation_context_sha256"],
-            three_hour_detail["confirmation_context_sha256"],
+            sixty_minute_detail["confirmation_context_sha256"],
+            thirty_minute_detail["confirmation_context_sha256"],
         )
 
         stale_response = self.client.post(
             "/api/annual-run",
             json=self._annual_payload(
                 baseline["id"],
-                interval_value=3,
-                interval_unit="hours",
+                interval_value=30,
+                interval_unit="minutes",
                 seasonal_fallback_acknowledgement=self._acknowledgement(
-                    six_hour_detail["confirmation_context_sha256"]
+                    sixty_minute_detail["confirmation_context_sha256"]
                 ),
             ),
         )
@@ -489,17 +489,17 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             "/api/annual-run",
             json=self._annual_payload(
                 baseline["id"],
-                interval_value=6,
-                interval_unit="hours",
+                interval_value=60,
+                interval_unit="minutes",
                 seasonal_fallback_acknowledgement=self._acknowledgement(
-                    six_hour_detail["confirmation_context_sha256"]
+                    sixty_minute_detail["confirmation_context_sha256"]
                 ),
             ),
         )
         self.assertEqual(response.status_code, 200, response.text)
         job = state.AGENT_STORE.get_job(response.json()["job_id"])
-        self.assertEqual(job["request"]["interval_value"], 6)
-        self.assertEqual(job["request"]["interval_unit"], "hours")
+        self.assertEqual(job["request"]["interval_value"], 60)
+        self.assertEqual(job["request"]["interval_unit"], "minutes")
 
     def test_annual_interval_accepts_equivalent_supported_units(self):
         for interval_value, interval_unit in (
@@ -508,8 +508,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             (30, "minutes"),
             (45, "minutes"),
             (60, "minutes"),
-            (12, "hours"),
-            (1, "days"),
+            (1, "hours"),
         ):
             with self.subTest(interval_value=interval_value, interval_unit=interval_unit):
                 response = self.client.post(
@@ -526,17 +525,31 @@ class AnnualCalibrationApiTests(unittest.TestCase):
                 self.assertEqual(job["request"]["interval_value"], interval_value)
                 self.assertEqual(job["request"]["interval_unit"], interval_unit)
 
-    def test_annual_interval_rejects_unsafe_minute_and_over_day_values(self):
+    def test_annual_interval_rejects_unsafe_or_coarse_values_before_queue(self):
         invalid_intervals = (
             (7, "minutes"),
             (11, "minutes"),
             (61, "minutes"),
+            (2, "hours"),
+            (3, "hours"),
+            (4, "hours"),
             (5, "hours"),
+            (6, "hours"),
+            (8, "hours"),
+            (12, "hours"),
+            (24, "hours"),
             (25, "hours"),
+            (1, "days"),
             (2, "days"),
         )
         for interval_value, interval_unit in invalid_intervals:
-            with self.subTest(interval_value=interval_value, interval_unit=interval_unit):
+            with (
+                self.subTest(
+                    interval_value=interval_value,
+                    interval_unit=interval_unit,
+                ),
+                patch.object(run_annual.midc, "fetch_hourly_data") as download,
+            ):
                 response = self.client.post(
                     "/api/annual-run",
                     json={
@@ -547,6 +560,14 @@ class AnnualCalibrationApiTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(response.status_code, 422, response.text)
+                detail = response.json()["detail"]
+                if interval_unit == "minutes":
+                    self.assertIn("1 to 60", detail)
+                else:
+                    self.assertIn("1 hour", detail)
+                self.assertEqual(state.JOBS, {})
+                self.assertEqual(state.AGENT_STORE.list_jobs(), [])
+                download.assert_not_called()
 
     def test_worker_passes_resolved_profile_and_exposes_sanitized_application(self):
         baseline = self._completed_reviewed_baseline(

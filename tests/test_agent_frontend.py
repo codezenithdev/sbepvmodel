@@ -372,6 +372,11 @@ class AgentFrontendContractTests(unittest.TestCase):
         self.assertIn("hasCanonicalAnnualYears", viewer)
         self.assertIn("legacyAnnualRequestYear(job.request)", viewer)
         self.assertIn("legacy date-range result is read-only", viewer)
+        legacy_mapper = self.html.split(
+            "function legacyAnnualRequestYear(request)", 1
+        )[1].split("\n        async function ", 1)[0]
+        self.assertIn("isRecognizedAnnualInterval", legacy_mapper)
+        self.assertNotIn("isSupportedAnnualInterval", legacy_mapper)
         self.assertNotIn("postAgentAction", viewer)
         self.assertNotIn("method: 'POST'", viewer)
 

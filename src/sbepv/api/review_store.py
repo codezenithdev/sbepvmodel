@@ -20,7 +20,6 @@ from typing import Any
 from fastapi import HTTPException
 
 from sbepv.api import config
-from sbepv.api.config import CALIBRATION_REVIEW_TTL
 from sbepv.api.job_store import _get_job_record
 from sbepv.calibration import public_quality_report
 from sbepv import reporting
@@ -128,7 +127,7 @@ def _cleanup_expired_calibration_reviews(
         current = current.replace(tzinfo=timezone.utc)
     else:
         current = current.astimezone(timezone.utc)
-    stale_before = current - CALIBRATION_REVIEW_TTL
+    stale_before = current - config.CALIBRATION_REVIEW_TTL
     removed = 0
     review_root = config.CALIBRATION_REVIEW_DIR
     try:

@@ -437,7 +437,7 @@
                 }
                 if (isAgentJobTerminal(data)) await refreshAgentState(false);
                 else scheduleAgentJobPoll(jobId, 800, 0);
-            } catch (error) {
+            } catch {
                 const current = agentJobSnapshots.get(jobId) || { job_id: jobId };
                 const nextFailureCount = failureCount + 1;
                 const reconnecting = nextFailureCount <= AGENT_POLL_MAX_FAILURES;

@@ -51,6 +51,84 @@ from sbepv.calibration import (
 
 __version__ = "5"
 
+# Annual MIDC timestamp interpretation evolves independently of the historian
+# prediction core. Keep this identity separate from ``__version__`` so a change
+# to annual interval placement cannot unnecessarily retire compatible reviewed
+# calibration profiles.
+ANNUAL_TEMPORAL_SEMANTICS_VERSION = "2"
+ANNUAL_MAX_PHYSICS_INTERVAL_SECONDS = 3_600
+
+
+def annual_temporal_semantics_manifest() -> dict[str, object]:
+    """Return the stable annual interval-placement and integration contract."""
+
+    return {
+        "version": ANNUAL_TEMPORAL_SEMANTICS_VERSION,
+        "source_weather": "interval_means",
+        "source_output_timestamp_convention": "right-closed, right-labeled",
+        "weather_evaluation_convention": "interval_midpoint",
+        "weather_evaluation_offset_fraction": -0.5,
+        "maximum_physics_interval_seconds": ANNUAL_MAX_PHYSICS_INTERVAL_SECONDS,
+        "interval_alignment": "whole-minute divisor of a fixed-MST day",
+        "output_timestamp_preserved": True,
+        "energy_integration": "point_power_times_nominal_interval_duration",
+        "annual_attribution_timezone": "Etc/GMT+7",
+    }
+
+
+def annual_temporal_semantics_fingerprint() -> str:
+    """Return the stable hash used to gate annual scenario comparisons."""
+
+    payload = json.dumps(
+        annual_temporal_semantics_manifest(),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+ANNUAL_TEMPORAL_SEMANTICS_FINGERPRINT = (
+    annual_temporal_semantics_fingerprint()
+)
+
+
+def _validated_annual_midc_interval_seconds(value: object) -> int:
+    """Return the safe annual physics interval used by MIDC model execution."""
+
+    if value is None:
+        raise ValueError(
+            "expected_interval_seconds is required for annual MIDC modeling."
+        )
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            "Annual MIDC intervals must be whole-minute divisors of a day "
+            "no coarser than 1 hour."
+        ) from exc
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not np.isfinite(numeric)
+        or not numeric.is_integer()
+    ):
+        raise ValueError(
+            "Annual MIDC intervals must be whole-minute divisors of a day "
+            "no coarser than 1 hour."
+        )
+    seconds = int(numeric)
+    if (
+        seconds < 60
+        or seconds > ANNUAL_MAX_PHYSICS_INTERVAL_SECONDS
+        or seconds % 60
+        or 86_400 % seconds
+    ):
+        raise ValueError(
+            "Annual MIDC intervals must be whole-minute divisors of a day "
+            "no coarser than 1 hour."
+        )
+    return seconds
+
 # -----------------------------------------------------------------------------
 # RUN SETTINGS (edit here -- no command-line prompts)
 # -----------------------------------------------------------------------------
@@ -1792,19 +1870,48 @@ def predict_ac_power(
     include_iam: bool | None = INCLUDE_IAM,
     iam_a_r: float | None = A_R,
     iam_model: str | None = None,
+    evaluation_times: pd.DatetimeIndex | None = None,
 ) -> tuple[pd.DataFrame, str]:
     """Add predicted AC power columns for SolarEdge and Solectria.
 
     progress_cb(frac, msg): optional callback (frac in 0..1) for the Solectria
     time loop, so a UI can show a moving progress bar.
+
+    ``evaluation_times`` lets interval-mean weather be evaluated at its physical
+    representative instant without changing the source/output timestamp index.
+    It must be timezone-compatible and positionally aligned with ``df``.
     """
     selected_iam_model, effective_iam_a_r = resolve_iam_settings(
         iam_model=iam_model,
         iam_a_r=iam_a_r,
         include_iam=include_iam,
     )
-    location = pvl.location.Location(LAT, LON, tz=str(df.index.tz))
-    weather, dhi_source = build_weather(df, location)
+    prediction_input = df
+    if evaluation_times is not None:
+        source_times = pd.DatetimeIndex(df.index)
+        try:
+            evaluation_index = pd.DatetimeIndex(evaluation_times)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("evaluation_times must be valid timestamps.") from exc
+        if len(evaluation_index) != len(source_times):
+            raise ValueError("evaluation_times must contain one timestamp per input row.")
+        if evaluation_index.hasnans:
+            raise ValueError("evaluation_times cannot contain invalid timestamps.")
+        if source_times.tz is None or evaluation_index.tz is None:
+            raise ValueError("evaluation_times and the input index must be timezone-aware.")
+        if str(source_times.tz) != str(evaluation_index.tz):
+            raise ValueError(
+                "evaluation_times must use the same timezone as the input index."
+            )
+        prediction_input = df.copy()
+        prediction_input.index = evaluation_index
+
+    location = pvl.location.Location(
+        LAT,
+        LON,
+        tz=str(prediction_input.index.tz),
+    )
+    weather, dhi_source = build_weather(prediction_input, location)
 
     all_tilts = (
         np.array(SOLECTRIA_TILT_ASBUILT).flatten().tolist()
@@ -3012,6 +3119,13 @@ def run_model(
     )
     if calibration_profile is not None:
         validate_calibration_profile_physics(calibration_profile)
+    if annual_mode and input_kind == "midc":
+        # The API rejects unsafe cadence choices, but the model is also a
+        # callable boundary. Fail before source IO so direct callers cannot
+        # create coarse results carrying the current temporal-semantics identity.
+        expected_interval_seconds = _validated_annual_midc_interval_seconds(
+            expected_interval_seconds
+        )
     application_context_supplied = calibration_application_context is not None
     if calibration_application_context is None:
         calibration_application: dict = {}
@@ -3062,6 +3176,48 @@ def run_model(
         )
     else:
         raise ValueError(f"Unsupported model input kind: {input_kind}")
+
+    evaluation_times: pd.DatetimeIndex | None = None
+    weather_evaluation_convention = "source_timestamp"
+    weather_evaluation_offset_seconds = 0.0
+    source_output_timestamp_convention = (
+        "right-closed, right-labeled"
+        if input_kind == "midc"
+        else "source timestamps"
+    )
+    annual_temporal_semantics_version = (
+        ANNUAL_TEMPORAL_SEMANTICS_VERSION
+        if annual_mode and input_kind == "midc"
+        else None
+    )
+    annual_temporal_semantics_fingerprint_value = (
+        ANNUAL_TEMPORAL_SEMANTICS_FINGERPRINT
+        if annual_mode and input_kind == "midc"
+        else None
+    )
+    if input_kind == "midc" and expected_interval_seconds is not None:
+        try:
+            midpoint_interval_seconds = float(expected_interval_seconds)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "expected_interval_seconds must be a positive whole number."
+            ) from exc
+        if (
+            isinstance(expected_interval_seconds, (bool, np.bool_))
+            or not np.isfinite(midpoint_interval_seconds)
+            or midpoint_interval_seconds <= 0
+            or not midpoint_interval_seconds.is_integer()
+        ):
+            raise ValueError(
+                "expected_interval_seconds must be a positive whole number."
+            )
+        weather_evaluation_offset_seconds = -midpoint_interval_seconds / 2.0
+        evaluation_times = pd.DatetimeIndex(df.index) + pd.to_timedelta(
+            weather_evaluation_offset_seconds,
+            unit="s",
+        )
+        weather_evaluation_convention = "interval_midpoint"
+
     def prediction_progress(frac: float, msg: str) -> None:
         if progress_cb:
             progress_cb(max(0.0, min(1.0, frac)) * 0.84, msg)
@@ -3075,6 +3231,7 @@ def run_model(
         include_iam=False,
         iam_a_r=effective_iam_a_r,
         iam_model=selected_iam_model,
+        evaluation_times=evaluation_times,
     )
     if curtailment_enabled and curtailment_limit_kw is None:
         curtailment_limit_kw = DEFAULT_CURTAILMENT_LIMIT_KW
@@ -3281,6 +3438,13 @@ def run_model(
         "input_csv": input_csv,
         "input_kind": input_kind,
         "annual_mode": bool(annual_mode),
+        "source_output_timestamp_convention": source_output_timestamp_convention,
+        "weather_evaluation_convention": weather_evaluation_convention,
+        "weather_evaluation_offset_seconds": weather_evaluation_offset_seconds,
+        "annual_temporal_semantics_version": annual_temporal_semantics_version,
+        "annual_temporal_semantics_fingerprint": (
+            annual_temporal_semantics_fingerprint_value
+        ),
         "input_is_utc": bool(INPUT_IS_UTC),
         "local_timezone": str(df.index.tz),
         "dhi_source": dhi_source,
@@ -3542,6 +3706,13 @@ def run_model(
         "predicted_difference_kwh": _safe(predicted_difference),
         "predicted_difference_pct": _safe(predicted_difference_pct, 2),
         "dhi_source": dhi_source,
+        "source_output_timestamp_convention": source_output_timestamp_convention,
+        "weather_evaluation_convention": weather_evaluation_convention,
+        "weather_evaluation_offset_seconds": weather_evaluation_offset_seconds,
+        "annual_temporal_semantics_version": annual_temporal_semantics_version,
+        "annual_temporal_semantics_fingerprint": (
+            annual_temporal_semantics_fingerprint_value
+        ),
         "data_quality_warnings": data_quality_warnings,
         "backtrack": bool(backtrack),
         "solaredge_inverter_efficiency": _safe(se_inv_eff, 4),

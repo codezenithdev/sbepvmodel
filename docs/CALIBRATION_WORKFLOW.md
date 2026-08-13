@@ -182,10 +182,12 @@ backtracking, efficiency, IAM, and curtailment settings as editable starting
 values. Any edits are recorded as explicit differences from the calibration
 settings. Annual dates remain independent of the historian calibration window.
 The annual interval can use any supported whole-minute divisor of a day from 1
-through 60 minutes, a supported whole-hour interval, or one day. Sub-hour source
-snapshots carry both fixed-MST hour and minute keys. A one-minute full year is
-about 525,600 rows; combined selections above 1,048,575 rows are rejected before
-download so the complete time series remains exportable to Excel.
+through 60 minutes, or exactly one hour. Coarser hour and day intervals are
+rejected before queueing or download because a single coarse weather sample cannot
+preserve the solar geometry required by the PV model. Sub-hour source snapshots
+carry both fixed-MST hour and minute keys. A one-minute full year is about 525,600
+rows; combined selections above 1,048,575 rows are rejected before download so the
+complete time series remains exportable to Excel.
 
 The annual weather data is never used to refit calibration factors. The model
 first produces its physics-only prediction with the submitted annual settings,

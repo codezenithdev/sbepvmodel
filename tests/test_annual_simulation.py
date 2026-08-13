@@ -364,6 +364,29 @@ class MidcReferenceHourTests(unittest.TestCase):
 
 
 class MidcModelInputTests(unittest.TestCase):
+    def test_annual_model_rejects_missing_or_coarse_interval_before_input_io(self):
+        for interval, message in (
+            (None, "required for annual MIDC"),
+            (7 * 60, "whole-minute divisors"),
+            (2 * 3_600, "no coarser than 1 hour"),
+        ):
+            with (
+                self.subTest(interval=interval),
+                patch.object(
+                    model,
+                    "parse_midc_csv",
+                    side_effect=AssertionError("interval must fail before input IO"),
+                ),
+                self.assertRaisesRegex(ValueError, message),
+            ):
+                model.run_model(
+                    input_csv="unused.csv",
+                    output_base="unused",
+                    input_kind="midc",
+                    annual_mode=True,
+                    expected_interval_seconds=interval,
+                )
+
     def test_sub_hour_midc_keys_parse_as_distinct_fixed_mst_timestamps(self):
         frame = pd.DataFrame(
             {
@@ -391,6 +414,109 @@ class MidcModelInputTests(unittest.TestCase):
     def test_default_martin_ruiz_coefficient_is_applied_when_custom_iam_is_off(self):
         self.assertEqual(model.resolve_iam_a_r(False, 0.9), 0.2)
         self.assertEqual(model.resolve_iam_a_r(True, 0.15), 0.15)
+
+    def test_midpoint_evaluation_produces_daylight_power_without_relabeling_output(self):
+        right_label = pd.DatetimeIndex(
+            [pd.Timestamp("2025-01-01 23:00", tz="Etc/GMT+7")],
+            name="timestamp_local",
+        ).tz_convert(model.TIMEZONE)
+        frame = pd.DataFrame(
+            {
+                "ghi_wm2": [103.5047],
+                "dni_wm2": [151.2978],
+                "dhi_wm2": [55.9301],
+                "temp_air_c": [-4.2868],
+                "wind_speed_ms": [3.3364],
+                "se_measured_power_w": [0.0],
+                "sol_measured_power_w": [0.0],
+                "timestamp_utc": right_label.tz_convert("UTC"),
+            },
+            index=right_label,
+        )
+
+        predicted, _ = model.predict_ac_power(
+            frame,
+            backtrack=True,
+            se_eff=1.0,
+            sol_eff=1.0,
+            iam_model=model.IAM_MODEL_PHYSICAL,
+            evaluation_times=right_label - pd.Timedelta(hours=12),
+        )
+
+        pd.testing.assert_index_equal(predicted.index, right_label)
+        self.assertGreater(predicted["se_predicted_power_w"].iloc[0], 0.0)
+        self.assertGreater(predicted["sol_predicted_power_w"].iloc[0], 0.0)
+
+    def test_prediction_evaluation_times_require_matching_length_and_timezone(self):
+        index = pd.date_range(
+            "2025-01-01 12:00",
+            periods=1,
+            freq="h",
+            tz=model.TIMEZONE,
+        )
+        frame = pd.DataFrame(index=index)
+
+        with self.assertRaisesRegex(ValueError, "one timestamp per input row"):
+            model.predict_ac_power(
+                frame,
+                evaluation_times=pd.DatetimeIndex([], tz=model.TIMEZONE),
+            )
+        with self.assertRaisesRegex(ValueError, "same timezone"):
+            model.predict_ac_power(
+                frame,
+                evaluation_times=index.tz_convert("UTC"),
+            )
+
+    def test_historian_model_keeps_source_timestamp_evaluation(self):
+        index = pd.date_range(
+            "2025-01-01 12:00",
+            periods=1,
+            freq="h",
+            tz=model.TIMEZONE,
+        )
+        parsed = pd.DataFrame(
+            {
+                "timestamp_utc": index.tz_convert("UTC"),
+                "se_measured_power_w": [0.0],
+                "sol_measured_power_w": [0.0],
+                "dni_wm2": [500.0],
+                "ghi_wm2": [400.0],
+                "dhi_wm2": [80.0],
+                "temp_air_c": [10.0],
+                "wind_speed_ms": [2.0],
+            },
+            index=index,
+        )
+        prediction_call: dict[str, object] = {}
+
+        def fake_predict(frame, **kwargs):
+            prediction_call.update(kwargs)
+            out = frame.copy()
+            out["se_predicted_power_w"] = 1_000.0
+            out["sol_predicted_power_w"] = 800.0
+            return out, "measured"
+
+        with (
+            patch.object(model, "parse_input_csv", return_value=parsed),
+            patch.object(model, "predict_ac_power", side_effect=fake_predict),
+            patch.object(model, "plot_results"),
+            patch.object(model, "write_excel"),
+        ):
+            stats = model.run_model(
+                input_csv="ignored.csv",
+                output_base="ignored",
+                input_kind="historian",
+                calibrate_model=False,
+                expected_interval_seconds=3_600,
+            )
+
+        self.assertIsNone(prediction_call["evaluation_times"])
+        self.assertEqual(stats["weather_evaluation_convention"], "source_timestamp")
+        self.assertEqual(stats["weather_evaluation_offset_seconds"], 0.0)
+        self.assertEqual(
+            stats["source_output_timestamp_convention"],
+            "source timestamps",
+        )
 
     def test_missing_weather_uses_documented_fallbacks_and_warning(self):
         frame = pd.DataFrame(
@@ -617,8 +743,10 @@ class MidcModelInputTests(unittest.TestCase):
             },
             index=index,
         )
+        prediction_call: dict[str, object] = {}
 
         def fake_predict(frame, **kwargs):
+            prediction_call.update(kwargs)
             out = frame.copy()
             out["se_predicted_power_w"] = [0.0, 1000.0, 2000.0, 0.0]
             out["sol_predicted_power_w"] = [0.0, 800.0, 1600.0, 0.0]
@@ -641,11 +769,33 @@ class MidcModelInputTests(unittest.TestCase):
                     output_base=str(base),
                     input_kind="midc",
                     annual_mode=True,
+                    expected_interval_seconds=3_600,
                 )
 
             self.assertEqual(stats["mode"], "annual")
             self.assertEqual(stats["iam_model"], model.IAM_MODEL_PHYSICAL)
             self.assertIsNone(stats["iam_a_r"])
+            pd.testing.assert_index_equal(
+                prediction_call["evaluation_times"],
+                index - pd.Timedelta(minutes=30),
+            )
+            self.assertEqual(
+                stats["source_output_timestamp_convention"],
+                "right-closed, right-labeled",
+            )
+            self.assertEqual(
+                stats["weather_evaluation_convention"],
+                "interval_midpoint",
+            )
+            self.assertEqual(stats["weather_evaluation_offset_seconds"], -1_800.0)
+            self.assertEqual(
+                stats["annual_temporal_semantics_version"],
+                model.ANNUAL_TEMPORAL_SEMANTICS_VERSION,
+            )
+            self.assertEqual(
+                stats["annual_temporal_semantics_fingerprint"],
+                model.ANNUAL_TEMPORAL_SEMANTICS_FINGERPRINT,
+            )
             self.assertTrue(all(path.is_file() for path in paths))
             with pd.ExcelFile(paths[-1]) as workbook:
                 self.assertIn("monthly_energy", workbook.sheet_names)
@@ -660,6 +810,34 @@ class MidcModelInputTests(unittest.TestCase):
                 self.assertIn("sol_predicted_energy_kwh", headers)
                 self.assertNotIn("se_calibrated_power_w", headers)
                 self.assertNotIn("sol_calibrated_energy_kwh", headers)
+                time_series = pd.read_excel(workbook, sheet_name="time_series")
+                self.assertEqual(
+                    time_series["timestamp_local_naive"].iloc[0],
+                    index[0].tz_localize(None),
+                )
+                run_info = pd.read_excel(workbook, sheet_name="run_info").set_index(
+                    "parameter"
+                )["value"]
+                self.assertEqual(
+                    run_info["source_output_timestamp_convention"],
+                    "right-closed, right-labeled",
+                )
+                self.assertEqual(
+                    run_info["weather_evaluation_convention"],
+                    "interval_midpoint",
+                )
+                self.assertEqual(
+                    float(run_info["weather_evaluation_offset_seconds"]),
+                    -1_800.0,
+                )
+                self.assertEqual(
+                    str(run_info["annual_temporal_semantics_version"]),
+                    model.ANNUAL_TEMPORAL_SEMANTICS_VERSION,
+                )
+                self.assertEqual(
+                    run_info["annual_temporal_semantics_fingerprint"],
+                    model.ANNUAL_TEMPORAL_SEMANTICS_FINGERPRINT,
+                )
             self.assertEqual(len(stats["annual_energy_by_year"]), 1)
             self.assertEqual(stats["annual_energy_cdf"]["eligible_years"], [])
         finally:
@@ -710,7 +888,7 @@ class AnnualApiTests(unittest.TestCase):
     def test_selected_years_are_sorted_resolved_and_persisted(self):
         response = TestClient(app.app).post(
             "/api/annual-run",
-            json={"years": [2024, 2011], "interval_value": 6, "interval_unit": "hours"},
+            json={"years": [2024, 2011], "interval_value": 1, "interval_unit": "hours"},
         )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -1082,7 +1260,7 @@ class AnnualApiTests(unittest.TestCase):
             return midc.MidcFetchResult(frame, 1, 1, 0, 0, 0, kwargs["interval_seconds"])
 
         req = app.AnnualRunRequest(
-            years=[2024, 2011], interval_value=6, interval_unit="hours"
+            years=[2024, 2011], interval_value=1, interval_unit="hours"
         )
         job_id = "_test_selected_years"
         base = config.OUTPUT_DIR / job_id
@@ -1120,8 +1298,8 @@ class AnnualApiTests(unittest.TestCase):
             self.assertEqual(
                 calls,
                 [
-                    (date(2011, 2, 11), date(2011, 12, 31), 21_600),
-                    (date(2024, 1, 1), date(2024, 12, 31), 21_600),
+                    (date(2011, 2, 11), date(2011, 12, 31), 3_600),
+                    (date(2024, 1, 1), date(2024, 12, 31), 3_600),
                 ],
             )
             result = state.JOBS[job_id]["result"]

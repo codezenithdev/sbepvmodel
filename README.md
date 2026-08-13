@@ -79,11 +79,12 @@ Bazefield retrieval and chat fail.
 
 Annual Simulation accepts one or more SolarTAC years from 2011 through the current
 year. Supported minute intervals are the whole-minute divisors of a day from 1
-through 60 (including 1, 5, 15, 30, 45, and 60 minutes); supported hour intervals
-are 1, 2, 3, 4, 6, 8, 12, or 24 hours; 1 day is also supported. One-minute data
-creates about 525,600 rows for a full year. The server rejects combined selections
-above 1,048,575 rows before download so the complete time series remains exportable
-to Excel.
+through 60 (including 1, 5, 15, 30, 45, and 60 minutes), or exactly 1 hour.
+Coarser hour and day intervals are rejected before a job is queued because one
+coarse weather sample cannot preserve the solar geometry required by the PV model.
+One-minute data creates about 525,600 rows for a full year. The server rejects
+combined selections above 1,048,575 rows before download so the complete time
+series remains exportable to Excel.
 The 2011 selection starts on February 11 and the current-year selection ends on
 the latest complete fixed-MST day; both remain labelled as partial periods and
 are excluded from the full-year empirical CDF. The source can be inspected in the

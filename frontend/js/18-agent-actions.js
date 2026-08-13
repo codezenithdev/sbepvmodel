@@ -60,7 +60,7 @@
         }
 
         function legacyAnnualRequestYear(request) {
-            if (!request || !isSupportedAnnualInterval(
+            if (!request || !isRecognizedAnnualInterval(
                 Number(request.interval_value), request.interval_unit
             )) return null;
             for (let year = ANNUAL_FIRST_YEAR; year <= annualCurrentYear(); year += 1) {

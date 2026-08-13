@@ -18,7 +18,6 @@ from time import perf_counter
 
 from sbepv.api import config, state
 from sbepv.api.artifacts import _delete_job_attempt_artifacts
-from sbepv.api.config import SERVER_SESSION_ID
 from sbepv.api.job_store import _cache_job_record, _get_job_record, _update_job
 from sbepv.api.schemas import AnnualRunRequest, RunRequest
 from sbepv.api.validation import (
@@ -28,7 +27,6 @@ from sbepv.api.validation import (
 )
 from sbepv.store import AgentStoreError, LeaseOwnershipLost
 from sbepv.worker import run_annual, run_validation
-from sbepv.api.config import JOB_HEARTBEAT_SECONDS, JOB_STALE_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +60,11 @@ def _stop_model_worker() -> None:
 def _heartbeat_model_job(
     job_id: str, lease_token: str, stop: threading.Event
 ) -> None:
-    while not stop.wait(JOB_HEARTBEAT_SECONDS):
+    while not stop.wait(config.JOB_HEARTBEAT_SECONDS):
         try:
             if not state.AGENT_STORE.heartbeat_job(
                 job_id,
-                worker_id=SERVER_SESSION_ID,
+                worker_id=config.SERVER_SESSION_ID,
                 lease_token=lease_token,
             ):
                 return
@@ -82,16 +80,18 @@ def _model_worker_loop() -> None:
             if now >= next_stale_check:
                 interrupted = state.AGENT_STORE.mark_stale_running_jobs_interrupted(
                     before=datetime.now(timezone.utc)
-                    - timedelta(seconds=JOB_STALE_SECONDS)
+                    - timedelta(seconds=config.JOB_STALE_SECONDS)
                 )
                 if interrupted:
                     logger.warning(
                         "Marked %s expired model job lease(s) interrupted",
                         interrupted,
                     )
-                next_stale_check = now + min(JOB_STALE_SECONDS / 2, 30)
+                next_stale_check = now + min(
+                    config.JOB_STALE_SECONDS / 2, 30
+                )
             record = state.AGENT_STORE.claim_next_queued_job(
-                worker_id=SERVER_SESSION_ID
+                worker_id=config.SERVER_SESSION_ID
             )
         except AgentStoreError:
             logger.exception("The durable model queue could not claim a job")
@@ -134,7 +134,7 @@ def _model_worker_loop() -> None:
                     calibration_application_context=provenance.get(
                         "calibration_application"
                     ),
-                    worker_id=SERVER_SESSION_ID,
+                    worker_id=config.SERVER_SESSION_ID,
                     lease_token=lease_token,
                 )
             else:
@@ -151,7 +151,7 @@ def _model_worker_loop() -> None:
                     calibration_profile=provenance.get(
                         "calibration_profile"
                     ),
-                    worker_id=SERVER_SESSION_ID,
+                    worker_id=config.SERVER_SESSION_ID,
                     lease_token=lease_token,
                 )
         except LeaseOwnershipLost:
@@ -169,7 +169,7 @@ def _model_worker_loop() -> None:
                 try:
                     _update_job(
                         job_id,
-                        worker_id=SERVER_SESSION_ID,
+                        worker_id=config.SERVER_SESSION_ID,
                         lease_token=lease_token,
                         state="error",
                         stage="Failed",

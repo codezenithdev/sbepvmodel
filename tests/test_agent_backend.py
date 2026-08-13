@@ -100,6 +100,7 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
         mode: str = "validation",
         request: dict | None = None,
         reviewed: bool | None = None,
+        include_annual_temporal_semantics: bool = True,
     ) -> dict:
         if request is None:
             request = self.validation_config()
@@ -169,6 +170,17 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                 ),
             },
         }
+        if mode == "annual" and include_annual_temporal_semantics:
+            result["stats"].update(
+                {
+                    "annual_temporal_semantics_version": (
+                        model.ANNUAL_TEMPORAL_SEMANTICS_VERSION
+                    ),
+                    "annual_temporal_semantics_fingerprint": (
+                        model.ANNUAL_TEMPORAL_SEMANTICS_FINGERPRINT
+                    ),
+                }
+            )
         if mode == "validation":
             result.update(
                 {
@@ -932,6 +944,144 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             scenario_math._same_input_context("annual", baseline, candidate)
         )
 
+    def test_coarse_annual_interval_is_rejected_before_agent_proposal(self) -> None:
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+
+        with self.assertRaises(HTTPException) as error:
+            tools._handle_scenario_tool(
+                app.ChatRequest(
+                    message="Run annual simulation at 24-hour resolution.",
+                    job_id=baseline["id"],
+                    active_mode="annual",
+                    current_config=baseline["request"],
+                ),
+                self.tool_arguments(interval_value=24, interval_unit="hours"),
+            )
+
+        self.assertEqual(error.exception.status_code, 422)
+        self.assertIn("1 hour", str(error.exception.detail))
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(), [baseline])
+
+    def test_coarse_annual_interval_is_revalidated_at_agent_confirmation(self) -> None:
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+        proposal = state.AGENT_STORE.create_proposal(
+            mode="annual",
+            effective_request={
+                **baseline["request"],
+                "interval_value": 24,
+                "interval_unit": "hours",
+            },
+            changes=[
+                {
+                    "field": "interval_value",
+                    "label": "Interval value",
+                    "from": 1,
+                    "to": 24,
+                }
+            ],
+            baseline_id=baseline["id"],
+            comparison_kind="cross_run",
+            confirmation_required=True,
+            confirmation_reason="Annual scenarios always require confirmation",
+        )
+
+        with self.assertRaises(HTTPException) as error:
+            app.confirm_agent_proposal(proposal["id"])
+
+        self.assertEqual(error.exception.status_code, 422)
+        self.assertIn("1 hour", str(error.exception.detail))
+        self.assertEqual(
+            state.AGENT_STORE.get_proposal(proposal["id"])["state"],
+            "pending",
+        )
+        self.assertEqual(state.AGENT_STORE.list_jobs(), [baseline])
+
+    def test_legacy_annual_baseline_cannot_create_agent_scenario(self) -> None:
+        baseline = self.completed_baseline(
+            mode="annual",
+            reviewed=False,
+            include_annual_temporal_semantics=False,
+        )
+
+        with self.assertRaises(HTTPException) as error:
+            tools._handle_scenario_tool(
+                app.ChatRequest(
+                    message="Turn annual backtracking off.",
+                    job_id=baseline["id"],
+                    active_mode="annual",
+                    current_config=baseline["request"],
+                ),
+                self.tool_arguments(backtrack=False),
+            )
+
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertIn("fresh Annual baseline", str(error.exception.detail))
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(), [baseline])
+
+    def test_mismatched_annual_semantics_cannot_create_agent_scenario(self) -> None:
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+        stale_result = dict(baseline["result"])
+        stale_result["stats"] = {
+            **dict(stale_result["stats"]),
+            "annual_temporal_semantics_fingerprint": "0" * 64,
+        }
+        baseline = state.AGENT_STORE.update_job(
+            baseline["id"],
+            result=stale_result,
+        )
+
+        with self.assertRaises(HTTPException) as error:
+            tools._handle_scenario_tool(
+                app.ChatRequest(
+                    message="Turn annual backtracking off.",
+                    job_id=baseline["id"],
+                    active_mode="annual",
+                    current_config=baseline["request"],
+                ),
+                self.tool_arguments(backtrack=False),
+            )
+
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertIn("incompatible", str(error.exception.detail))
+        self.assertEqual(state.AGENT_STORE.list_proposals(), [])
+        self.assertEqual(state.AGENT_STORE.list_jobs(), [baseline])
+
+    def test_legacy_annual_proposal_is_revalidated_at_confirmation(self) -> None:
+        baseline = self.completed_baseline(
+            mode="annual",
+            reviewed=False,
+            include_annual_temporal_semantics=False,
+        )
+        proposal = state.AGENT_STORE.create_proposal(
+            mode="annual",
+            effective_request={**baseline["request"], "backtrack": False},
+            changes=[
+                {
+                    "field": "backtrack",
+                    "label": "Backtracking",
+                    "from": True,
+                    "to": False,
+                }
+            ],
+            baseline_id=baseline["id"],
+            comparison_kind="same_input",
+            confirmation_required=True,
+            confirmation_reason="Annual scenarios always require confirmation",
+        )
+
+        with self.assertRaises(HTTPException) as error:
+            app.confirm_agent_proposal(proposal["id"])
+
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertIn("fresh Annual baseline", str(error.exception.detail))
+        self.assertEqual(
+            state.AGENT_STORE.get_proposal(proposal["id"])["state"],
+            "pending",
+        )
+        self.assertEqual(state.AGENT_STORE.list_jobs(), [baseline])
+
     def test_annual_canonicalization_rejects_forged_partial_selected_year(self) -> None:
         forged = {
             "years": [2024],
@@ -1375,6 +1525,76 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
                     "required_seasons"
                 ],
             )
+
+    def test_same_input_annual_candidate_inherits_verified_source_audit(self) -> None:
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+        audit = {
+            "schema_version": 2,
+            "source_sha256": baseline["source_hash"],
+            "interval_seconds": 3_600,
+            "source_quality": {
+                "interval_seconds": 3_600,
+                "partial_interval_count": 2,
+                "periods": [],
+            },
+            "warnings": ["MIDC source contains two partial intervals."],
+        }
+        baseline = state.AGENT_STORE.update_job(
+            baseline["id"],
+            provenance={"annual_source_audit": audit},
+        )
+
+        _, action = tools._handle_scenario_tool(
+            app.ChatRequest(
+                message="Turn annual backtracking off.",
+                job_id=baseline["id"],
+                active_mode="annual",
+                current_config=baseline["request"],
+            ),
+            self.tool_arguments(backtrack=False),
+        )
+        response = app.confirm_agent_proposal(
+            action["proposal"]["proposal_id"]
+        )
+
+        payload = json.loads(response.body)
+        candidate = state.AGENT_STORE.get_job(payload["job"]["job_id"])
+        self.assertEqual(
+            audit,
+            candidate["provenance"]["annual_source_audit"],
+        )
+
+    def test_same_input_annual_candidate_rejects_unbound_source_audit(self) -> None:
+        baseline = self.completed_baseline(mode="annual", reviewed=False)
+        baseline = state.AGENT_STORE.update_job(
+            baseline["id"],
+            provenance={
+                "annual_source_audit": {
+                    "schema_version": 2,
+                    "source_sha256": "0" * 64,
+                    "interval_seconds": 3_600,
+                    "source_quality": {"periods": []},
+                    "warnings": ["This warning belongs to different bytes."],
+                }
+            },
+        )
+
+        _, action = tools._handle_scenario_tool(
+            app.ChatRequest(
+                message="Turn annual backtracking off.",
+                job_id=baseline["id"],
+                active_mode="annual",
+                current_config=baseline["request"],
+            ),
+            self.tool_arguments(backtrack=False),
+        )
+        response = app.confirm_agent_proposal(
+            action["proposal"]["proposal_id"]
+        )
+
+        payload = json.loads(response.body)
+        candidate = state.AGENT_STORE.get_job(payload["job"]["job_id"])
+        self.assertNotIn("annual_source_audit", candidate["provenance"] or {})
 
     def test_tampered_annual_calibration_provenance_blocks_confirmation(self) -> None:
         calibration_baseline = self.completed_baseline(

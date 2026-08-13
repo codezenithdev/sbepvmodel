@@ -32,6 +32,10 @@ COMPARISON_SCHEMA_VERSION = 1
 SAME_INPUT = "same_input"
 CROSS_RUN = "cross_run"
 COMPARISON_TYPES = frozenset({SAME_INPUT, CROSS_RUN})
+ANNUAL_TEMPORAL_IDENTITY_FIELDS = (
+    "annual_temporal_semantics_version",
+    "annual_temporal_semantics_fingerprint",
+)
 
 CROSS_RUN_CAVEAT = (
     "Different interval or source data: aggregate differences are descriptive "
@@ -334,6 +338,29 @@ def _series_match(first: pd.Series, second: pd.Series) -> bool:
     return bool(np.allclose(a, b, rtol=0.0, atol=1e-9, equal_nan=True))
 
 
+def _annual_temporal_identity(
+    book: ModelWorkbook,
+) -> tuple[dict[str, str | None], bool]:
+    """Return the annual time-semantics identity and whether it is complete."""
+
+    identity: dict[str, str | None] = {}
+    for field in ANNUAL_TEMPORAL_IDENTITY_FIELDS:
+        value = book.run_info.get(field)
+        normalized = (
+            ""
+            if value is None or (not isinstance(value, str) and pd.isna(value))
+            else str(value).strip()
+        )
+        if field.endswith("_fingerprint"):
+            normalized = normalized.lower()
+            if len(normalized) != 64 or any(
+                char not in "0123456789abcdef" for char in normalized
+            ):
+                normalized = ""
+        identity[field] = normalized or None
+    return identity, all(identity.values())
+
+
 def _flatten_snapshot(value: Mapping[str, Any] | None) -> dict[str, Any]:
     flattened: dict[str, Any] = {}
 
@@ -384,9 +411,10 @@ def compute_comparison(
 ) -> dict[str, Any]:
     """Calculate a JSON-safe, deterministic model comparison.
 
-    ``same_input`` is intentionally strict.  It is rejected unless both source
-    hashes match, timestamps align, and measured observations are unchanged.
-    ``cross_run`` never permits causal attribution.
+    ``same_input`` is intentionally strict. It requires matching source hashes
+    and timestamps, matching measured observations for validation, and matching
+    temporal-semantics identities for annual runs. ``cross_run`` never permits
+    causal attribution.
     """
 
     baseline_book = _coerce_workbook(baseline, mode=mode)
@@ -434,14 +462,37 @@ def compute_comparison(
 
     measured_totals_match = all(measured_total_flags)
     measured_series_match = all(measured_series_flags)
+    measured_data_required = selected_mode == "validation"
+    baseline_temporal_identity: dict[str, str | None] | None = None
+    candidate_temporal_identity: dict[str, str | None] | None = None
+    temporal_identities_present = True
+    temporal_identities_match = True
+    if selected_mode == "annual":
+        baseline_temporal_identity, baseline_identity_present = (
+            _annual_temporal_identity(baseline_book)
+        )
+        candidate_temporal_identity, candidate_identity_present = (
+            _annual_temporal_identity(candidate_book)
+        )
+        temporal_identities_present = (
+            baseline_identity_present and candidate_identity_present
+        )
+        temporal_identities_match = (
+            temporal_identities_present
+            and baseline_temporal_identity == candidate_temporal_identity
+        )
 
     if comparison_type is None:
         comparison_type = (
             SAME_INPUT
             if hashes_match
             and timestamps_aligned
-            and measured_totals_match
-            and measured_series_match
+            and temporal_identities_present
+            and temporal_identities_match
+            and (
+                not measured_data_required
+                or (measured_totals_match and measured_series_match)
+            )
             else CROSS_RUN
         )
     if comparison_type not in COMPARISON_TYPES:
@@ -454,10 +505,20 @@ def compute_comparison(
             failures.append("source SHA-256 fingerprints differ")
         if not timestamps_aligned:
             failures.append("timestamps do not align")
-        if not measured_totals_match:
-            failures.append("measured energy totals differ")
-        if not measured_series_match:
-            failures.append("measured power observations differ")
+        if selected_mode == "annual":
+            if not temporal_identities_present:
+                failures.append(
+                    "annual temporal-semantics identities are missing"
+                )
+            elif not temporal_identities_match:
+                failures.append(
+                    "annual temporal-semantics identities differ"
+                )
+        if measured_data_required:
+            if not measured_totals_match:
+                failures.append("measured energy totals differ")
+            if not measured_series_match:
+                failures.append("measured power observations differ")
         if failures:
             raise ComparisonInvariantError(
                 "Cannot create a same-input comparison: " + "; ".join(failures) + "."
@@ -560,6 +621,10 @@ def compute_comparison(
             "timestamps_aligned": timestamps_aligned,
             "measured_totals_match": measured_totals_match,
             "measured_series_match": measured_series_match,
+            "annual_temporal_identities_present": temporal_identities_present,
+            "annual_temporal_identities_match": temporal_identities_match,
+            "baseline_annual_temporal_identity": baseline_temporal_identity,
+            "candidate_annual_temporal_identity": candidate_temporal_identity,
         },
         "parameter_changes": changes,
         "attribution": {
@@ -641,6 +706,12 @@ def _build_provenance(
                 "source_sha256": baseline_hash,
                 "run_timestamp_utc": baseline.run_info.get("run_timestamp_utc"),
                 "model_version": baseline.run_info.get("version"),
+                "annual_temporal_semantics_version": baseline.run_info.get(
+                    "annual_temporal_semantics_version"
+                ),
+                "annual_temporal_semantics_fingerprint": baseline.run_info.get(
+                    "annual_temporal_semantics_fingerprint"
+                ),
                 "dhi_source": baseline.run_info.get("dhi_source"),
                 "curtailment_scope": baseline.run_info.get("curtailment_scope"),
             },
@@ -651,6 +722,12 @@ def _build_provenance(
                 "source_sha256": candidate_hash,
                 "run_timestamp_utc": candidate.run_info.get("run_timestamp_utc"),
                 "model_version": candidate.run_info.get("version"),
+                "annual_temporal_semantics_version": candidate.run_info.get(
+                    "annual_temporal_semantics_version"
+                ),
+                "annual_temporal_semantics_fingerprint": candidate.run_info.get(
+                    "annual_temporal_semantics_fingerprint"
+                ),
                 "dhi_source": candidate.run_info.get("dhi_source"),
                 "curtailment_scope": candidate.run_info.get("curtailment_scope"),
             },

@@ -193,6 +193,9 @@
         const ANNUAL_FIRST_DATE = '2011-02-11';
         const MAX_ANNUAL_MODEL_ROWS = 1048575;
         const SUPPORTED_ANNUAL_INTERVALS = Object.freeze({
+            hours: new Set([1]),
+        });
+        const RECOGNIZED_LEGACY_ANNUAL_INTERVALS = Object.freeze({
             hours: new Set([1, 2, 3, 4, 6, 8, 12, 24]),
             days: new Set([1]),
         });
@@ -202,6 +205,12 @@
                 return Number.isInteger(value) && value >= 1 && value <= 60 && 1440 % value === 0;
             }
             return Number.isInteger(value) && !!SUPPORTED_ANNUAL_INTERVALS[unit]?.has(value);
+        }
+
+        function isRecognizedAnnualInterval(value, unit) {
+            return isSupportedAnnualInterval(value, unit) || (
+                Number.isInteger(value) && !!RECOGNIZED_LEGACY_ANNUAL_INTERVALS[unit]?.has(value)
+            );
         }
         const DEFAULT_ASSISTANT_MESSAGE = "Ask about performance, model accuracy, or explore a what-if scenario using the active dashboard context.";
         let latestJobId = null;

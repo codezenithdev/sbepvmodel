@@ -9,6 +9,7 @@ The agent never makes that decision -- it only reports the status returned here.
 from __future__ import annotations
 
 import logging
+import secrets
 from copy import deepcopy
 from typing import Any
 
@@ -17,16 +18,17 @@ from fastapi import HTTPException
 from typing import Literal
 
 from sbepv.agent.scenario_math import _canonical_request, _same_input_context
-from sbepv.api import config, state
+from sbepv.api import config, state, validation
 from sbepv.api.baselines import (
     _active_model_jobs,
     _baseline_calibration_profile,
+    _has_current_annual_temporal_semantics,
     _inherited_annual_calibration_provenance,
     _reviewed_baseline_data_quality,
     _verified_baseline_source,
 )
 from sbepv.api.job_store import _cache_job_record, _get_job_record
-from sbepv.api.schemas import ChatRequest
+from sbepv.api.schemas import AnnualRunRequest, ChatRequest
 from sbepv.store import QueueCapacityExceeded
 
 logger = logging.getLogger(__name__)
@@ -130,6 +132,19 @@ def _create_candidate_proposal(
     scenario_sweep: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     baseline_mode = str(baseline.get("mode", "validation"))
+    if (
+        mode == "annual"
+        and baseline_mode == "annual"
+        and not _has_current_annual_temporal_semantics(baseline)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The selected Annual baseline uses legacy or incompatible "
+                "weather timestamp semantics. Run a fresh Annual baseline "
+                "before creating a scenario."
+            ),
+        )
     baseline_request = baseline.get("request") or {}
     source_path, source_hash = _verified_baseline_source(baseline)
     same_window = mode == baseline_mode and _same_input_context(
@@ -189,8 +204,31 @@ def _proposal_confirmation_spec(
     baseline: dict[str, Any] | None = None
     if proposal.get("baseline_id"):
         baseline = _get_job_record(str(proposal["baseline_id"]))
+    if (
+        proposal.get("mode") == "annual"
+        and job_kind == "candidate"
+        and baseline is not None
+        and baseline.get("mode") == "annual"
+        and not _has_current_annual_temporal_semantics(baseline)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The Annual baseline bound to this proposal uses legacy or "
+                "incompatible weather timestamp semantics. Run a fresh Annual "
+                "baseline before confirming a scenario."
+            ),
+        )
     validation_quality: dict[str, Any] | None = None
     effective_request = dict(proposal.get("effective_request") or {})
+    annual_interval_seconds: int | None = None
+    if proposal.get("mode") == "annual":
+        # Revalidate the immutable proposal at confirmation time. This keeps
+        # legacy or directly persisted coarse requests from bypassing the
+        # current annual physics safety contract and reaching the job queue.
+        annual_interval_seconds = validation._annual_interval_seconds(
+            AnnualRunRequest(**effective_request)
+        )
     calibration_requested = bool(effective_request.get("calibrate_model", True))
     if proposal.get("mode") == "validation" and calibration_requested:
         if (
@@ -226,6 +264,30 @@ def _proposal_confirmation_spec(
                 status_code=409,
                 detail="The baseline source fingerprint is no longer valid. Confirm a fresh baseline run.",
             )
+    if (
+        proposal.get("mode") == "annual"
+        and job_kind == "candidate"
+        and proposal.get("comparison_kind") == "same_input"
+        and baseline is not None
+        and source_hash is not None
+    ):
+        baseline_audit = (baseline.get("provenance") or {}).get(
+            "annual_source_audit"
+        )
+        if isinstance(baseline_audit, dict):
+            recorded_hash = baseline_audit.get("source_sha256")
+            recorded_interval = baseline_audit.get("interval_seconds")
+            audit_is_verified = (
+                isinstance(recorded_hash, str)
+                and secrets.compare_digest(
+                    recorded_hash.strip().lower(), source_hash.strip().lower()
+                )
+                and recorded_interval == annual_interval_seconds
+                and isinstance(baseline_audit.get("source_quality"), dict)
+                and isinstance(baseline_audit.get("warnings"), list)
+            )
+            if audit_is_verified:
+                provenance["annual_source_audit"] = deepcopy(baseline_audit)
     if (
         proposal.get("mode") == "annual"
         and job_kind == "candidate"

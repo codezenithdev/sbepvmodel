@@ -112,24 +112,6 @@ from sbepv.api.request_context import (
     _json_sha256,
     _run_request_context,
 )
-from sbepv.api.config import (
-    ANNUAL_RUN_MAX_DAYS,
-    AUTH_REALM,
-    CALIBRATION_REVIEW_MAX_RANGE,
-    CALIBRATION_REVIEW_TTL,
-    JOB_HEARTBEAT_SECONDS,
-    JOB_STALE_SECONDS,
-    LOCAL_TZ,
-    OPENAI_MAX_RETRIES,
-    OPENAI_TIMEOUT_SECONDS,
-    PRIVATE_OUTPUT_DIRS,
-    PUBLIC_OUTPUT_SUFFIXES,
-    SERVER_SESSION_ID,
-    UNIT_SECONDS,
-    UTC_TZ,
-    VALIDATION_RUN_MAX_RANGE,
-    VALIDATION_RUN_MAX_ROWS,
-)
 from sbepv.api.timewindows import _iso, _validation_window_metadata
 from sbepv.api.validation import (
     _annual_dates,
@@ -197,11 +179,30 @@ from sbepv.reporting import (
 logger = logging.getLogger(__name__)
 
 
+_COMPAT_CONFIG_EXPORTS = frozenset(
+    {
+        "CALIBRATION_REVIEW_TTL",
+        "OPENAI_MAX_RETRIES",
+        "OPENAI_TIMEOUT_SECONDS",
+        "SERVER_SESSION_ID",
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    """Keep the former ``api.main`` settings surface without freezing values."""
+
+    if name in _COMPAT_CONFIG_EXPORTS:
+        return getattr(config, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
     _dashboard_basic_credentials()
     interrupted = state.AGENT_STORE.mark_stale_running_jobs_interrupted(
-        before=datetime.now(timezone.utc) - timedelta(seconds=JOB_STALE_SECONDS)
+        before=datetime.now(timezone.utc)
+        - timedelta(seconds=config.JOB_STALE_SECONDS)
     )
     if interrupted:
         logger.warning("Marked %s stale model job(s) interrupted", interrupted)
@@ -227,7 +228,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
 )
 app.mount(
@@ -324,7 +325,10 @@ def session() -> JSONResponse:
         for mode in ("validation", "annual")
     }
     return JSONResponse(
-        {"session_id": SERVER_SESSION_ID, "promoted_baselines": promoted}
+        {
+            "session_id": config.SERVER_SESSION_ID,
+            "promoted_baselines": promoted,
+        }
     )
 
 
@@ -396,7 +400,9 @@ def create_calibration_review(req: RunRequest) -> JSONResponse:
     with state._ORCHESTRATION_LOCK:
         _cleanup_expired_calibration_reviews()
     review_id = uuid.uuid4().hex
-    interval_seconds = int(req.interval_value) * UNIT_SECONDS[req.interval_unit]
+    interval_seconds = (
+        int(req.interval_value) * config.UNIT_SECONDS[req.interval_unit]
+    )
     source_path = _calibration_review_path(review_id, ".raw.csv")
     from_iso = _iso(req.from_date, req.from_time)
     to_iso = _iso(req.to_date, req.to_time)
@@ -458,7 +464,7 @@ def create_calibration_review(req: RunRequest) -> JSONResponse:
         "review_id": review_id,
         "state": "pending",
         "created_at": now.isoformat(),
-        "expires_at": (now + CALIBRATION_REVIEW_TTL).isoformat(),
+        "expires_at": (now + config.CALIBRATION_REVIEW_TTL).isoformat(),
         "request": _run_request_context(req),
         "source_path": str(source_path.resolve()),
         "source_hash": source_hash,

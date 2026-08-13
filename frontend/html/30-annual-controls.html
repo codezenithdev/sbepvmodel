@@ -66,14 +66,13 @@
                             <label class="control-field annual-interval-field">
                                 <span class="date-label">Time interval</span>
                                 <span class="interval-row">
-                                    <input type="number" class="date-input annual-input" id="annualIntervalValue" value="1" min="1" step="1" inputmode="numeric" aria-describedby="annualIntervalHelp">
+                                    <input type="number" class="date-input annual-input" id="annualIntervalValue" value="1" min="1" max="1" step="1" inputmode="numeric" aria-describedby="annualIntervalHelp">
                                     <select class="date-input annual-input" id="annualIntervalUnit" aria-describedby="annualIntervalHelp">
                                         <option value="minutes">minutes</option>
                                         <option value="hours" selected>hours</option>
-                                        <option value="days">days</option>
                                     </select>
                                 </span>
-                                <span class="limit-helper" id="annualIntervalHelp">15-minute and 1-hour intervals are preferred.</span>
+                                <span class="limit-helper" id="annualIntervalHelp">Use a whole-minute interval from 1 to 60 that divides evenly into 24 hours, or exactly 1 hour.</span>
                             </label>
                             <div class="annual-time-note">
                                 <span class="annual-time-dot" aria-hidden="true"></span>

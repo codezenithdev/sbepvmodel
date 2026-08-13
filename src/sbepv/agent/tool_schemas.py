@@ -90,12 +90,19 @@ SCENARIO_TOOL = {
                 description=(
                     "For annual runs, minute values are exactly 1, 2, 3, 4, 5, 6, "
                     "8, 9, 10, 12, 15, 16, 18, 20, 24, 30, 32, 36, 40, 45, 48, "
-                    "or 60; hour values are 1, 2, 3, 4, 6, 8, 12, or 24; day value "
-                    "is 1. Annual selections may not exceed 1,048,575 model rows."
+                    "or 60; the only supported hour value is 1. Coarser hour and "
+                    "day intervals are not supported because annual PV physics must "
+                    "preserve solar geometry. Annual selections may not exceed "
+                    "1,048,575 model rows."
                 ),
             ),
             "interval_unit": _nullable_schema(
-                "string", enum=["minutes", "hours", "days", None]
+                "string",
+                enum=["minutes", "hours", "days", None],
+                description=(
+                    "For annual runs, use minutes or hours; hours requires value 1. "
+                    "Day intervals are not supported for annual physics runs."
+                ),
             ),
             "backtrack": _nullable_schema("boolean"),
             "solaredge_inverter_efficiency": _nullable_schema(

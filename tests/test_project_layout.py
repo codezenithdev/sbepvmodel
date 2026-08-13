@@ -9,6 +9,7 @@ attributes with ``patch.object``.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import tempfile
 import unittest
 from datetime import date
@@ -116,6 +117,38 @@ class ModuleShadowingTests(unittest.TestCase):
         self.assertEqual(offenders, [])
 
 
+class ConfigBindingTests(unittest.TestCase):
+    """Settings stay patchable by resolving them through ``api.config``."""
+
+    def test_config_values_are_never_bound_with_from_imports(self):
+        package_root = Path(sbepv.__file__).resolve().parent
+        offenders: list[str] = []
+
+        for path in sorted(package_root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            relative = path.relative_to(package_root)
+            package = ".".join(("sbepv", *relative.parent.parts))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.level:
+                    imported_module = importlib.util.resolve_name(
+                        "." * node.level + (node.module or ""),
+                        package,
+                    )
+                else:
+                    imported_module = node.module
+                if imported_module != config.__name__:
+                    continue
+                imported_names = ", ".join(alias.name for alias in node.names)
+                offenders.append(
+                    f"{relative}:{node.lineno} binds config value(s) "
+                    f"{imported_names}; import the config module instead"
+                )
+
+        self.assertEqual(offenders, [])
+
+
 class MatplotlibBackendTests(unittest.TestCase):
     def test_importing_the_backend_pins_agg(self):
         """The job worker renders on a background thread and needs a headless backend.
@@ -173,6 +206,9 @@ class PatchInterceptionTests(unittest.TestCase):
 
             # Same path, unpatched: it is outside the real output directory.
             self.assertIsNone(app._public_source_url(snapshot))
+
+        with patch.object(config, "SERVER_SESSION_ID", "patched-session"):
+            self.assertEqual(app.SERVER_SESSION_ID, "patched-session")
 
     def test_state_reassignment_crosses_the_module_boundary(self):
         """``state.AGENT_STORE`` is swapped for a temp database by six test files."""

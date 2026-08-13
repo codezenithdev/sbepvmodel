@@ -14,7 +14,6 @@ from sbepv.api.artifacts import (
     _public_source_url,
     _workbook_download_name,
 )
-from sbepv.api.config import UNIT_SECONDS
 from sbepv.api.job_store import _check_job_cancelled, _get_job_record, _update_job
 from sbepv.api.request_context import _iam_metadata
 from sbepv.api.schemas import RunRequest
@@ -55,7 +54,9 @@ def _run_job(
     try:
         from_iso = _iso(req.from_date, req.from_time)
         to_iso = _iso(req.to_date, req.to_time)
-        interval_seconds = int(req.interval_value) * UNIT_SECONDS[req.interval_unit]
+        interval_seconds = (
+            int(req.interval_value) * config.UNIT_SECONDS[req.interval_unit]
+        )
         attempt_prefix = _job_attempt_prefix(job_id, lease_token)
         csv_path = (
             Path(source_path)

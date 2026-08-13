@@ -84,16 +84,21 @@ class AnnualCalibrationUiTests(unittest.TestCase):
         for marker in (
             'id="annualIntervalValue"',
             'id="annualIntervalUnit"',
-            'id="annualIntervalValue" value="1" min="1" step="1"',
+            'id="annualIntervalValue" value="1" min="1" max="1" step="1"',
             '<option value="minutes">minutes</option>',
             '<option value="hours" selected>hours</option>',
-            '<option value="days">days</option>',
+            "hours: new Set([1])",
+            "const RECOGNIZED_LEGACY_ANNUAL_INTERVALS",
             "hours: new Set([1, 2, 3, 4, 6, 8, 12, 24])",
+            "days: new Set([1])",
             "function isSupportedAnnualInterval(value, unit)",
+            "function isRecognizedAnnualInterval(value, unit)",
             "1440 % value === 0",
             "const MAX_ANNUAL_MODEL_ROWS = 1048575",
             "function estimateAnnualModelRows(years, intervalValue, intervalUnit)",
-            "15-minute and 1-hour intervals are preferred.",
+            "Use a whole-minute interval from 1 to 60 that divides evenly into 24 hours, or exactly 1 hour.",
+            "function applyAnnualIntervalFormState(value, unit)",
+            "function normalizeAnnualIntervalControls()",
         ):
             self.assertIn(marker, self.html)
         self.assertNotIn("Minute options:", self.html)
@@ -104,7 +109,7 @@ class AnnualCalibrationUiTests(unittest.TestCase):
             '<section class="annual-config-card annual-window-card"', 1
         )[1].split('<section class="annual-config-card annual-settings-card"', 1)[0]
         self.assertIn('<option value="minutes">', annual_window)
-        self.assertIn('<option value="days">', annual_window)
+        self.assertNotIn('<option value="days">', annual_window)
 
         form_state = self.html.split("function getAnnualFormState()", 1)[1].split(
             "\n        function ", 1
@@ -115,8 +120,12 @@ class AnnualCalibrationUiTests(unittest.TestCase):
         apply_state = self.html.split("function applyAnnualFormState(form)", 1)[
             1
         ].split("\n        function ", 1)[0]
-        self.assertIn("setValue('annualIntervalValue', form.intervalValue)", apply_state)
-        self.assertIn("setValue('annualIntervalUnit', form.intervalUnit)", apply_state)
+        self.assertIn(
+            "applyAnnualIntervalFormState(form.intervalValue, form.intervalUnit)",
+            apply_state,
+        )
+        self.assertNotIn("setValue('annualIntervalValue'", apply_state)
+        self.assertNotIn("setValue('annualIntervalUnit'", apply_state)
 
         request_builder = self.html.split("function buildAnnualRequest()", 1)[
             1
@@ -128,6 +137,10 @@ class AnnualCalibrationUiTests(unittest.TestCase):
             request_builder,
         )
         self.assertIn(
+            "Choose a whole-minute interval from 1 to 60 that divides evenly into 24 hours, or exactly 1 hour.",
+            request_builder,
+        )
+        self.assertIn(
             "estimatedRows > MAX_ANNUAL_MODEL_ROWS",
             request_builder,
         )
@@ -136,6 +149,78 @@ class AnnualCalibrationUiTests(unittest.TestCase):
         self.assertIn("years,", request_builder)
         self.assertNotIn("from_date:", request_builder)
         self.assertNotIn("to_date:", request_builder)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_annual_interval_policy_and_cached_state_migration_in_node(self) -> None:
+        policy = "const SUPPORTED_ANNUAL_INTERVALS" + self.html.split(
+            "const SUPPORTED_ANNUAL_INTERVALS", 1
+        )[1].split("const DEFAULT_ASSISTANT_MESSAGE", 1)[0]
+        constraints = "function syncAnnualIntervalConstraints()" + self.html.split(
+            "function syncAnnualIntervalConstraints()", 1
+        )[1].split("\n        function ", 1)[0]
+        apply_state = "function applyAnnualIntervalFormState(value, unit)" + self.html.split(
+            "function applyAnnualIntervalFormState(value, unit)", 1
+        )[1].split("\n        function ", 1)[0]
+        normalize_controls = "function normalizeAnnualIntervalControls()" + self.html.split(
+            "function normalizeAnnualIntervalControls()", 1
+        )[1].split("\n        function ", 1)[0]
+        script = f"""
+{policy}
+const elements = {{
+    annualIntervalValue: {{value: '1', max: '1'}},
+    annualIntervalUnit: {{value: 'hours'}},
+}};
+const document = {{getElementById: (id) => elements[id]}};
+{constraints}
+{apply_state}
+{normalize_controls}
+const snapshot = () => ({{
+    value: elements.annualIntervalValue.value,
+    unit: elements.annualIntervalUnit.value,
+    max: elements.annualIntervalValue.max,
+}});
+applyAnnualIntervalFormState('45', 'minutes');
+const validCached = snapshot();
+applyAnnualIntervalFormState('24', 'hours');
+const coarseCached = snapshot();
+applyAnnualIntervalFormState('1', 'days');
+const dayCached = snapshot();
+elements.annualIntervalValue.value = '15';
+elements.annualIntervalUnit.value = 'hours';
+normalizeAnnualIntervalControls();
+const switchedToHours = snapshot();
+console.log(JSON.stringify({{
+    supportedMinutes: [1, 5, 7, 45, 60, 61].map((value) => isSupportedAnnualInterval(value, 'minutes')),
+    supportedHours: [1, 2, 6, 8, 12, 24].map((value) => isSupportedAnnualInterval(value, 'hours')),
+    supportedDay: isSupportedAnnualInterval(1, 'days'),
+    recognizedLegacyHours: [8, 12, 24].map((value) => isRecognizedAnnualInterval(value, 'hours')),
+    recognizedLegacyDay: isRecognizedAnnualInterval(1, 'days'),
+    validCached,
+    coarseCached,
+    dayCached,
+    switchedToHours,
+}}));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            {
+                "supportedMinutes": [True, True, False, True, True, False],
+                "supportedHours": [True, False, False, False, False, False],
+                "supportedDay": False,
+                "recognizedLegacyHours": [True, True, True],
+                "recognizedLegacyDay": True,
+                "validCached": {"value": "45", "unit": "minutes", "max": "60"},
+                "coarseCached": {"value": "1", "unit": "hours", "max": "1"},
+                "dayCached": {"value": "1", "unit": "hours", "max": "1"},
+                "switchedToHours": {"value": "1", "unit": "hours", "max": "1"},
+            },
+            json.loads(completed.stdout),
+        )
 
     def test_midc_year_selector_uses_runtime_years_and_exact_reference(self) -> None:
         for marker in (

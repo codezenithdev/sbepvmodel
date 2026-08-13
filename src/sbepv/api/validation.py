@@ -47,7 +47,7 @@ def _request_fields_set(req: BaseModel) -> set[str]:
 
 
 def _annual_interval_seconds(req: AnnualRunRequest) -> int:
-    """Return a model-safe annual interval at minute or whole-hour resolution."""
+    """Return a model-safe annual interval no coarser than one hour."""
     try:
         interval_value = int(req.interval_value)
         seconds = interval_value * config.UNIT_SECONDS[req.interval_unit]
@@ -57,7 +57,6 @@ def _annual_interval_seconds(req: AnnualRunRequest) -> int:
         raise HTTPException(
             status_code=422, detail="Interval value must be at least 1."
         )
-    supported_hours = frozenset({1, 2, 3, 4, 6, 8, 12, 24})
     if req.interval_unit == "minutes" and (
         interval_value > 60 or 1_440 % interval_value
     ):
@@ -68,25 +67,30 @@ def _annual_interval_seconds(req: AnnualRunRequest) -> int:
                 "minutes and divide evenly into a 24-hour day."
             ),
         )
-    if req.interval_unit == "hours" and interval_value not in supported_hours:
+    if req.interval_unit == "hours" and interval_value != 1:
         raise HTTPException(
             status_code=422,
             detail=(
-                "Annual Simulation hour intervals must be one of "
-                "1, 2, 3, 4, 6, 8, 12, or 24 hours."
+                "Annual Simulation supports exactly 1 hour or a finer "
+                "supported minute interval. Coarser intervals cannot preserve "
+                "the solar geometry used by the PV model."
             ),
         )
-    if req.interval_unit == "days" and interval_value != 1:
-        raise HTTPException(
-            status_code=422,
-            detail="Annual Simulation supports a maximum interval of 1 day.",
-        )
-    if seconds < 60 or seconds > 86_400 or seconds % 60 or 86_400 % seconds:
+    if req.interval_unit == "days":
         raise HTTPException(
             status_code=422,
             detail=(
-                "Annual Simulation intervals must be supported whole-minute "
-                "divisors of a 24-hour day."
+                "Annual Simulation does not support day intervals. Use exactly "
+                "1 hour or a finer supported minute interval so the PV model "
+                "can preserve solar geometry."
+            ),
+        )
+    if seconds < 60 or seconds > 3_600 or seconds % 60 or 86_400 % seconds:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Annual Simulation intervals must be whole-minute divisors of "
+                "a 24-hour day no coarser than 1 hour."
             ),
         )
     return seconds

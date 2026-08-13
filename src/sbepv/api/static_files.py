@@ -13,7 +13,6 @@ from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
 from sbepv.api import config
-from sbepv.api.config import PRIVATE_OUTPUT_DIRS, PUBLIC_OUTPUT_SUFFIXES
 
 
 class PublicOutputStaticFiles(StaticFiles):
@@ -29,13 +28,13 @@ class PublicOutputStaticFiles(StaticFiles):
             return "", None
         if any(
             resolved == private_root or private_root in resolved.parents
-            for private_root in PRIVATE_OUTPUT_DIRS
+            for private_root in config.PRIVATE_OUTPUT_DIRS
         ):
             return "", None
         if (
             resolved.parent != config.OUTPUT_DIR.resolve()
             or resolved.name.startswith(".")
-            or resolved.suffix.casefold() not in PUBLIC_OUTPUT_SUFFIXES
+            or resolved.suffix.casefold() not in config.PUBLIC_OUTPUT_SUFFIXES
             or (stat_result is not None and not resolved.is_file())
         ):
             return "", None

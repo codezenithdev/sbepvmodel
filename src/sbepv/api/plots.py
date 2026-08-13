@@ -11,8 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from sbepv import model
+from sbepv.api import config
 from sbepv.api.artifacts import _output_url
-from sbepv.api.config import LOCAL_TZ
 
 
 def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str]:
@@ -67,7 +67,7 @@ def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str
     ax1.grid(True, alpha=0.25)
     ax1.legend(loc="best")
     ax1.xaxis.set_major_formatter(
-        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=LOCAL_TZ)
+        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=config.LOCAL_TZ)
     )
     fig1.autofmt_xdate()
     fig1.savefig(measured_path, dpi=200, bbox_inches="tight")
@@ -87,7 +87,7 @@ def _render_input_data_plots(csv_path: Path, output_base: Path) -> dict[str, str
     ax2.grid(True, alpha=0.25)
     ax2.legend(loc="best")
     ax2.xaxis.set_major_formatter(
-        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=LOCAL_TZ)
+        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=config.LOCAL_TZ)
     )
     fig2.autofmt_xdate()
     fig2.savefig(irradiance_path, dpi=200, bbox_inches="tight")
@@ -130,7 +130,7 @@ def _render_midc_input_data_plots(
     ax.grid(True, alpha=0.25)
     ax.legend(loc="best", ncols=3)
     ax.xaxis.set_major_formatter(
-        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=LOCAL_TZ)
+        mdates.DateFormatter("%m-%d-%Y %H:%M", tz=config.LOCAL_TZ)
     )
     fig.autofmt_xdate()
     fig.tight_layout()

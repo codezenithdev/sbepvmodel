@@ -73,31 +73,60 @@ def make_time_series(
     return frame
 
 
-def workbook_value(frame, *, annual=False):
+def workbook_value(
+    frame,
+    *,
+    annual=False,
+    temporal_version="midc-interval-midpoint-v1",
+    temporal_fingerprint="f" * 64,
+):
+    run_info = {
+        "annual_mode": annual,
+        "version": "1",
+        "dhi_source": "measured",
+        "curtailment_scope": "predicted_only",
+    }
+    if annual:
+        run_info.update(
+            {
+                "annual_temporal_semantics_version": temporal_version,
+                "annual_temporal_semantics_fingerprint": temporal_fingerprint,
+            }
+        )
     return reporting.ModelWorkbook(
         path=None,
         time_series=frame,
-        run_info={
-            "annual_mode": annual,
-            "version": "1",
-            "dhi_source": "measured",
-            "curtailment_scope": "predicted_only",
-        },
+        run_info=run_info,
         monthly_energy=None,
         mode="annual" if annual else "validation",
     )
 
 
-def write_model_workbook(path, frame, *, annual=False):
-    run_info = pd.DataFrame(
-        [
+def write_model_workbook(
+    path,
+    frame,
+    *,
+    annual=False,
+    temporal_version="midc-interval-midpoint-v1",
+    temporal_fingerprint="f" * 64,
+):
+    run_info_rows = [
             ("annual_mode", annual),
             ("version", "1"),
             ("run_timestamp_utc", "2026-07-20T12:00:00+00:00"),
             ("dhi_source", "measured"),
             ("curtailment_scope", "predicted_only"),
             ("data_quality_warnings", "None"),
-        ],
+        ]
+    if annual:
+        run_info_rows.extend(
+            [
+                ("annual_temporal_semantics_version", temporal_version),
+                ("annual_temporal_semantics_fingerprint", temporal_fingerprint),
+            ]
+        )
+    run_info = pd.DataFrame(
+        run_info_rows,
         columns=["parameter", "value"],
     )
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
@@ -288,6 +317,87 @@ class ComparisonMetricTests(unittest.TestCase):
                 candidate_source_sha256="a" * 64,
             )
 
+    def test_same_input_annual_comparison_does_not_require_measured_columns(self):
+        baseline_frame = make_time_series().drop(
+            columns=[
+                "se_measured_power_w",
+                "se_measured_energy_kwh",
+                "sol_measured_power_w",
+                "sol_measured_energy_kwh",
+            ]
+        )
+        candidate_frame = baseline_frame.copy()
+        candidate_frame["se_predicted_power_w"] *= 0.95
+        candidate_frame["se_predicted_energy_kwh"] = (
+            candidate_frame["se_predicted_power_w"] / 1000.0
+        ).cumsum()
+
+        result = reporting.compute_comparison(
+            workbook_value(baseline_frame, annual=True),
+            workbook_value(candidate_frame, annual=True),
+            mode="annual",
+            comparison_type="same_input",
+            baseline_source_sha256="a" * 64,
+            candidate_source_sha256="a" * 64,
+            baseline_request={"backtrack": True},
+            candidate_request={"backtrack": False},
+        )
+
+        self.assertTrue(result["like_for_like"])
+        self.assertEqual("same_input", result["comparison_type"])
+        self.assertFalse(result["invariants"]["measured_series_match"])
+        self.assertIsNone(result["systems"]["solaredge"]["validation"])
+        self.assertEqual(
+            -5.0,
+            result["systems"]["solaredge"]["delta_pct"],
+        )
+
+    def test_annual_same_input_requires_matching_temporal_semantics(self):
+        frame = make_time_series()
+        current = workbook_value(frame, annual=True)
+        legacy = workbook_value(
+            frame,
+            annual=True,
+            temporal_version=None,
+            temporal_fingerprint=None,
+        )
+        changed = workbook_value(
+            frame,
+            annual=True,
+            temporal_version="midc-interval-midpoint-v2",
+        )
+
+        for candidate, expected in (
+            (legacy, "identities are missing"),
+            (changed, "identities differ"),
+        ):
+            with self.subTest(expected=expected):
+                with self.assertRaisesRegex(
+                    reporting.ComparisonInvariantError,
+                    expected,
+                ):
+                    reporting.compute_comparison(
+                        current,
+                        candidate,
+                        mode="annual",
+                        comparison_type="same_input",
+                        baseline_source_sha256="a" * 64,
+                        candidate_source_sha256="a" * 64,
+                    )
+
+        automatic = reporting.compute_comparison(
+            current,
+            legacy,
+            mode="annual",
+            baseline_source_sha256="a" * 64,
+            candidate_source_sha256="a" * 64,
+        )
+        self.assertEqual(automatic["comparison_type"], "cross_run")
+        self.assertFalse(automatic["like_for_like"])
+        self.assertFalse(
+            automatic["invariants"]["annual_temporal_identities_present"]
+        )
+
     def test_cross_run_is_labeled_non_causal(self):
         result = reporting.compute_comparison(
             workbook_value(make_time_series()),
@@ -404,6 +514,61 @@ class ArtifactTests(unittest.TestCase):
                 "predicted_only",
             )
             json.dumps(result, allow_nan=False)
+        finally:
+            for path in [source, baseline_path, candidate_path, *generated]:
+                path.unlink(missing_ok=True)
+
+    def test_same_input_annual_report_supports_predicted_only_workbooks(self):
+        token = uuid4().hex
+        source = TEST_TEMP_ROOT / f"_test_scenario_reporting_{token}_source.csv"
+        baseline_path = TEST_TEMP_ROOT / f"_test_scenario_reporting_{token}_baseline.xlsx"
+        candidate_path = TEST_TEMP_ROOT / f"_test_scenario_reporting_{token}_candidate.xlsx"
+        output_base = TEST_TEMP_ROOT / f"_test_scenario_reporting_{token}_annual"
+        generated = [
+            Path(f"{output_base}_comparison.xlsx"),
+            Path(f"{output_base}_comparison_power.png"),
+            Path(f"{output_base}_comparison_energy.png"),
+            Path(f"{output_base}_comparison_monthly.png"),
+        ]
+        baseline_frame = make_time_series(start="2025-01-01").drop(
+            columns=[
+                "se_measured_power_w",
+                "se_measured_energy_kwh",
+                "sol_measured_power_w",
+                "sol_measured_energy_kwh",
+            ]
+        )
+        candidate_frame = baseline_frame.copy()
+        candidate_frame["se_predicted_power_w"] *= 0.95
+        candidate_frame["se_predicted_energy_kwh"] = (
+            candidate_frame["se_predicted_power_w"] / 1000.0
+        ).cumsum()
+        try:
+            source.write_text("same annual source", encoding="utf-8")
+            write_model_workbook(baseline_path, baseline_frame, annual=True)
+            write_model_workbook(candidate_path, candidate_frame, annual=True)
+
+            result = reporting.generate_comparison_artifacts(
+                baseline_path,
+                candidate_path,
+                output_base,
+                baseline_job_id="annual-baseline",
+                candidate_job_id="annual-candidate",
+                baseline_request={"backtrack": True},
+                candidate_request={"backtrack": False},
+                baseline_source_path=source,
+                candidate_source_path=source,
+                comparison_type="same_input",
+                mode="annual",
+            )
+
+            self.assertTrue(result["comparison"]["like_for_like"])
+            self.assertIsNotNone(result["artifacts"]["monthly_png"])
+            for key in ("workbook", "power_png", "energy_png", "monthly_png"):
+                self.assertTrue(Path(result["artifacts"][key]["path"]).is_file())
+            with pd.ExcelFile(result["artifacts"]["workbook"]["path"]) as workbook:
+                self.assertIn("aligned_delta", workbook.sheet_names)
+                self.assertIn("monthly_comparison", workbook.sheet_names)
         finally:
             for path in [source, baseline_path, candidate_path, *generated]:
                 path.unlink(missing_ok=True)

@@ -32,7 +32,7 @@
             const intervalValue = Number(intervalInput.value);
             const intervalUnit = intervalUnitInput.value;
             if (!isSupportedAnnualInterval(intervalValue, intervalUnit)) {
-                showAnnualError('Choose a whole-minute interval from 1 to 60 that divides evenly into a day, a listed whole-hour divisor of one day, or 1 day.');
+                showAnnualError('Choose a whole-minute interval from 1 to 60 that divides evenly into 24 hours, or exactly 1 hour.');
                 intervalInput.focus();
                 return null;
             }
@@ -386,12 +386,16 @@
         document.getElementById('annualFromDate').addEventListener('change', updateAnnualRuntimeWarning);
         document.getElementById('annualToDate').addEventListener('change', updateAnnualRuntimeWarning);
         document.getElementById('annualIntervalValue').addEventListener('input', updateAnnualRuntimeWarning);
-        document.getElementById('annualIntervalUnit').addEventListener('change', updateAnnualRuntimeWarning);
+        document.getElementById('annualIntervalUnit').addEventListener('change', () => {
+            normalizeAnnualIntervalControls();
+            updateAnnualRuntimeWarning();
+        });
         syncCurtailmentLimit();
         syncCalibrationMode();
         syncIamAr();
         syncAnnualCurtailmentLimit();
         syncAnnualIamAr();
+        syncAnnualIntervalConstraints();
         updateAnnualRuntimeWarning();
         renderAnnualCalibrationBaseline(null, { state: 'loading' });
         renderAnnualResultCalibration(null);
