@@ -51,6 +51,25 @@ frontend/   dashboard.ts  css/ html/ js/   canonical dashboard sources
 app/ lib/ worker/ build/      TypeScript frontend (vinext on Cloudflare Workers)
 ```
 
+## Context-efficient inspection
+
+Treat this guide and the layout above as the repository map. Do not begin a task by
+inventorying, recursively searching, or reading the whole repository.
+
+- Map the request to the smallest likely set of files first. Inspect only those
+  files, their direct callers or dependencies, and the relevant tests.
+- Prefer path-scoped and symbol-scoped `rg` searches. Do not dump entire large files
+  when a focused range or symbol is sufficient.
+- Reuse facts and file contents already established in the current task unless the
+  file may have changed. Do not rescan unchanged areas for every follow-up prompt.
+- Skip `.git`, dependency folders, generated output, caches, and build artifacts
+  unless the request specifically concerns them.
+- A repository-wide scan is appropriate only when the user explicitly requests one
+  or a genuinely cross-cutting task cannot be resolved locally. State the reason
+  before doing it and summarize results instead of injecting raw output into context.
+- This guide is orientation, not proof of current behavior. Before editing, still
+  verify the specific implementation and tests affected by the requested change.
+
 ## Invariants
 
 These five all fail *silently* — no import error, no failing test — so they are

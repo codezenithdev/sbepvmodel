@@ -4,7 +4,7 @@
                             <h2 id="annualResultsHeading" tabindex="-1">Simulation results</h2>
                             <p>Headline production first, then model differences, coverage, and time-series detail.</p>
                         </div>
-                        <span class="annual-results-note" id="annualResultsNote">Weather inputs render before annual predictions</span>
+                        <span class="annual-results-note" id="annualResultsNote">Annual predictions appear after the model run</span>
                     </div>
 
                 <section class="annual-result-calibration" id="annualResultCalibration" aria-label="Annual calibration application details" hidden>
@@ -90,31 +90,63 @@
                                 <tbody id="annualYearResultRows"></tbody>
                             </table>
                         </div>
-                        <figure class="annual-cdf-card" id="annualCdfCard">
-                            <figcaption>
-                                <strong>Empirical cumulative distribution</strong>
-                                <span>Complete calendar years only</span>
+                        <figure class="annual-distribution-card" id="annualDistributionCard">
+                            <figcaption class="annual-distribution-heading">
+                                <div>
+                                    <strong>Annual energy across weather years</strong>
+                                    <span id="annualDistributionSubtitle">Ranked source-complete calendar years</span>
+                                </div>
+                                <div class="annual-distribution-controls">
+                                    <label for="annualDistributionSeries">System
+                                        <select id="annualDistributionSeries" disabled>
+                                            <option value="combined" selected>Combined</option>
+                                            <option value="solarEdge">SolarEdge</option>
+                                            <option value="solectria">Solectria</option>
+                                        </select>
+                                    </label>
+                                    <div class="annual-distribution-view-switch" role="group" aria-label="Annual energy chart view">
+                                        <button id="annualDistributionRankedBtn" type="button" aria-controls="annualDistributionChart" aria-pressed="true" disabled>Ranked years</button>
+                                        <button id="annualDistributionExceedanceBtn" type="button" aria-controls="annualDistributionChart" aria-pressed="false" disabled>Exceedance</button>
+                                    </div>
+                                </div>
                             </figcaption>
-                            <div class="annual-cdf-legend" aria-label="Chart series line styles">
-                                <span class="solaredge">SolarEdge - solid</span>
-                                <span class="solectria">Solectria - dashed</span>
-                                <span class="combined">Combined - dotted</span>
+                            <div class="annual-distribution-kpis" aria-label="Annual weather-year energy statistics">
+                                <div>
+                                    <span>Complete years</span>
+                                    <strong id="annualDistributionSampleValue">--</strong>
+                                    <small id="annualDistributionSampleMeta">No eligible results</small>
+                                </div>
+                                <div>
+                                    <span>Weather-year P90</span>
+                                    <strong id="annualDistributionP90Value">--</strong>
+                                    <small id="annualDistributionP90Meta">10th percentile</small>
+                                </div>
+                                <div>
+                                    <span>Weather-year P50</span>
+                                    <strong id="annualDistributionP50Value">--</strong>
+                                    <small id="annualDistributionP50Meta">Median</small>
+                                </div>
+                                <div>
+                                    <span>Observed range</span>
+                                    <strong id="annualDistributionRangeValue">--</strong>
+                                    <small id="annualDistributionRangeMeta">Complete years only</small>
+                                </div>
                             </div>
-                            <svg class="annual-cdf-chart" id="annualCdfChart" viewBox="0 0 720 360" role="img" aria-labelledby="annualCdfTitle annualCdfDescription" hidden>
-                                <title id="annualCdfTitle">Annual predicted energy empirical cumulative distribution</title>
-                                <desc id="annualCdfDescription">No complete-year distribution is available.</desc>
-                            </svg>
-                            <p class="annual-cdf-fallback" id="annualCdfFallback" role="status">Run at least two complete calendar years to view a distribution.</p>
+                            <p class="annual-distribution-caveat" id="annualDistributionCaveat">Weather-year variability only; model and measurement uncertainty are not included. Partial calendar years and incomplete source years are excluded.</p>
+                            <div class="annual-distribution-chart-wrap" id="annualDistributionChartWrap" role="region" aria-label="Scrollable annual energy chart" tabindex="0" hidden>
+                                <svg class="annual-distribution-chart" id="annualDistributionChart" viewBox="0 0 720 360" preserveAspectRatio="xMinYMin meet" role="img" aria-labelledby="annualDistributionTitle annualDistributionDescription" hidden>
+                                    <title id="annualDistributionTitle">Annual predicted energy across weather years</title>
+                                    <desc id="annualDistributionDescription">No complete-year energy observations are available.</desc>
+                                </svg>
+                            </div>
+                            <p class="annual-distribution-fallback" id="annualDistributionFallback" role="status">Run at least one complete calendar year to compare annual energy.</p>
+                            <p class="annual-distribution-view-note" id="annualDistributionViewNote" aria-live="polite">Exceedance view requires at least 10 complete years.</p>
                         </figure>
                     </div>
                 </section>
 
                 <section class="analysis-layout" aria-label="Annual simulation charts">
                     <div class="annual-charts-grid" id="annualChartGrid">
-                        <article class="chart-card">
-                            <div class="chart-header"><div><div class="chart-title">Measured Irradiance </div><div class="chart-meta">DNI, GHI, and DHI from the selected MIDC interval - W/m2</div></div><span class="chart-badge">Weather</span></div>
-                            <div class="chart-placeholder" id="annualIrradianceChartBox"><div class="chart-icon" id="annualIrradianceIcon">W/m2</div><img class="chart-image" id="annualIrradianceImg" alt="Annual DNI, GHI, and DHI irradiance input chart" style="display:none;"></div>
-                        </article>
                         <article class="chart-card">
                             <div class="chart-header"><div><div class="chart-title">Predicted AC Power</div><div class="chart-meta">SolarEdge and Solectria predicted AC output</div></div><span class="chart-badge">Power</span></div>
                             <div class="chart-placeholder" id="annualAcChartBox"><div class="chart-icon" id="annualAcIcon">AC</div><img class="chart-image" id="annualAcImg" alt="Annual predicted AC power chart" style="display:none;"></div>

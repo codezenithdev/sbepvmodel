@@ -90,17 +90,21 @@
             return shiftIsoDate(dateIsoInTimeZone(value, 'Etc/GMT+7'), -1);
         }
 
-        function annualYearDateRange(year) {
+        function annualYearDateRange(year, currentDate = new Date()) {
             const numericYear = Number(year);
-            const currentYear = annualCurrentYear();
+            const referenceDate = currentDate instanceof Date ? currentDate : new Date();
+            const currentYear = annualCurrentYear(referenceDate);
             if (!Number.isInteger(numericYear) || numericYear < ANNUAL_FIRST_YEAR || numericYear > currentYear) return null;
             const periodStart = numericYear === ANNUAL_FIRST_YEAR
                 ? ANNUAL_FIRST_DATE
                 : numericYear + '-01-01';
             let periodEnd = numericYear + '-12-31';
-            let coverageStatus = numericYear === ANNUAL_FIRST_YEAR ? 'partial_start' : 'complete';
+            const knownPartialNote = ANNUAL_KNOWN_PARTIAL_YEAR_NOTES[numericYear] || null;
+            let coverageStatus = numericYear === ANNUAL_FIRST_YEAR
+                ? 'partial_start'
+                : (knownPartialNote ? 'incomplete_source' : 'complete');
             if (numericYear === currentYear) {
-                periodEnd = annualLatestAvailableDate();
+                periodEnd = annualLatestAvailableDate(referenceDate);
                 coverageStatus = 'year_to_date';
                 if (!periodEnd.startsWith(String(currentYear))) return null;
             }
@@ -109,6 +113,7 @@
                 periodStart,
                 periodEnd,
                 coverageStatus,
+                coverageNote: knownPartialNote,
                 completeCalendarYear: coverageStatus === 'complete',
             };
         }
@@ -180,7 +185,9 @@
                     note.className = 'annual-year-option-note';
                     note.textContent = range.coverageStatus === 'partial_start'
                         ? 'Partial - starts ' + formatAnnualPickerDate(range.periodStart)
-                        : 'Partial - through ' + formatAnnualPickerDate(range.periodEnd);
+                        : (range.coverageStatus === 'incomplete_source'
+                            ? 'Partial - ' + range.coverageNote
+                            : 'Partial - through ' + formatAnnualPickerDate(range.periodEnd));
                     copy.appendChild(note);
                 }
                 if (!range) {
@@ -268,7 +275,6 @@
         }
 
         function clearAnnualImages() {
-            clearImage('annualIrradianceImg', 'annualIrradianceIcon', 'annualIrradianceChartBox');
             clearImage('annualAcImg', 'annualAcIcon', 'annualAcChartBox');
             clearImage('annualEnergyImg', 'annualEnergyIcon', 'annualEnergyChartBox');
             clearImage('annualMonthlyImg', 'annualMonthlyIcon', 'annualMonthlyChartBox');
@@ -501,21 +507,6 @@
             }
             if (inputPlots.irradiance_png) {
                 showImage('irradianceImg', 'irradianceIcon', 'irradianceChartBox', inputPlots.irradiance_png, cacheBust);
-            }
-        }
-
-        function applyAnnualInputPlots(inputPlots, cacheBust = true) {
-            if (inputPlots && inputPlots.irradiance_png) {
-                const image = document.getElementById('annualIrradianceImg');
-                if (image.dataset.sourceUrl === inputPlots.irradiance_png) return;
-                image.dataset.sourceUrl = inputPlots.irradiance_png;
-                showImage(
-                    'annualIrradianceImg',
-                    'annualIrradianceIcon',
-                    'annualIrradianceChartBox',
-                    inputPlots.irradiance_png,
-                    cacheBust
-                );
             }
         }
 

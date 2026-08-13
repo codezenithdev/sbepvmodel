@@ -1351,42 +1351,5 @@ class GeneratedPlotTimestampTests(unittest.TestCase):
         for figure in saved_figures:
             assert_plot_timestamp_format(self, figure.axes[0])
 
-    def test_annual_input_plot_uses_requested_format(self):
-        frame = pd.DataFrame(
-            {
-                "dni_wm2": [700.0, 750.0],
-                "ghi_wm2": [500.0, 550.0],
-                "dhi_wm2": [100.0, 110.0],
-            },
-            index=pd.date_range(
-                "2025-12-15 09:00",
-                periods=2,
-                freq="h",
-                tz="America/Denver",
-            ),
-        )
-        saved_figures = []
-
-        def capture(figure, *_args, **_kwargs):
-            saved_figures.append(figure)
-
-        with (
-            patch.object(app.model, "parse_midc_csv", return_value=(frame, [])),
-            patch.object(
-                matplotlib.figure.Figure,
-                "savefig",
-                autospec=True,
-                side_effect=capture,
-            ),
-        ):
-            app._render_midc_input_data_plots(
-                Path("ignored.csv"),
-                Path("ignored"),
-            )
-
-        self.assertEqual(len(saved_figures), 1)
-        assert_plot_timestamp_format(self, saved_figures[0].axes[0])
-
-
 if __name__ == "__main__":
     unittest.main()

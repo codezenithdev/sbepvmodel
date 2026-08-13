@@ -102,7 +102,6 @@ from sbepv.api.job_store import (
     _job_cancel_requested,
     _update_job,
 )
-from sbepv.api.plots import _render_midc_input_data_plots
 from sbepv.api.request_context import (
     _ANNUAL_FALLBACK_MAPPING,
     _CALIBRATION_SETTING_FIELDS,

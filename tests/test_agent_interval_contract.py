@@ -1,6 +1,6 @@
 import unittest
 
-from sbepv.agent.prompts import SOLAR_AGENT_INSTRUCTIONS
+from sbepv.agent.prompts import SOLAR_AGENT_INSTRUCTIONS, SOLAR_MODEL_KNOWLEDGE
 from sbepv.agent.tool_schemas import SCENARIO_TOOL
 
 
@@ -24,6 +24,18 @@ class AgentAnnualIntervalContractTests(unittest.TestCase):
         self.assertIn("only supported hour value is 1", value_description)
         self.assertIn("day intervals are not supported", value_description)
         self.assertIn("Day intervals are not supported", unit_description)
+
+    def test_prompt_prelabels_known_midc_gap_years(self) -> None:
+        expected = "Years 2022 and 2023 have known MIDC source gaps"
+        self.assertIn(expected, SOLAR_AGENT_INSTRUCTIONS)
+        self.assertIn(
+            "Years 2022 and 2023 have known source gaps",
+            SOLAR_MODEL_KNOWLEDGE["annual_data_coverage"],
+        )
+        self.assertIn(
+            "Downloaded source quality is authoritative",
+            SOLAR_MODEL_KNOWLEDGE["annual_data_coverage"],
+        )
 
 
 if __name__ == "__main__":

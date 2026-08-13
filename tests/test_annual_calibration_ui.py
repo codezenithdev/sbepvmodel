@@ -229,44 +229,192 @@ console.log(JSON.stringify({{
             'id="annualClearYearsBtn"',
             "const ANNUAL_FIRST_YEAR = 2011",
             "const ANNUAL_FIRST_DATE = '2011-02-11'",
+            "const ANNUAL_KNOWN_PARTIAL_YEAR_NOTES = Object.freeze({",
+            "2022: 'known source gaps'",
+            "2023: 'known source gaps'",
             "function initializeAnnualYearSelector()",
             "for (let year = currentYear; year >= ANNUAL_FIRST_YEAR; year -= 1)",
+            "knownPartialNote ? 'incomplete_source' : 'complete'",
             "coverageStatus = 'year_to_date'",
             "? 'Partial - starts '",
+            "? 'Partial - ' + range.coverageNote",
+            "Years 2022 and 2023 have known MIDC source gaps and are marked partial, but remain selectable.",
             "annualYearElements.selectAllButton.addEventListener('click'",
             "annualYearElements.clearButton.addEventListener('click'",
             "https://midcdmz.nlr.gov/apps/daily.pl?site=STAC&amp;start=20110211&amp;yr=2026&amp;mo=7&amp;dy=12",
         ):
             self.assertIn(marker, self.html)
 
-    def test_multi_year_results_table_and_accessible_cdf_are_client_rendered(self) -> None:
+    def test_multi_year_results_table_and_accessible_distribution_are_client_rendered(self) -> None:
         for marker in (
             'id="annualYearResults"',
             'id="annualYearResultRows"',
-            'id="annualCdfChart"',
-            'aria-labelledby="annualCdfTitle annualCdfDescription"',
+            'id="annualDistributionChart"',
+            'aria-labelledby="annualDistributionTitle annualDistributionDescription"',
+            'id="annualDistributionSeries"',
+            '<option value="combined" selected>Combined</option>',
+            '<option value="solarEdge">SolarEdge</option>',
+            '<option value="solectria">Solectria</option>',
+            'id="annualDistributionRankedBtn"',
+            'id="annualDistributionExceedanceBtn"',
+            'id="annualDistributionSampleValue"',
+            'id="annualDistributionP90Value"',
+            'id="annualDistributionP50Value"',
+            'id="annualDistributionRangeValue"',
+            'Weather-year variability only; model and measurement uncertainty are not included.',
             "function renderAnnualYearResults(result)",
-            "function renderAnnualEnergyCdf(rows)",
-            "chart.toggleAttribute('hidden', false)",
-            "row.cdfEligible && row.complete",
+            "function renderAnnualEnergyDistribution(rows = annualDistributionRows)",
+            "function renderAnnualRankedEnergyChart(points, summary, series)",
+            "function renderAnnualExceedanceChart(points, summary, series)",
+            "const ANNUAL_DISTRIBUTION_MIN_PERCENTILE_YEARS = 5",
+            "const ANNUAL_DISTRIBUTION_MIN_EXCEEDANCE_YEARS = 10",
+            "annualEnergyQuantile(values, 0.10)",
+            "row.complete && row.cdfEligible && Number.isFinite(row[seriesKey])",
             "sourceCoveragePct: annualRowNumber(row, ['source_coverage_pct'])",
             "row.coverageStatus === 'incomplete_source' || (row.complete && row.sourceComplete === false)",
             "label: 'Partial source'",
             "'% source coverage'",
-            "eligible.length < 2",
-            "last.probability = probability",
-            "sampleCount: rankedValues.length",
-            "stroke-dasharray",
-            "SolarEdge (solid)",
-            "Solectria (dashed)",
-            "combined (dotted)",
+            "tabindex: 0",
+            "Empirical steps and points are shown without smoothing.",
         ):
             self.assertIn(marker, self.html)
 
-        self.assertIn(
-            "Source gaps are assessed after download; affected years remain visible as partial",
-            self.html,
+        for removed in (
+            'id="annualCdfChart"',
+            "function renderAnnualEnergyCdf(rows)",
+            "SolarEdge (solid)",
+            "Solectria (dashed)",
+            "combined (dotted)",
+            "annualIrradiance",
+            "applyAnnualInputPlots",
+        ):
+            self.assertNotIn(removed, self.html)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_known_midc_gap_years_are_prelabelled_partial_in_node(self) -> None:
+        helpers = "function dateIsoInTimeZone" + self.html.split(
+            "function dateIsoInTimeZone", 1
+        )[1].split("\n        function formatAnnualPickerDate", 1)[0]
+        script = f"""
+const ANNUAL_FIRST_YEAR = 2011;
+const ANNUAL_FIRST_DATE = '2011-02-11';
+const ANNUAL_KNOWN_PARTIAL_YEAR_NOTES = Object.freeze({{
+    2022: 'known source gaps',
+    2023: 'known source gaps',
+}});
+{helpers}
+const currentDate = new Date('2026-08-11T12:00:00Z');
+console.log(JSON.stringify([2011, 2022, 2023, 2024, 2026].map((year) =>
+    annualYearDateRange(year, currentDate)
+).concat([2022, 2023].map(annualYearDateRange))));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
         )
+        ranges = json.loads(completed.stdout)
+        self.assertEqual(
+            [item["coverageStatus"] for item in ranges[:5]],
+            ["partial_start", "incomplete_source", "incomplete_source", "complete", "year_to_date"],
+        )
+        self.assertEqual(ranges[1]["coverageNote"], "known source gaps")
+        self.assertEqual(ranges[2]["coverageNote"], "known source gaps")
+        self.assertEqual(ranges[1]["periodStart"], "2022-01-01")
+        self.assertEqual(ranges[1]["periodEnd"], "2022-12-31")
+        self.assertFalse(ranges[1]["completeCalendarYear"])
+        self.assertTrue(ranges[3]["completeCalendarYear"])
+        self.assertEqual(ranges[4]["periodEnd"], "2026-08-10")
+        self.assertEqual(
+            [item["coverageStatus"] for item in ranges[5:]],
+            ["incomplete_source", "incomplete_source"],
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_annual_distribution_math_and_sample_policy_in_node(self) -> None:
+        helpers = "const ANNUAL_DISTRIBUTION_MIN_PERCENTILE_YEARS" + self.html.split(
+            "const ANNUAL_DISTRIBUTION_MIN_PERCENTILE_YEARS", 1
+        )[1].split("\n        function clearAnnualDistributionChart", 1)[0]
+        script = f"""
+{helpers}
+const values = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000];
+const rows = values.map((value, index) => ({{
+    year: 2012 + index,
+    complete: true,
+    cdfEligible: true,
+    combined: value,
+    solarEdge: value / 2,
+    solectria: value / 2,
+}}));
+rows.push({{year: 2011, complete: false, cdfEligible: false, combined: 50}});
+rows.push({{year: 2022, complete: true, cdfEligible: false, combined: 1100}});
+rows.push({{year: 2023, complete: true, cdfEligible: true, combined: NaN}});
+const ties = annualDistributionPoints([
+    {{year: 2020, complete: true, cdfEligible: true, combined: 500}},
+    {{year: 2019, complete: true, cdfEligible: true, combined: 500}},
+], 'combined');
+const equalDomain = annualDistributionDomain([500, 500]);
+const exceedancePoints = annualExceedancePoints(annualDistributionPoints(rows, 'combined'));
+const exceedancePath = annualExceedanceStepPath(exceedancePoints, [0, 1100], (value) => value, (probability) => probability);
+console.log(JSON.stringify({{
+    p90: annualEnergyQuantile(values, 0.10),
+    p50: annualEnergyQuantile(values, 0.50),
+    includedYears: annualDistributionPoints(rows, 'combined').map((point) => point.year),
+    selectedSeriesValue: annualDistributionPoints(rows, 'solarEdge')[0].value,
+    tieYears: ties.map((point) => point.year),
+    policies: [4, 5, 9, 10].map(annualDistributionPolicy),
+    equalDomainExpands: equalDomain[0] < 500 && equalDomain[1] > 500,
+    narrowDomainTickDigits: annualDistributionTickDigits([499980, 500020]),
+    exceedancePathStarts: exceedancePath.startsWith('M 0 1 H 100 V 0.9 H 200 V 0.8'),
+    exceedancePathEnds: exceedancePath.endsWith('H 1000 V 0 H 1100'),
+}}));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["p90"], 190)
+        self.assertEqual(payload["p50"], 550)
+        self.assertEqual(payload["includedYears"], list(range(2012, 2022)))
+        self.assertEqual(payload["selectedSeriesValue"], 50)
+        self.assertEqual(payload["tieYears"], [2019, 2020])
+        self.assertEqual(
+            payload["policies"],
+            [
+                {
+                    "showPercentiles": False,
+                    "p90Provisional": False,
+                    "showP90Reference": False,
+                    "allowExceedance": False,
+                },
+                {
+                    "showPercentiles": True,
+                    "p90Provisional": True,
+                    "showP90Reference": False,
+                    "allowExceedance": False,
+                },
+                {
+                    "showPercentiles": True,
+                    "p90Provisional": True,
+                    "showP90Reference": False,
+                    "allowExceedance": False,
+                },
+                {
+                    "showPercentiles": True,
+                    "p90Provisional": False,
+                    "showP90Reference": True,
+                    "allowExceedance": True,
+                },
+            ],
+        )
+        self.assertTrue(payload["equalDomainExpands"])
+        self.assertGreaterEqual(payload["narrowDomainTickDigits"], 2)
+        self.assertTrue(payload["exceedancePathStarts"])
+        self.assertTrue(payload["exceedancePathEnds"])
 
     def test_validation_dates_reset_after_cached_form_restore(self) -> None:
         for marker in (

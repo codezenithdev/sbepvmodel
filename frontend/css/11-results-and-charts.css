@@ -358,6 +358,10 @@
             background: #ffffff;
         }
 
+        .annual-charts-grid .chart-card:last-child {
+            grid-column: 1 / -1;
+        }
+
         .stat-card,
         .chart-card,
         .controls-bar,
@@ -405,7 +409,7 @@
 
         .annual-year-results-grid {
             display: grid;
-            grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+            grid-template-columns: minmax(0, 1fr);
             gap: 14px;
             align-items: stretch;
         }
@@ -500,95 +504,258 @@
             color: var(--warning);
         }
 
-        .annual-cdf-card {
+        .annual-distribution-card {
             min-width: 0;
             display: grid;
-            grid-template-rows: auto auto minmax(220px, 1fr);
-            gap: 10px;
+            gap: 12px;
             margin: 0;
-            padding: 14px;
+            padding: 16px;
             border: 1px solid var(--border);
             border-radius: 9px;
             background: #ffffff;
         }
 
-        .annual-cdf-card figcaption {
-            display: grid;
-            gap: 2px;
-        }
-
-        .annual-cdf-card figcaption strong {
-            color: var(--text);
-            font-size: 13px;
-        }
-
-        .annual-cdf-card figcaption span {
-            color: var(--muted);
-            font-size: 10px;
-        }
-
-        .annual-cdf-legend {
+        .annual-distribution-heading {
             display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
             flex-wrap: wrap;
-            gap: 10px;
+        }
+
+        .annual-distribution-heading > div:first-child {
+            display: grid;
+            gap: 3px;
+        }
+
+        .annual-distribution-heading strong {
+            color: var(--text);
+            font-size: 15px;
+        }
+
+        .annual-distribution-heading span {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .annual-distribution-controls {
+            display: flex;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 8px 12px;
+        }
+
+        .annual-distribution-controls label {
+            display: grid;
+            gap: 4px;
             color: var(--muted-strong);
             font-size: 9px;
-            font-weight: 760;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
         }
 
-        .annual-cdf-legend span {
+        .annual-distribution-controls select {
+            min-width: 138px;
+            height: 34px;
+            padding: 0 30px 0 10px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 11px;
+            font-weight: 750;
+            text-transform: none;
+        }
+
+        .annual-distribution-view-switch {
             display: inline-flex;
             align-items: center;
-            gap: 5px;
+            padding: 3px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
         }
 
-        .annual-cdf-legend span::before {
-            content: '';
-            width: 14px;
-            height: 3px;
-            border-radius: 999px;
-            background: currentColor;
+        .annual-distribution-view-switch button {
+            min-height: 28px;
+            padding: 5px 9px;
+            border-radius: 5px;
+            background: transparent;
+            color: var(--muted-strong);
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: 780;
         }
 
-        .annual-cdf-legend .solectria::before {
-            height: 0;
-            border-top: 3px dashed currentColor;
-            border-radius: 0;
-            background: none;
+        .annual-distribution-view-switch button[aria-pressed="true"] {
+            background: var(--surface);
+            color: var(--accent-strong);
+            box-shadow: 0 1px 4px rgba(22, 34, 29, 0.14);
         }
 
-        .annual-cdf-legend .combined::before {
-            height: 0;
-            border-top: 3px dotted currentColor;
-            border-radius: 0;
-            background: none;
+        .annual-distribution-view-switch button:disabled,
+        .annual-distribution-controls select:disabled {
+            cursor: not-allowed;
+            opacity: 0.48;
         }
 
-        .annual-cdf-legend .solaredge {
-            color: var(--accent);
+        .annual-distribution-controls select:focus-visible,
+        .annual-distribution-view-switch button:focus-visible,
+        .annual-distribution-chart-wrap:focus-visible {
+            outline: 3px solid rgba(37, 99, 235, 0.26);
+            outline-offset: 2px;
         }
 
-        .annual-cdf-legend .solectria {
-            color: var(--info);
+        .annual-distribution-kpis {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
         }
 
-        .annual-cdf-legend .combined {
-            color: var(--warning);
+        .annual-distribution-kpis > div {
+            min-width: 0;
+            display: grid;
+            gap: 2px;
+            padding: 10px 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
         }
 
-        .annual-cdf-chart {
-            width: 100%;
-            min-height: 220px;
-            align-self: center;
-            overflow: visible;
+        .annual-distribution-kpis span {
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 820;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
         }
 
-        .annual-cdf-chart[hidden] {
+        .annual-distribution-kpis strong {
+            overflow-wrap: anywhere;
+            color: var(--text);
+            font-size: 15px;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.25;
+        }
+
+        .annual-distribution-kpis small {
+            color: var(--muted);
+            font-size: 9px;
+            line-height: 1.35;
+        }
+
+        .annual-distribution-caveat {
+            padding: 9px 11px;
+            border-left: 3px solid var(--warning);
+            border-radius: 0 7px 7px 0;
+            background: var(--warning-soft);
+            color: var(--muted-strong);
+            font-size: 10px;
+            line-height: 1.45;
+        }
+
+        .annual-distribution-chart-wrap {
+            min-width: 0;
+            overflow-x: auto;
+            padding: 4px 0 2px;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .annual-distribution-chart-wrap[hidden],
+        .annual-distribution-chart[hidden] {
             display: none;
         }
 
-        .annual-cdf-fallback {
-            align-self: center;
+        .annual-distribution-chart {
+            width: 100%;
+            min-width: 620px;
+            height: auto;
+            display: block;
+            overflow: visible;
+        }
+
+        .annual-distribution-grid-line {
+            stroke: #e7eeeb;
+            stroke-width: 1;
+        }
+
+        .annual-distribution-axis-line {
+            stroke: #93a49d;
+            stroke-width: 1.2;
+        }
+
+        .annual-distribution-row-guide {
+            stroke: #dfe7e3;
+            stroke-width: 1.3;
+        }
+
+        .annual-distribution-axis-label,
+        .annual-distribution-year-label,
+        .annual-distribution-value-label,
+        .annual-distribution-reference-label {
+            fill: var(--muted);
+            font-size: 10px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .annual-distribution-year-label,
+        .annual-distribution-value-label {
+            fill: var(--muted-strong);
+            font-weight: 720;
+        }
+
+        .annual-distribution-axis-title {
+            fill: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 780;
+        }
+
+        .annual-distribution-reference {
+            stroke-width: 2;
+        }
+
+        .annual-distribution-reference.p50 {
+            stroke: #475569;
+            stroke-dasharray: 7 5;
+        }
+
+        .annual-distribution-reference.p90 {
+            stroke: var(--warning);
+            stroke-dasharray: 2 5;
+        }
+
+        .annual-distribution-reference-label {
+            font-size: 10px;
+            font-weight: 820;
+        }
+
+        .annual-distribution-reference-label.p50 {
+            fill: #334155;
+        }
+
+        .annual-distribution-reference-label.p90 {
+            fill: var(--warning);
+        }
+
+        .annual-distribution-point {
+            outline: none;
+        }
+
+        .annual-distribution-dot {
+            transition: r 120ms ease;
+        }
+
+        .annual-distribution-point:hover .annual-distribution-dot,
+        .annual-distribution-point:focus .annual-distribution-dot {
+            r: 8px;
+            stroke: var(--text);
+            stroke-width: 3px;
+        }
+
+        .annual-distribution-fallback {
             padding: 22px 16px;
             border: 1px dashed var(--border-strong);
             border-radius: 8px;
@@ -598,8 +765,14 @@
             text-align: center;
         }
 
-        .annual-cdf-fallback[hidden] {
+        .annual-distribution-fallback[hidden] {
             display: none;
+        }
+
+        .annual-distribution-view-note {
+            color: var(--muted);
+            font-size: 10px;
+            line-height: 1.4;
         }
 
         @media (max-width: 1180px) {
@@ -607,8 +780,8 @@
                 grid-template-columns: 1fr;
             }
 
-            .annual-cdf-card {
-                min-height: 340px;
+            .annual-distribution-kpis {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
         }
 
@@ -617,9 +790,24 @@
                 padding: 13px;
             }
 
-            .annual-cdf-card {
-                min-height: 300px;
+            .annual-distribution-card {
                 padding: 12px;
+            }
+
+            .annual-distribution-heading,
+            .annual-distribution-controls {
+                align-items: stretch;
+            }
+
+            .annual-distribution-controls,
+            .annual-distribution-controls label,
+            .annual-distribution-controls select,
+            .annual-distribution-view-switch {
+                width: 100%;
+            }
+
+            .annual-distribution-view-switch button {
+                flex: 1 1 0;
             }
         }
 

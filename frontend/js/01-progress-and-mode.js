@@ -39,7 +39,7 @@
                 ? 'SolarEdge & Solectria Annual Simulation'
                 : 'SolarEdge & Solectria Performance Analysis';
             dashboardSubtitle.textContent = annual
-                ? 'Carry the reviewed calibration into a long-range forecast of energy, irradiance, and performance.'
+                ? 'Carry the reviewed calibration into a long-range forecast of energy and performance.'
                 : 'Compare measured power, irradiance, physics-model predictions, and export-ready run artifacts for the SBE Innovation Site.';
             document.body.classList.toggle('dashboard-mode-annual', annual);
             document.body.classList.toggle('dashboard-mode-technoeconomic', technoeconomic);

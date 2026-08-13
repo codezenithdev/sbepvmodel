@@ -308,13 +308,12 @@
         }
 
         .annual-year-option-note {
-            overflow: hidden;
             color: var(--warning);
             font-size: 9px;
             font-weight: 720;
             line-height: 1.25;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+            overflow-wrap: anywhere;
+            white-space: normal;
         }
 
         .annual-year-help {

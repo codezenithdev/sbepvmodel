@@ -244,7 +244,6 @@
                 annualRunState = { state: data.state, progress: data.progress, stage: data.stage || '' };
                 putAgentJob(data);
                 renderAgentJobUpdate(data);
-                if (data.input_plots) applyAnnualInputPlots(data.input_plots);
                 saveDashboardState();
                 if (data.state === 'done') {
                     annualLatestResult = data.result;

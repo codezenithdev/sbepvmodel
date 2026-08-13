@@ -596,8 +596,7 @@ class AnnualCalibrationApiTests(unittest.TestCase):
         source = midc.MidcFetchResult(hourly, 1, 1, 0, 1, 1)
         base = config.OUTPUT_DIR / job_id
         source_path = config.OUTPUT_DIR / f"{job_id}_midc_hourly.csv"
-        irradiance_path = config.OUTPUT_DIR / f"{job_id}_irradiance.png"
-        self.generated_files.extend((source_path, irradiance_path))
+        self.generated_files.append(source_path)
         captured: dict = {}
 
         def fake_run_model(**kwargs):

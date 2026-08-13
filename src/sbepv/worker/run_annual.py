@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from sbepv import model
-from sbepv.api import config, plots, state
+from sbepv.api import config, state
 from sbepv.api.artifacts import (
     _job_attempt_prefix,
     _output_url,
@@ -18,7 +18,6 @@ from sbepv.api.artifacts import (
     _workbook_download_name,
 )
 from sbepv.api.job_store import _check_job_cancelled, _get_job_record, _update_job
-from sbepv.api.plots import _render_midc_input_data_plots
 from sbepv.api.request_context import _iam_metadata
 from sbepv.api.schemas import AnnualRunRequest
 from sbepv.api.validation import _annual_interval_seconds, _annual_periods
@@ -392,16 +391,6 @@ def _run_annual_job(
             source_hash=source_hash,
             provenance=existing_provenance,
         )
-        set_progress(28, "Rendering annual irradiance inputs")
-        input_plots = _render_midc_input_data_plots(csv_path, base_path)
-        existing_artifacts = (_get_job_record(job_id) or {}).get("artifacts") or {}
-        _update_job(
-            job_id,
-            worker_id=worker_id,
-            lease_token=lease_token,
-            artifacts={**existing_artifacts, "input_plots": input_plots},
-        )
-
         def model_progress(frac: float, msg: str) -> None:
             set_progress(30 + int(frac * 60), msg)
 
@@ -498,7 +487,6 @@ def _run_annual_job(
             "monthly_png": _output_url(Path(stats["monthly_png"])),
             "excel": _output_url(Path(stats["excel"])),
             "excel_filename": _workbook_download_name(req),
-            "input_plots": state.JOBS[job_id].get("input_plots"),
             "source_csv": _public_source_url(csv_path),
             "warnings": warnings,
             "source_quality": source_quality,

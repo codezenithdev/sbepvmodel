@@ -1134,24 +1134,6 @@ class AnnualApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(state.JOBS, {})
 
-    def test_status_exposes_annual_irradiance_before_model_completion(self):
-        state.JOBS["annual-weather-ready"] = {
-            "mode": "annual",
-            "state": "running",
-            "progress": 28,
-            "stage": "Rendering annual irradiance inputs",
-            "input_plots": {
-                "irradiance_png": "/outputs/annual-weather-ready_irradiance.png"
-            },
-        }
-
-        response = TestClient(app.app).get("/api/status/annual-weather-ready")
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["state"], "running")
-        self.assertIn("irradiance_png", payload["input_plots"])
-
     def test_validation_endpoint_remains_separate(self):
         response = TestClient(app.app).post(
             "/api/run",
@@ -1187,7 +1169,6 @@ class AnnualApiTests(unittest.TestCase):
         job_id = "_test_annualjob"
         base = config.OUTPUT_DIR / job_id
         source_path = config.OUTPUT_DIR / f"{job_id}_midc_hourly.csv"
-        irradiance_path = config.OUTPUT_DIR / f"{job_id}_irradiance.png"
         stats = {
             "se_predicted_kwh": 10.0,
             "sol_predicted_kwh": 8.0,
@@ -1202,8 +1183,6 @@ class AnnualApiTests(unittest.TestCase):
         }
 
         def fake_run_model(**kwargs):
-            self.assertIn("input_plots", state.JOBS[job_id])
-            self.assertTrue(irradiance_path.is_file())
             self.assertEqual(kwargs["iam_model"], model.IAM_MODEL_MARTIN_RUIZ)
             self.assertEqual(kwargs["iam_a_r"], 0.18)
             self.assertEqual(kwargs["expected_interval_seconds"], 15 * 60)
@@ -1221,8 +1200,7 @@ class AnnualApiTests(unittest.TestCase):
             result = state.JOBS[job_id]["result"]
             self.assertEqual(result["mode"], "annual")
             self.assertTrue(source_path.is_file())
-            self.assertTrue(irradiance_path.is_file())
-            self.assertIn("irradiance_png", result["input_plots"])
+            self.assertNotIn("input_plots", result)
             self.assertIn("monthly_png", result)
             self.assertIn("source_csv", result)
             self.assertIn("model fallback", result["warnings"])
@@ -1240,7 +1218,6 @@ class AnnualApiTests(unittest.TestCase):
             self.assertEqual(result["window"]["iam_a_r"], 0.18)
         finally:
             source_path.unlink(missing_ok=True)
-            irradiance_path.unlink(missing_ok=True)
 
     def test_annual_worker_fetches_only_selected_year_periods(self):
         calls = []
@@ -1289,9 +1266,6 @@ class AnnualApiTests(unittest.TestCase):
             with (
                 patch.object(midc, "fetch_hourly_data", side_effect=source_for),
                 patch.object(model, "run_model", side_effect=fake_run_model),
-                patch.object(
-                    run_annual, "_render_midc_input_data_plots", return_value={}
-                ),
             ):
                 run_annual._run_annual_job(job_id, req)
 
@@ -1348,9 +1322,6 @@ class AnnualApiTests(unittest.TestCase):
         try:
             with (
                 patch.object(midc, "fetch_hourly_data", return_value=source),
-                patch.object(
-                    run_annual, "_render_midc_input_data_plots", return_value={}
-                ),
                 patch.object(model, "run_model", side_effect=RuntimeError("after source")),
             ):
                 run_annual._run_annual_job(job_id, req)
@@ -1373,9 +1344,6 @@ class AnnualApiTests(unittest.TestCase):
             }
             with (
                 patch.object(midc, "fetch_hourly_data") as refetch,
-                patch.object(
-                    run_annual, "_render_midc_input_data_plots", return_value={}
-                ),
                 patch.object(model, "run_model", return_value=stats) as rerun_model,
             ):
                 run_annual._run_annual_job(

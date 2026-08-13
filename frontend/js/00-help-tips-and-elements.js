@@ -179,9 +179,24 @@
             panel: document.getElementById('annualYearResults'),
             summary: document.getElementById('annualYearResultsSummary'),
             rows: document.getElementById('annualYearResultRows'),
-            cdfChart: document.getElementById('annualCdfChart'),
-            cdfDescription: document.getElementById('annualCdfDescription'),
-            cdfFallback: document.getElementById('annualCdfFallback'),
+            distributionChart: document.getElementById('annualDistributionChart'),
+            distributionChartWrap: document.getElementById('annualDistributionChartWrap'),
+            distributionTitle: document.getElementById('annualDistributionTitle'),
+            distributionDescription: document.getElementById('annualDistributionDescription'),
+            distributionFallback: document.getElementById('annualDistributionFallback'),
+            distributionSubtitle: document.getElementById('annualDistributionSubtitle'),
+            distributionSeries: document.getElementById('annualDistributionSeries'),
+            distributionRankedButton: document.getElementById('annualDistributionRankedBtn'),
+            distributionExceedanceButton: document.getElementById('annualDistributionExceedanceBtn'),
+            distributionViewNote: document.getElementById('annualDistributionViewNote'),
+            distributionSampleValue: document.getElementById('annualDistributionSampleValue'),
+            distributionSampleMeta: document.getElementById('annualDistributionSampleMeta'),
+            distributionP90Value: document.getElementById('annualDistributionP90Value'),
+            distributionP90Meta: document.getElementById('annualDistributionP90Meta'),
+            distributionP50Value: document.getElementById('annualDistributionP50Value'),
+            distributionP50Meta: document.getElementById('annualDistributionP50Meta'),
+            distributionRangeValue: document.getElementById('annualDistributionRangeValue'),
+            distributionRangeMeta: document.getElementById('annualDistributionRangeMeta'),
         };
         const operationsNavLink = document.getElementById('operationsNavLink');
         const pvModelNavLink = document.getElementById('pvModelNavLink');
@@ -191,6 +206,10 @@
         const MAX_RECENT_AGENT_RUNS = 10;
         const ANNUAL_FIRST_YEAR = 2011;
         const ANNUAL_FIRST_DATE = '2011-02-11';
+        const ANNUAL_KNOWN_PARTIAL_YEAR_NOTES = Object.freeze({
+            2022: 'known source gaps',
+            2023: 'known source gaps',
+        });
         const MAX_ANNUAL_MODEL_ROWS = 1048575;
         const SUPPORTED_ANNUAL_INTERVALS = Object.freeze({
             hours: new Set([1]),

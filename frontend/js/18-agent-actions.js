@@ -116,7 +116,6 @@
                         : null;
                     annualProgressWrap.classList.remove('visible');
                     resetAnnualRunBtn();
-                    if (job.input_plots) applyAnnualInputPlots(job.input_plots);
                     applyAnnualResult(job.result);
                     if (!annualRequestCanBeLoaded) {
                         showAnnualError('This legacy date-range result is read-only. Select MIDC years before starting a new simulation.');
