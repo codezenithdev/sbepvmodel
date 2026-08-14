@@ -37,7 +37,7 @@ function safePath(path: string[]): string {
   return path.map((segment) => encodeURIComponent(segment)).join("/");
 }
 
-function isAllowedApiPath(path: string[]): boolean {
+export function isAllowedApiPath(path: string[]): boolean {
   if (path.length === 1) {
     return [
       "session",
@@ -55,7 +55,11 @@ function isAllowedApiPath(path: string[]): boolean {
     return (
       (path[0] === "status" && isSafeId(path[1])) ||
       (path[0] === "agent" && path[1] === "state") ||
-      (path[0] === "saved-results" && isSafeId(path[1]))
+      (path[0] === "saved-results" && isSafeId(path[1])) ||
+      (
+        path[0] === "technoeconomic" &&
+        ["sources", "jobs"].includes(path[1])
+      )
     );
   }
 
@@ -70,22 +74,38 @@ function isAllowedApiPath(path: string[]): boolean {
         path[0] === "calibration-reviews" &&
         isSafeId(path[1]) &&
         ["run", "rows"].includes(path[2])
+      ) ||
+      (
+        path[0] === "technoeconomic" &&
+        path[1] === "jobs" &&
+        isSafeId(path[2])
       )
     );
   }
 
-  return (
-    path.length === 4 &&
-    path[0] === "agent" &&
-    isSafeId(path[2]) &&
-    (
+  if (path.length === 4) {
+    return (
       (
-        path[1] === "proposals" &&
-        ["confirm", "edit", "dismiss"].includes(path[3])
+        path[0] === "agent" &&
+        isSafeId(path[2]) &&
+        (
+          (
+            path[1] === "proposals" &&
+            ["confirm", "edit", "dismiss"].includes(path[3])
+          ) ||
+          (path[1] === "sweeps" && path[3] === "confirm")
+        )
       ) ||
-      (path[1] === "sweeps" && path[3] === "confirm")
-    )
-  );
+      (
+        path[0] === "technoeconomic" &&
+        path[1] === "jobs" &&
+        isSafeId(path[2]) &&
+        ["cancel", "retry"].includes(path[3])
+      )
+    );
+  }
+
+  return false;
 }
 
 export async function proxyRenderRequest(

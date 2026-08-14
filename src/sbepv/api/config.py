@@ -72,6 +72,7 @@ PRIVATE_OUTPUT_DIRS = (
     (OUTPUT_DIR / ".agent_state").resolve(),
     CALIBRATION_REVIEW_DIR.resolve(),
     ANNUAL_SOURCE_ARTIFACT_DIR.resolve(),
+    (OUTPUT_DIR / ".technoeconomic_attempts").resolve(),
 )
 PUBLIC_OUTPUT_SUFFIXES = frozenset({".csv", ".png", ".xlsx"})
 CALIBRATION_REVIEW_TTL = timedelta(hours=24)

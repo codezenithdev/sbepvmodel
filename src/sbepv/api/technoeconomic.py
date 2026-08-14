@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from dataclasses import asdict
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -26,13 +27,20 @@ from typing import Any
 import uuid
 
 from sbepv import calibration, model, reporting
+from sbepv import technoeconomic as technoeconomic_kernel
 from sbepv.api import config, timewindows
+from sbepv.api.schemas import (
+    TechnoeconomicDistributionRequest,
+    TechnoeconomicEvidenceRequest,
+    TechnoeconomicSubmissionRequest,
+)
 from sbepv.reporting import SourceFingerprintMismatch
 
 
 ANNUAL_SOURCE_SNAPSHOT_SCHEMA_VERSION = 1
 ANNUAL_SOURCE_ELIGIBILITY_VERSION = "tea-annual-source-v1"
 ANNUAL_SOURCE_ARTIFACT_SCHEMA_VERSION = 1
+TECHNOECONOMIC_SUBMISSION_PROVENANCE_SCHEMA_VERSION = 1
 
 
 class AnnualSourceValidationError(ValueError):
@@ -2462,15 +2470,762 @@ def inspect_annual_source_eligibility(
     }
 
 
+def resolve_annual_source_dependencies(
+    agent_store: Any,
+    source_annual_job_id: str,
+) -> dict[str, Any]:
+    """Resolve the exact Annual, origin-validation, and promotion records.
+
+    Store access is deliberately injected.  This keeps module singletons out of
+    the source-verification layer and lets the caller hold its orchestration lock.
+    The historical promotion lookup is exact rather than a bounded scan of recent
+    promotion history.
+    """
+
+    source_id = _nonempty_text(
+        source_annual_job_id,
+        "annual_job_id_missing",
+        "The selected Annual Simulation job ID is missing.",
+    )
+    annual_job = agent_store.get_job(source_id)
+    annual = _mapping(
+        annual_job,
+        "annual_job_missing",
+        "The selected Annual Simulation cannot be resolved.",
+    )
+    provenance = _mapping(
+        annual.get("provenance"),
+        "annual_provenance_missing",
+        "The Annual Simulation durable provenance is missing.",
+    )
+    application = _mapping(
+        provenance.get("calibration_application"),
+        "calibration_application_missing",
+        "The Annual Simulation durable calibration application is missing.",
+    )
+    origin_job_id = _nonempty_text(
+        application.get("baseline_job_id"),
+        "origin_job_id_missing",
+        "The Annual calibration origin job ID is missing.",
+    )
+    promoted_at = _nonempty_text(
+        application.get("baseline_promoted_at"),
+        "origin_promotion_missing",
+        "The Annual calibration promotion timestamp is missing.",
+    )
+    origin_job = agent_store.get_job(origin_job_id)
+    promotion = agent_store.get_promotion(
+        mode="validation",
+        job_id=origin_job_id,
+        promoted_at=promoted_at,
+    )
+    return {
+        "annual_job": annual,
+        "origin_validation_job": origin_job,
+        "promotion_record": promotion,
+    }
+
+
+def _parsed_submission_request(
+    request_payload: Mapping[str, Any] | TechnoeconomicSubmissionRequest,
+) -> TechnoeconomicSubmissionRequest:
+    if isinstance(request_payload, TechnoeconomicSubmissionRequest):
+        payload: Mapping[str, Any] = request_payload.model_dump(
+            mode="python",
+            exclude_none=False,
+        )
+    elif isinstance(request_payload, Mapping):
+        payload = request_payload
+    else:
+        raise TypeError("technoeconomic request payload must be an object")
+    return TechnoeconomicSubmissionRequest.model_validate(dict(payload))
+
+
+def _kernel_distribution(
+    input_id: str,
+    distribution: TechnoeconomicDistributionRequest,
+) -> technoeconomic_kernel.DistributionSpec:
+    values = distribution.model_dump(mode="python", exclude_none=True)
+    family = values.pop("family")
+    return technoeconomic_kernel.DistributionSpec(
+        input_id=input_id,
+        family=family,
+        **values,
+    )
+
+
+def _snapshot_capacity_specs(
+    source_snapshot: Mapping[str, Any],
+) -> tuple[
+    technoeconomic_kernel.CapacitySpec,
+    technoeconomic_kernel.CapacitySpec,
+]:
+    manifest = _mapping(
+        source_snapshot.get("capacity_manifest"),
+        "source_snapshot_capacity_missing",
+        "The frozen source snapshot has no capacity manifest.",
+    )
+    systems = _mapping(
+        manifest.get("systems"),
+        "source_snapshot_capacity_missing",
+        "The frozen source snapshot has no per-system capacity records.",
+    )
+    if set(systems) != {"solectria", "solaredge"}:
+        _fail(
+            "source_snapshot_capacity_invalid",
+            "The frozen source snapshot must contain exactly Solectria and SolarEdge capacities.",
+        )
+    result: list[technoeconomic_kernel.CapacitySpec] = []
+    for system in ("solectria", "solaredge"):
+        record = _mapping(
+            systems.get(system),
+            "source_snapshot_capacity_invalid",
+            f"The frozen {system} capacity record is missing.",
+        )
+        try:
+            result.append(
+                technoeconomic_kernel.CapacitySpec(
+                    system=system,
+                    module_model=record["module_model"],
+                    module_stc_wdc=record["module_stc_wdc"],
+                    strings=record["strings"],
+                    bays_per_string=record["bays_per_string"],
+                    modules_per_bay=record["modules_per_bay"],
+                    module_count=record["module_count"],
+                    installed_wdc=record["installed_wdc"],
+                    physics_version=record["calibration_physics_version"],
+                    physics_fingerprint=record[
+                        "calibration_physics_fingerprint"
+                    ],
+                )
+            )
+        except KeyError as exc:
+            raise AnnualSourceValidationError(
+                "source_snapshot_capacity_invalid",
+                f"The frozen {system} capacity record is incomplete.",
+            ) from exc
+    return result[0], result[1]
+
+
+def _snapshot_energy_rows(
+    source_snapshot: Mapping[str, Any],
+) -> tuple[technoeconomic_kernel.PairedEnergyRow, ...]:
+    raw_rows = _sequence(
+        source_snapshot.get("eligible_paired_energy_rows"),
+        "source_snapshot_energy_missing",
+        "The frozen source snapshot has no eligible paired energy rows.",
+    )
+    rows: list[technoeconomic_kernel.PairedEnergyRow] = []
+    for raw in raw_rows:
+        row = _mapping(
+            raw,
+            "source_snapshot_energy_invalid",
+            "A frozen paired energy row is invalid.",
+        )
+        try:
+            rows.append(
+                technoeconomic_kernel.PairedEnergyRow(
+                    year=row["year"],
+                    sol_predicted_kwh_ac=row["sol_predicted_kwh"],
+                    se_predicted_kwh_ac=row["se_predicted_kwh"],
+                    provenance=deepcopy(dict(row)),
+                )
+            )
+        except KeyError as exc:
+            raise AnnualSourceValidationError(
+                "source_snapshot_energy_invalid",
+                "A frozen paired energy row is incomplete.",
+            ) from exc
+    return tuple(rows)
+
+
+def _cost_intensity_multipliers(
+    line: Any,
+    *,
+    basis: str,
+    capacities: Mapping[str, technoeconomic_kernel.CapacitySpec],
+) -> tuple[float, float]:
+    quantities = {
+        "solectria": float(line.solectria_quantity),
+        "solaredge": float(line.solaredge_quantity),
+    }
+    if basis == "commercial_representative":
+        # The strict schema permits only explicitly sourced commercial per-Wdc
+        # target-year values.  No SolarTAC total is silently divided by a
+        # hypothetical size, and the documented pre-submission currency index
+        # is not applied a second time.
+        return quantities["solectria"], quantities["solaredge"]
+    return (
+        quantities["solectria"] / capacities["solectria"].installed_wdc,
+        quantities["solaredge"] / capacities["solaredge"].installed_wdc,
+    )
+
+
+def build_technoeconomic_kernel_request(
+    request_payload: Mapping[str, Any] | TechnoeconomicSubmissionRequest,
+    source_snapshot: Mapping[str, Any],
+) -> technoeconomic_kernel.TechnoeconomicRequest:
+    """Build and validate a kernel request from strict input plus frozen source.
+
+    The API body has no capacity or energy fields.  Both system Wdc manifests and
+    every paired weather row are reconstructed exclusively from the already
+    verified immutable snapshot.  This helper is safe to call once before enqueue
+    and again in the worker from the two frozen durable payloads.
+    """
+
+    request = _parsed_submission_request(request_payload)
+    snapshot = _mapping(
+        source_snapshot,
+        "source_snapshot_invalid",
+        "The frozen Annual source snapshot is invalid.",
+    )
+    snapshot_source_id = _nonempty_text(
+        snapshot.get("source_annual_job_id"),
+        "source_snapshot_invalid",
+        "The frozen source snapshot has no Annual job ID.",
+    )
+    if not secrets.compare_digest(snapshot_source_id, request.source_annual_job_id):
+        _fail(
+            "source_snapshot_job_mismatch",
+            "The request Annual job ID does not match the frozen source snapshot.",
+        )
+
+    capacities_tuple = _snapshot_capacity_specs(snapshot)
+    capacities = {item.system: item for item in capacities_tuple}
+    paired_rows = _snapshot_energy_rows(snapshot)
+
+    cost_lines: list[technoeconomic_kernel.CostLineSpec] = []
+    for line in request.cost_lines:
+        sol_multiplier, se_multiplier = _cost_intensity_multipliers(
+            line,
+            basis=request.basis,
+            capacities=capacities,
+        )
+        cost_lines.append(
+            technoeconomic_kernel.CostLineSpec(
+                input_id=line.input_id,
+                label=line.label,
+                basis=request.basis,
+                ownership=line.ownership,
+                cost_type=line.cost_type,
+                distribution=_kernel_distribution(
+                    line.input_id,
+                    line.distribution,
+                ),
+                solectria_multiplier_to_intensity=sol_multiplier,
+                solaredge_multiplier_to_intensity=se_multiplier,
+                coverage_ids=tuple(line.coverage_include_ids),
+                solectria_treatment_key=technoeconomic_kernel.SUPPORTED_COST_TREATMENT,
+                solaredge_treatment_key=technoeconomic_kernel.SUPPORTED_COST_TREATMENT,
+            )
+        )
+
+    transfer: technoeconomic_kernel.TransferSpec | None = None
+    if request.commercial_transfer is not None:
+        transfer = technoeconomic_kernel.TransferSpec(
+            baseline=_kernel_distribution(
+                "transfer.baseline",
+                request.commercial_transfer.baseline_factor.distribution,
+            ),
+            incremental=_kernel_distribution(
+                "transfer.incremental",
+                request.commercial_transfer.incremental_factor.distribution,
+            ),
+            mechanism_status=request.commercial_transfer.status,
+        )
+
+    kernel_request = technoeconomic_kernel.TechnoeconomicRequest(
+        basis=request.basis,
+        n=request.n,
+        seed=request.seed,
+        project_life_years=request.finance.project_life_years,
+        capacities=capacities_tuple,
+        paired_energy_rows=paired_rows,
+        cost_lines=tuple(cost_lines),
+        discount_rate=_kernel_distribution(
+            "finance.discount-rate",
+            request.finance.real_discount_rate.distribution,
+        ),
+        shared_degradation=_kernel_distribution(
+            "energy.shared-degradation",
+            request.shared_degradation.annual_rate.distribution,
+        ),
+        transfer=transfer,
+        commercial_reference_wdc=(
+            request.commercial_reference_design.reference_wdc
+            if request.commercial_reference_design is not None
+            else None
+        ),
+        cost_stack_completeness=request.cost_stack_completeness,
+        calculation_contract_version=(
+            technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
+        ),
+        sampling_version=technoeconomic_kernel.SAMPLING_VERSION,
+    )
+    return technoeconomic_kernel.validate_request(kernel_request)
+
+
+def _evidence_receipt(
+    request: TechnoeconomicSubmissionRequest,
+) -> dict[str, Any]:
+    subjects: list[tuple[str, TechnoeconomicEvidenceRequest]] = [
+        (f"cost:{line.input_id}", line.evidence) for line in request.cost_lines
+    ]
+    subjects.extend(
+        [
+            ("finance:project-life", request.finance.project_life_evidence),
+            (
+                "finance:discount-rate",
+                request.finance.real_discount_rate.evidence,
+            ),
+            (
+                "energy:shared-degradation",
+                request.shared_degradation.annual_rate.evidence,
+            ),
+        ]
+    )
+    if request.commercial_reference_design is not None:
+        subjects.append(
+            ("commercial:reference-design", request.commercial_reference_design.evidence)
+        )
+    if request.commercial_transfer is not None:
+        subjects.extend(
+            [
+                (
+                    "transfer:baseline-factor",
+                    request.commercial_transfer.baseline_factor.evidence,
+                ),
+                (
+                    "transfer:incremental-factor",
+                    request.commercial_transfer.incremental_factor.evidence,
+                ),
+            ]
+        )
+        subjects.extend(
+            (
+                f"transfer-mechanism:{mechanism.mechanism}",
+                mechanism.evidence,
+            )
+            for mechanism in request.commercial_transfer.mechanisms
+        )
+
+    subjects.extend(
+        (
+            f"cost-currency-index:{line.input_id}",
+            line.currency_year_normalization.index_source_evidence,
+        )
+        for line in request.cost_lines
+        if line.currency_year_normalization.method == "price_index_adjustment"
+    )
+
+    counts: dict[str, int] = {}
+    preservation_counts: dict[str, int] = {}
+    preservation: list[dict[str, Any]] = []
+    provisional: list[dict[str, Any]] = []
+    for subject, evidence in subjects:
+        counts[evidence.evidence_class] = counts.get(evidence.evidence_class, 0) + 1
+        citation = evidence.citation
+        preservation_counts[citation.preservation_mode] = (
+            preservation_counts.get(citation.preservation_mode, 0) + 1
+        )
+        preservation.append(
+            {
+                "subject": subject,
+                "mode": citation.preservation_mode,
+                "user_supplied_content_sha256": (
+                    citation.user_supplied_content_sha256
+                ),
+                "content_sha256_provenance": (
+                    "user_supplied_metadata"
+                    if citation.user_supplied_content_sha256 is not None
+                    else None
+                ),
+                "server_verified_bytes": False,
+                "metadata_only_rationale": citation.metadata_only_rationale,
+            }
+        )
+        if evidence.evidence_class in {
+            "engineering_judgment",
+            "secondary_synthesis",
+        }:
+            provisional.append(
+                {
+                    "subject": subject,
+                    "evidence_class": evidence.evidence_class,
+                    "explicit_acceptance": evidence.explicit_acceptance is True,
+                    "acceptance_rationale_sha256": canonical_json_sha256(
+                        evidence.acceptance_rationale
+                    ),
+                }
+            )
+    return {
+        "status": "provisional_inputs" if provisional else "documented_inputs",
+        "evidence_class_counts": dict(sorted(counts.items())),
+        "preservation_mode_counts": dict(sorted(preservation_counts.items())),
+        "subject_count": len(subjects),
+        "preservation": sorted(preservation, key=lambda item: item["subject"]),
+        "provisional_inputs": sorted(provisional, key=lambda item: item["subject"]),
+    }
+
+
+def _normalization_receipt(
+    request: TechnoeconomicSubmissionRequest,
+    kernel_request: technoeconomic_kernel.TechnoeconomicRequest,
+) -> dict[str, Any]:
+    source_lines = {line.input_id: line for line in request.cost_lines}
+    capacities = {item.system: item for item in kernel_request.capacities}
+    receipts: list[dict[str, Any]] = []
+    for line in kernel_request.cost_lines:
+        source = source_lines[line.input_id]
+        if request.basis == "solartac_site":
+            wdc_denominator: dict[str, Any] = {
+                "method": "frozen_annual_source_capacity_manifest",
+                "solectria": {
+                    "installed_wdc": capacities["solectria"].installed_wdc,
+                    "source_field": (
+                        "source_snapshot.capacity_manifest.systems."
+                        "solectria.installed_wdc"
+                    ),
+                    "applied": source.solectria_quantity > 0,
+                },
+                "solaredge": {
+                    "installed_wdc": capacities["solaredge"].installed_wdc,
+                    "source_field": (
+                        "source_snapshot.capacity_manifest.systems."
+                        "solaredge.installed_wdc"
+                    ),
+                    "applied": source.solaredge_quantity > 0,
+                },
+            }
+        else:
+            design = request.commercial_reference_design
+            if design is None:  # guarded by the strict request model
+                _fail(
+                    "commercial_reference_design_missing",
+                    "Commercial normalization has no reference design.",
+                )
+            wdc_denominator = {
+                "method": "declared_commercial_per_wdc_basis",
+                "reference_design_id": design.design_id,
+                "reference_wdc": design.reference_wdc,
+                "applied_to_input_normalization": False,
+            }
+        receipts.append(
+            {
+                "input_id": line.input_id,
+                "basis": request.basis,
+                "ownership": line.ownership,
+                "cost_type": line.cost_type,
+                "original_unit": source.original_unit,
+                "normalized_unit": source.normalized_unit,
+                "normalization_method": source.normalization_method,
+                "solectria_quantity": source.solectria_quantity,
+                "solaredge_quantity": source.solaredge_quantity,
+                "quantity_unit": source.quantity_unit,
+                "normalization_derivation": source.normalization_derivation,
+                "wdc_denominator": wdc_denominator,
+                "constant_dollar_cost_year": source.constant_dollar_cost_year,
+                "currency_year_normalization": (
+                    source.currency_year_normalization.model_dump(
+                        mode="json",
+                        exclude_none=False,
+                    )
+                ),
+                "documented_pre_submission_index_factor": (
+                    source.currency_year_normalization.index_factor
+                ),
+                "solectria_multiplier_to_intensity": (
+                    line.solectria_multiplier_to_intensity
+                ),
+                "solaredge_multiplier_to_intensity": (
+                    line.solaredge_multiplier_to_intensity
+                ),
+            }
+        )
+    return {
+        "status": "validated",
+        "lines": receipts,
+    }
+
+
+def _overlap_receipt(
+    request: TechnoeconomicSubmissionRequest,
+    kernel_request: technoeconomic_kernel.TechnoeconomicRequest,
+) -> dict[str, Any]:
+    source_lines = {line.input_id: line for line in request.cost_lines}
+    assignments: list[dict[str, Any]] = []
+    scopes: dict[str, dict[str, Any]] = {}
+    ordered_lines = sorted(kernel_request.cost_lines, key=lambda item: item.input_id)
+    for line in ordered_lines:
+        systems = (
+            ["solectria"]
+            if line.ownership == "solectria_only"
+            else ["solaredge"]
+            if line.ownership == "solaredge_only"
+            else ["solectria", "solaredge"]
+        )
+        timing_group = (
+            "initial_t0"
+            if line.cost_type in technoeconomic_kernel.INITIAL_COST_TYPES
+            else "recurring_year_end"
+        )
+        source = source_lines[line.input_id]
+        scopes[line.input_id] = {
+            "systems": systems,
+            "timing_group": timing_group,
+            "coverage_include_ids": sorted(line.coverage_ids),
+            "coverage_exclude_ids": sorted(source.coverage_exclude_ids),
+        }
+        for system in systems:
+            for coverage_id in line.coverage_ids:
+                assignments.append(
+                    {
+                        "system": system,
+                        "timing_group": timing_group,
+                        "coverage_id": coverage_id,
+                        "input_id": line.input_id,
+                    }
+                )
+        assignments.append(
+            {
+                "input_id": line.input_id,
+                "excluded_coverage_ids": list(source.coverage_exclude_ids),
+            }
+        )
+
+    pairwise_decisions: list[dict[str, Any]] = []
+    potentially_overlapping_pairs = 0
+    for left_index, left in enumerate(ordered_lines):
+        for right in ordered_lines[left_index + 1 :]:
+            left_scope = scopes[left.input_id]
+            right_scope = scopes[right.input_id]
+            shared_systems = sorted(
+                set(left_scope["systems"]) & set(right_scope["systems"])
+            )
+            same_timing = (
+                left_scope["timing_group"] == right_scope["timing_group"]
+            )
+            shared_coverage = sorted(
+                set(left.coverage_ids) & set(right.coverage_ids)
+            )
+            left_excludes_right = sorted(
+                set(left_scope["coverage_exclude_ids"]) & set(right.coverage_ids)
+            )
+            right_excludes_left = sorted(
+                set(right_scope["coverage_exclude_ids"]) & set(left.coverage_ids)
+            )
+            potentially_overlapping = bool(shared_systems and same_timing)
+            if potentially_overlapping:
+                potentially_overlapping_pairs += 1
+            if not shared_systems:
+                decision = "disjoint_system_ownership"
+            elif not same_timing:
+                decision = "disjoint_cost_timing"
+            elif shared_coverage:
+                _fail(
+                    "cost_coverage_overlap",
+                    "Validated kernel request contains overlapping cost coverage.",
+                )
+            elif left_excludes_right or right_excludes_left:
+                decision = "disjoint_by_declared_exclusion"
+            else:
+                decision = "disjoint_stable_coverage_ids"
+            pairwise_decisions.append(
+                {
+                    "left_input_id": left.input_id,
+                    "right_input_id": right.input_id,
+                    "potentially_overlapping": potentially_overlapping,
+                    "shared_systems": shared_systems,
+                    "same_timing_group": same_timing,
+                    "shared_coverage_ids": shared_coverage,
+                    "left_excludes_right_coverage_ids": left_excludes_right,
+                    "right_excludes_left_coverage_ids": right_excludes_left,
+                    "decision": decision,
+                    "overlap_detected": False,
+                }
+            )
+    return {
+        "status": "validated_no_overlap",
+        "assignments": assignments,
+        "line_scopes": [
+            {"input_id": input_id, **scopes[input_id]}
+            for input_id in sorted(scopes)
+        ],
+        "pair_count": len(pairwise_decisions),
+        "potentially_overlapping_pair_count": potentially_overlapping_pairs,
+        "pairwise_decisions": pairwise_decisions,
+    }
+
+
+def _commercial_reference_receipt(
+    request: TechnoeconomicSubmissionRequest,
+) -> dict[str, Any] | None:
+    design = request.commercial_reference_design
+    if design is None:
+        return None
+    design_payload = design.model_dump(mode="json", exclude_none=False)
+    return {
+        "design_id": design.design_id,
+        "reference_wdc": design.reference_wdc,
+        "module_model": design.module_model,
+        "module_stc_wdc": design.module_stc_wdc,
+        "module_count": design.module_count,
+        "constant_dollar_cost_year": design.constant_dollar_cost_year,
+        "design_sha256": canonical_json_sha256(design_payload),
+    }
+
+
+def _transfer_receipt(request: TechnoeconomicSubmissionRequest) -> dict[str, Any]:
+    if request.basis == "solartac_site":
+        return {
+            "status": "not_applicable",
+            "energy_available": True,
+            "commercial_reference_design": None,
+        }
+    transfer = request.commercial_transfer
+    reference_design = _commercial_reference_receipt(request)
+    if transfer is None:
+        return {
+            "status": "cost_only",
+            "energy_available": False,
+            "commercial_reference_design": reference_design,
+            "baseline_factor": None,
+            "incremental_factor": None,
+        }
+    return {
+        "status": "approved",
+        "energy_available": True,
+        "commercial_reference_design": reference_design,
+        "explicit_attestation": transfer.explicit_attestation,
+        "attested_by": transfer.attested_by,
+        "attested_at": transfer.attested_at,
+        "attestation_rationale_sha256": canonical_json_sha256(
+            transfer.attestation_rationale
+        ),
+        "baseline_factor_input_id": "transfer.baseline",
+        "incremental_factor_input_id": "transfer.incremental",
+        "all_mechanisms_resolved": all(
+            item.status in {"supported", "not_applicable"}
+            for item in transfer.mechanisms
+        ),
+        "mechanisms": [
+            {
+                "mechanism": item.mechanism,
+                "status": item.status,
+                "rationale_sha256": canonical_json_sha256(item.rationale),
+            }
+            for item in sorted(transfer.mechanisms, key=lambda value: value.mechanism)
+        ],
+    }
+
+
+def build_technoeconomic_submission_provenance(
+    request_payload: Mapping[str, Any] | TechnoeconomicSubmissionRequest,
+    source_snapshot_envelope: Mapping[str, Any],
+    validated_kernel_request: technoeconomic_kernel.TechnoeconomicRequest,
+) -> dict[str, Any]:
+    """Build deterministic immutable validation receipts for one submission."""
+
+    request = _parsed_submission_request(request_payload)
+    envelope = _mapping(
+        source_snapshot_envelope,
+        "source_snapshot_envelope_invalid",
+        "The source snapshot envelope is invalid.",
+    )
+    if set(envelope) != {"source_snapshot", "source_snapshot_sha256"}:
+        _fail(
+            "source_snapshot_envelope_invalid",
+            "The source snapshot envelope has unexpected fields.",
+        )
+    snapshot = _mapping(
+        envelope.get("source_snapshot"),
+        "source_snapshot_invalid",
+        "The source snapshot envelope has no payload.",
+    )
+    snapshot_sha256 = _sha256(
+        envelope.get("source_snapshot_sha256"),
+        "source_snapshot_hash_invalid",
+        "The source snapshot SHA-256 is missing or invalid.",
+    )
+    _require_digest_match(
+        snapshot_sha256,
+        canonical_json_sha256(snapshot),
+        "source_snapshot_hash_mismatch",
+        "The source snapshot does not match its canonical SHA-256.",
+    )
+
+    expected_kernel = build_technoeconomic_kernel_request(request, snapshot)
+    supplied_kernel = technoeconomic_kernel.validate_request(validated_kernel_request)
+    expected_kernel_payload = asdict(expected_kernel)
+    supplied_kernel_payload = asdict(supplied_kernel)
+    expected_kernel_hash = canonical_json_sha256(expected_kernel_payload)
+    supplied_kernel_hash = canonical_json_sha256(supplied_kernel_payload)
+    if not secrets.compare_digest(expected_kernel_hash, supplied_kernel_hash):
+        _fail(
+            "kernel_request_mismatch",
+            "The validated kernel request does not match the strict request and frozen source.",
+        )
+
+    canonical_request = request.model_dump(mode="json", exclude_none=False)
+    normalization = _normalization_receipt(request, supplied_kernel)
+    overlap = _overlap_receipt(request, supplied_kernel)
+    evidence = _evidence_receipt(request)
+    transfer = _transfer_receipt(request)
+    commercial_reference = _commercial_reference_receipt(request)
+    receipts = {
+        "normalization": normalization,
+        "overlap": overlap,
+        "evidence": evidence,
+        "commercial_transfer": transfer,
+    }
+    return {
+        "schema_version": TECHNOECONOMIC_SUBMISSION_PROVENANCE_SCHEMA_VERSION,
+        "source_annual_job_id": request.source_annual_job_id,
+        "analysis_basis": request.basis,
+        "commercial_transfer_status": transfer["status"],
+        "commercial_reference_design": commercial_reference,
+        "commercial_reference_design_sha256": (
+            commercial_reference["design_sha256"]
+            if commercial_reference is not None
+            else None
+        ),
+        "commercial_reference_receipt_sha256": (
+            canonical_json_sha256(commercial_reference)
+            if commercial_reference is not None
+            else None
+        ),
+        "calculation_contract_version": supplied_kernel.calculation_contract_version,
+        "sampling_version": supplied_kernel.sampling_version,
+        "request_schema": "technoeconomic-submission-v1",
+        "request_sha256": canonical_json_sha256(canonical_request),
+        "source_snapshot_sha256": snapshot_sha256,
+        "validated_kernel_request_sha256": supplied_kernel_hash,
+        "normalization_receipt": normalization,
+        "normalization_receipt_sha256": canonical_json_sha256(normalization),
+        "overlap_receipt": overlap,
+        "overlap_receipt_sha256": canonical_json_sha256(overlap),
+        "evidence_receipt": evidence,
+        "evidence_receipt_sha256": canonical_json_sha256(evidence),
+        "commercial_transfer_receipt": transfer,
+        "commercial_transfer_receipt_sha256": canonical_json_sha256(transfer),
+        "validation_receipts_sha256": canonical_json_sha256(receipts),
+        "provisional_inputs": evidence["status"] == "provisional_inputs",
+    }
+
+
 __all__ = [
     "ANNUAL_SOURCE_ELIGIBILITY_VERSION",
     "ANNUAL_SOURCE_SNAPSHOT_SCHEMA_VERSION",
     "AnnualSourceValidationError",
+    "TECHNOECONOMIC_SUBMISSION_PROVENANCE_SCHEMA_VERSION",
     "build_annual_source_snapshot",
+    "build_technoeconomic_kernel_request",
+    "build_technoeconomic_submission_provenance",
     "canonical_json_sha256",
     "harden_annual_source_artifact",
     "inspect_annual_source_eligibility",
     "make_atomic_source_recheck",
+    "resolve_annual_source_dependencies",
     "technoeconomic_source_store_fields",
     "validate_capacity_manifest",
     "verify_annual_source_artifact",

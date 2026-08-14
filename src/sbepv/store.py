@@ -1637,7 +1637,7 @@ class AgentStore:
         mode: str | None = None,
         kind: str | None = None,
         baseline_id: str | None | object = _UNSET,
-        limit: int = 100,
+        limit: int | None = 100,
     ) -> list[dict[str, Any]]:
         if mode is not None:
             self._validate_mode(mode)
@@ -1645,7 +1645,7 @@ class AgentStore:
             unknown = set(states) - JOB_STATES
             if unknown:
                 raise ValueError(f"unknown job states: {sorted(unknown)}")
-        if limit <= 0:
+        if limit is not None and limit <= 0:
             return []
         clauses: list[str] = []
         parameters: list[Any] = []
@@ -1665,11 +1665,14 @@ class AgentStore:
                 clauses.append("baseline_id = ?")
                 parameters.append(baseline_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        parameters.append(int(limit))
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = " LIMIT ?"
+            parameters.append(int(limit))
         with self._transaction() as connection:
             rows = connection.execute(
                 f"SELECT * FROM jobs {where} "
-                "ORDER BY created_at DESC, job_id DESC LIMIT ?",
+                f"ORDER BY created_at DESC, job_id DESC{limit_clause}",
                 parameters,
             ).fetchall()
         return [self._job_from_row(row) for row in rows]  # type: ignore[misc]
@@ -2173,10 +2176,20 @@ class AgentStore:
                 "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
             ).fetchone()
             if row is None:
+                if expected_worker_id is not None:
+                    raise LeaseOwnershipLost(
+                        "runner no longer owns the active lease for missing "
+                        f"technoeconomic job {job_id}"
+                    )
                 raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
             if row["state"] in TERMINAL_JOB_STATES:
                 raise InvalidStateTransition(
                     f"terminal technoeconomic job {job_id} is immutable"
+                )
+            if state == "done" and bool(row["cancel_requested"]):
+                raise InvalidStateTransition(
+                    "cannot complete a technoeconomic job after cancellation "
+                    "was requested"
                 )
 
             lease_is_owned = bool(row["worker_id"] or row["lease_token"])
@@ -2324,6 +2337,11 @@ class AgentStore:
                 (job_id,),
             ).fetchone()
         if row is None:
+            if expected_worker_id is not None:
+                raise LeaseOwnershipLost(
+                    "runner no longer owns the active lease for missing "
+                    f"technoeconomic job {job_id}"
+                )
             raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
         if expected_worker_id is not None and (
             row["state"] != "running"
@@ -2425,8 +2443,19 @@ class AgentStore:
             ).fetchone()
         return self._technoeconomic_job_from_row(retried)  # type: ignore[return-value]
 
-    def delete_technoeconomic_job(self, job_id: str) -> dict[str, Any]:
-        """Delete a terminal TEA record and return its confined artifact manifest."""
+    def delete_technoeconomic_job(
+        self,
+        job_id: str,
+        *,
+        before_delete: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        """Delete a terminal TEA record after optional in-transaction cleanup.
+
+        ``before_delete`` runs after all state and retry-lineage checks but before
+        the row is removed.  The API uses it for confined filesystem cleanup so a
+        cleanup failure rolls the database transaction back and leaves a durable
+        job that can be deleted again.  The callback must not access this store.
+        """
 
         with self._transaction(write=True) as connection:
             row = connection.execute(
@@ -2448,10 +2477,12 @@ class AgentStore:
                     "delete later technoeconomic retry attempts before their source attempt"
                 )
             deleted = self._technoeconomic_job_from_row(row)
+            assert deleted is not None
+            if before_delete is not None:
+                before_delete(deleted)
             connection.execute(
                 "DELETE FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
             )
-        assert deleted is not None
         return deleted
 
     @staticmethod
@@ -2797,6 +2828,42 @@ class AgentStore:
         with self._transaction() as connection:
             rows = connection.execute(query, parameters).fetchall()
         return [dict(row) for row in rows]
+
+    def get_promotion(
+        self,
+        *,
+        mode: str,
+        job_id: str,
+        promoted_at: str,
+    ) -> dict[str, Any] | None:
+        """Return one exact historical baseline-promotion receipt.
+
+        Annual Simulation provenance records the validation mode, origin job ID,
+        and promotion timestamp.  TEA source verification must resolve that exact
+        historical receipt rather than depending on the current baseline or on a
+        bounded recent-promotion listing.
+        """
+
+        self._validate_mode(mode)
+        normalized_job_id = job_id.strip() if isinstance(job_id, str) else ""
+        normalized_promoted_at = (
+            promoted_at.strip() if isinstance(promoted_at, str) else ""
+        )
+        if not normalized_job_id:
+            raise ValueError("job_id must not be blank")
+        if not normalized_promoted_at:
+            raise ValueError("promoted_at must not be blank")
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM baseline_promotions
+                 WHERE mode = ? AND job_id = ? AND promoted_at = ?
+                 ORDER BY promotion_id DESC
+                 LIMIT 1
+                """,
+                (mode, normalized_job_id, normalized_promoted_at),
+            ).fetchone()
+        return None if row is None else dict(row)
 
     def snapshot_state(
         self, *, mode: str | None = None, recent_limit: int = 10

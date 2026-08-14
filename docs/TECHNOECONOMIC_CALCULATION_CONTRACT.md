@@ -1600,13 +1600,13 @@ truth and both Python/Vite assemblers must remain equivalent.
 
 ### Phase 3 — API and worker
 
-- [ ] Add strict request schemas and eligible-source endpoint.
-- [ ] Add create/status/cancel/retry/delete endpoints and safe serialization.
-- [ ] Add explicitly dispatched TEA worker with progress and cancellation checks.
-- [ ] Consume only the frozen source snapshot.
-- [ ] Add lease-loss, cancellation, restart/interruption, tamper, queue-capacity, and
+- [X] Add strict request schemas and eligible-source endpoint.
+- [X] Add create/status/cancel/retry/delete endpoints and safe serialization.
+- [X] Add explicitly dispatched TEA worker with progress and cancellation checks.
+- [X] Consume only the frozen source snapshot.
+- [X] Add lease-loss, cancellation, restart/interruption, tamper, queue-capacity, and
   API error tests.
-- [ ] Run focused API/worker tests and report results for approval.
+- [X] Run focused API/worker tests and report results for approval.
 
 ### Phase 4 — artifacts, CDF plots, and exports
 

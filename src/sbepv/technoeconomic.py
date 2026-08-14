@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from hashlib import sha256
 import math
 import re
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import numpy as np
 import scipy
@@ -2564,10 +2564,29 @@ def _sensitivity_models(
     return results
 
 
-def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
-    """Run one complete in-memory probabilistic technoeconomic calculation."""
+def run_technoeconomic(
+    request: TechnoeconomicRequest,
+    *,
+    progress_cb: Callable[[float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> TechnoeconomicResult:
+    """Run one complete in-memory probabilistic technoeconomic calculation.
 
+    The optional callbacks keep the pure kernel independent of persistence while
+    allowing a durable worker to report coarse progress and cooperatively stop at
+    deterministic stage boundaries.  Omitting them preserves the Phase-1 calling
+    contract and calculation behavior.
+    """
+
+    def checkpoint(fraction: float, stage: str) -> None:
+        if cancel_check is not None:
+            cancel_check()
+        if progress_cb is not None:
+            progress_cb(fraction, stage)
+
+    checkpoint(0.0, "Validating technoeconomic inputs")
     request = validate_request(request)
+    checkpoint(0.05, "Generating probabilistic samples")
     capacity_map = {spec.system: spec for spec in request.capacities}
     distributions = [line.distribution for line in request.cost_lines]
     distributions.extend([request.discount_rate, request.shared_degradation])
@@ -2579,6 +2598,7 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
         request.seed,
         [row.year for row in request.paired_energy_rows],
     )
+    checkpoint(0.18, "Allocating paired weather years")
     energy_by_year = {row.year: row for row in request.paired_energy_rows}
     source_sol_kwh = np.asarray(
         [energy_by_year[int(year)].sol_predicted_kwh_ac for year in weather_years],
@@ -2617,6 +2637,7 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
             "delta_ea_cost": delta_ea_cost,
         },
     )
+    checkpoint(0.38, "Calculating lifecycle cost and energy")
 
     energy_available = request.basis == "solartac_site" or request.transfer is not None
     if request.basis == "solartac_site":
@@ -2805,6 +2826,7 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
         _require_finite_arrays("Commercial reference diagnostics", reference_fields)
         table.update(reference_fields)
 
+    checkpoint(0.62, "Summarizing realization outcomes")
     common_audit = _build_common_cost_audit(request.cost_lines, samples)
     common_treatments = {
         row["input_id"]: row["comparison_treatment"] for row in common_audit
@@ -2816,6 +2838,7 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
         capacity_map,
         energy_available,
     )
+    checkpoint(0.74, "Calculating sensitivity diagnostics")
     sensitivity = _sensitivity_models(
         request,
         table,
@@ -2824,6 +2847,7 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
         energy_available,
     )
 
+    checkpoint(0.88, "Calculating convergence diagnostics")
     convergence_metrics: dict[str, np.ndarray] = {
         FIELD_DELTA_COST: table[FIELD_DELTA_COST],
     }
@@ -2908,6 +2932,7 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
             "class_probability_change_threshold": 0.001,
         },
     }
+    checkpoint(1.0, "Technoeconomic calculation complete")
     return TechnoeconomicResult(
         realization_table=table,
         sampled_inputs={identifier: values.copy() for identifier, values in samples.items()},
