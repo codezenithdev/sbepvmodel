@@ -20,7 +20,11 @@
             chatComposerStatus.textContent = chatHydrationPending
                 ? 'Restoring the saved dashboard context...'
                 : chatIsSending
-                ? 'Reviewing the active ' + (activeMode === 'annual' ? 'annual simulation' : 'calibration run') + '... Select Cancel to stop waiting.'
+                ? 'Reviewing the active ' + (
+                    activeView === 'technoeconomic'
+                        ? 'technoeconomic workspace'
+                        : activeMode === 'annual' ? 'annual simulation' : 'calibration run'
+                ) + '... Select Cancel to stop waiting.'
                 : isChatMobile()
                     ? 'Tap Send · Enter adds a new line'
                     : 'Enter to send · Shift+Enter for a new line';

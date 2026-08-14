@@ -380,20 +380,6 @@
             updateAnnualRuntimeWarning();
         }
 
-        function getTechnoeconomicFormState() {
-            return {
-                baselineAnnualizedCost: baselineAnnualizedCost.value,
-                optimizedAnnualizedCost: optimizedAnnualizedCost.value,
-            };
-        }
-
-        function applyTechnoeconomicFormState(form) {
-            const values = form || {};
-            baselineAnnualizedCost.value = values.baselineAnnualizedCost ?? '';
-            optimizedAnnualizedCost.value = values.optimizedAnnualizedCost ?? '';
-            renderTechnoeconomicAnalysis();
-        }
-
         function finiteOrNull(value) {
             if (value === null || value === undefined || String(value).trim() === '') return null;
             const number = Number(value);

@@ -35,12 +35,16 @@
             const annual = activeView === 'annual';
             const technoeconomic = activeView === 'technoeconomic';
             const validation = activeView === 'validation';
-            dashboardTitle.textContent = annual
-                ? 'SolarEdge & Solectria Annual Simulation'
-                : 'SolarEdge & Solectria Performance Analysis';
-            dashboardSubtitle.textContent = annual
-                ? 'Carry the reviewed calibration into a long-range forecast of energy and performance.'
-                : 'Compare measured power, irradiance, physics-model predictions, and export-ready run artifacts for the SBE Innovation Site.';
+            dashboardTitle.textContent = technoeconomic
+                ? 'Probabilistic Technoeconomic Analysis'
+                : annual
+                    ? 'SolarEdge & Solectria Annual Simulation'
+                    : 'SolarEdge & Solectria Performance Analysis';
+            dashboardSubtitle.textContent = technoeconomic
+                ? 'Compare SolarEdge minus Solectria lifecycle economics using a frozen Annual Simulation, explicit evidence, and reproducible uncertainty.'
+                : annual
+                    ? 'Carry the reviewed calibration into a long-range forecast of energy and performance.'
+                    : 'Compare measured power, irradiance, physics-model predictions, and export-ready run artifacts for the SBE Innovation Site.';
             document.body.classList.toggle('dashboard-mode-annual', annual);
             document.body.classList.toggle('dashboard-mode-technoeconomic', technoeconomic);
             document.body.classList.toggle('dashboard-mode-validation', validation);

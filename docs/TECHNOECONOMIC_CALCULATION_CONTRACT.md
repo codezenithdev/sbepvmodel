@@ -1618,15 +1618,15 @@ truth and both Python/Vite assemblers must remain equivalent.
 
 ### Phase 5 — canonical frontend replacement
 
-- [ ] Replace only canonical `frontend/` TEA sources and necessary shared partials.
-- [ ] Build accessible source selection, distribution/citation editing, n/seed
+- [X] Replace only canonical `frontend/` TEA sources and necessary shared partials.
+- [X] Build accessible source selection, distribution/citation editing, n/seed
   controls, basis/Wdc/design and transfer disclosures, lifecycle assumptions,
   submission/confirmation, durable progress/cancel/retry, summaries, CDFs, per-year
   table, sensitivity, convergence, tradeoff classifications and downloads.
-- [ ] Keep draft form state local but all job results server-authoritative.
-- [ ] Keep Solar Agent action modes and model promotion/comparison separate.
-- [ ] Add Node/assembled-dashboard frontend tests and responsive/accessibility checks.
-- [ ] Run focused frontend tests and `npm run build`; visually inspect the dashboard;
+- [X] Keep draft form state local but all job results server-authoritative.
+- [X] Keep Solar Agent action modes and model promotion/comparison separate.
+- [X] Add Node/assembled-dashboard frontend tests and responsive/accessibility checks.
+- [X] Run focused frontend tests and `npm run build`; visually inspect the dashboard;
   report results for approval.
 
 ### Phase 6 — integration and full verification

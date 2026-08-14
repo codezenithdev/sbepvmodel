@@ -1,135 +1,376 @@
-                <section class="controls-bar" id="technoeconomicInputs" aria-labelledby="technoeconomicInputsHeading">
-                    <div class="controls-header">
+                <section class="controls-bar tea-workspace" id="technoeconomicInputs" aria-labelledby="technoeconomicInputsHeading">
+                    <div class="controls-header tea-page-heading">
                         <div>
-                            <p class="annual-kicker">Cost assumptions</p>
-                            <h2 class="section-title" id="technoeconomicInputsHeading">User-specified annualized costs</h2>
-                            <p class="section-subtitle">Enter comparable yearly costs for the baseline Solectria system and optimized SolarEdge system.</p>
+                            <p class="annual-kicker">Probabilistic lifecycle economics</p>
+                            <h2 class="section-title" id="technoeconomicInputsHeading">Technoeconomic analysis setup</h2>
+                            <p class="section-subtitle">Select a verified Annual Simulation, document every economic assumption, and run a reproducible SolarEdge minus Solectria lifecycle comparison.</p>
                         </div>
+                        <span class="tea-contract-badge">Server calculated</span>
                     </div>
 
-                    <div class="technoeconomic-cost-grid">
-                        <section class="annual-config-card technoeconomic-cost-card" aria-labelledby="baselineCostHeading">
-                            <div class="technoeconomic-system-label">
-                                <span class="system-dot solectria-dot" aria-hidden="true"></span>
+                    <form class="tea-form" id="technoeconomicForm" novalidate>
+                        <section class="tea-panel tea-core-panel" aria-labelledby="technoeconomicSourceHeading">
+                            <div class="tea-section-heading">
                                 <div>
-                                    <h3 id="baselineCostHeading">Baseline Solectria</h3>
-                                    <p>String-level baseline system</p>
+                                    <p class="tea-step-label">Step 1</p>
+                                    <h3 id="technoeconomicSourceHeading">Source and reproducibility</h3>
+                                    <p>Only a completed, calibrated Annual Simulation that passes the current provenance checks can be submitted.</p>
+                                </div>
+                                <button class="tea-button tea-button-secondary" id="technoeconomicRefreshSourcesBtn" type="button">Refresh sources</button>
+                            </div>
+
+                            <div class="tea-source-layout">
+                                <div class="tea-field tea-field-wide">
+                                    <label for="technoeconomicSourceSelect">Annual Simulation source</label>
+                                    <select id="technoeconomicSourceSelect" aria-describedby="technoeconomicSourceHelp technoeconomicSourceStatus" required>
+                                        <option value="">Select a verified Annual Simulation</option>
+                                    </select>
+                                    <p class="tea-field-help" id="technoeconomicSourceHelp">Selection is explicit. A newer Annual Simulation will not replace the frozen source of a submitted job.</p>
+                                </div>
+                                <button class="tea-button tea-button-quiet" id="openAnnualSimulationBtn" type="button">Open Annual Simulation</button>
+                            </div>
+
+                            <div class="tea-source-status" id="technoeconomicSourceStatusPanel" data-state="idle">
+                                <span class="tea-state-icon" aria-hidden="true"></span>
+                                <div>
+                                    <strong id="technoeconomicSourceStatus" role="status" aria-live="polite" aria-atomic="true">Choose an Annual Simulation source</strong>
+                                    <p id="technoeconomicSourceDetail">Refresh the list to inspect eligible years, frozen Wdc capacities, and calibration lineage.</p>
                                 </div>
                             </div>
-                            <label class="technoeconomic-cost-field" for="baselineAnnualizedCost">
-                                <span class="date-label">Annualized system cost</span>
-                                <span class="technoeconomic-cost-input-wrap">
-                                    <span class="technoeconomic-currency-prefix" aria-hidden="true">$</span>
-                                    <input class="technoeconomic-cost-input" id="baselineAnnualizedCost" type="number" min="0" step="100" inputmode="decimal" placeholder="e.g., 24000" aria-describedby="baselineCostHelp baselineCostError">
-                                    <span class="technoeconomic-cost-unit" aria-hidden="true">USD / year</span>
-                                </span>
-                                <span class="technoeconomic-cost-helper" id="baselineCostHelp">Use the total equivalent annual cost in USD per year for the baseline system.</span>
-                                <span class="technoeconomic-cost-error" id="baselineCostError" role="status" aria-live="polite"></span>
-                            </label>
+                            <dl class="tea-definition-grid" id="technoeconomicSourceDetails" aria-label="Selected Annual Simulation evidence"></dl>
+
+                            <fieldset class="tea-fieldset tea-core-controls">
+                                <legend>Analysis basis and sampling</legend>
+                                <div class="tea-control-grid">
+                                    <div class="tea-field tea-field-wide">
+                                        <label for="technoeconomicBasis">Analysis basis</label>
+                                        <select id="technoeconomicBasis" aria-describedby="technoeconomicBasisHelp" required>
+                                            <option value="">Select an analysis basis</option>
+                                            <option value="solartac_site">SolarTAC site as-built</option>
+                                            <option value="commercial_representative">Commercial representative design</option>
+                                        </select>
+                                        <p class="tea-field-help" id="technoeconomicBasisHelp">One durable job uses one basis. SolarTAC and commercial assumptions are never blended.</p>
+                                    </div>
+                                    <div class="tea-field">
+                                        <label for="technoeconomicRealizations">Realizations</label>
+                                        <input id="technoeconomicRealizations" type="number" min="1" max="100000" step="1" inputmode="numeric" value="10000" aria-describedby="technoeconomicRealizationsHelp" required>
+                                        <p class="tea-field-help" id="technoeconomicRealizationsHelp">Server limit: 1 to 100,000. The interface default is 10,000.</p>
+                                    </div>
+                                    <div class="tea-field">
+                                        <label for="technoeconomicSeed">Sampling seed</label>
+                                        <input id="technoeconomicSeed" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="20" autocomplete="off" aria-describedby="technoeconomicSeedHelp" required>
+                                    <p class="tea-field-help" id="technoeconomicSeedHelp">Enter an integer from 0 through 9,007,199,254,740,991. Larger values are rejected so the browser never rounds the reproducibility seed.</p>
+                                    </div>
+                                </div>
+                                <p class="tea-disclosure"><strong>Full-system cost stack:</strong> standalone LCOEs require complete Solectria and SolarEdge costs. A paired line cancels only when the server verifies identical normalized treatment.</p>
+                            </fieldset>
                         </section>
 
-                        <section class="annual-config-card technoeconomic-cost-card optimized" aria-labelledby="optimizedCostHeading">
-                            <div class="technoeconomic-system-label">
-                                <span class="system-dot solaredge-dot" aria-hidden="true"></span>
+                        <section class="tea-panel tea-job-panel" id="technoeconomicJobPanel" aria-labelledby="technoeconomicJobHeading" hidden>
+                            <div class="tea-section-heading tea-job-heading">
                                 <div>
-                                    <h3 id="optimizedCostHeading">Optimized SolarEdge</h3>
-                                    <p>Module-level optimized system</p>
+                                    <p class="tea-step-label">Durable job</p>
+                                    <h3 id="technoeconomicJobHeading">Analysis status</h3>
+                                </div>
+                                <span class="tea-status-pill" id="technoeconomicJobState">Not started</span>
+                            </div>
+                            <div class="tea-progress-layout">
+                                <label for="technoeconomicProgress">Job progress</label>
+                                <progress id="technoeconomicProgress" max="100" value="0">0%</progress>
+                                <span id="technoeconomicProgressValue">0%</span>
+                            </div>
+                            <p class="tea-job-stage" id="technoeconomicProgressStage" role="status" aria-live="polite" aria-atomic="true">Waiting to start.</p>
+                            <p class="tea-durable-note">The browser reconnects by job ID. Calculations, progress, results, and artifact identities remain server-authoritative.</p>
+                            <div class="tea-action-row" aria-label="Technoeconomic job actions">
+                                <button class="tea-button tea-button-secondary" id="technoeconomicCancelBtn" type="button" hidden>Cancel job</button>
+                                <button class="tea-button tea-button-primary" id="technoeconomicRetryBtn" type="button" hidden>Retry frozen job</button>
+                                <button class="tea-button tea-button-danger" id="technoeconomicDeleteBtn" type="button" hidden>Delete job</button>
+                            </div>
+                            <div class="tea-alert" id="technoeconomicJobError" role="alert" tabindex="-1" hidden></div>
+                        </section>
+
+                        <section class="annual-results-shell tea-results-shell" id="technoeconomicResults" aria-labelledby="technoeconomicResultsHeading" hidden>
+                            <div class="annual-results-heading tea-results-heading">
+                                <div>
+                                    <p class="tea-step-label">Completed evidence</p>
+                                    <h2 id="technoeconomicResultsHeading">Probabilistic lifecycle results</h2>
+                                    <p>Percentiles, classifications, diagnostics, and downloads below come from the completed durable job.</p>
+                                </div>
+                                <span class="annual-results-note">SolarEdge minus Solectria</span>
+                            </div>
+
+                            <div class="tea-summary-grid" id="technoeconomicResultSummary" aria-label="Job and evidence summary"></div>
+
+                            <section class="tea-result-section" aria-labelledby="technoeconomicMetricsHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <h3 id="technoeconomicMetricsHeading">Lifecycle metric percentiles</h3>
+                                        <p>P5, P50, and P95 use the server's fixed type-7 quantile contract.</p>
+                                    </div>
+                                </div>
+                                <div class="tea-metric-grid" id="technoeconomicMetricSummary"></div>
+                            </section>
+
+                            <section class="tea-result-section" aria-labelledby="technoeconomicTradeoffsHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <h3 id="technoeconomicTradeoffsHeading">Cost and energy outcomes</h3>
+                                        <p>Every realization remains represented, including energy-loss and within-tolerance outcomes.</p>
+                                    </div>
+                                </div>
+                                <div class="tea-tradeoff-grid" id="technoeconomicTradeoffs"></div>
+                            </section>
+
+                            <section class="tea-result-section" aria-labelledby="technoeconomicPerYearHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <h3 id="technoeconomicPerYearHeading">Per-weather-year summary</h3>
+                                        <p>Source energy, realization representation, and lifecycle percentile evidence by eligible year.</p>
+                                    </div>
+                                </div>
+                                <div class="tea-table-region" id="technoeconomicPerYearRegion" role="region" aria-labelledby="technoeconomicPerYearHeading" tabindex="0">
+                                    <table class="tea-table" id="technoeconomicPerYearTable">
+                                        <caption>Per-weather-year technoeconomic summary</caption>
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Year</th>
+                                                <th scope="col">Realizations</th>
+                                                <th scope="col">Share</th>
+                                                <th scope="col">Solectria source energy</th>
+                                                <th scope="col">SolarEdge source energy</th>
+                                                <th scope="col">Lifecycle cost delta P50</th>
+                                                <th scope="col">Lifecycle energy delta P50</th>
+                                                <th scope="col">Headline LCOO P50</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="technoeconomicPerYearBody"></tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <section class="tea-result-section" aria-labelledby="technoeconomicSensitivityHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <h3 id="technoeconomicSensitivityHeading">Sensitivity</h3>
+                                        <p>Deterministic forward stepwise rank-regression evidence; unavailable inputs retain an explicit reason.</p>
+                                    </div>
+                                </div>
+                                <div class="tea-table-region" id="technoeconomicSensitivityRegion" role="region" aria-labelledby="technoeconomicSensitivityHeading" tabindex="0">
+                                    <table class="tea-table" id="technoeconomicSensitivityTable">
+                                        <caption>Sensitivity model entries and exclusions</caption>
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Response</th>
+                                                <th scope="col">Predictor or reason</th>
+                                                <th scope="col">Entry order</th>
+                                                <th scope="col">Incremental R²</th>
+                                                <th scope="col">Standardized beta</th>
+                                                <th scope="col">Direction</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="technoeconomicSensitivityBody"></tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <section class="tea-result-section" aria-labelledby="technoeconomicConvergenceHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <h3 id="technoeconomicConvergenceHeading">Convergence evidence</h3>
+                                        <p>Checkpoint changes are diagnostic evidence, not a guarantee of mathematical convergence.</p>
+                                    </div>
+                                </div>
+                                <div class="tea-convergence-status" id="technoeconomicConvergenceStatus" role="status"></div>
+                                <div class="tea-table-region" id="technoeconomicConvergenceRegion" role="region" aria-labelledby="technoeconomicConvergenceHeading" tabindex="0">
+                                    <table class="tea-table" id="technoeconomicConvergenceTable">
+                                        <caption>Realization checkpoint percentile evidence</caption>
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Realizations</th>
+                                                <th scope="col">Metric</th>
+                                                <th scope="col">P5</th>
+                                                <th scope="col">P50</th>
+                                                <th scope="col">P95</th>
+                                                <th scope="col">Change from prior</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="technoeconomicConvergenceBody"></tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <section class="tea-result-section" aria-labelledby="technoeconomicFiguresHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <h3 id="technoeconomicFiguresHeading">Verified figures</h3>
+                                        <p>Images are served from the completed job's integrity-checked artifact manifest.</p>
+                                    </div>
+                                </div>
+                                <div class="tea-figure-grid">
+                                    <figure class="tea-figure-card">
+                                        <img id="technoeconomicCdfPlot" alt="Empirical cumulative distributions for lifecycle cost, energy, LCOE, and LCOO populations" hidden>
+                                        <p class="tea-figure-fallback" id="technoeconomicCdfPlotFallback" role="status">CDF figure is not available.</p>
+                                        <figcaption>Empirical CDFs. Population and denominator details are repeated in the metric summaries.</figcaption>
+                                    </figure>
+                                    <figure class="tea-figure-card">
+                                        <img id="technoeconomicSensitivityPlot" alt="Sensitivity rankings for available technoeconomic response metrics" hidden>
+                                        <p class="tea-figure-fallback" id="technoeconomicSensitivityPlotFallback" role="status">Sensitivity figure is not available.</p>
+                                        <figcaption>Sensitivity ranking. The accessible table records entries, effects, exclusions, and unavailable reasons.</figcaption>
+                                    </figure>
+                                    <figure class="tea-figure-card">
+                                        <img id="technoeconomicConvergencePlot" alt="Percentile stability across cumulative realization checkpoints" hidden>
+                                        <p class="tea-figure-fallback" id="technoeconomicConvergencePlotFallback" role="status">Convergence figure is not available.</p>
+                                        <figcaption>Convergence checkpoints. The accessible table reports the underlying percentile evidence.</figcaption>
+                                    </figure>
+                                </div>
+                            </section>
+
+                            <section class="tea-result-section tea-provenance-section" aria-labelledby="technoeconomicProvenanceHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <h3 id="technoeconomicProvenanceHeading">Basis and provenance</h3>
+                                        <p>Frozen capacities, source identity, evidence status, commercial transfer treatment, seed, and contract versions.</p>
+                                    </div>
+                                </div>
+                                <dl class="tea-definition-grid" id="technoeconomicProvenance"></dl>
+                            </section>
+
+                            <div class="tea-download-panel" aria-labelledby="technoeconomicDownloadsHeading">
+                                <div>
+                                    <h3 id="technoeconomicDownloadsHeading">Verified downloads</h3>
+                                    <p>Exports include realization-level values, assumptions, diagnostics, provenance, and integrity tie-outs.</p>
+                                </div>
+                                <div class="tea-action-row">
+                                    <a class="tea-download-link" id="technoeconomicCsvLink" href="#" hidden>Download CSV bundle</a>
+                                    <a class="tea-download-link" id="technoeconomicXlsxLink" href="#" hidden>Download XLSX workbook</a>
                                 </div>
                             </div>
-                            <label class="technoeconomic-cost-field" for="optimizedAnnualizedCost">
-                                <span class="date-label">Annualized system cost</span>
-                                <span class="technoeconomic-cost-input-wrap">
-                                    <span class="technoeconomic-currency-prefix" aria-hidden="true">$</span>
-                                    <input class="technoeconomic-cost-input" id="optimizedAnnualizedCost" type="number" min="0" step="100" inputmode="decimal" placeholder="e.g., 27000" aria-describedby="optimizedCostHelp optimizedCostError">
-                                    <span class="technoeconomic-cost-unit" aria-hidden="true">USD / year</span>
-                                </span>
-                                <span class="technoeconomic-cost-helper" id="optimizedCostHelp">Enter USD per year using the same annualization method and cost year as the baseline.</span>
-                                <span class="technoeconomic-cost-error" id="optimizedCostError" role="status" aria-live="polite"></span>
-                            </label>
                         </section>
-                    </div>
 
-                    <p class="technoeconomic-method-note">
-                        <strong>Cost basis:</strong> Enter annualized totals directly. Include annual capital recovery and recurring operating costs consistently for both systems.
-                    </p>
-                </section>
+                        <div class="tea-deep-editor" id="technoeconomicAssumptionEditors">
+                            <section class="tea-panel" aria-labelledby="technoeconomicLifecycleHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <p class="tea-step-label">Step 2</p>
+                                        <h3 id="technoeconomicLifecycleHeading">Lifecycle assumptions</h3>
+                                        <p>Use one constant-dollar cost year, a fixed project life, a documented real discount-rate distribution, and shared module degradation.</p>
+                                    </div>
+                                </div>
+                                <fieldset class="tea-fieldset">
+                                    <legend>Time and currency basis</legend>
+                                    <div class="tea-control-grid">
+                                        <div class="tea-field">
+                                            <label for="technoeconomicCostYear">Constant-dollar cost year</label>
+                                            <input id="technoeconomicCostYear" type="number" min="1900" max="3000" step="1" inputmode="numeric" required>
+                                        </div>
+                                        <div class="tea-field">
+                                            <label for="technoeconomicProjectLife">Project life</label>
+                                            <div class="tea-input-with-unit">
+                                                <input id="technoeconomicProjectLife" type="number" min="1" step="1" inputmode="numeric" required>
+                                                <span aria-hidden="true">years</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="tea-editor-card" id="technoeconomicProjectLifeEvidence" aria-label="Project-life evidence editor"></div>
+                                </fieldset>
+                                <div class="tea-editor-grid">
+                                    <section class="tea-editor-card" aria-labelledby="technoeconomicDiscountRateHeading">
+                                        <h4 id="technoeconomicDiscountRateHeading">Real discount rate</h4>
+                                        <p>Document a real-fraction-per-year distribution and its source evidence.</p>
+                                        <div id="technoeconomicDiscountRateEditor"></div>
+                                    </section>
+                                    <section class="tea-editor-card" aria-labelledby="technoeconomicDegradationHeading">
+                                        <h4 id="technoeconomicDegradationHeading">Shared module degradation</h4>
+                                        <p>Version 1 uses one documented annual-rate distribution shared by both modeled systems.</p>
+                                        <div id="technoeconomicDegradationEditor"></div>
+                                    </section>
+                                </div>
+                            </section>
 
-                <section class="annual-results-shell" id="technoeconomicResults" aria-labelledby="technoeconomicResultsHeading">
-                    <div class="annual-results-heading">
-                        <div>
-                            <h2 id="technoeconomicResultsHeading">Levelized cost results</h2>
-                            <p>Latest full-year Annual Simulation production combined with the annualized costs above.</p>
+                            <section class="tea-panel" aria-labelledby="technoeconomicCostLinesHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <p class="tea-step-label">Step 3</p>
+                                        <h3 id="technoeconomicCostLinesHeading">Itemized cost and evidence stack</h3>
+                                        <p>Each line declares ownership, timing, coverage, distribution, normalization, currency basis, and immutable citation metadata.</p>
+                                    </div>
+                                    <button class="tea-button tea-button-secondary" id="technoeconomicAddCostLineBtn" type="button">Add cost line</button>
+                                </div>
+                                <div class="tea-inline-note" role="note">
+                                    <strong>Direction:</strong> marginal outputs are always SolarEdge minus Solectria. Paired/shared does not by itself mean the line cancels.
+                                </div>
+                                <div class="tea-repeating-editor" id="technoeconomicCostLines" aria-live="polite"></div>
+                                <p class="tea-empty-editor" id="technoeconomicCostLinesEmpty" role="status">Add at least one fully documented cost line.</p>
+                            </section>
+
+                            <section class="tea-panel tea-commercial-panel" id="technoeconomicCommercialDesign" aria-labelledby="technoeconomicCommercialDesignHeading" hidden>
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <p class="tea-step-label">Commercial basis</p>
+                                        <h3 id="technoeconomicCommercialDesignHeading">Representative design disclosure</h3>
+                                        <p>Commercial economics require an independently evidenced target design. SolarTAC equipment descriptions are not inherited as defaults.</p>
+                                    </div>
+                                </div>
+                                <details class="tea-disclosure-panel" open>
+                                    <summary>Reference Wdc and technology design</summary>
+                                    <div class="tea-disclosure-body" id="technoeconomicCommercialDesignEditor"></div>
+                                </details>
+                            </section>
+
+                            <section class="tea-panel tea-commercial-panel" id="technoeconomicCommercialTransfer" aria-labelledby="technoeconomicCommercialTransferHeading" hidden>
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <p class="tea-step-label">Commercial energy</p>
+                                        <h3 id="technoeconomicCommercialTransferHeading">Energy transfer attestation</h3>
+                                        <p>Leave transfer disabled for a cost-only commercial result. Enabling it requires a complete, evidenced mechanism checklist.</p>
+                                    </div>
+                                </div>
+                                <label class="tea-switch-row" for="technoeconomicTransferEnabled">
+                                    <input id="technoeconomicTransferEnabled" type="checkbox" aria-describedby="technoeconomicTransferHelp">
+                                    <span>
+                                        <strong>Enable commercial energy transfer</strong>
+                                        <small id="technoeconomicTransferHelp">I will document baseline and incremental factors, all required mechanisms, and an explicit attestation.</small>
+                                    </span>
+                                </label>
+                                <div class="tea-transfer-editor" id="technoeconomicCommercialTransferEditor" hidden></div>
+                            </section>
                         </div>
-                        <span class="annual-results-note">USD per kWh</span>
-                    </div>
 
-                    <div class="technoeconomic-source-card" id="technoeconomicSourceCard">
-                        <div role="status" aria-live="polite" aria-atomic="true">
-                            <div class="technoeconomic-source-heading">
-                                <span class="technoeconomic-source-dot" aria-hidden="true"></span>
-                                <span id="technoeconomicSourceStatus">Annual Simulation result required</span>
+                        <section class="tea-panel tea-submit-panel" aria-labelledby="technoeconomicSubmitHeading">
+                            <div>
+                                <p class="tea-step-label">Step 4</p>
+                                <h3 id="technoeconomicSubmitHeading">Validate and confirm</h3>
+                                <p>Review errors first, then confirm the exact source, basis, sample controls, lifecycle assumptions, evidence status, and transfer treatment before the job is queued.</p>
                             </div>
-                            <p class="technoeconomic-source-detail" id="technoeconomicSourceDetail">Run an inclusive one-calendar-year Annual Simulation to supply annual energy production.</p>
-                        </div>
-                        <button class="technoeconomic-source-action" id="openAnnualSimulationBtn" type="button">Go to Annual Simulation</button>
-                    </div>
-
-                    <div class="technoeconomic-energy-grid" aria-label="Annual energy basis">
-                        <article class="technoeconomic-energy-card">
-                            <div class="technoeconomic-energy-label">Baseline annual energy: Solectria</div>
-                            <div class="technoeconomic-energy-value"><strong id="technoeconomicBaselineEnergy">--</strong> <span>kWh / year</span></div>
-                        </article>
-                        <article class="technoeconomic-energy-card">
-                            <div class="technoeconomic-energy-label">Optimized annual energy: SolarEdge</div>
-                            <div class="technoeconomic-energy-value"><strong id="technoeconomicOptimizedEnergy">--</strong> <span>kWh / year</span></div>
-                        </article>
-                        <article class="technoeconomic-energy-card">
-                            <div class="technoeconomic-energy-label">Annual energy increase</div>
-                            <div class="technoeconomic-energy-value"><strong id="technoeconomicEnergyIncrease">--</strong> <span>kWh / year</span></div>
-                        </article>
-                    </div>
-
-                    <div class="technoeconomic-output-grid" aria-label="Levelized cost outputs">
-                        <article class="technoeconomic-output-card optimization">
-                            <h3>LCOO</h3>
-                            <p class="technoeconomic-output-name">Levelized cost of optimization</p>
-                            <output class="technoeconomic-output-value" id="technoeconomicLcoo" for="baselineAnnualizedCost optimizedAnnualizedCost" aria-live="polite">--</output>
-                            <p class="technoeconomic-output-status" id="technoeconomicLcooStatus" aria-live="polite">Enter both annualized costs and provide a full-year Annual Simulation result.</p>
-                        </article>
-                        <article class="technoeconomic-output-card">
-                            <h3>LCOE</h3>
-                            <p class="technoeconomic-output-name">Baseline levelized cost of electricity</p>
-                            <output class="technoeconomic-output-value" id="technoeconomicLcoe" for="baselineAnnualizedCost" aria-live="polite">--</output>
-                            <p class="technoeconomic-output-status" id="technoeconomicLcoeStatus" aria-live="polite">Enter the baseline annualized cost and provide a full-year Annual Simulation result.</p>
-                        </article>
-                    </div>
-
-                    <div class="technoeconomic-basis-grid" aria-label="Annualized cost calculation basis">
-                        <div class="technoeconomic-basis-item">
-                            <div class="technoeconomic-basis-label">Baseline annualized cost</div>
-                            <div class="technoeconomic-basis-value" id="technoeconomicBaselineCost">--</div>
-                        </div>
-                        <div class="technoeconomic-basis-item">
-                            <div class="technoeconomic-basis-label">Optimized annualized cost</div>
-                            <div class="technoeconomic-basis-value" id="technoeconomicOptimizedCost">--</div>
-                        </div>
-                        <div class="technoeconomic-basis-item">
-                            <div class="technoeconomic-basis-label">Marginal annualized cost</div>
-                            <div class="technoeconomic-basis-value" id="technoeconomicMarginalCost">--</div>
-                        </div>
-                    </div>
-
-                    <div class="technoeconomic-formula-grid" aria-label="Technoeconomic formulas">
-                        <article class="technoeconomic-formula-card">
-                            <div class="technoeconomic-basis-label">LCOO formula</div>
-                            <code>(optimized annualized cost − baseline annualized cost) / (optimized annual energy − baseline annual energy)</code>
-                        </article>
-                        <article class="technoeconomic-formula-card">
-                            <div class="technoeconomic-basis-label">LCOE formula</div>
-                            <code>baseline annualized cost / baseline annual energy</code>
-                        </article>
-                    </div>
+                            <div class="tea-alert" id="technoeconomicFormErrors" role="alert" aria-live="assertive" tabindex="-1" hidden></div>
+                            <p class="tea-draft-status" id="technoeconomicDraftStatus" role="status" aria-live="polite">Draft inputs stay in this browser; submitted jobs and results are durable on the server.</p>
+                            <div class="tea-action-row">
+                                <button class="tea-button tea-button-primary tea-submit-button" id="technoeconomicSubmitBtn" type="submit">Review analysis</button>
+                            </div>
+                        </section>
+                    </form>
                 </section>
+
+                <p class="tea-sr-live" id="technoeconomicLiveStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+
+                <dialog class="tea-confirm-dialog" id="technoeconomicConfirmDialog" aria-labelledby="technoeconomicConfirmHeading" aria-describedby="technoeconomicConfirmDescription">
+                    <div class="tea-confirm-content">
+                        <div class="tea-section-heading">
+                            <div>
+                                <p class="tea-step-label">Submission confirmation</p>
+                                <h2 id="technoeconomicConfirmHeading">Queue this probabilistic analysis?</h2>
+                                <p id="technoeconomicConfirmDescription">Confirm the frozen request summary. No Annual baseline, model promotion, or comparison will be changed.</p>
+                            </div>
+                        </div>
+                        <div class="tea-confirm-summary" id="technoeconomicConfirmSummary"></div>
+                        <div class="tea-inline-note tea-provisional-note" id="technoeconomicConfirmProvisional" role="note" hidden></div>
+                        <div class="tea-alert" id="technoeconomicConfirmError" role="alert" tabindex="-1" hidden></div>
+                        <div class="tea-action-row tea-confirm-actions">
+                            <button class="tea-button tea-button-quiet" id="technoeconomicConfirmCancelBtn" type="button">Go back</button>
+                            <button class="tea-button tea-button-primary" id="technoeconomicConfirmSubmitBtn" type="button">Confirm and queue</button>
+                        </div>
+                    </div>
+                </dialog>
             </div>
 
-            <!-- Functional contract: every original form id, chart id, button id, and state class is preserved for the existing JavaScript. -->
+            <!-- Technoeconomic controls are canonical source markup; repeated editors and durable result rows are rendered by frontend/js/06-technoeconomic.js. -->

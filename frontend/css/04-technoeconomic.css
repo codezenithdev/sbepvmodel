@@ -1,348 +1,1302 @@
-        .technoeconomic-cost-grid {
+        #technoeconomicInputs,
+        #technoeconomicResults {
+            scroll-margin-top: 18px;
+        }
+
+        .technoeconomic-only [hidden] {
+            display: none !important;
+        }
+
+        .tea-workspace {
+            padding: 0;
+            overflow: visible;
+        }
+
+        .tea-page-heading {
+            gap: 20px;
+            padding: 22px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tea-contract-badge,
+        .tea-status-pill {
+            display: inline-flex;
+            min-height: 28px;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+            padding: 5px 10px;
+            border: 1px solid #b8d7d3;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 820;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+
+        .tea-form {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 16px;
+            gap: 18px;
             padding: 20px;
             background: var(--surface-muted);
         }
 
-        .technoeconomic-cost-card {
-            border-left: 4px solid var(--info);
+        .tea-core-panel {
+            order: 1;
         }
 
-        .technoeconomic-cost-card.optimized {
-            border-left-color: var(--accent);
+        .tea-job-panel {
+            order: 2;
         }
 
-        .technoeconomic-system-label {
+        .tea-results-shell {
+            order: 3;
+        }
+
+        .tea-deep-editor {
+            display: grid;
+            order: 4;
+            gap: 18px;
+        }
+
+        .tea-submit-panel {
+            order: 5;
+        }
+
+        .tea-panel,
+        .tea-result-section {
+            min-width: 0;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+        }
+
+        .tea-panel {
+            padding: 20px;
+        }
+
+        .tea-section-heading {
             display: flex;
-            align-items: center;
-            gap: 9px;
-            margin-bottom: 16px;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+            margin-bottom: 17px;
         }
 
-        .technoeconomic-system-label h3 {
+        .tea-section-heading h2,
+        .tea-section-heading h3,
+        .tea-section-heading h4 {
             color: var(--text);
-            font-size: 17px;
-            font-weight: 830;
+            line-height: 1.25;
         }
 
-        .technoeconomic-system-label p {
-            margin-top: 2px;
+        .tea-section-heading h3 {
+            font-size: 18px;
+            font-weight: 840;
+        }
+
+        .tea-section-heading h4 {
+            font-size: 15px;
+            font-weight: 820;
+        }
+
+        .tea-section-heading p:not(.tea-step-label),
+        .tea-editor-card > p,
+        .tea-submit-panel > div > p:not(.tea-step-label),
+        .tea-download-panel p {
+            max-width: 78ch;
+            margin-top: 4px;
             color: var(--muted);
             font-size: 12px;
+            line-height: 1.55;
         }
 
-        .technoeconomic-cost-field {
-            display: grid;
-            gap: 7px;
+        .tea-step-label {
+            margin-bottom: 4px;
+            color: var(--accent-strong);
+            font-size: 10px;
+            font-weight: 860;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
         }
 
-        .technoeconomic-cost-input-wrap {
-            position: relative;
+        .tea-source-layout {
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
-            align-items: center;
+            align-items: end;
+            gap: 14px;
         }
 
-        .technoeconomic-currency-prefix {
-            position: absolute;
-            left: 13px;
+        .tea-control-grid,
+        .tea-editor-grid,
+        .tea-dynamic-grid,
+        .tea-distribution-grid,
+        .tea-evidence-grid,
+        .tea-design-grid,
+        .tea-transfer-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .tea-control-grid {
+            grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(170px, 0.8fr));
+        }
+
+        .tea-editor-grid {
+            margin-top: 16px;
+        }
+
+        .tea-field {
+            display: grid;
+            min-width: 0;
+            align-content: start;
+            gap: 6px;
+        }
+
+        .tea-field-wide {
+            min-width: 0;
+        }
+
+        .tea-field > label,
+        .tea-progress-layout > label,
+        .tea-field-label {
             color: var(--muted-strong);
-            font-weight: 800;
-            pointer-events: none;
+            font-size: 12px;
+            font-weight: 790;
         }
 
-        .technoeconomic-cost-input {
+        .tea-field input:not([type="checkbox"]):not([type="radio"]),
+        .tea-field select,
+        .tea-field textarea,
+        .tea-distribution-editor input:not([type="checkbox"]):not([type="radio"]),
+        .tea-distribution-editor select,
+        .tea-evidence-editor input:not([type="checkbox"]):not([type="radio"]),
+        .tea-evidence-editor select,
+        .tea-evidence-editor textarea,
+        .tea-cost-line input:not([type="checkbox"]):not([type="radio"]),
+        .tea-cost-line select,
+        .tea-cost-line textarea,
+        .tea-commercial-panel input:not([type="checkbox"]):not([type="radio"]),
+        .tea-commercial-panel select,
+        .tea-commercial-panel textarea {
             width: 100%;
             min-width: 0;
-            height: 44px;
-            padding: 9px 82px 9px 28px;
+            min-height: 44px;
+            padding: 9px 11px;
             border: 1px solid var(--border-strong);
             border-radius: 7px;
             background: #ffffff;
             color: var(--text);
+            font-family: inherit;
+            font-size: 14px;
             font-variant-numeric: tabular-nums;
+            line-height: 1.35;
         }
 
-        .technoeconomic-cost-input:focus {
+        .tea-field textarea,
+        .tea-evidence-editor textarea,
+        .tea-cost-line textarea,
+        .tea-commercial-panel textarea {
+            min-height: 92px;
+            resize: vertical;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+        }
+
+        .tea-field input:focus,
+        .tea-field select:focus,
+        .tea-field textarea:focus,
+        .tea-distribution-editor input:focus,
+        .tea-distribution-editor select:focus,
+        .tea-evidence-editor input:focus,
+        .tea-evidence-editor select:focus,
+        .tea-evidence-editor textarea:focus,
+        .tea-cost-line input:focus,
+        .tea-cost-line select:focus,
+        .tea-cost-line textarea:focus,
+        .tea-commercial-panel input:focus,
+        .tea-commercial-panel select:focus,
+        .tea-commercial-panel textarea:focus {
             border-color: var(--accent);
-            outline: 3px solid rgba(15, 118, 110, 0.12);
+            outline: 3px solid rgba(15, 118, 110, 0.14);
+            outline-offset: 0;
         }
 
-        .technoeconomic-cost-input[aria-invalid="true"] {
-            border-color: var(--danger);
-            background: var(--danger-soft);
+        .tea-field [aria-invalid="true"],
+        .tea-distribution-editor [aria-invalid="true"],
+        .tea-evidence-editor [aria-invalid="true"],
+        .tea-cost-line [aria-invalid="true"],
+        .tea-commercial-panel [aria-invalid="true"] {
+            border-color: var(--danger) !important;
+            background: var(--danger-soft) !important;
         }
 
-        .technoeconomic-cost-unit {
-            position: absolute;
-            right: 12px;
+        .tea-field input:disabled,
+        .tea-field select:disabled,
+        .tea-field textarea:disabled,
+        .tea-commercial-panel :disabled {
+            cursor: not-allowed;
+            background: #eef2f4;
             color: var(--muted);
-            font-size: 12px;
-            font-weight: 750;
-            pointer-events: none;
+            opacity: 1;
         }
 
-        .technoeconomic-cost-helper,
-        .technoeconomic-method-note {
+        .tea-field-help,
+        .tea-field-error,
+        .tea-editor-help {
+            margin: 0;
             color: var(--muted);
-            font-size: 12px;
+            font-size: 11px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
         }
 
-        .technoeconomic-cost-error {
+        .tea-field-error {
             color: var(--danger);
-            font-size: 12px;
-            font-weight: 700;
+            font-weight: 730;
         }
 
-        .technoeconomic-cost-error:empty {
+        .tea-field-error:empty {
             display: none;
         }
 
-        .technoeconomic-method-note {
+        .tea-input-with-unit {
+            position: relative;
+            display: grid;
+            min-width: 0;
+        }
+
+        .tea-input-with-unit > input {
+            padding-right: 58px !important;
+        }
+
+        .tea-input-with-unit > span {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 760;
+            pointer-events: none;
+            transform: translateY(-50%);
+        }
+
+        .tea-fieldset {
+            min-width: 0;
             margin: 0;
-            padding: 15px 20px;
-            border-top: 1px solid var(--border);
-            background: var(--surface);
-        }
-
-        .technoeconomic-method-note strong {
-            color: var(--muted-strong);
-        }
-
-        .technoeconomic-source-card {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 18px;
-            margin-bottom: 16px;
-            padding: 15px 16px;
+            padding: 16px;
             border: 1px solid var(--border);
-            border-left: 4px solid var(--border-strong);
-            border-radius: 8px;
-            background: var(--surface);
+            border-radius: 9px;
+            background: var(--surface-muted);
         }
 
-        .technoeconomic-source-card.ready {
-            border-left-color: var(--success);
-            background: #f7fcf9;
-        }
-
-        .technoeconomic-source-card.running {
-            border-left-color: var(--info);
-            background: #f7f9ff;
-        }
-
-        .technoeconomic-source-card.warning {
-            border-left-color: var(--warning);
-            background: #fffaf0;
-        }
-
-        .technoeconomic-source-heading {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            color: var(--muted-strong);
+        .tea-fieldset > legend {
+            padding: 0 7px;
+            color: var(--text);
             font-size: 13px;
             font-weight: 820;
         }
 
-        .technoeconomic-source-dot {
-            width: 9px;
-            height: 9px;
-            flex: 0 0 auto;
-            border-radius: 50%;
-            background: var(--border-strong);
+        .tea-core-controls {
+            margin-top: 16px;
         }
 
-        .technoeconomic-source-card.ready .technoeconomic-source-dot {
-            background: var(--success);
+        .tea-source-status {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 11px;
+            margin-top: 14px;
+            padding: 13px 14px;
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--border-strong);
+            border-radius: 8px;
+            background: var(--surface-muted);
         }
 
-        .technoeconomic-source-card.running .technoeconomic-source-dot {
-            background: var(--info);
+        .tea-source-status strong {
+            display: block;
+            color: var(--muted-strong);
+            font-size: 13px;
+            line-height: 1.35;
         }
 
-        .technoeconomic-source-card.warning .technoeconomic-source-dot {
-            background: var(--warning);
-        }
-
-        .technoeconomic-source-detail {
+        .tea-source-status p {
             margin-top: 3px;
             color: var(--muted);
             font-size: 12px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
         }
 
-        .technoeconomic-source-action {
-            flex: 0 0 auto;
-            padding: 8px 11px;
-            border: 1px solid var(--border-strong);
-            border-radius: 7px;
-            background: var(--surface);
-            color: var(--accent-strong);
-            font-size: 12px;
-            font-weight: 800;
-            cursor: pointer;
+        .tea-state-icon {
+            width: 11px;
+            height: 11px;
+            margin-top: 3px;
+            border: 2px solid currentColor;
+            border-radius: 50%;
+            color: var(--border-strong);
+            background: currentColor;
+            box-shadow: inset 0 0 0 2px var(--surface-muted);
         }
 
-        .technoeconomic-source-action:hover,
-        .technoeconomic-source-action:focus-visible {
-            border-color: var(--accent);
-            background: var(--accent-soft);
-            outline: none;
+        .tea-source-status[data-state="loading"],
+        .tea-source-status[data-state="running"] {
+            border-left-color: var(--info);
+            background: #f6f8ff;
         }
 
-        .technoeconomic-energy-grid,
-        .technoeconomic-output-grid,
-        .technoeconomic-formula-grid {
-            display: grid;
-            gap: 14px;
-        }
-
-        .technoeconomic-energy-grid {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            margin-bottom: 16px;
-        }
-
-        .technoeconomic-energy-card {
-            min-width: 0;
-            padding: 16px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: var(--surface-muted);
-        }
-
-        .technoeconomic-energy-label,
-        .technoeconomic-basis-label {
-            color: var(--muted);
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.03em;
-            text-transform: uppercase;
-        }
-
-        .technoeconomic-energy-value {
-            margin-top: 7px;
-            color: var(--text);
-            font-size: 23px;
-            font-weight: 840;
-            line-height: 1.1;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .technoeconomic-energy-value span {
-            color: var(--muted);
-            font-size: 12px;
-            font-weight: 700;
-        }
-
-        .technoeconomic-output-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            margin-bottom: 16px;
-        }
-
-        .technoeconomic-output-card {
-            min-width: 0;
-            padding: 22px;
-            border: 1px solid var(--border);
-            border-top: 4px solid var(--info);
-            border-radius: 9px;
-            background: var(--surface);
-            box-shadow: var(--shadow);
-        }
-
-        .technoeconomic-output-card.optimization {
-            border-top-color: var(--accent);
-        }
-
-        .technoeconomic-output-card h3 {
-            color: var(--text);
-            font-size: 16px;
-            font-weight: 830;
-        }
-
-        .technoeconomic-output-name {
-            margin-top: 2px;
-            color: var(--muted);
-            font-size: 12px;
-        }
-
-        .technoeconomic-output-value {
-            display: block;
-            margin-top: 16px;
+        .tea-source-status[data-state="loading"] .tea-state-icon,
+        .tea-source-status[data-state="running"] .tea-state-icon {
             color: var(--info);
-            font-size: clamp(30px, 3vw, 40px);
-            font-weight: 860;
-            line-height: 1;
-            font-variant-numeric: tabular-nums;
         }
 
-        .technoeconomic-output-card.optimization .technoeconomic-output-value {
-            color: var(--accent-strong);
+        .tea-source-status[data-state="ready"] {
+            border-left-color: var(--success);
+            background: #f5fbf7;
         }
 
-        .technoeconomic-output-status {
-            min-height: 36px;
-            margin-top: 12px;
-            color: var(--muted);
-            font-size: 12px;
+        .tea-source-status[data-state="ready"] .tea-state-icon {
+            color: var(--success);
         }
 
-        .technoeconomic-formula-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+        .tea-source-status[data-state="warning"] {
+            border-left-color: var(--warning);
+            background: #fffaf0;
         }
 
-        .technoeconomic-formula-card {
-            min-width: 0;
-            padding: 15px 16px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: var(--surface-muted);
+        .tea-source-status[data-state="warning"] .tea-state-icon {
+            color: var(--warning);
         }
 
-        .technoeconomic-formula-card code {
-            display: block;
-            margin-top: 7px;
-            color: var(--muted-strong);
-            font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-            font-size: 12px;
-            line-height: 1.55;
-            white-space: normal;
+        .tea-source-status[data-state="error"] {
+            border-left-color: var(--danger);
+            background: var(--danger-soft);
         }
 
-        .technoeconomic-basis-grid {
+        .tea-source-status[data-state="error"] .tea-state-icon {
+            color: var(--danger);
+        }
+
+        .tea-definition-grid {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 1px;
-            margin: 16px 0;
+            margin: 14px 0 0;
             overflow: hidden;
             border: 1px solid var(--border);
             border-radius: 8px;
             background: var(--border);
         }
 
-        .technoeconomic-basis-item {
+        .tea-definition-grid:empty {
+            display: none;
+        }
+
+        .tea-definition-grid > div {
             min-width: 0;
-            padding: 14px 16px;
+            padding: 12px 13px;
             background: var(--surface);
         }
 
-        .technoeconomic-basis-value {
-            margin-top: 5px;
-            color: var(--text);
-            font-size: 17px;
+        .tea-definition-grid dt {
+            color: var(--muted);
+            font-size: 10px;
             font-weight: 830;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .tea-definition-grid dd {
+            margin: 4px 0 0;
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 730;
+            line-height: 1.4;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-disclosure,
+        .tea-inline-note,
+        .tea-durable-note,
+        .tea-draft-status {
+            margin: 14px 0 0;
+            padding: 12px 13px;
+            border: 1px solid #cbdfe9;
+            border-radius: 8px;
+            background: #f5f9fb;
+            color: var(--muted-strong);
+            font-size: 12px;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-disclosure strong,
+        .tea-inline-note strong {
+            color: var(--text);
+        }
+
+        .tea-provisional-note {
+            border-color: #ead6a4;
+            background: #fffaf0;
+        }
+
+        .tea-button,
+        .tea-download-link {
+            min-height: 44px;
+            align-items: center;
+            justify-content: center;
+            padding: 9px 13px;
+            border: 1px solid transparent;
+            border-radius: 7px;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 820;
+            line-height: 1.25;
+            text-align: center;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .tea-button {
+            display: inline-flex;
+        }
+
+        .tea-button-primary,
+        .tea-download-link {
+            border-color: var(--accent);
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        .tea-button-secondary {
+            border-color: var(--border-strong);
+            background: var(--surface);
+            color: var(--accent-strong);
+        }
+
+        .tea-button-quiet {
+            border-color: var(--border);
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+        }
+
+        .tea-button-danger {
+            border-color: var(--danger);
+            background: #ffffff;
+            color: var(--danger);
+        }
+
+        .tea-button:hover:not(:disabled),
+        .tea-download-link:hover {
+            filter: brightness(0.96);
+        }
+
+        .tea-button:focus-visible,
+        .tea-download-link:focus-visible,
+        .tea-disclosure-panel > summary:focus-visible,
+        .tea-table-region:focus-visible,
+        .tea-switch-row:focus-within {
+            outline: 3px solid rgba(15, 118, 110, 0.24);
+            outline-offset: 2px;
+        }
+
+        .tea-button:disabled,
+        .tea-download-link[aria-disabled="true"] {
+            cursor: not-allowed;
+            filter: none;
+            opacity: 0.56;
+        }
+
+        .tea-action-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 9px;
+        }
+
+        .tea-job-panel {
+            border-left: 4px solid var(--info);
+        }
+
+        .tea-job-panel[data-state="done"] {
+            border-left-color: var(--success);
+        }
+
+        .tea-job-panel[data-state="error"],
+        .tea-job-panel[data-state="cancelled"],
+        .tea-job-panel[data-state="interrupted"] {
+            border-left-color: var(--warning);
+        }
+
+        .tea-job-heading {
+            align-items: center;
+        }
+
+        .tea-job-panel[data-state="done"] .tea-status-pill {
+            border-color: #b8d8c1;
+            background: #eef9f1;
+            color: var(--success);
+        }
+
+        .tea-job-panel[data-state="error"] .tea-status-pill,
+        .tea-job-panel[data-state="cancelled"] .tea-status-pill,
+        .tea-job-panel[data-state="interrupted"] .tea-status-pill {
+            border-color: #ead6a4;
+            background: #fff8e8;
+            color: #8b5a00;
+        }
+
+        .tea-progress-layout {
+            display: grid;
+            grid-template-columns: auto minmax(140px, 1fr) auto;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .tea-progress-layout progress {
+            width: 100%;
+            height: 12px;
+            overflow: hidden;
+            border: 0;
+            border-radius: 999px;
+            background: #dfe6e9;
+            color: var(--accent);
+        }
+
+        .tea-progress-layout progress::-webkit-progress-bar {
+            border-radius: 999px;
+            background: #dfe6e9;
+        }
+
+        .tea-progress-layout progress::-webkit-progress-value {
+            border-radius: 999px;
+            background: var(--accent);
+        }
+
+        .tea-progress-layout progress::-moz-progress-bar {
+            border-radius: 999px;
+            background: var(--accent);
+        }
+
+        #technoeconomicProgressValue {
+            min-width: 42px;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 820;
+            text-align: right;
             font-variant-numeric: tabular-nums;
         }
 
-        #technoeconomicInputs,
-        #technoeconomicResults {
-            scroll-margin-top: 18px;
+        .tea-job-stage {
+            margin-top: 9px;
+            color: var(--muted-strong);
+            font-size: 13px;
+            font-weight: 740;
         }
 
-        #annualControls:focus-visible {
-            outline: 3px solid rgba(15, 118, 110, 0.22);
-            outline-offset: 3px;
+        .tea-job-panel .tea-action-row {
+            margin-top: 15px;
         }
 
+        .tea-alert {
+            margin-top: 14px;
+            padding: 12px 14px;
+            border: 1px solid #e9b3b3;
+            border-left: 4px solid var(--danger);
+            border-radius: 8px;
+            background: var(--danger-soft);
+            color: #7c1f1f;
+            font-size: 12px;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-alert a {
+            color: inherit;
+            font-weight: 820;
+        }
+
+        .tea-alert ul {
+            margin: 7px 0 0 18px;
+        }
+
+        .tea-results-shell {
+            padding: 0;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+        }
+
+        .tea-results-heading {
+            margin: 0;
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(135deg, #f5fbfa 0%, #f7f9ff 100%);
+        }
+
+        .tea-summary-grid,
+        .tea-metric-grid,
+        .tea-tradeoff-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            padding: 18px 20px;
+        }
+
+        .tea-summary-card,
+        .tea-metric-card,
+        .tea-tradeoff-card {
+            min-width: 0;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .tea-summary-card-label,
+        .tea-metric-label,
+        .tea-tradeoff-label {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 830;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-summary-card-value,
+        .tea-metric-value,
+        .tea-tradeoff-value {
+            margin-top: 6px;
+            color: var(--text);
+            font-size: 18px;
+            font-weight: 840;
+            line-height: 1.2;
+            font-variant-numeric: tabular-nums;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-metric-percentiles {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 7px;
+            margin-top: 11px;
+        }
+
+        .tea-metric-percentiles > div {
+            min-width: 0;
+            padding: 8px;
+            border-radius: 6px;
+            background: var(--surface);
+            text-align: center;
+        }
+
+        .tea-metric-percentiles span {
+            display: block;
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 820;
+            text-transform: uppercase;
+        }
+
+        .tea-metric-percentiles strong {
+            display: block;
+            margin-top: 3px;
+            color: var(--text);
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-result-section {
+            margin: 0 20px 18px;
+            padding: 18px;
+            box-shadow: none;
+        }
+
+        .tea-result-section > .tea-section-heading {
+            margin-bottom: 13px;
+        }
+
+        .tea-tradeoff-card[data-classification="dominant"] {
+            border-left: 4px solid var(--success);
+        }
+
+        .tea-tradeoff-card[data-classification="dominated"] {
+            border-left: 4px solid var(--danger);
+        }
+
+        .tea-tradeoff-card[data-classification="tradeoff"],
+        .tea-tradeoff-card[data-classification="neutral"] {
+            border-left: 4px solid var(--warning);
+        }
+
+        .tea-table-region {
+            max-width: 100%;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            overscroll-behavior-inline: contain;
+        }
+
+        .tea-table {
+            width: 100%;
+            min-width: 760px;
+            border-collapse: collapse;
+            color: var(--text);
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .tea-table caption {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .tea-table th,
+        .tea-table td {
+            padding: 10px 11px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+            vertical-align: top;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-table th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #eef3f4;
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 840;
+            letter-spacing: 0.035em;
+            text-transform: uppercase;
+        }
+
+        .tea-table tbody tr:nth-child(even) {
+            background: var(--surface-muted);
+        }
+
+        .tea-table tbody tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .tea-table tbody:empty::after {
+            display: table-cell;
+            padding: 14px;
+            color: var(--muted);
+            content: "No completed evidence is available.";
+        }
+
+        .tea-convergence-status {
+            margin-bottom: 12px;
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 740;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-figure-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .tea-figure-card {
+            display: grid;
+            min-width: 0;
+            align-content: start;
+            gap: 9px;
+            margin: 0;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .tea-figure-card:first-child {
+            grid-column: 1 / -1;
+        }
+
+        .tea-figure-card img {
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            max-height: 720px;
+            object-fit: contain;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #ffffff;
+        }
+
+        .tea-figure-card figcaption,
+        .tea-figure-fallback {
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-figure-fallback {
+            min-height: 110px;
+            display: grid;
+            place-items: center;
+            margin: 0;
+            padding: 16px;
+            border: 1px dashed var(--border-strong);
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .tea-provenance-section .tea-definition-grid {
+            margin-top: 0;
+        }
+
+        .tea-download-panel {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            margin: 0 20px 20px;
+            padding: 17px 18px;
+            border: 1px solid #b8d7d3;
+            border-radius: 9px;
+            background: var(--accent-soft);
+        }
+
+        .tea-download-panel h3 {
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 840;
+        }
+
+        .tea-download-link {
+            display: inline-flex;
+        }
+
+        .tea-editor-card,
+        .tea-cost-line,
+        .tea-distribution-editor,
+        .tea-evidence-editor,
+        .tea-transfer-mechanism {
+            min-width: 0;
+            padding: 15px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .tea-editor-card h4,
+        .tea-cost-line h4,
+        .tea-transfer-mechanism h4 {
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 830;
+        }
+
+        .tea-editor-card + .tea-editor-card,
+        .tea-distribution-editor + .tea-evidence-editor {
+            margin-top: 12px;
+        }
+
+        .tea-repeating-editor {
+            display: grid;
+            gap: 14px;
+            margin-top: 14px;
+        }
+
+        .tea-cost-line {
+            border-left: 4px solid var(--info);
+            background: var(--surface);
+        }
+
+        .tea-cost-line[data-ownership="solaredge_only"] {
+            border-left-color: var(--accent);
+        }
+
+        .tea-cost-line[data-ownership="paired_shared"] {
+            border-left-color: var(--warning);
+        }
+
+        .tea-repeat-heading {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 13px;
+        }
+
+        .tea-empty-editor {
+            margin: 14px 0 0;
+            padding: 17px;
+            border: 1px dashed var(--border-strong);
+            border-radius: 8px;
+            color: var(--muted);
+            font-size: 12px;
+            text-align: center;
+        }
+
+        .tea-disclosure-panel {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .tea-disclosure-panel > summary {
+            min-height: 44px;
+            padding: 12px 14px;
+            color: var(--muted-strong);
+            font-size: 13px;
+            font-weight: 820;
+            cursor: pointer;
+        }
+
+        .tea-disclosure-body {
+            padding: 0 14px 14px;
+        }
+
+        .tea-switch-row,
+        .tea-checkbox-row,
+        .tea-radio-row {
+            display: flex;
+            min-width: 0;
+            min-height: 44px;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 11px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+            cursor: pointer;
+        }
+
+        .tea-switch-row input,
+        .tea-checkbox-row input,
+        .tea-radio-row input {
+            width: 18px;
+            height: 18px;
+            flex: 0 0 auto;
+            margin-top: 1px;
+            accent-color: var(--accent);
+        }
+
+        .tea-switch-row span,
+        .tea-checkbox-row span,
+        .tea-radio-row span {
+            min-width: 0;
+        }
+
+        .tea-switch-row strong,
+        .tea-checkbox-row strong,
+        .tea-radio-row strong {
+            display: block;
+            color: var(--text);
+            font-size: 13px;
+        }
+
+        .tea-switch-row small,
+        .tea-checkbox-row small,
+        .tea-radio-row small {
+            display: block;
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-transfer-editor {
+            display: grid;
+            gap: 14px;
+            margin-top: 14px;
+        }
+
+        .tea-transfer-mechanism {
+            border-left: 4px solid var(--warning);
+        }
+
+        .tea-transfer-mechanism[data-status="supported"] {
+            border-left-color: var(--success);
+        }
+
+        .tea-transfer-mechanism[data-status="not_applicable"] {
+            border-left-color: var(--muted);
+        }
+
+        .tea-submit-panel {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 17px;
+            border-top: 4px solid var(--accent);
+        }
+
+        .tea-submit-panel .tea-alert,
+        .tea-submit-panel .tea-draft-status {
+            grid-column: 1 / -1;
+            margin-top: 0;
+        }
+
+        .tea-submit-panel > .tea-action-row {
+            align-self: center;
+        }
+
+        .tea-submit-button {
+            min-width: 150px;
+        }
+
+        .tea-sr-live {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .tea-confirm-dialog {
+            width: min(680px, calc(100vw - 32px));
+            max-height: min(86vh, 820px);
+            padding: 0;
+            overflow: auto;
+            border: 1px solid var(--border-strong);
+            border-radius: 12px;
+            background: var(--surface);
+            color: var(--text);
+            box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+        }
+
+        .tea-confirm-dialog::backdrop {
+            background: rgba(15, 23, 42, 0.58);
+        }
+
+        .tea-confirm-content {
+            padding: 22px;
+        }
+
+        .tea-confirm-summary {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--border);
+        }
+
+        .tea-confirm-summary > div {
+            min-width: 0;
+            padding: 12px;
+            background: var(--surface-muted);
+            overflow-wrap: anywhere;
+        }
+
+        .tea-confirm-actions {
+            margin-top: 18px;
+        }
+
+        @media (max-width: 760px) {
+            .tea-page-heading,
+            .tea-section-heading,
+            .tea-download-panel {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .tea-contract-badge {
+                align-self: flex-start;
+            }
+
+            .tea-source-layout,
+            .tea-control-grid,
+            .tea-editor-grid,
+            .tea-dynamic-grid,
+            .tea-distribution-grid,
+            .tea-evidence-grid,
+            .tea-design-grid,
+            .tea-transfer-grid,
+            .tea-submit-panel {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-definition-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .tea-summary-grid,
+            .tea-metric-grid,
+            .tea-tradeoff-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .tea-figure-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-figure-card:first-child {
+                grid-column: auto;
+            }
+
+            .tea-download-panel .tea-action-row,
+            .tea-submit-panel .tea-action-row {
+                justify-content: flex-start;
+            }
+
+            .tea-submit-panel > .tea-action-row {
+                grid-column: 1;
+            }
+
+            #technoeconomicPanel.has-results .tea-job-panel,
+            #technoeconomicPanel.has-results .tea-results-shell {
+                scroll-margin-top: 12px;
+            }
+        }
+
+        @media (max-width: 560px) {
+            .tea-page-heading,
+            .tea-form,
+            .tea-panel,
+            .tea-results-heading,
+            .tea-summary-grid,
+            .tea-metric-grid,
+            .tea-tradeoff-grid,
+            .tea-result-section,
+            .tea-confirm-content {
+                padding: 16px;
+            }
+
+            .tea-form {
+                gap: 14px;
+            }
+
+            .tea-result-section {
+                margin: 0 16px 16px;
+            }
+
+            .tea-download-panel {
+                margin: 0 16px 16px;
+            }
+
+            .tea-definition-grid,
+            .tea-summary-grid,
+            .tea-metric-grid,
+            .tea-tradeoff-grid,
+            .tea-confirm-summary,
+            .tea-metric-percentiles {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-section-heading {
+                gap: 12px;
+            }
+
+            .tea-section-heading .tea-button,
+            .tea-source-layout > .tea-button,
+            .tea-submit-button,
+            .tea-download-link,
+            .tea-confirm-actions .tea-button {
+                width: 100%;
+            }
+
+            .tea-progress-layout {
+                grid-template-columns: minmax(0, 1fr) auto;
+            }
+
+            .tea-progress-layout > label {
+                grid-column: 1 / -1;
+            }
+
+            .tea-action-row {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .tea-action-row .tea-button,
+            .tea-action-row .tea-download-link {
+                width: 100%;
+            }
+
+            .tea-field input:not([type="checkbox"]):not([type="radio"]),
+            .tea-field select,
+            .tea-field textarea,
+            .tea-distribution-editor input:not([type="checkbox"]):not([type="radio"]),
+            .tea-distribution-editor select,
+            .tea-evidence-editor input:not([type="checkbox"]):not([type="radio"]),
+            .tea-evidence-editor select,
+            .tea-evidence-editor textarea,
+            .tea-cost-line input:not([type="checkbox"]):not([type="radio"]),
+            .tea-cost-line select,
+            .tea-cost-line textarea,
+            .tea-commercial-panel input:not([type="checkbox"]):not([type="radio"]),
+            .tea-commercial-panel select,
+            .tea-commercial-panel textarea {
+                min-height: 44px;
+                font-size: 16px;
+            }
+
+            .tea-table {
+                min-width: 720px;
+            }
+
+            .tea-table th,
+            .tea-table td {
+                padding: 10px;
+            }
+
+            .tea-confirm-dialog {
+                width: calc(100vw - 20px);
+                max-height: calc(100dvh - 20px);
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .technoeconomic-only *,
+            .technoeconomic-only *::before,
+            .technoeconomic-only *::after {
+                scroll-behavior: auto !important;
+                transition-duration: 0.01ms !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+            }
+        }
+
+        @media (forced-colors: active) {
+            .tea-panel,
+            .tea-result-section,
+            .tea-editor-card,
+            .tea-cost-line,
+            .tea-source-status,
+            .tea-status-pill,
+            .tea-button,
+            .tea-download-link,
+            .tea-table-region {
+                border-color: CanvasText;
+            }
+
+            .tea-state-icon {
+                forced-color-adjust: none;
+            }
+
+            .tea-button-primary,
+            .tea-download-link {
+                background: Highlight;
+                color: HighlightText;
+            }
+        }
