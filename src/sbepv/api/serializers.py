@@ -15,6 +15,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from sbepv.agent.tool_schemas import SCENARIO_FIELD_LABELS, SCENARIO_OVERRIDE_FIELDS
+from sbepv.api import artifacts as artifacts_module
 from sbepv.api import config
 from sbepv.api.job_store import _get_job_record
 
@@ -37,6 +38,35 @@ _PRIVATE_METADATA_KEYS = {
 _PRIVATE_PATH_FRAGMENT = re.compile(
     r"(?i)(?:\\\\[^\\/\s]+[\\/][^\s]+|\b[a-z]:[\\/]|file:(?:/{0,3})|"
     r"(?<![:/\w])/(?!/?(?:outputs|api)(?:/|$)))"
+)
+_PUBLIC_TECHNOECONOMIC_ARTIFACT_URL_SUFFIXES = {
+    "csv_bundle": "exports/csv",
+    "xlsx_workbook": "exports/xlsx",
+    "cdf_plot": "artifacts/cdf_plot",
+    "sensitivity_plot": "artifacts/sensitivity_plot",
+    "convergence_plot": "artifacts/convergence_plot",
+}
+_PUBLIC_TECHNOECONOMIC_ARTIFACT_FIELDS = (
+    "artifact_id",
+    "schema_version",
+    "artifact_kind",
+    "filename",
+    "media_type",
+    "sha256",
+    "byte_count",
+    "row_count",
+    "table_count",
+    "tables",
+    "sheet_count",
+    "sheets",
+    "write_only_streaming",
+    "width_px",
+    "height_px",
+    "chart_contract_id",
+    "source_point_count",
+    "display_point_count",
+    "source_step_count",
+    "display_step_count",
 )
 
 
@@ -190,6 +220,87 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _public_technoeconomic_artifacts(job: dict[str, Any]) -> dict[str, Any]:
+    """Project immutable TEA artifact identities without storage locations."""
+
+    internal = job.get("artifacts")
+    if not isinstance(internal, dict):
+        return {}
+    public: dict[str, Any] = {}
+    sealed = internal.get("sealed_calculation")
+    if isinstance(sealed, dict):
+        public["sealed_calculation"] = {
+            key: _public_value(sealed[key])
+            for key in (
+                "schema_version",
+                "artifact_kind",
+                "media_type",
+                "sha256",
+                "byte_count",
+                "row_count",
+                "column_count",
+                "array_count",
+                "pickle_allowed",
+                "public",
+            )
+            if key in sealed
+        }
+
+    manifest = internal.get("exports")
+    entries = manifest.get("artifacts") if isinstance(manifest, dict) else None
+    if not isinstance(manifest, dict) or not isinstance(entries, dict):
+        return public
+    job_id = str(job.get("id") or "")
+    projected_entries: dict[str, Any] = {}
+    for _selector, contract in (
+        artifacts_module.TECHNOECONOMIC_PUBLIC_ARTIFACT_CONTRACT.items()
+    ):
+        artifact_id = str(contract["artifact_id"])
+        entry = entries.get(artifact_id)
+        if (
+            not isinstance(entry, dict)
+            or entry.get("artifact_id") != artifact_id
+            or entry.get("public") is not True
+            or entry.get("artifact_kind") != contract["artifact_kind"]
+            or entry.get("filename") != contract["filename"]
+            or entry.get("media_type") != contract["media_type"]
+        ):
+            continue
+        projected = {
+            key: _public_value(entry[key])
+            for key in _PUBLIC_TECHNOECONOMIC_ARTIFACT_FIELDS
+            if key in entry
+        }
+        projected["url"] = (
+            f"/api/technoeconomic/jobs/{job_id}/"
+            f"{_PUBLIC_TECHNOECONOMIC_ARTIFACT_URL_SUFFIXES[artifact_id]}"
+        )
+        projected_entries[artifact_id] = projected
+    public_manifest = {
+        key: _public_value(manifest[key])
+        for key in (
+            "schema_version",
+            "csv_format_version",
+            "owner_workflow",
+            "owner_job_id",
+            "source_snapshot_sha256",
+            "request_sha256",
+            "submission_provenance_sha256",
+            "sealed_calculation_sha256",
+            "calculation_contract_version",
+            "sampling_version",
+            "artifact_count",
+            "tie_outs",
+            "chart_contracts",
+            "manifest_sha256",
+        )
+        if key in manifest
+    }
+    public_manifest["artifacts"] = projected_entries
+    public["exports"] = public_manifest
+    return public
+
+
 def _public_technoeconomic_job(job: dict[str, Any]) -> dict[str, Any]:
     """Return the strict public projection of one durable TEA job.
 
@@ -242,7 +353,7 @@ def _public_technoeconomic_job(job: dict[str, Any]) -> dict[str, Any]:
         "request": _public_value(job.get("request")),
         "result": _public_value(job.get("result")),
         "result_provenance": _public_value(job.get("result_provenance")),
-        "artifacts": _public_value(job.get("artifacts")),
+        "artifacts": _public_technoeconomic_artifacts(job),
     }
     if job.get("error"):
         payload["error"] = _public_error(job["error"])

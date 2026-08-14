@@ -275,11 +275,20 @@ class TechnoeconomicRenderProxyTests(unittest.TestCase):
             (["technoeconomic", "jobs", "tea_abc123"], True),
             (["technoeconomic", "jobs", "tea_abc123", "cancel"], True),
             (["technoeconomic", "jobs", "tea_abc123", "retry"], True),
+            (["technoeconomic", "jobs", "tea_abc123", "exports", "csv"], True),
+            (["technoeconomic", "jobs", "tea_abc123", "exports", "xlsx"], True),
+            (["technoeconomic", "jobs", "tea_abc123", "artifacts", "cdf_plot"], True),
+            (["technoeconomic", "jobs", "tea_abc123", "artifacts", "sensitivity_plot"], True),
+            (["technoeconomic", "jobs", "tea_abc123", "artifacts", "convergence_plot"], True),
             (["technoeconomic", "jobs", "tea_abc123", "promote"], False),
             (["technoeconomic", "jobs", ".."], False),
             (["technoeconomic", "jobs", "tea_abc123", "delete"], False),
             (["technoeconomic", "sources", "extra"], False),
             (["technoeconomic", "jobs", "tea_abc123", "cancel", "extra"], False),
+            (["technoeconomic", "jobs", "tea_abc123", "exports", "png"], False),
+            (["technoeconomic", "jobs", "tea_abc123", "exports", "csv", "extra"], False),
+            (["technoeconomic", "jobs", "tea_abc123", "artifacts", "sealed_calculation"], False),
+            (["technoeconomic", "jobs", "..", "exports", "csv"], False),
         ]
         script = f"""
 import {{ isAllowedApiPath }} from './lib/render-proxy.ts';

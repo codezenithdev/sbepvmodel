@@ -6,6 +6,7 @@ payload is a 422 rather than a silently ignored setting.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import re
@@ -137,8 +138,40 @@ class ProposalSweepConfirmRequest(StrictRequest):
 # Technoeconomic requests deliberately use a stricter model family than the
 # historical dashboard bodies above.  Changing ``StrictRequest`` itself to
 # ``strict=True`` would be a compatibility change for the existing API.
+def _reject_xml_10_illegal_text(value: Any) -> None:
+    if isinstance(value, str):
+        for character in value:
+            codepoint = ord(character)
+            if (
+                (codepoint < 0x20 and codepoint not in {0x09, 0x0A, 0x0D})
+                or 0xD800 <= codepoint <= 0xDFFF
+                or codepoint in {0xFFFE, 0xFFFF}
+            ):
+                raise ValueError(
+                    "technoeconomic text contains a character that is not valid "
+                    "in XML 1.0"
+                )
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _reject_xml_10_illegal_text(key)
+            _reject_xml_10_illegal_text(item)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_xml_10_illegal_text(item)
+
+
 class StrictTechnoeconomicRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_xml_10_illegal_text(cls, value: Any) -> Any:
+        """Reject text that cannot be represented in the required XLSX export."""
+
+        _reject_xml_10_illegal_text(value)
+        return value
 
 
 StableTechnoeconomicId = Annotated[
@@ -157,6 +190,16 @@ NonemptyTechnoeconomicText = Annotated[
 Sha256Text = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 FiniteNonnegativeFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 FinitePositiveFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
+
+# The realization table has 43 fixed identity/result columns today.  Budget 48
+# so a version-1 request remains safe if a few audit columns are added without
+# weakening the pre-enqueue resource gate.  Every declared distribution is also
+# exported as a realization column, including fixed inputs.
+TECHNOECONOMIC_REALIZATION_COLUMN_OVERHEAD = 48
+TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS = 8_000_000
+# Forward stepwise rank regression repeatedly fits expanding predictor sets.  The
+# deterministic n*p^2 gate is a conservative lower-bound proxy for that work.
+TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS = 25_000_000
 
 
 class FixedDistributionRequest(StrictTechnoeconomicRequest):
@@ -646,6 +689,50 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                 raise ValueError(
                     "commercial representative costs must declare a sourced per-Wdc basis"
                 )
+
+        declared_input_count = len(self.cost_lines) + 2
+        if self.commercial_transfer is not None:
+            declared_input_count += 2
+        estimated_realization_columns = (
+            TECHNOECONOMIC_REALIZATION_COLUMN_OVERHEAD + declared_input_count
+        )
+        realization_export_cells = self.n * estimated_realization_columns
+        if realization_export_cells > TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS:
+            raise ValueError(
+                "technoeconomic realization export cell budget exceeded: "
+                f"{realization_export_cells} > "
+                f"{TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS}"
+            )
+
+        distributions = [line.distribution for line in self.cost_lines]
+        distributions.extend(
+            (
+                self.finance.real_discount_rate.distribution,
+                self.shared_degradation.annual_rate.distribution,
+            )
+        )
+        if self.commercial_transfer is not None:
+            distributions.extend(
+                (
+                    self.commercial_transfer.baseline_factor.distribution,
+                    self.commercial_transfer.incremental_factor.distribution,
+                )
+            )
+        nonfixed_predictor_count = sum(
+            distribution.family != "fixed"
+            and not (
+                distribution.family in {"uniform", "triangular"}
+                and distribution.low == distribution.high
+            )
+            for distribution in distributions
+        )
+        sensitivity_work_units = self.n * nonfixed_predictor_count**2
+        if sensitivity_work_units > TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS:
+            raise ValueError(
+                "technoeconomic sensitivity work budget exceeded: "
+                f"{sensitivity_work_units} > "
+                f"{TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS}"
+            )
         return self
 
 

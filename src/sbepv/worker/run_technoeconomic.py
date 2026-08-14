@@ -16,11 +16,14 @@ import math
 import os
 from pathlib import Path
 import secrets
+import stat
 from typing import Any, Callable
 
 import numpy as np
 
 from sbepv import technoeconomic as kernel
+from sbepv import technoeconomic_reporting
+from sbepv.api import artifacts as artifact_api
 from sbepv.api import config, job_store, state
 from sbepv.api import technoeconomic as technoeconomic_api
 from sbepv.api.artifacts import (
@@ -36,6 +39,15 @@ SEALED_CALCULATION_SCHEMA_VERSION = 1
 ROUTINE_RESULT_SCHEMA_VERSION = 1
 RESULT_PROVENANCE_SCHEMA_VERSION = 1
 SEALED_CALCULATION_FILENAME = "calculation_payload_v1.npz"
+_REQUIRED_EXPORT_ARTIFACT_IDS = frozenset(
+    {
+        "csv_bundle",
+        "xlsx_workbook",
+        "cdf_plot",
+        "sensitivity_plot",
+        "convergence_plot",
+    }
+)
 
 
 def _json_safe(value: Any) -> Any:
@@ -92,10 +104,26 @@ def _canonical_json_text(value: Any) -> str:
 
 
 def _sha256_file(path: Path) -> str:
+    before = path.lstat()
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise ValueError("The technoeconomic artifact is not a regular file")
     digest = hashlib.sha256()
+    byte_count = 0
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
+            byte_count += len(chunk)
+    after = path.lstat()
+    if (
+        stat.S_ISLNK(after.st_mode)
+        or not stat.S_ISREG(after.st_mode)
+        or before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+        or byte_count != after.st_size
+    ):
+        raise ValueError("The technoeconomic artifact changed during verification")
     return digest.hexdigest()
 
 
@@ -219,21 +247,32 @@ def _write_sealed_calculation_payload(
     metadata_bytes = _canonical_json_text(metadata).encode("utf-8")
     arrays["metadata_json_utf8"] = np.frombuffer(metadata_bytes, dtype=np.uint8)
 
+    published = False
     try:
         with temporary.open("xb") as handle:
             np.savez_compressed(handle, **arrays)
             handle.flush()
             os.fsync(handle.fileno())
+        artifact_sha256 = _sha256_file(temporary)
+        byte_count = int(temporary.stat().st_size)
+        if byte_count <= 0:
+            raise ValueError("The sealed calculation payload is empty")
         publish_check()
         temporary.replace(target)
+        published = True
+        if (
+            int(target.stat().st_size) != byte_count
+            or not secrets.compare_digest(_sha256_file(target), artifact_sha256)
+        ):
+            raise ValueError(
+                "The sealed calculation payload changed during publication"
+            )
     except Exception:
         temporary.unlink(missing_ok=True)
+        if published:
+            target.unlink(missing_ok=True)
         raise
 
-    artifact_sha256 = _sha256_file(target)
-    byte_count = int(target.stat().st_size)
-    if byte_count <= 0:
-        raise ValueError("The sealed calculation payload is empty")
     storage_key = target.resolve().relative_to(config.OUTPUT_DIR.resolve()).as_posix()
     return {
         "schema_version": SEALED_CALCULATION_SCHEMA_VERSION,
@@ -268,6 +307,359 @@ def _public_calculation_identity(artifact: Mapping[str, Any]) -> dict[str, Any]:
             "public",
         )
     }
+
+
+def _verify_sealed_calculation_artifact(
+    job_id: str,
+    lease_token: str,
+    artifact: Mapping[str, Any],
+) -> None:
+    """Revalidate the private calculation bytes before terminal completion."""
+
+    if not isinstance(artifact, Mapping):
+        raise ValueError("The sealed calculation artifact is not an object")
+    if (
+        artifact.get("schema_version") != SEALED_CALCULATION_SCHEMA_VERSION
+        or artifact.get("artifact_kind") != "sealed_technoeconomic_calculation"
+        or artifact.get("owner_workflow") != "technoeconomic"
+        or artifact.get("owner_job_id") != job_id
+        or artifact.get("filename") != SEALED_CALCULATION_FILENAME
+        or artifact.get("media_type") != "application/x-npz"
+        or artifact.get("public") is not False
+        or artifact.get("pickle_allowed") is not False
+    ):
+        raise ValueError("The sealed calculation artifact has an invalid identity")
+
+    attempt_directory = _technoeconomic_attempt_directory(
+        job_id,
+        lease_token,
+        create=False,
+    ).resolve(strict=True)
+    candidate = attempt_directory / SEALED_CALCULATION_FILENAME
+    try:
+        details = candidate.lstat()
+        resolved = candidate.resolve(strict=True)
+        output_directory = config.OUTPUT_DIR.resolve(strict=True)
+        expected_storage_key = resolved.relative_to(output_directory).as_posix()
+    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("The sealed calculation artifact is unavailable") from exc
+    if (
+        stat.S_ISLNK(details.st_mode)
+        or not stat.S_ISREG(details.st_mode)
+        or resolved.parent != attempt_directory
+        or artifact.get("storage_key") != expected_storage_key
+    ):
+        raise ValueError("The sealed calculation artifact escapes its attempt directory")
+
+    byte_count = artifact.get("byte_count")
+    digest = artifact.get("sha256")
+    if (
+        isinstance(byte_count, bool)
+        or not isinstance(byte_count, int)
+        or byte_count <= 0
+        or details.st_size != byte_count
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        or not secrets.compare_digest(_sha256_file(candidate), digest)
+    ):
+        raise ValueError("The sealed calculation artifact no longer matches its identity")
+
+
+def _positive_int(value: Any, *, field: str, allow_zero: bool = False) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Export manifest {field} must be an integer")
+    invalid = value < 0 if allow_zero else value <= 0
+    if invalid:
+        qualifier = "nonnegative" if allow_zero else "positive"
+        raise ValueError(f"Export manifest {field} must be {qualifier}")
+    return value
+
+
+def _verify_export_manifest(
+    job_id: str,
+    lease_token: str,
+    manifest: Mapping[str, Any],
+    *,
+    request_sha256: str,
+    source_snapshot_sha256: str,
+    submission_provenance_sha256: str,
+    calculation_contract_version: str,
+    sampling_version: str,
+    sealed_calculation_sha256: str,
+) -> None:
+    """Fail closed unless every published export matches its manifest identity."""
+
+    if not isinstance(manifest, Mapping):
+        raise ValueError("The technoeconomic export manifest is not an object")
+    if (
+        manifest.get("schema_version")
+        != technoeconomic_reporting.EXPORT_MANIFEST_SCHEMA_VERSION
+        or manifest.get("csv_format_version")
+        != technoeconomic_reporting.CSV_FORMAT_VERSION
+    ):
+        raise ValueError("The technoeconomic export manifest has the wrong schema")
+    expected_manifest_sha256 = manifest.get("manifest_sha256")
+    if (
+        not isinstance(expected_manifest_sha256, str)
+        or len(expected_manifest_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_manifest_sha256)
+    ):
+        raise ValueError("The technoeconomic export manifest has an invalid SHA-256")
+    digest_payload = dict(manifest)
+    digest_payload.pop("manifest_sha256", None)
+    calculated_manifest_sha256 = hashlib.sha256(
+        _canonical_json_text(digest_payload).encode("utf-8")
+    ).hexdigest()
+    if not secrets.compare_digest(
+        calculated_manifest_sha256,
+        expected_manifest_sha256,
+    ):
+        raise ValueError("The technoeconomic export manifest SHA-256 does not match")
+
+    expected_bindings = {
+        "owner_workflow": "technoeconomic",
+        "owner_job_id": job_id,
+        "request_sha256": request_sha256,
+        "source_snapshot_sha256": source_snapshot_sha256,
+        "submission_provenance_sha256": submission_provenance_sha256,
+        "sealed_calculation_sha256": sealed_calculation_sha256,
+        "calculation_contract_version": calculation_contract_version,
+        "sampling_version": sampling_version,
+    }
+    for field, expected in expected_bindings.items():
+        actual = manifest.get(field)
+        matches = actual == expected
+        if field.endswith("_sha256") and isinstance(actual, str):
+            matches = secrets.compare_digest(actual, expected)
+        if not matches:
+            raise ValueError(
+                f"The technoeconomic export manifest has the wrong {field}"
+            )
+
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, Mapping):
+        raise ValueError("The technoeconomic export manifest has no artifact map")
+    artifact_ids = {str(key) for key in artifacts}
+    if artifact_ids != _REQUIRED_EXPORT_ARTIFACT_IDS:
+        raise ValueError("The technoeconomic export manifest is incomplete")
+    if _positive_int(manifest.get("artifact_count"), field="artifact_count") != len(
+        artifacts
+    ):
+        raise ValueError("The technoeconomic export artifact count does not match")
+
+    attempt_directory = _technoeconomic_attempt_directory(
+        job_id,
+        lease_token,
+        create=False,
+    )
+    output_directory = config.OUTPUT_DIR.resolve()
+    seen_filenames: set[str] = set()
+    seen_storage_keys: set[str] = set()
+    public_contracts = {
+        str(contract["artifact_id"]): contract
+        for contract in artifact_api.TECHNOECONOMIC_PUBLIC_ARTIFACT_CONTRACT.values()
+    }
+    for artifact_id in sorted(_REQUIRED_EXPORT_ARTIFACT_IDS):
+        entry = artifacts.get(artifact_id)
+        if not isinstance(entry, Mapping) or entry.get("artifact_id") != artifact_id:
+            raise ValueError(
+                f"The technoeconomic export entry {artifact_id!r} has the wrong identity"
+            )
+        if entry.get("owner_workflow") != "technoeconomic":
+            raise ValueError("A technoeconomic export has the wrong workflow owner")
+        if entry.get("owner_job_id") != job_id:
+            raise ValueError("A technoeconomic export has the wrong job owner")
+        if entry.get("public") is not True:
+            raise ValueError("A published technoeconomic export is not public")
+        expected_schema_version = (
+            technoeconomic_reporting.CSV_BUNDLE_SCHEMA_VERSION
+            if artifact_id == "csv_bundle"
+            else technoeconomic_reporting.XLSX_SCHEMA_VERSION
+            if artifact_id == "xlsx_workbook"
+            else technoeconomic_reporting.PNG_SCHEMA_VERSION
+        )
+        if entry.get("schema_version") != expected_schema_version:
+            raise ValueError(
+                f"The technoeconomic export {artifact_id!r} has the wrong schema"
+            )
+        public_contract = public_contracts.get(artifact_id)
+        if public_contract is None or any(
+            entry.get(field) != public_contract.get(field)
+            for field in ("artifact_kind", "media_type", "filename")
+        ):
+            raise ValueError(
+                f"The technoeconomic export {artifact_id!r} violates its public contract"
+            )
+
+        filename = entry.get("filename")
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or len(filename) > 128
+            or filename.startswith(".")
+            or any(
+                character
+                not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
+                for character in filename
+            )
+            or filename in seen_filenames
+        ):
+            raise ValueError("A technoeconomic export has an unsafe filename")
+        seen_filenames.add(filename)
+
+        storage_key = entry.get("storage_key")
+        if (
+            not isinstance(storage_key, str)
+            or not storage_key
+            or "\\" in storage_key
+            or storage_key in seen_storage_keys
+        ):
+            raise ValueError("A technoeconomic export has an invalid storage key")
+        seen_storage_keys.add(storage_key)
+        try:
+            artifact_candidate = config.OUTPUT_DIR / Path(storage_key)
+            artifact_stat = artifact_candidate.lstat()
+            artifact_path = artifact_candidate.resolve()
+        except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+            raise ValueError("A technoeconomic export is unavailable") from exc
+        if (
+            artifact_path.parent != attempt_directory
+            or artifact_path.name != filename
+            or not artifact_path.is_relative_to(output_directory)
+            or not stat.S_ISREG(artifact_stat.st_mode)
+            or artifact_candidate.is_symlink()
+        ):
+            raise ValueError("A technoeconomic export escapes its attempt directory")
+
+        byte_count = _positive_int(
+            entry.get("byte_count"),
+            field=f"{artifact_id}.byte_count",
+        )
+        artifact_sha256 = entry.get("sha256")
+        if (
+            not isinstance(artifact_sha256, str)
+            or len(artifact_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in artifact_sha256)
+            or artifact_stat.st_size != byte_count
+            or not secrets.compare_digest(_sha256_file(artifact_path), artifact_sha256)
+        ):
+            raise ValueError("A technoeconomic export does not match its file identity")
+
+        if artifact_id == "csv_bundle":
+            table_count = _positive_int(
+                entry.get("table_count"), field="csv_bundle.table_count"
+            )
+            _positive_int(
+                entry.get("row_count"),
+                field="csv_bundle.row_count",
+                allow_zero=True,
+            )
+            tables = entry.get("tables")
+            if not isinstance(tables, list) or len(tables) != table_count:
+                raise ValueError("The CSV table count does not match its manifest")
+            table_rows = 0
+            table_filenames: set[str] = set()
+            for table in tables:
+                if not isinstance(table, Mapping):
+                    raise ValueError("The CSV table manifest is invalid")
+                table_rows += _positive_int(
+                    table.get("row_count"),
+                    field="csv_bundle.tables.row_count",
+                    allow_zero=True,
+                )
+                _positive_int(
+                    table.get("column_count"),
+                    field="csv_bundle.tables.column_count",
+                )
+                table_filename = table.get("filename")
+                table_sha256 = table.get("sha256")
+                if (
+                    not isinstance(table_filename, str)
+                    or not table_filename.endswith(".csv")
+                    or Path(table_filename).name != table_filename
+                    or table_filename in table_filenames
+                    or not isinstance(table_sha256, str)
+                    or len(table_sha256) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in table_sha256
+                    )
+                ):
+                    raise ValueError("A CSV table identity is invalid")
+                table_filenames.add(table_filename)
+            if table_rows != entry.get("row_count"):
+                raise ValueError("The CSV aggregate row count does not match")
+        elif artifact_id == "xlsx_workbook":
+            sheet_count = _positive_int(
+                entry.get("sheet_count"), field="xlsx_workbook.sheet_count"
+            )
+            _positive_int(
+                entry.get("row_count"),
+                field="xlsx_workbook.row_count",
+                allow_zero=True,
+            )
+            sheets = entry.get("sheets")
+            if not isinstance(sheets, list) or len(sheets) != sheet_count:
+                raise ValueError("The workbook sheet count does not match its manifest")
+            sheet_rows = 0
+            sheet_names: set[str] = set()
+            for sheet in sheets:
+                if not isinstance(sheet, Mapping):
+                    raise ValueError("The workbook sheet manifest is invalid")
+                sheet_rows += _positive_int(
+                    sheet.get("row_count"),
+                    field="xlsx_workbook.sheets.row_count",
+                    allow_zero=True,
+                )
+                _positive_int(
+                    sheet.get("column_count"),
+                    field="xlsx_workbook.sheets.column_count",
+                )
+                sheet_name = sheet.get("sheet_name")
+                logical_sha256 = sheet.get("logical_sha256")
+                if (
+                    not isinstance(sheet_name, str)
+                    or not sheet_name
+                    or len(sheet_name) > 31
+                    or sheet_name in sheet_names
+                    or sheet.get("logical_hash_version")
+                    != technoeconomic_reporting.XLSX_LOGICAL_HASH_VERSION
+                    or not isinstance(logical_sha256, str)
+                    or len(logical_sha256) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in logical_sha256
+                    )
+                ):
+                    raise ValueError("A workbook sheet identity is invalid")
+                sheet_names.add(sheet_name)
+            if sheet_rows != entry.get("row_count"):
+                raise ValueError("The workbook aggregate row count does not match")
+        else:
+            _positive_int(
+                entry.get("row_count"),
+                field=f"{artifact_id}.row_count",
+                allow_zero=True,
+            )
+            _positive_int(entry.get("width_px"), field=f"{artifact_id}.width_px")
+            _positive_int(entry.get("height_px"), field=f"{artifact_id}.height_px")
+            if not isinstance(entry.get("chart_contract_id"), str) or not entry[
+                "chart_contract_id"
+            ].strip():
+                raise ValueError("A technoeconomic chart has no contract identity")
+
+
+def _public_export_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the immutable manifest without private storage locations."""
+
+    public_manifest = _json_safe(manifest)
+    artifacts = public_manifest.get("artifacts")
+    if isinstance(artifacts, dict):
+        for entry in artifacts.values():
+            if isinstance(entry, dict):
+                entry.pop("storage_key", None)
+    return public_manifest
 
 
 def _routine_result(
@@ -618,6 +1010,56 @@ def _run_technoeconomic_job(
             artifact,
             verified_submission_provenance,
         )
+        kernel_provenance = _json_safe(calculation.provenance)
+        # Reporting reloads the sealed payload so exports are derived from the
+        # immutable bytes, not the live kernel object.  Release the large kernel
+        # arrays before that reload to avoid holding two realization matrices.
+        del calculation
+        attempt_directory = _technoeconomic_attempt_directory(
+            job_id,
+            lease_token,
+            create=False,
+        )
+        sealed_calculation_path = attempt_directory / artifact["filename"]
+
+        def fenced_check() -> None:
+            _check_cancelled(
+                job_id,
+                worker_id=worker_id,
+                lease_token=lease_token,
+            )
+
+        set_progress(94, "Generating CSV, workbook, and diagnostic plots")
+        export_manifest = technoeconomic_reporting.generate_technoeconomic_exports(
+            job_id=job_id,
+            attempt_directory=attempt_directory,
+            sealed_calculation_path=sealed_calculation_path,
+            sealed_calculation_artifact=artifact,
+            request_payload=request_payload,
+            source_snapshot=source_snapshot,
+            submission_provenance=verified_submission_provenance,
+            routine_result=routine_result,
+            cancellation_check=fenced_check,
+            publish_check=fenced_check,
+        )
+        _verify_sealed_calculation_artifact(job_id, lease_token, artifact)
+        set_progress(97, "Verifying the immutable export manifest")
+        export_verification = {
+            "request_sha256": request_sha256,
+            "source_snapshot_sha256": source_snapshot_sha256,
+            "submission_provenance_sha256": submission_provenance_sha256,
+            "calculation_contract_version": request.calculation_contract_version,
+            "sampling_version": request.sampling_version,
+            "sealed_calculation_sha256": artifact["sha256"],
+        }
+        _verify_export_manifest(
+            job_id,
+            lease_token,
+            export_manifest,
+            **export_verification,
+        )
+        public_export_manifest = _public_export_manifest(export_manifest)
+        routine_result["exports"] = public_export_manifest
         routine_result_sha256 = technoeconomic_api.canonical_json_sha256(
             routine_result
         )
@@ -636,10 +1078,22 @@ def _run_technoeconomic_job(
             },
             "routine_result_sha256": routine_result_sha256,
             "sealed_calculation": _public_calculation_identity(artifact),
-            "kernel": _json_safe(calculation.provenance),
+            "exports": {
+                "schema_version": export_manifest["schema_version"],
+                "manifest_sha256": export_manifest["manifest_sha256"],
+                "artifact_count": export_manifest["artifact_count"],
+            },
+            "kernel": kernel_provenance,
         }
-        set_progress(97, "Finalizing technoeconomic results")
+        set_progress(99, "Finalizing technoeconomic results")
+        _verify_export_manifest(
+            job_id,
+            lease_token,
+            export_manifest,
+            **export_verification,
+        )
         _check_cancelled(job_id, worker_id=worker_id, lease_token=lease_token)
+        _verify_sealed_calculation_artifact(job_id, lease_token, artifact)
         state.AGENT_STORE.update_technoeconomic_job(
             job_id,
             expected_worker_id=worker_id,
@@ -649,7 +1103,10 @@ def _run_technoeconomic_job(
             stage="Done",
             result=routine_result,
             result_provenance=result_provenance,
-            artifacts={"sealed_calculation": artifact},
+            artifacts={
+                "sealed_calculation": artifact,
+                "exports": export_manifest,
+            },
             error=None,
         )
     except Exception as exc:

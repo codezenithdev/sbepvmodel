@@ -451,6 +451,72 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         self.assertEqual([], self.store.list_technoeconomic_jobs())
         state._WORKER_WAKE.set.assert_not_called()
 
+    def test_strict_schema_rejects_xml_illegal_text_before_enqueue(self) -> None:
+        valid = _site_request_payload()
+        allowed_whitespace = deepcopy(valid)
+        allowed_whitespace["cost_lines"][0]["label"] = (
+            "Embedded tab\tline feed\nand carriage return\rremain valid"
+        )
+        parsed = TechnoeconomicSubmissionRequest.model_validate(allowed_whitespace)
+        self.assertIn("\t", parsed.cost_lines[0].label)
+        self.assertIn("\n", parsed.cost_lines[0].label)
+        self.assertIn("\r", parsed.cost_lines[0].label)
+
+        for illegal_character in ("\x00", "\x0b", "\x1f", "\ud800", "\ufffe", "\uffff"):
+            invalid = deepcopy(valid)
+            invalid["cost_lines"][0]["evidence"]["citation"][
+                "excerpt_or_derivation_note"
+            ] = f"Invalid export text {illegal_character} must be rejected"
+            with self.assertRaises(ValidationError) as raised:
+                TechnoeconomicSubmissionRequest.model_validate(invalid)
+            if illegal_character != "\ud800":
+                self.assertIn("not valid in XML 1.0", str(raised.exception))
+
+        http_invalid = deepcopy(valid)
+        http_invalid["cost_lines"][0]["label"] = "Invalid vertical tab\x0b"
+        response = self._create_via_api(http_invalid)
+        self.assertEqual(422, response.status_code, response.text)
+        self.assertEqual([], self.store.list_technoeconomic_jobs())
+        state._WORKER_WAKE.set.assert_not_called()
+
+    def test_strict_schema_enforces_pre_enqueue_resource_budgets(self) -> None:
+        normal_maximum_n = _site_request_payload(n=100_000)
+        parsed = TechnoeconomicSubmissionRequest.model_validate(normal_maximum_n)
+        self.assertEqual(100_000, parsed.n)
+
+        def expanded_payload(line_count: int, *, uncertain: bool) -> dict:
+            payload = _site_request_payload(n=100_000)
+            while len(payload["cost_lines"]) < line_count:
+                index = len(payload["cost_lines"])
+                line = deepcopy(payload["cost_lines"][0])
+                line["input_id"] = f"cost.sol.extra-{index:03d}"
+                line["label"] = f"Additional Solectria cost {index}"
+                line["coverage_include_ids"] = [f"equipment.sol.extra-{index:03d}"]
+                payload["cost_lines"].append(line)
+            if uncertain:
+                for line in payload["cost_lines"]:
+                    line["distribution"] = {
+                        "family": "uniform",
+                        "low": 1.0,
+                        "high": 2.0,
+                    }
+            return payload
+
+        excessive_cells = expanded_payload(31, uncertain=False)
+        excessive_sensitivity = expanded_payload(16, uncertain=True)
+        invalid_payloads = (
+            (excessive_cells, "realization export cell budget exceeded"),
+            (excessive_sensitivity, "sensitivity work budget exceeded"),
+        )
+        for payload, message in invalid_payloads:
+            with self.assertRaisesRegex(ValidationError, message):
+                TechnoeconomicSubmissionRequest.model_validate(payload)
+            response = self._create_via_api(payload)
+            self.assertEqual(422, response.status_code, response.text)
+
+        self.assertEqual([], self.store.list_technoeconomic_jobs())
+        state._WORKER_WAKE.set.assert_not_called()
+
     def test_site_receipts_freeze_denominators_currency_and_pair_decisions(self) -> None:
         payload = _site_request_payload()
         shared = deepcopy(payload["cost_lines"][0])

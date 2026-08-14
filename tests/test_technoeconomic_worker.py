@@ -180,10 +180,23 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
 
     def test_success_uses_frozen_inputs_and_seals_every_realization(self) -> None:
         record = self._claim()
+        observed_stages: list[str] = []
+        update_job = self.store.update_technoeconomic_job
+
+        def capture_stages(job_id: str, **kwargs):
+            stage = kwargs.get("stage")
+            if isinstance(stage, str):
+                observed_stages.append(stage)
+            return update_job(job_id, **kwargs)
+
         with patch.object(
             self.store,
             "get_job",
             side_effect=AssertionError("worker must not read the live Annual job"),
+        ), patch.object(
+            self.store,
+            "update_technoeconomic_job",
+            side_effect=capture_stages,
         ):
             self._run(record)
 
@@ -223,6 +236,49 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         cdf = next(iter(completed["result"]["summaries"].values()))["cdf"]
         self.assertEqual("sealed_calculation_payload", cdf["storage"])
         self.assertNotIn("values", cdf)
+
+        exports = completed["artifacts"]["exports"]
+        self.assertEqual(
+            {
+                "csv_bundle",
+                "xlsx_workbook",
+                "cdf_plot",
+                "sensitivity_plot",
+                "convergence_plot",
+            },
+            set(exports["artifacts"]),
+        )
+        manifest_payload = deepcopy(exports)
+        manifest_sha256 = manifest_payload.pop("manifest_sha256")
+        self.assertEqual(
+            manifest_sha256,
+            hashlib.sha256(
+                run_technoeconomic._canonical_json_text(manifest_payload).encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+        )
+        for export in exports["artifacts"].values():
+            export_path = self.output / Path(export["storage_key"])
+            self.assertTrue(export_path.is_file())
+            self.assertEqual(export["byte_count"], export_path.stat().st_size)
+            self.assertEqual(
+                export["sha256"],
+                hashlib.sha256(export_path.read_bytes()).hexdigest(),
+            )
+        public_exports = completed["result"]["exports"]
+        self.assertNotIn("storage_key", json.dumps(public_exports, sort_keys=True))
+        self.assertEqual(
+            exports["manifest_sha256"],
+            completed["result_provenance"]["exports"]["manifest_sha256"],
+        )
+        for expected_stage in (
+            "Sealing the private calculation payload",
+            "Generating CSV, workbook, and diagnostic plots",
+            "Verifying the immutable export manifest",
+            "Finalizing technoeconomic results",
+        ):
+            self.assertIn(expected_stage, observed_stages)
 
     def test_snapshot_digest_tampering_fails_before_calculation(self) -> None:
         record = self._claim()
@@ -352,6 +408,275 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
                 )
             ),
         )
+        self.assertFalse(
+            (
+                self.output
+                / ".technoeconomic_attempts"
+                / self.job_id
+                / record["lease_token"]
+            ).exists()
+        )
+
+    def test_sealed_payload_tampering_between_check_and_rename_fails_cleanly(
+        self,
+    ) -> None:
+        record = self._claim()
+        write_payload = run_technoeconomic._write_sealed_calculation_payload
+
+        def tamper_at_publish(*args, publish_check, **kwargs):
+            def check_then_tamper() -> None:
+                publish_check()
+                pending = (
+                    self.output
+                    / ".technoeconomic_attempts"
+                    / self.job_id
+                    / record["lease_token"]
+                    / ".pending.npz"
+                )
+                with pending.open("ab") as handle:
+                    handle.write(b"tampered-after-prepublication-hash")
+
+            return write_payload(
+                *args,
+                publish_check=check_then_tamper,
+                **kwargs,
+            )
+
+        with patch.object(
+            run_technoeconomic,
+            "_write_sealed_calculation_payload",
+            side_effect=tamper_at_publish,
+        ):
+            self._run(record)
+
+        failed = self.store.get_technoeconomic_job(self.job_id)
+        self.assertEqual("error", failed["state"])
+        self.assertIsNone(failed["result"])
+        self.assertIsNone(failed["artifacts"])
+        self.assertEqual([], list(self.output.rglob("*.npz")))
+
+    def test_cancellation_during_streaming_export_generation_cleans_attempt(
+        self,
+    ) -> None:
+        record = self._claim()
+
+        def cancel_while_streaming(**kwargs):
+            kwargs["cancellation_check"]()
+            self.store.cancel_technoeconomic_job(self.job_id)
+            kwargs["cancellation_check"]()
+            self.fail("the credentialed cancellation check must raise")
+
+        with patch.object(
+            run_technoeconomic.technoeconomic_reporting,
+            "generate_technoeconomic_exports",
+            side_effect=cancel_while_streaming,
+        ):
+            self._run(record)
+
+        cancelled = self.store.get_technoeconomic_job(self.job_id)
+        self.assertEqual("cancelled", cancelled["state"])
+        self.assertIsNone(cancelled["result"])
+        self.assertIsNone(cancelled["artifacts"])
+        self.assertFalse(
+            (
+                self.output
+                / ".technoeconomic_attempts"
+                / self.job_id
+                / record["lease_token"]
+            ).exists()
+        )
+
+    def test_cancellation_before_later_export_rename_removes_earlier_exports(
+        self,
+    ) -> None:
+        record = self._claim()
+        generate_exports = (
+            run_technoeconomic.technoeconomic_reporting.generate_technoeconomic_exports
+        )
+        publication_checks = 0
+
+        def cancel_later(**kwargs):
+            original_publish_check = kwargs["publish_check"]
+
+            def cancel_before_third_rename() -> None:
+                nonlocal publication_checks
+                publication_checks += 1
+                if publication_checks == 3:
+                    self.store.cancel_technoeconomic_job(self.job_id)
+                original_publish_check()
+
+            kwargs["publish_check"] = cancel_before_third_rename
+            return generate_exports(**kwargs)
+
+        with patch.object(
+            run_technoeconomic.technoeconomic_reporting,
+            "generate_technoeconomic_exports",
+            side_effect=cancel_later,
+        ):
+            self._run(record)
+
+        cancelled = self.store.get_technoeconomic_job(self.job_id)
+        self.assertEqual(3, publication_checks)
+        self.assertEqual("cancelled", cancelled["state"])
+        self.assertIsNone(cancelled["result"])
+        self.assertIsNone(cancelled["artifacts"])
+        self.assertFalse(
+            (
+                self.output
+                / ".technoeconomic_attempts"
+                / self.job_id
+                / record["lease_token"]
+            ).exists()
+        )
+
+    def test_lease_loss_after_an_export_publish_cleans_the_attempt(self) -> None:
+        record = self._claim()
+        generate_exports = (
+            run_technoeconomic.technoeconomic_reporting.generate_technoeconomic_exports
+        )
+        publication_checks = 0
+
+        def lose_lease_later(**kwargs):
+            original_publish_check = kwargs["publish_check"]
+
+            def interrupt_before_second_rename() -> None:
+                nonlocal publication_checks
+                publication_checks += 1
+                if publication_checks == 2:
+                    self.store.mark_stale_running_technoeconomic_jobs_interrupted()
+                original_publish_check()
+
+            kwargs["publish_check"] = interrupt_before_second_rename
+            return generate_exports(**kwargs)
+
+        with patch.object(
+            run_technoeconomic.technoeconomic_reporting,
+            "generate_technoeconomic_exports",
+            side_effect=lose_lease_later,
+        ):
+            self._run(record)
+
+        interrupted = self.store.get_technoeconomic_job(self.job_id)
+        self.assertEqual(2, publication_checks)
+        self.assertEqual("interrupted", interrupted["state"])
+        self.assertIsNone(interrupted["result"])
+        self.assertIsNone(interrupted["artifacts"])
+        self.assertFalse(
+            (
+                self.output
+                / ".technoeconomic_attempts"
+                / self.job_id
+                / record["lease_token"]
+            ).exists()
+        )
+
+    def test_forged_rehashed_export_provenance_fails_and_cleans_attempt(
+        self,
+    ) -> None:
+        record = self._claim()
+        generate_exports = (
+            run_technoeconomic.technoeconomic_reporting.generate_technoeconomic_exports
+        )
+
+        def forge_manifest(**kwargs):
+            manifest = generate_exports(**kwargs)
+            manifest["source_snapshot_sha256"] = "0" * 64
+            digest_payload = deepcopy(manifest)
+            digest_payload.pop("manifest_sha256", None)
+            manifest["manifest_sha256"] = hashlib.sha256(
+                run_technoeconomic._canonical_json_text(digest_payload).encode("utf-8")
+            ).hexdigest()
+            return manifest
+
+        with patch.object(
+            run_technoeconomic.technoeconomic_reporting,
+            "generate_technoeconomic_exports",
+            side_effect=forge_manifest,
+        ):
+            self._run(record)
+
+        failed = self.store.get_technoeconomic_job(self.job_id)
+        self.assertEqual("error", failed["state"])
+        self.assertIsNone(failed["result"])
+        self.assertIsNone(failed["artifacts"])
+        self.assertFalse(
+            (
+                self.output
+                / ".technoeconomic_attempts"
+                / self.job_id
+                / record["lease_token"]
+            ).exists()
+        )
+
+    def test_export_file_tampering_before_terminal_publication_fails_cleanly(
+        self,
+    ) -> None:
+        record = self._claim()
+        generate_exports = (
+            run_technoeconomic.technoeconomic_reporting.generate_technoeconomic_exports
+        )
+
+        def tamper_with_published_export(**kwargs):
+            manifest = generate_exports(**kwargs)
+            csv_entry = manifest["artifacts"]["csv_bundle"]
+            csv_path = self.output / Path(csv_entry["storage_key"])
+            with csv_path.open("ab") as handle:
+                handle.write(b"tampered-before-terminal-publication")
+            return manifest
+
+        with patch.object(
+            run_technoeconomic.technoeconomic_reporting,
+            "generate_technoeconomic_exports",
+            side_effect=tamper_with_published_export,
+        ):
+            self._run(record)
+
+        failed = self.store.get_technoeconomic_job(self.job_id)
+        self.assertEqual("error", failed["state"])
+        self.assertIsNone(failed["result"])
+        self.assertIsNone(failed["artifacts"])
+        self.assertFalse(
+            (
+                self.output
+                / ".technoeconomic_attempts"
+                / self.job_id
+                / record["lease_token"]
+            ).exists()
+        )
+
+    def test_sealed_payload_tampering_after_export_generation_fails_cleanly(
+        self,
+    ) -> None:
+        record = self._claim()
+        generate_exports = (
+            run_technoeconomic.technoeconomic_reporting.generate_technoeconomic_exports
+        )
+
+        def tamper_with_sealed_payload(**kwargs):
+            manifest = generate_exports(**kwargs)
+            with kwargs["sealed_calculation_path"].open("ab") as handle:
+                handle.write(b"tampered-after-export-generation")
+            return manifest
+
+        with patch.object(
+            run_technoeconomic.technoeconomic_reporting,
+            "generate_technoeconomic_exports",
+            side_effect=tamper_with_sealed_payload,
+        ):
+            self._run(record)
+
+        failed = self.store.get_technoeconomic_job(self.job_id)
+        self.assertEqual("error", failed["state"])
+        self.assertIsNone(failed["result"])
+        self.assertIsNone(failed["artifacts"])
+        self.assertFalse(
+            (
+                self.output
+                / ".technoeconomic_attempts"
+                / self.job_id
+                / record["lease_token"]
+            ).exists()
+        )
 
     def test_cancellation_wins_the_final_done_transition_and_cleans_artifact(
         self,
@@ -387,6 +712,14 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
                     run_technoeconomic.SEALED_CALCULATION_FILENAME
                 )
             ),
+        )
+        self.assertFalse(
+            (
+                self.output
+                / ".technoeconomic_attempts"
+                / self.job_id
+                / record["lease_token"]
+            ).exists()
         )
 
     def test_lease_loss_prevents_publication(self) -> None:

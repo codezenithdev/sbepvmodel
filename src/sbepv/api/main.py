@@ -96,12 +96,14 @@ from sbepv.agent.scenario_math import (
 )
 from sbepv.api.artifacts import (
     ArtifactCleanupError,
+    ArtifactIntegrityError,
     _delete_job_artifacts,
     _delete_job_attempt_artifacts,
     _delete_technoeconomic_job_artifacts,
     _job_attempt_prefix,
     _output_url,
     _public_source_url,
+    _verified_technoeconomic_artifact,
     _workbook_download_name,
 )
 from sbepv.api.job_store import (
@@ -1100,6 +1102,113 @@ def technoeconomic_status(job_id: str) -> JSONResponse:
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
     return JSONResponse(_public_technoeconomic_job(job))
+
+
+def _technoeconomic_export_response(job_id: str, export_format: str) -> FileResponse:
+    job = state.AGENT_STORE.get_technoeconomic_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
+    if job.get("state") != "done":
+        raise HTTPException(
+            status_code=409,
+            detail="Technoeconomic exports are available only after completion.",
+        )
+    try:
+        artifact_path, artifact = _verified_technoeconomic_artifact(
+            job,
+            export_format,
+        )
+    except (ArtifactIntegrityError, ValueError) as exc:
+        logger.warning(
+            "Rejected unverifiable %s export for technoeconomic job %s",
+            export_format,
+            job_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The requested technoeconomic export could not be verified. "
+                "Re-run the analysis to create a new immutable export."
+            ),
+        ) from exc
+    return FileResponse(
+        artifact_path,
+        media_type=str(artifact["media_type"]),
+        filename=str(artifact["filename"]),
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"sha256-{artifact["sha256"]}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/api/technoeconomic/jobs/{job_id}/exports/csv")
+def download_technoeconomic_csv(job_id: str) -> FileResponse:
+    """Download the verified UTF-8 CSV table bundle for one completed TEA."""
+
+    return _technoeconomic_export_response(job_id, "csv")
+
+
+@app.get("/api/technoeconomic/jobs/{job_id}/exports/xlsx")
+def download_technoeconomic_xlsx(job_id: str) -> FileResponse:
+    """Download the verified workbook for one completed TEA."""
+
+    return _technoeconomic_export_response(job_id, "xlsx")
+
+
+@app.get(
+    "/api/technoeconomic/jobs/{job_id}/artifacts/{artifact_id}",
+    response_class=FileResponse,
+)
+def download_technoeconomic_plot(job_id: str, artifact_id: str) -> FileResponse:
+    """Serve one literal allowlisted public plot from a completed TEA manifest."""
+
+    if artifact_id not in {
+        "cdf_plot",
+        "sensitivity_plot",
+        "convergence_plot",
+    }:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic artifact")
+    job = state.AGENT_STORE.get_technoeconomic_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
+    if job.get("state") != "done":
+        raise HTTPException(
+            status_code=409,
+            detail="Technoeconomic artifacts are available only after completion.",
+        )
+    try:
+        artifact_path, artifact = _verified_technoeconomic_artifact(
+            job,
+            artifact_id,
+        )
+    except (ArtifactIntegrityError, ValueError) as exc:
+        logger.warning(
+            "Rejected unverifiable %s for technoeconomic job %s",
+            artifact_id,
+            job_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The requested technoeconomic artifact could not be verified. "
+                "Re-run the analysis to create a new immutable artifact."
+            ),
+        ) from exc
+    return FileResponse(
+        artifact_path,
+        media_type="image/png",
+        filename=str(artifact["filename"]),
+        content_disposition_type="inline",
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"sha256-{artifact["sha256"]}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.post("/api/technoeconomic/jobs/{job_id}/cancel")

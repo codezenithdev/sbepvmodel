@@ -105,6 +105,28 @@ export function isAllowedApiPath(path: string[]): boolean {
     );
   }
 
+  if (path.length === 5) {
+    return (
+      path[0] === "technoeconomic" &&
+      path[1] === "jobs" &&
+      isSafeId(path[2]) &&
+      (
+        (
+          path[3] === "exports" &&
+          ["csv", "xlsx"].includes(path[4])
+        ) ||
+        (
+          path[3] === "artifacts" &&
+          [
+            "cdf_plot",
+            "sensitivity_plot",
+            "convergence_plot",
+          ].includes(path[4])
+        )
+      )
+    );
+  }
+
   return false;
 }
 

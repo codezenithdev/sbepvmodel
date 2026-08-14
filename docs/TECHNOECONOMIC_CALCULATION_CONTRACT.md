@@ -1610,11 +1610,11 @@ truth and both Python/Vite assemblers must remain equivalent.
 
 ### Phase 4 — artifacts, CDF plots, and exports
 
-- [ ] Generate result CDF and sensitivity/convergence plots with the non-GUI backend.
-- [ ] Generate complete CSV set and XLSX workbook.
-- [ ] Hash and publish artifacts only after lease ownership verification.
-- [ ] Add export tie-outs, safe filenames, cleanup, cancellation and tamper tests.
-- [ ] Visually inspect plots/workbook and report results for approval.
+- [X] Generate result CDF and sensitivity/convergence plots with the non-GUI backend.
+- [X] Generate complete CSV set and XLSX workbook.
+- [X] Hash and publish artifacts only after lease ownership verification.
+- [X] Add export tie-outs, safe filenames, cleanup, cancellation and tamper tests.
+- [X] Visually inspect plots/workbook and report results for approval.
 
 ### Phase 5 — canonical frontend replacement
 
