@@ -1631,9 +1631,9 @@ truth and both Python/Vite assemblers must remain equivalent.
 
 ### Phase 6 — integration and full verification
 
-- [ ] Run all focused TEA suites together.
-- [ ] Run `python -m unittest discover -v` from repository root.
-- [ ] Run `npm run build`.
-- [ ] Recheck project-layout invariants, clean source/output boundaries, immutable
+- [X] Run all focused TEA suites together.
+- [X] Run `python -m unittest discover -v` from repository root.
+- [X] Run `npm run build`.
+- [X] Recheck project-layout invariants, clean source/output boundaries, immutable
   provenance, API safety, and unrelated workspace changes.
-- [ ] Report exact test/build counts and any remaining caveats.
+- [X] Report exact test/build counts and any remaining caveats.
