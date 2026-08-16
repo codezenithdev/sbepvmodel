@@ -28,8 +28,14 @@ from scipy.stats import truncnorm
 
 CALCULATION_CONTRACT_VERSION = "tea-calculation-v1"
 SAMPLING_VERSION = "tea-lhs-v1"
-PINNED_NUMPY_VERSION = "2.5.0"
-PINNED_SCIPY_VERSION = "1.18.0"
+NUMERICAL_CONTRACT_VERSION = "tea-numerics-v1"
+# The versions this contract was authored and hand-verified against.  They are
+# recorded in provenance and named in diagnostics; they are not the gate.  The
+# gate is the behavioural fingerprint below, which checks the properties the
+# contract actually depends on instead of a version string that changes for
+# thousands of unrelated reasons.
+CONTRACT_NUMPY_VERSION = "2.5.0"
+CONTRACT_SCIPY_VERSION = "1.18.0"
 SUPPORTED_COST_TREATMENT = "constant-real-v1"
 
 LHS_JITTER_PURPOSE = "lhs-jitter"
@@ -257,18 +263,193 @@ def _validate_stable_id(value: Any, label: str = "input ID") -> str:
     return value
 
 
-def validate_runtime_versions() -> None:
-    """Fail closed if a pinned numerical dependency silently drifted."""
+def _probe_pcg64dxsm_stream() -> tuple[int | float, ...]:
+    """Draw from the exact SeedSequence/PCG64DXSM path the LHS sampler uses."""
 
-    if np.__version__ != PINNED_NUMPY_VERSION:
-        raise TechnoeconomicValidationError(
-            "tea-lhs-v1 requires NumPy "
-            f"{PINNED_NUMPY_VERSION}; runtime is {np.__version__}."
+    words: list[int] = []
+    for entropy in ([0] * 8, list(range(1, 9))):
+        generator = np.random.PCG64DXSM(np.random.SeedSequence(entropy=entropy))
+        words.extend(int(generator.random_raw()) for _ in range(4))
+    return tuple(words)
+
+
+def _probe_truncnorm_ppf() -> tuple[int | float, ...]:
+    """Exercise the far-tail inversion binary64 CDF subtraction cannot perform.
+
+    The 10-11 and 37-38 standard-deviation intervals are exactly the cases
+    Section 5.6 of the calculation contract relies on: an ordinary
+    ``Phi(b) - Phi(a)`` collapses both to zero probability, so a regression here
+    would silently turn a legitimate bounded-normal input into a degenerate or
+    nonfinite draw rather than raising.
+    """
+
+    cases = (
+        (-1.0, 1.0, 0.25),
+        (-3.0, 3.0, 0.975),
+        (-0.5, 4.0, 1e-9),
+        (10.0, 11.0, 0.5),
+        (10.0, 11.0, 1e-9),
+        (10.0, 11.0, 1.0 - 1e-9),
+        (37.0, 38.0, 0.5),
+    )
+    return tuple(
+        float(truncnorm.ppf(probability, low, high))
+        for low, high, probability in cases
+    )
+
+
+def _probe_type7_quantile() -> tuple[int | float, ...]:
+    """Pin the Hyndman-Fan type-7 interpolation behind every reported Pxx."""
+
+    population = np.asarray(
+        [0.1, 2.5, 3.7, 4.2, 9.9, 11.3, 15.0, -2.25, 0.0, 7.5],
+        dtype=np.float64,
+    )
+    return tuple(
+        float(value)
+        for value in np.quantile(population, [0.05, 0.5, 0.95], method="linear")
+    )
+
+
+def _probe_binary64_growth() -> tuple[int | float, ...]:
+    """Pin log1p/expm1, which carry the annuity and lifecycle-energy factors."""
+
+    log_growth = float(np.log1p(0.07))
+    log_ratio = float(np.log1p(-0.005) - np.log1p(0.07))
+    return (
+        log_growth,
+        float(np.expm1(-25.0 * log_growth)),
+        log_ratio,
+        float(np.expm1(25.0 * log_ratio)),
+    )
+
+
+_NUMERICAL_PROBES: dict[str, Callable[[], tuple[int | float, ...]]] = {
+    "binary64_growth": _probe_binary64_growth,
+    "pcg64dxsm_stream": _probe_pcg64dxsm_stream,
+    "truncnorm_ppf": _probe_truncnorm_ppf,
+    "type7_quantile": _probe_type7_quantile,
+}
+
+# The gate compares probe values to this many significant decimal digits.
+# Binary64 carries roughly 16, so 12 absorbs last-bit refinement between
+# releases while still catching every failure mode the contract cares about --
+# a collapsed far-tail interval, a clamped bound, a changed quantile rule, and
+# a reseeded bit generator all move far more than one part in 1e12.
+NUMERICAL_PROBE_SIGNIFICANT_DIGITS = 12
+
+
+def _serialize_probe(values: Sequence[int | float], *, exact: bool) -> str:
+    parts: list[str] = []
+    for value in values:
+        if isinstance(value, int) and not isinstance(value, bool):
+            parts.append(str(value))
+            continue
+        # ``+ 0.0`` normalizes -0.0 so a sign-only artifact cannot trip the gate.
+        number = float(value) + 0.0
+        parts.append(
+            number.hex()
+            if exact
+            else f"{number:.{NUMERICAL_PROBE_SIGNIFICANT_DIGITS - 1}e}"
         )
-    if scipy.__version__ != PINNED_SCIPY_VERSION:
+    return "|".join(parts)
+
+
+def _probe_digest(name: str, *, exact: bool) -> str:
+    return sha256(
+        _serialize_probe(_NUMERICAL_PROBES[name](), exact=exact).encode("ascii")
+    ).hexdigest()
+
+
+# Tolerance-scoped digests under the authored contract versions.  These are the
+# gate: a runtime that reproduces all four is permitted to run.  Confirmed
+# identical on CPython 3.11 / NumPy 2.4.6 / SciPy 1.17.1 and CPython 3.13 /
+# NumPy 2.5.0 / SciPy 1.18.0.
+#
+# Deliberately not probed: np.linalg.matrix_rank and np.linalg.lstsq reach
+# LAPACK, so their trailing bits track the local BLAS build rather than the
+# NumPy release.  Gating on them would fail closed on an innocent BLAS swap
+# while proving nothing about the release.  Those paths already guard
+# themselves -- stepwise_rank_regression treats a singular design as an
+# exclusion, not as a silent result.
+NUMERICAL_PROBE_DIGESTS: dict[str, str] = {
+    "binary64_growth": "14cc27d71cbbb17ac1369c382a7fd0413aa14c3542750f6e1516624bd764e16b",
+    "pcg64dxsm_stream": "6916080426e3ee51b5c81d1856ea1649e0570b0eec5bd7f614b6a74d6cdb49c9",
+    "truncnorm_ppf": "77516b8d1730543e54cb8b8449e6cb274ab5a514777b4da1a37266cacf246839",
+    "type7_quantile": "14c57ad434b4fa3c4138c8f6d933b325f5edf32fd92d7f38835292dba6979b67",
+}
+
+# Bit-exact digest over every probe under the authored contract versions.  This
+# is NOT a gate.  It answers a different and narrower question than the one
+# above -- "would this runtime reproduce the reference realization tables bit
+# for bit?" -- and is recorded in provenance so a reviewer comparing two
+# completed jobs can tell at a glance whether they are bit-comparable or merely
+# both within contract tolerance.  SciPy 1.17.1 and 1.18.0 differ here by three
+# ULP on one near-bound truncnorm case while agreeing to every digit the
+# contract depends on, which is precisely the distinction being drawn.
+NUMERICAL_EXACTNESS_DIGEST = (
+    "f8949ae833e1a7ccf484a015396084dec1fc183c8eccf3c839aec46824cd3a8d"
+)
+
+
+def numerical_fingerprint() -> dict[str, Any]:
+    """Describe this runtime's numerical behaviour for provenance and audit."""
+
+    exactness = sha256(
+        "|".join(
+            _serialize_probe(_NUMERICAL_PROBES[name](), exact=True)
+            for name in sorted(_NUMERICAL_PROBES)
+        ).encode("ascii")
+    ).hexdigest()
+    return {
+        "contract_version": NUMERICAL_CONTRACT_VERSION,
+        "significant_digits": NUMERICAL_PROBE_SIGNIFICANT_DIGITS,
+        "probe_digests": {
+            name: _probe_digest(name, exact=False)
+            for name in sorted(_NUMERICAL_PROBES)
+        },
+        "exactness_digest": exactness,
+        "reference_exactness_digest": NUMERICAL_EXACTNESS_DIGEST,
+        "bit_identical_to_reference": exactness == NUMERICAL_EXACTNESS_DIGEST,
+        "reference_numpy_version": CONTRACT_NUMPY_VERSION,
+        "reference_scipy_version": CONTRACT_SCIPY_VERSION,
+    }
+
+
+def validate_runtime_versions() -> None:
+    """Fail closed if the runtime's numerical behaviour left the contract.
+
+    Version 1 originally compared ``numpy.__version__`` and ``scipy.__version__``
+    against exact strings.  That gate was simultaneously too strict and too
+    weak: it rejected runtimes whose numbers satisfied the contract, and it
+    would equally have accepted a same-version rebuild whose behaviour had
+    changed underneath it.  This checks the behaviour the contract actually
+    depends on; the version strings remain in provenance.
+
+    The function name is retained because it is called at the top of
+    ``generate_lhs``, ``allocate_weather_years``, and ``validate_request``.
+    """
+
+    divergent: list[str] = []
+    for name in sorted(NUMERICAL_PROBE_DIGESTS):
+        try:
+            observed = _probe_digest(name, exact=False)
+        except Exception as exc:  # A probe that cannot even run is a failed gate.
+            raise TechnoeconomicValidationError(
+                f"{NUMERICAL_CONTRACT_VERSION} could not evaluate the {name!r} "
+                f"numerical probe on NumPy {np.__version__} / SciPy "
+                f"{scipy.__version__}: {exc}"
+            ) from exc
+        if observed != NUMERICAL_PROBE_DIGESTS[name]:
+            divergent.append(name)
+    if divergent:
         raise TechnoeconomicValidationError(
-            "tea-lhs-v1 bounded-normal inversion requires SciPy "
-            f"{PINNED_SCIPY_VERSION}; runtime is {scipy.__version__}."
+            f"{NUMERICAL_CONTRACT_VERSION} numerical probes diverged on NumPy "
+            f"{np.__version__} / SciPy {scipy.__version__}: "
+            f"{', '.join(divergent)}. The contract was authored against NumPy "
+            f"{CONTRACT_NUMPY_VERSION} / SciPy {CONTRACT_SCIPY_VERSION}. "
+            "Seeded reproducibility cannot be promised until the divergence is "
+            "reviewed and the contract digests are re-approved."
         )
 
 
@@ -2887,6 +3068,7 @@ def run_technoeconomic(
         "sampling_version": SAMPLING_VERSION,
         "numpy_version": np.__version__,
         "scipy_version": scipy.__version__,
+        "numerics": numerical_fingerprint(),
         "analysis_basis": request.basis,
         "realization_count": request.n,
         "seed": request.seed,

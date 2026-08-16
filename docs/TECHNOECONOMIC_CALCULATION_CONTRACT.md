@@ -493,13 +493,32 @@ X = mean + sd * Phi^-1(Phi(a) + U * (Phi(b) - Phi(a)))
 Requirements: `sd > 0`, `low < high`, all parameters finite, and a nonempty
 truncated probability interval. The mean need not be centered in the bounds.
 
-Version 1 evaluates this inverse CDF with directly pinned SciPy 1.18.0
-`scipy.stats.truncnorm.ppf`. This is deliberate: ordinary binary64 normal-CDF
+Version 1 evaluates this inverse CDF with `scipy.stats.truncnorm.ppf`, authored
+against SciPy 1.18.0. This is deliberate: ordinary binary64 normal-CDF
 subtraction collapses legitimate far-tail intervals (for example, 10 to 11 standard
 deviations) to zero probability. A result that rounds onto a bound is moved one
 binary64 value toward the interior; an interval with no representable interior
 binary64 value is rejected. The SciPy version is stored with the sampling
 provenance.
+
+The dependency is on this *behavior*, not on a version string, and the runtime
+gate says so directly. `technoeconomic.validate_runtime_versions` evaluates four
+probe groups at every entry point — the `PCG64DXSM`/`SeedSequence` bit stream,
+`truncnorm.ppf` across ordinary, 10-to-11 and 37-to-38 standard-deviation
+intervals, the type-7 quantile rule, and the `log1p`/`expm1` pair behind the
+annuity and lifecycle-energy factors — and refuses to run unless each digest
+matches `NUMERICAL_PROBE_DIGESTS` to twelve significant decimal digits.
+`matrix_rank` and `lstsq` are excluded on purpose: they reach LAPACK, so their
+trailing bits track the local BLAS build rather than the NumPy release.
+
+Twelve digits absorbs last-bit refinement between releases — SciPy 1.17.1 and
+1.18.0 differ by three ULP on one near-bound case while agreeing everywhere the
+contract depends on them — and still rejects every failure mode that matters,
+each of which moves far more than one part in `1e12`. Bit-level identity is
+reported rather than enforced: provenance carries an `exactness_digest` and a
+`bit_identical_to_reference` flag, so a reviewer comparing two completed jobs
+can tell whether they are bit-comparable or merely both within contract
+tolerance. Re-approving `NUMERICAL_PROBE_DIGESTS` is a contract decision.
 
 ### 5.7 Finance and degradation inputs
 
@@ -526,7 +545,8 @@ generator and LHS algorithm.
 
 The proposed `tea-lhs-v1` sampling version pins:
 
-- NumPy 2.5.0 `PCG64DXSM` as the bit generator;
+- NumPy `PCG64DXSM` as the bit generator, authored against NumPy 2.5.0 and
+  verified at runtime by the Section 5.6 `pcg64dxsm_stream` probe;
 - a user seed integer in `0..2^64-1`;
 - canonical uncertain-dimension order by server-assigned stable ASCII input ID
   matching `[a-z0-9._:-]+`, followed by reserved IDs for approved dependence groups
@@ -891,7 +911,7 @@ Proposed deterministic algorithm:
 
 Preprocessing retains the lexicographically first exact rank-duplicate predictor and
 records later duplicates as `duplicate_rank`. Before each candidate fit, the design
-matrix must gain one numerical rank under NumPy 2.5.0's matrix-rank rule; otherwise
+matrix must gain one numerical rank under NumPy's matrix-rank rule; otherwise
 the candidate is recorded as `rank_singular`. Ordinary R-squared is clamped only for
 roundoff to `[0, 1]`. These policies prevent an arbitrary least-squares solution from
 changing entry order when predictors are algebraically redundant.

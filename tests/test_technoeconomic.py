@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import replace
 
 import numpy as np
+import scipy
 
 from sbepv import technoeconomic as tea
 
@@ -348,6 +349,63 @@ class DistributionContractTests(unittest.TestCase):
             tea.validate_distribution(
                 tea.DistributionSpec("x.bad", "bounded_normal", low=0, high=1, mean=0)
             )
+
+
+class NumericalContractGateTests(unittest.TestCase):
+    """The gate must accept a conforming runtime and reject a drifted one."""
+
+    def test_current_runtime_satisfies_every_probe(self):
+        tea.validate_runtime_versions()
+        fingerprint = tea.numerical_fingerprint()
+        self.assertEqual(fingerprint["probe_digests"], tea.NUMERICAL_PROBE_DIGESTS)
+        self.assertEqual(
+            sorted(tea.NUMERICAL_PROBE_DIGESTS),
+            ["binary64_growth", "pcg64dxsm_stream", "truncnorm_ppf", "type7_quantile"],
+        )
+
+    def test_a_drifted_probe_fails_closed_and_names_itself(self):
+        original = dict(tea.NUMERICAL_PROBE_DIGESTS)
+        tea.NUMERICAL_PROBE_DIGESTS["truncnorm_ppf"] = "00" * 32
+        try:
+            with self.assertRaises(tea.TechnoeconomicValidationError) as caught:
+                tea.validate_runtime_versions()
+        finally:
+            tea.NUMERICAL_PROBE_DIGESTS.clear()
+            tea.NUMERICAL_PROBE_DIGESTS.update(original)
+        self.assertIn("truncnorm_ppf", str(caught.exception))
+        self.assertNotIn("type7_quantile", str(caught.exception))
+
+    def test_an_unevaluatable_probe_fails_closed(self):
+        def exploding_probe():
+            raise RuntimeError("scipy signature changed")
+
+        original = tea._NUMERICAL_PROBES["truncnorm_ppf"]
+        tea._NUMERICAL_PROBES["truncnorm_ppf"] = exploding_probe
+        try:
+            with self.assertRaises(tea.TechnoeconomicValidationError) as caught:
+                tea.validate_runtime_versions()
+        finally:
+            tea._NUMERICAL_PROBES["truncnorm_ppf"] = original
+        self.assertIn("scipy signature changed", str(caught.exception))
+
+    def test_tolerance_absorbs_last_bit_drift_but_not_a_collapsed_tail(self):
+        # SciPy 1.17.1 and 1.18.0 differ by three ULP on one near-bound case.
+        # That must not trip the gate; a collapsed far-tail interval must.
+        values = tea._NUMERICAL_PROBES["truncnorm_ppf"]()
+        nudged = tuple(math.nextafter(v, math.inf) for v in values)
+        self.assertEqual(
+            tea._serialize_probe(values, exact=False),
+            tea._serialize_probe(nudged, exact=False),
+        )
+        self.assertNotEqual(
+            tea._serialize_probe(values, exact=True),
+            tea._serialize_probe(nudged, exact=True),
+        )
+        collapsed = tuple(10.0 for _ in values)
+        self.assertNotEqual(
+            tea._serialize_probe(values, exact=False),
+            tea._serialize_probe(collapsed, exact=False),
+        )
 
 
 class SamplingContractTests(unittest.TestCase):
@@ -1198,8 +1256,17 @@ class LifecycleCalculationTests(unittest.TestCase):
         self.assertEqual(len(result.realization_table["realization_index"]), 64)
         for identifier in replacements:
             self.assertGreater(np.ptp(result.sampled_inputs[identifier]), 0)
-        self.assertEqual(result.provenance["numpy_version"], "2.5.0")
-        self.assertEqual(result.provenance["scipy_version"], "1.18.0")
+        # Provenance records the runtime that actually ran, not a literal: the
+        # gate is the numerical fingerprint below, not a version string.
+        self.assertEqual(result.provenance["numpy_version"], np.__version__)
+        self.assertEqual(result.provenance["scipy_version"], scipy.__version__)
+        numerics = result.provenance["numerics"]
+        self.assertEqual(numerics["contract_version"], tea.NUMERICAL_CONTRACT_VERSION)
+        self.assertEqual(numerics["probe_digests"], tea.NUMERICAL_PROBE_DIGESTS)
+        self.assertEqual(
+            numerics["bit_identical_to_reference"],
+            numerics["exactness_digest"] == tea.NUMERICAL_EXACTNESS_DIGEST,
+        )
 
     def test_headline_lcoo_population_is_positive_gain_only(self):
         rows = (

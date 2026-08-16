@@ -6,7 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "sbepv"
 version = "1.0.0"
 description = "SB Energy PV operations dashboard: physics model, calibration workflow, and FastAPI backend"
-requires-python = ">=3.11"
+# 3.12 is a hard floor, not a preference: requirements.txt (read dynamically
+# below) pins numpy==2.5.0, which publishes no wheel for 3.11.  Declaring 3.11
+# here let the resolver quietly fall back to an older NumPy, which then failed
+# the technoeconomic numerical gate at request time instead of at install time.
+requires-python = ">=3.12"
 
 # Runtime dependencies are deliberately not duplicated here. requirements.txt is
 # authoritative -- it is what the Render build command installs, and keeping a
