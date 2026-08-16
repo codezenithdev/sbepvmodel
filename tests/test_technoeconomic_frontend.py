@@ -267,7 +267,7 @@ function commercialDraft(transferEnabled = true) {
             self.annual_run_script.index("technoeconomicTab.addEventListener"),
         )
 
-    def test_source_sampling_and_basis_controls_are_explicit(self) -> None:
+    def test_guided_solartac_controls_are_minimal_and_internal_editor_is_hidden(self) -> None:
         self.assertRegex(
             self.markup,
             r'<select id="technoeconomicSourceSelect"[^>]*\brequired\b',
@@ -281,6 +281,134 @@ function commercialDraft(transferEnabled = true) {
         self.assertIn("SolarTAC site", self.markup)
         self.assertIn("Commercial representative", self.markup)
         self.assertIn("SolarTAC and commercial assumptions are never blended", self.markup)
+
+        guided_ids = (
+            "technoeconomicGuidedPanel",
+            "technoeconomicGuidedCostYear",
+            "technoeconomicGuidedProjectLife",
+            "technoeconomicGuidedDiscount",
+            "technoeconomicGuidedDegradation",
+            "technoeconomicGuidedBaseCapex",
+            "technoeconomicGuidedBaseOm",
+            "technoeconomicGuidedIncrementalCapex",
+            "technoeconomicGuidedIncrementalOm",
+            "technoeconomicGuidedAssumptionNote",
+            "technoeconomicGuidedAccept",
+            "technoeconomicApplyReferenceBtn",
+            "technoeconomicReferenceStatus",
+            "technoeconomicGuidedRanges",
+            "technoeconomicAdvancedDetails",
+            "technoeconomicUseGuidedBtn",
+            "technoeconomicLegacyDraftNotice",
+            "technoeconomicEntryModeStatus",
+            "technoeconomicSubmitPanel",
+        )
+        for element_id in guided_ids:
+            self.assertEqual(self.markup.count(f'id="{element_id}"'), 1, element_id)
+
+        for stem in (
+            "Discount",
+            "Degradation",
+            "BaseCapex",
+            "BaseOm",
+            "IncrementalCapex",
+            "IncrementalOm",
+        ):
+            for suffix in ("Low", "High"):
+                element_id = f"technoeconomicGuided{stem}{suffix}"
+                self.assertEqual(self.markup.count(f'id="{element_id}"'), 1, element_id)
+
+        guided_ranges = re.search(
+            r'<details\b(?=[^>]*\bid="technoeconomicGuidedRanges")[^>]*>',
+            self.markup,
+        )
+        self.assertIsNotNone(guided_ranges)
+        assert guided_ranges is not None
+        self.assertNotRegex(guided_ranges.group(0), r"\sopen(?:\s|=|>)")
+
+        internal_editor = re.search(
+            r'<details\b(?=[^>]*\bid="technoeconomicAdvancedDetails")[^>]*>',
+            self.markup,
+        )
+        self.assertIsNotNone(internal_editor)
+        assert internal_editor is not None
+        self.assertRegex(internal_editor.group(0), r"\shidden(?:\s|=|>)")
+        self.assertRegex(internal_editor.group(0), r"\sinert(?:\s|=|>)")
+        self.assertNotRegex(internal_editor.group(0), r"\sopen(?:\s|=|>)")
+
+        self.assertRegex(
+            self.markup,
+            r'<button[^>]*\bid="technoeconomicApplyReferenceBtn"[^>]*\btype="button"',
+        )
+        self.assertRegex(
+            self.markup,
+            r'<input[^>]*\bid="technoeconomicGuidedAccept"[^>]*\btype="checkbox"',
+        )
+        self.assertRegex(
+            self.markup,
+            r'id="technoeconomicReferenceStatus"[^>]*\brole="status"',
+        )
+        self.assertRegex(
+            self.markup,
+            r'<button[^>]*\bid="technoeconomicUseGuidedBtn"[^>]*\btype="button"',
+        )
+        self.assertIn("Start new Guided SolarTAC form", self.markup)
+        self.assertRegex(
+            self.markup,
+            r'id="technoeconomicLegacyDraftNotice"[^>]*\bhidden\b',
+        )
+        self.assertRegex(
+            self.markup,
+            r'id="technoeconomicEntryModeStatus"[^>]*\brole="status"',
+        )
+        self.assertRegex(
+            self.markup,
+            r'<textarea[^>]*\bid="technoeconomicGuidedAssumptionNote"'
+            r'[^>]*\bmaxlength="4000"[^>]*\brequired\b',
+        )
+        for element_id in (
+            "technoeconomicGuidedCostYear",
+            "technoeconomicGuidedProjectLife",
+            "technoeconomicGuidedDiscount",
+            "technoeconomicGuidedDegradation",
+            "technoeconomicGuidedBaseCapex",
+            "technoeconomicGuidedBaseOm",
+            "technoeconomicGuidedIncrementalCapex",
+            "technoeconomicGuidedIncrementalOm",
+        ):
+            self.assertRegex(
+                self.markup,
+                rf'<input[^>]*\bid="{element_id}"[^>]*\brequired\b',
+                element_id,
+            )
+        for element_id in (
+            "technoeconomicGuidedBaseCapex",
+            "technoeconomicGuidedBaseOm",
+            "technoeconomicGuidedIncrementalCapex",
+            "technoeconomicGuidedIncrementalOm",
+        ):
+            self.assertRegex(
+                self.markup,
+                rf'<input[^>]*\bid="{element_id}"[^>]*\bmin="0"',
+                element_id,
+            )
+        self.assertIn("Enter 5 for a 5% real annual rate", self.markup)
+        self.assertIn("Enter 0.5 for 0.5% annual degradation", self.markup)
+        advanced_index = self.markup.index('id="technoeconomicAdvancedDetails"')
+        for advanced_id in (
+            "technoeconomicBasis",
+            "technoeconomicRealizations",
+            "technoeconomicSeed",
+            "technoeconomicAssumptionEditors",
+        ):
+            self.assertGreater(
+                self.markup.index(f'id="{advanced_id}"'),
+                advanced_index,
+                advanced_id,
+            )
+
+        # Sampling remains in the hidden internal request editor for strict
+        # serialization and legacy-draft preservation, not end-user editing.
         self.assertRegex(
             self.markup,
             r'<input id="technoeconomicRealizations"[^>]*\bmin="1"'
@@ -293,6 +421,16 @@ function commercialDraft(transferEnabled = true) {
         )
         self.assertIn("9,007,199,254,740,991", self.markup)
         self.assertIn("browser never rounds the reproducibility seed", self.markup)
+
+    def test_personal_attribution_is_absent_from_tea_code(self) -> None:
+        prohibited = "cli" + "ff"
+        for label, content in (
+            ("markup", self.markup),
+            ("script", self.script),
+            ("styles", self.styles),
+            ("bindings", self.bindings),
+        ):
+            self.assertNotIn(prohibited, content.lower(), label)
 
     def test_markup_ids_references_and_dom_bindings_resolve(self) -> None:
         element_ids = re.findall(r'\bid="([^"]+)"', self.markup)
@@ -319,7 +457,9 @@ function commercialDraft(transferEnabled = true) {
         for marker in (
             '<form class="tea-form" id="technoeconomicForm" novalidate>',
             "<fieldset",
-            "<legend>Analysis basis and sampling</legend>",
+            "Guided SolarTAC setup",
+            '<details class="tea-advanced-workspace" id="technoeconomicAdvancedDetails" hidden inert>',
+            "<legend>Basis and reproducibility controls</legend>",
             '<progress id="technoeconomicProgress" max="100" value="0">',
             'role="status" aria-live="polite" aria-atomic="true"',
             'id="technoeconomicFormErrors" role="alert" aria-live="assertive"',
@@ -500,6 +640,502 @@ console.log(JSON.stringify(context));
         ):
             self.assertIn(marker, source)
         self.assertNotIn("sealed_calculation", source)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_default_draft_never_silently_prefills_reference_values(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const draft = technoeconomicDefaultDraft();
+assert.equal(draft.n, '10000');
+assert.equal(draft.project_life_years, '');
+assert.equal(draft.discount_rate.distribution.value, '');
+assert.equal(draft.shared_degradation.distribution.value, '');
+assert.ok(draft.cost_lines.length >= 2);
+assert.ok(draft.cost_lines.every((line) => line.distribution.value === ''));
+const frozenDefault = JSON.stringify(draft);
+for (const referenceValue of ['0.02', '0.035', '0.046', '0.05', '0.08', '6500']) {
+  assert.equal(frozenDefault.includes(referenceValue), false, referenceValue);
+}
+assert.equal(frozenDefault.includes('secondary_synthesis'), false);
+const serialized = serializeTechnoeconomicRequest(draft, {sources: []});
+assert.equal(serialized.valid, false);
+assert.ok(serialized.errors.length > 0);
+console.log(JSON.stringify({
+  valid: serialized.valid,
+  errorCount: serialized.errors.length,
+  projectLife: draft.project_life_years,
+  costValues: draft.cost_lines.map((line) => line.distribution.value),
+}));
+"""
+        )
+        self.assertFalse(payload["valid"])
+        self.assertGreater(payload["errorCount"], 0)
+        self.assertEqual("", payload["projectLife"])
+        self.assertTrue(all(value == "" for value in payload["costValues"]))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_guided_helpers_expand_ranges_evidence_and_reference_action(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+
+const fixed = technoeconomicGuidedDistribution('0.05');
+assert.deepEqual(fixed, {
+  family: 'fixed', value: '0.05', low: '', mode: '', high: '', mean: '', sd: '',
+});
+const triangular = technoeconomicGuidedDistribution('0.05', '0.03', '0.07');
+assert.deepEqual(triangular, {
+  family: 'triangular', value: '', low: '0.03', mode: '0.05', high: '0.07',
+  mean: '', sd: '',
+});
+const percent = technoeconomicGuidedDistribution('5', '3', '7', 100);
+assert.deepEqual(percent, {
+  family: 'triangular', value: '', low: '0.03', mode: '0.05', high: '0.07',
+  mean: '', sd: '',
+});
+
+const evidence = technoeconomicGuidedEvidence(
+  'Accepted as an analyst-provided provisional assumption for this run.',
+  true,
+  {date: '2026-08-16', seed: '123', subject: 'Guided fixture'},
+);
+assert.equal(evidence.evidence_class, 'engineering_judgment');
+assert.equal(evidence.explicit_acceptance, true);
+assert.equal(evidence.acceptance_rationale,
+  'Accepted as an analyst-provided provisional assumption for this run.');
+assert.equal(evidence.citation.stable_reference, 'guided-solartac-assumptions-123');
+assert.equal(evidence.citation.publication_or_as_of_date, '2026-08-16');
+assert.equal(evidence.citation.accessed_date, '2026-08-16');
+assert.equal(evidence.citation.title, 'Guided fixture');
+assert.equal(evidence.citation.organization, 'User-supplied guided TEA assumptions');
+
+const rejected = technoeconomicGuidedEvidence('Not accepted.', false, {
+  date: '2026-08-16', seed: '123',
+});
+assert.equal(rejected.explicit_acceptance, false);
+
+const original = {base_capex: '1.2', incremental_capex: '9.9'};
+const reference = technoeconomicApplyProvisionalReferenceValues(original);
+assert.deepEqual(original, {base_capex: '1.2', incremental_capex: '9.9'});
+assert.equal(reference.base_capex, '1.2');
+assert.equal(reference.incremental_capex_low, '0.02');
+assert.equal(reference.incremental_capex, '0.05');
+assert.equal(reference.incremental_capex_high, '0.08');
+assert.equal(reference.provisional_reference_applied, true);
+const referenceEvidence = technoeconomicGuidedEvidence(
+  'I explicitly reviewed and accepted the provisional reference range.',
+  true,
+  {date: '2026-08-16', seed: '123', provisionalReference: true},
+);
+assert.equal(referenceEvidence.evidence_class, 'secondary_synthesis');
+assert.equal(referenceEvidence.explicit_acceptance, true);
+assert.equal(referenceEvidence.citation.stable_reference,
+  'solartac-incremental-capex-provisional-reference-v1');
+assert.ok(referenceEvidence.citation.excerpt_or_derivation_note.includes('$0.02'));
+assert.ok(referenceEvidence.citation.excerpt_or_derivation_note.includes('$0.05'));
+assert.ok(referenceEvidence.citation.excerpt_or_derivation_note.includes('$0.08'));
+
+console.log(JSON.stringify({fixed, triangular, percent, evidence, rejected, reference}));
+"""
+        )
+        self.assertEqual("fixed", payload["fixed"]["family"])
+        self.assertEqual("triangular", payload["triangular"]["family"])
+        self.assertEqual("0.05", payload["percent"]["mode"])
+        self.assertTrue(payload["evidence"]["explicit_acceptance"])
+        self.assertFalse(payload["rejected"]["explicit_acceptance"])
+        self.assertTrue(payload["reference"]["provisional_reference_applied"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_internal_detailed_editor_is_never_exposed(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+globalThis.technoeconomicElements = {
+  guidedPanel: {hidden: true},
+  advancedDetails: {hidden: false, open: true},
+  entryModeRow: {hidden: false},
+  submitPanel: {hidden: false},
+  useGuidedButton: {hidden: false},
+  entryModeStatus: {textContent: ''},
+};
+
+technoeconomicEntryMode = TECHNOECONOMIC_GUIDED_ENTRY_MODE;
+technoeconomicRenderEntryMode();
+assert.equal(technoeconomicElements.guidedPanel.hidden, false);
+assert.equal(technoeconomicElements.advancedDetails.hidden, true);
+assert.equal(technoeconomicElements.advancedDetails.open, false);
+assert.equal(technoeconomicElements.entryModeRow.hidden, true);
+assert.equal(technoeconomicElements.submitPanel.hidden, false);
+assert.equal(technoeconomicElements.useGuidedButton.hidden, true);
+assert.ok(technoeconomicElements.entryModeStatus.textContent.includes('generated automatically'));
+
+technoeconomicElements.advancedDetails.open = true;
+technoeconomicEntryMode = TECHNOECONOMIC_ADVANCED_ENTRY_MODE;
+technoeconomicRenderEntryMode();
+assert.equal(technoeconomicElements.guidedPanel.hidden, true);
+assert.equal(technoeconomicElements.advancedDetails.hidden, true);
+assert.equal(technoeconomicElements.advancedDetails.open, false);
+assert.equal(technoeconomicElements.entryModeRow.hidden, false);
+assert.equal(technoeconomicElements.submitPanel.hidden, true);
+assert.equal(technoeconomicElements.useGuidedButton.hidden, false);
+assert.ok(technoeconomicElements.entryModeStatus.textContent.includes('saved custom TEA draft'));
+const errors = technoeconomicGuidedFormErrors();
+assert.equal(errors.length, 1);
+assert.ok(errors[0].message.includes('minimum-entry interface'));
+
+console.log(JSON.stringify({
+  guidedHidden: technoeconomicElements.guidedPanel.hidden,
+  internalHidden: technoeconomicElements.advancedDetails.hidden,
+  internalOpen: technoeconomicElements.advancedDetails.open,
+  legacyNoticeHidden: technoeconomicElements.entryModeRow.hidden,
+  submitHidden: technoeconomicElements.submitPanel.hidden,
+  blocked: errors.length === 1,
+}));
+"""
+        )
+        self.assertTrue(payload["guidedHidden"])
+        self.assertTrue(payload["internalHidden"])
+        self.assertFalse(payload["internalOpen"])
+        self.assertFalse(payload["legacyNoticeHidden"])
+        self.assertTrue(payload["submitHidden"])
+        self.assertTrue(payload["blocked"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_tampered_reference_preset_clears_provenance_and_acceptance(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const base = technoeconomicDefaultDraft();
+base.source_annual_job_id = 'annual-guided-source';
+const inputs = technoeconomicApplyProvisionalReferenceValues({
+  cost_year: '2025', project_life_years: '25',
+  discount: '5', discount_low: '', discount_high: '',
+  degradation: '0.5', degradation_low: '', degradation_high: '',
+  base_capex: '1.2', base_capex_low: '', base_capex_high: '',
+  base_om: '0.012', base_om_low: '', base_om_high: '',
+  incremental_capex: '', incremental_capex_low: '', incremental_capex_high: '',
+  incremental_om: '0.004', incremental_om_low: '', incremental_om_high: '',
+  assumption_note: 'Reviewed provisional assumptions.', accepted: true,
+});
+const options = {
+  seed: '42', date: '2026-08-16',
+  solectriaWdc: '140000', solaredgeWdc: '175000',
+};
+const saved = technoeconomicBuildGuidedDraft(base, inputs, options);
+const savedIncremental = saved.cost_lines.find((line) =>
+  line.input_id === TECHNOECONOMIC_GUIDED_COST_IDS.incremental_capex);
+assert.equal(saved.provisional_reference_applied, true);
+assert.equal(savedIncremental.evidence.evidence_class, 'secondary_synthesis');
+assert.equal(savedIncremental.evidence.explicit_acceptance, true);
+
+// Simulate a stale or tampered persisted draft whose flag no longer matches
+// the only defined provisional reference triple.
+savedIncremental.distribution.mode = '0.06';
+const controlKeys = [
+  'guidedCostYear', 'guidedProjectLife',
+  'guidedDiscount', 'guidedDiscountLow', 'guidedDiscountHigh',
+  'guidedDegradation', 'guidedDegradationLow', 'guidedDegradationHigh',
+  'guidedBaseCapex', 'guidedBaseCapexLow', 'guidedBaseCapexHigh',
+  'guidedBaseOm', 'guidedBaseOmLow', 'guidedBaseOmHigh',
+  'guidedIncrementalCapex', 'guidedIncrementalCapexLow',
+  'guidedIncrementalCapexHigh', 'guidedIncrementalOm',
+  'guidedIncrementalOmLow', 'guidedIncrementalOmHigh',
+  'guidedAssumptionNote',
+];
+globalThis.technoeconomicElements = Object.fromEntries(
+  controlKeys.map((key) => [key, {value: ''}])
+);
+technoeconomicElements.guidedAccept = {checked: true};
+technoeconomicElements.referenceStatus = {textContent: ''};
+technoeconomicElements.guidedRanges = {open: false};
+technoeconomicProvisionalReferenceApplied = true;
+
+technoeconomicRenderGuidedForm(saved);
+assert.equal(technoeconomicElements.guidedIncrementalCapex.value, '0.06');
+assert.equal(technoeconomicElements.guidedAccept.checked, false);
+assert.equal(technoeconomicProvisionalReferenceApplied, false);
+assert.ok(technoeconomicElements.referenceStatus.textContent.includes('cleared'));
+
+const rebuilt = technoeconomicBuildGuidedDraft(
+  saved, technoeconomicReadGuidedForm(), options
+);
+const rebuiltIncremental = rebuilt.cost_lines.find((line) =>
+  line.input_id === TECHNOECONOMIC_GUIDED_COST_IDS.incremental_capex);
+assert.equal(rebuilt.provisional_reference_applied, false);
+assert.equal(rebuiltIncremental.evidence.evidence_class, 'engineering_judgment');
+assert.equal(rebuiltIncremental.evidence.explicit_acceptance, false);
+assert.equal(
+  rebuiltIncremental.evidence.citation.stable_reference,
+  'guided-solartac-assumptions-42',
+);
+
+console.log(JSON.stringify({
+  accepted: technoeconomicElements.guidedAccept.checked,
+  referenceApplied: rebuilt.provisional_reference_applied,
+  evidenceClass: rebuiltIncremental.evidence.evidence_class,
+  evidenceAccepted: rebuiltIncremental.evidence.explicit_acceptance,
+}));
+"""
+        )
+        self.assertFalse(payload["accepted"])
+        self.assertFalse(payload["referenceApplied"])
+        self.assertEqual("engineering_judgment", payload["evidenceClass"])
+        self.assertFalse(payload["evidenceAccepted"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_legacy_v1_draft_is_preserved_without_exposing_detailed_editor(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const memory = new Map();
+globalThis.localStorage = {
+  getItem(key) { return memory.has(key) ? memory.get(key) : null; },
+  setItem(key, value) { memory.set(key, String(value)); },
+  removeItem(key) { memory.delete(key); },
+};
+const legacy = technoeconomicDefaultDraft();
+delete legacy.entry_mode;
+legacy.source_annual_job_id = 'annual-legacy-source';
+memory.set(TECHNOECONOMIC_DRAFT_STORAGE_KEY, JSON.stringify(legacy));
+
+const loaded = technoeconomicLoadLocalDraft();
+assert.equal(loaded.entry_mode, TECHNOECONOMIC_ADVANCED_ENTRY_MODE);
+globalThis.technoeconomicElements = {
+  guidedPanel: {hidden: false},
+  advancedDetails: {hidden: false, open: true},
+  entryModeRow: {hidden: true},
+  submitPanel: {hidden: false},
+  useGuidedButton: {hidden: true},
+  entryModeStatus: {textContent: ''},
+};
+technoeconomicEntryMode = loaded.entry_mode;
+technoeconomicRenderEntryMode();
+assert.equal(technoeconomicElements.guidedPanel.hidden, true);
+assert.equal(technoeconomicElements.advancedDetails.hidden, true);
+assert.equal(technoeconomicElements.advancedDetails.open, false);
+assert.equal(technoeconomicElements.entryModeRow.hidden, false);
+assert.equal(technoeconomicElements.submitPanel.hidden, true);
+assert.equal(technoeconomicElements.useGuidedButton.hidden, false);
+assert.ok(technoeconomicElements.entryModeStatus.textContent.includes('saved custom TEA draft'));
+const errors = technoeconomicGuidedFormErrors();
+assert.equal(errors.length, 1);
+
+console.log(JSON.stringify({
+  mode: loaded.entry_mode,
+  guidedHidden: technoeconomicElements.guidedPanel.hidden,
+  internalHidden: technoeconomicElements.advancedDetails.hidden,
+  advancedOpen: technoeconomicElements.advancedDetails.open,
+  legacyNoticeHidden: technoeconomicElements.entryModeRow.hidden,
+  submitHidden: technoeconomicElements.submitPanel.hidden,
+  blocked: errors.length === 1,
+}));
+"""
+        )
+        self.assertEqual("advanced", payload["mode"])
+        self.assertTrue(payload["guidedHidden"])
+        self.assertTrue(payload["internalHidden"])
+        self.assertFalse(payload["advancedOpen"])
+        self.assertFalse(payload["legacyNoticeHidden"])
+        self.assertTrue(payload["submitHidden"])
+        self.assertTrue(payload["blocked"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_legacy_custom_reset_requires_confirmation_and_preserves_source_seed(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const current = technoeconomicDefaultDraft();
+current.entry_mode = TECHNOECONOMIC_ADVANCED_ENTRY_MODE;
+current.source_annual_job_id = 'annual-legacy-source';
+current.seed = '8675309';
+current.project_life_years = '31';
+let applied = null;
+let marked = '';
+let confirmation = false;
+globalThis.window = {confirm() { return confirmation; }};
+globalThis.technoeconomicElements = {advancedDetails: {open: true}};
+getTechnoeconomicFormState = () => current;
+applyTechnoeconomicFormState = (value) => {
+  applied = JSON.parse(JSON.stringify(value));
+  return true;
+};
+technoeconomicMarkDraftChanged = (action) => { marked = action; };
+
+const beforeRevision = technoeconomicDraftRevision;
+technoeconomicUseGuidedSolarTac();
+assert.equal(applied, null);
+assert.equal(marked, '');
+assert.equal(technoeconomicDraftRevision, beforeRevision);
+assert.equal(current.entry_mode, TECHNOECONOMIC_ADVANCED_ENTRY_MODE);
+assert.equal(current.project_life_years, '31');
+
+confirmation = true;
+technoeconomicUseGuidedSolarTac();
+assert.equal(applied.entry_mode, TECHNOECONOMIC_GUIDED_ENTRY_MODE);
+assert.equal(applied.source_annual_job_id, 'annual-legacy-source');
+assert.equal(applied.seed, '8675309');
+assert.equal(applied.project_life_years, '');
+assert.equal(technoeconomicElements.advancedDetails.open, false);
+assert.ok(technoeconomicDraftRevision > beforeRevision);
+assert.equal(marked, 'Guided SolarTAC setup restored.');
+
+console.log(JSON.stringify({
+  source: applied.source_annual_job_id,
+  seed: applied.seed,
+  projectLife: applied.project_life_years,
+  advancedOpen: technoeconomicElements.advancedDetails.open,
+  resetMarked: marked,
+}));
+"""
+        )
+        self.assertEqual("annual-legacy-source", payload["source"])
+        self.assertEqual("8675309", payload["seed"])
+        self.assertEqual("", payload["projectLife"])
+        self.assertFalse(payload["advancedOpen"])
+        self.assertEqual("Guided SolarTAC setup restored.", payload["resetMarked"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_guided_draft_expands_to_the_existing_strict_request_contract(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const base = technoeconomicDefaultDraft();
+base.source_annual_job_id = 'annual-guided-source';
+const inputs = {
+  cost_year: '2025',
+  project_life_years: '25',
+  discount: '5', discount_low: '3', discount_high: '7',
+  degradation: '0.5', degradation_low: '0.3', degradation_high: '0.7',
+  base_capex: '1.2', base_capex_low: '', base_capex_high: '',
+  base_om: '0.012', base_om_low: '', base_om_high: '',
+  incremental_capex: '0.05', incremental_capex_low: '0.02',
+  incremental_capex_high: '0.08',
+  incremental_om: '0.004', incremental_om_low: '', incremental_om_high: '',
+  assumption_note: 'Analyst reviewed this shared provisional assumption set.',
+  accepted: true,
+  provisional_reference_applied: false,
+};
+const referenceInputs = technoeconomicApplyProvisionalReferenceValues(inputs);
+const draft = technoeconomicBuildGuidedDraft(base, referenceInputs, {
+  seed: '42', date: '2026-08-16',
+  solectriaWdc: '140000', solaredgeWdc: '175000',
+});
+assert.equal(draft.entry_mode, 'guided_solartac');
+assert.equal(draft.basis, 'solartac_site');
+assert.equal(draft.n, '10000');
+assert.equal(draft.seed, '42');
+assert.equal(draft.cost_year, '2025');
+assert.equal(draft.project_life_years, '25');
+assert.deepEqual(draft.discount_rate.distribution, {
+  family: 'triangular', value: '', low: '0.03', mode: '0.05', high: '0.07',
+  mean: '', sd: '',
+});
+assert.equal(draft.shared_degradation.distribution.family, 'triangular');
+assert.equal(draft.shared_degradation.distribution.low, '0.003');
+assert.equal(draft.shared_degradation.distribution.mode, '0.005');
+assert.ok(Math.abs(Number(draft.shared_degradation.distribution.high) - 0.007) < 1e-12);
+assert.deepEqual(draft.cost_lines.map((line) => line.input_id), [
+  'cost.guided.base-capex',
+  'cost.guided.base-recurring-om',
+  'cost.guided.solaredge-incremental-capex',
+  'cost.guided.solaredge-incremental-recurring-om',
+]);
+assert.deepEqual(draft.cost_lines.map((line) => line.ownership), [
+  'paired_shared', 'paired_shared', 'solaredge_only', 'solaredge_only',
+]);
+assert.deepEqual(draft.cost_lines.map((line) => line.cost_type), [
+  'initial_capex', 'recurring_om', 'initial_capex', 'recurring_om',
+]);
+assert.deepEqual(draft.cost_lines.map((line) => line.original_unit), [
+  'usd_per_unit', 'usd_per_unit_year', 'usd_per_unit', 'usd_per_unit_year',
+]);
+assert.deepEqual(draft.cost_lines.map((line) => line.normalized_unit), [
+  'usd_per_wdc', 'usd_per_wdc_year', 'usd_per_wdc', 'usd_per_wdc_year',
+]);
+assert.deepEqual(draft.cost_lines.map((line) => line.solectria_quantity), [
+  '140000', '140000', '0', '0',
+]);
+assert.deepEqual(draft.cost_lines.map((line) => line.solaredge_quantity), [
+  '175000', '175000', '175000', '175000',
+]);
+assert.ok(draft.cost_lines.every((line) =>
+  line.constant_dollar_cost_year === '2025'
+  && line.normalization_method === 'multiply_quantity_then_divide_by_frozen_source_wdc'
+  && line.quantity_unit === 'Wdc'
+  && line.evidence.explicit_acceptance === true
+  && line.evidence.acceptance_rationale === inputs.assumption_note));
+assert.deepEqual(draft.cost_lines.map((line) => line.evidence.evidence_class), [
+  'engineering_judgment', 'engineering_judgment',
+  'secondary_synthesis', 'engineering_judgment',
+]);
+assert.deepEqual(
+  [draft.project_life_evidence, draft.discount_rate.evidence,
+    draft.shared_degradation.evidence].map((item) => item.explicit_acceptance),
+  [true, true, true],
+);
+assert.equal(draft.transfer_enabled, false);
+
+const roundTrip = technoeconomicGuidedInputsFromDraft(draft);
+assert.equal(roundTrip.discount, '5');
+assert.equal(roundTrip.discount_low, '3');
+assert.ok(Math.abs(Number(roundTrip.discount_high) - 7) < 1e-12);
+assert.equal(roundTrip.degradation, '0.5');
+assert.equal(roundTrip.degradation_low, '0.3');
+assert.equal(roundTrip.degradation_high, '0.7');
+assert.equal(roundTrip.base_capex, '1.2');
+assert.equal(roundTrip.incremental_capex, '0.05');
+assert.equal(roundTrip.accepted, true);
+assert.equal(roundTrip.provisional_reference_applied, true);
+
+const serialized = serializeTechnoeconomicRequest(draft, {
+  sources: [{source_annual_job_id: 'annual-guided-source', eligible: true}],
+});
+assert.equal(serialized.valid, true, JSON.stringify(serialized.errors));
+assert.equal(serialized.payload.n, 10000);
+assert.equal(serialized.payload.seed, 42);
+assert.equal(serialized.payload.finance.real_discount_rate.distribution.mode, 0.05);
+assert.equal(serialized.payload.shared_degradation.annual_rate.distribution.mode, 0.005);
+assert.equal(serialized.payload.cost_lines.length, 4);
+assert.equal(serialized.payload.commercial_reference_design, null);
+assert.equal(serialized.payload.commercial_transfer, null);
+
+const rejectedDraft = technoeconomicBuildGuidedDraft(base, {...inputs, accepted: false}, {
+  seed: '42', date: '2026-08-16',
+  solectriaWdc: '140000', solaredgeWdc: '175000',
+});
+const rejected = serializeTechnoeconomicRequest(rejectedDraft, {
+  sources: [{source_annual_job_id: 'annual-guided-source', eligible: true}],
+});
+assert.equal(rejected.valid, false);
+assert.ok(rejected.errors.some((item) =>
+  item.path === 'finance.project_life_evidence.explicit_acceptance'));
+assert.ok(rejected.errors.some((item) =>
+  item.path === 'finance.real_discount_rate.evidence.explicit_acceptance'));
+assert.ok(rejected.errors.some((item) =>
+  item.path === 'shared_degradation.annual_rate.evidence.explicit_acceptance'));
+for (let index = 0; index < 4; index += 1) {
+  assert.ok(rejected.errors.some((item) =>
+    item.path === `cost_lines[${index}].evidence.explicit_acceptance`));
+}
+
+console.log(JSON.stringify({
+  valid: serialized.valid,
+  costLineCount: serialized.payload.cost_lines.length,
+  discountMode: serialized.payload.finance.real_discount_rate.distribution.mode,
+  degradationMode: serialized.payload.shared_degradation.annual_rate.distribution.mode,
+  roundTrip,
+  rejectionCount: rejected.errors.length,
+}));
+"""
+        )
+        self.assertTrue(payload["valid"])
+        self.assertEqual(4, payload["costLineCount"])
+        self.assertEqual(0.05, payload["discountMode"])
+        self.assertEqual(0.005, payload["degradationMode"])
+        self.assertEqual("5", payload["roundTrip"]["discount"])
+        self.assertEqual("0.5", payload["roundTrip"]["degradation"])
+        self.assertGreaterEqual(payload["rejectionCount"], 7)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_site_request_serialization_matches_the_strict_api_contract(self) -> None:

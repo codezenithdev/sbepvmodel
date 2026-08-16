@@ -7,6 +7,21 @@
         const TECHNOECONOMIC_MAX_SAFE_SEED = Number.MAX_SAFE_INTEGER;
         const TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS = 8000000;
         const TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS = 25000000;
+        const TECHNOECONOMIC_GUIDED_ENTRY_MODE = 'guided_solartac';
+        const TECHNOECONOMIC_ADVANCED_ENTRY_MODE = 'advanced';
+        const TECHNOECONOMIC_SOLARTAC_CAPEX_REFERENCE_RANGE = Object.freeze({
+            low: '0.02', central: '0.05', high: '0.08',
+        });
+        const TECHNOECONOMIC_PROVISIONAL_REFERENCE_NOTE = 'I am using the provisional '
+            + 'SolarTAC incremental CAPEX reference range ($0.02 low, $0.05 central, '
+            + 'and $0.08 high per Wdc) as explicitly accepted secondary synthesis '
+            + 'pending independent cost evidence.';
+        const TECHNOECONOMIC_GUIDED_COST_IDS = Object.freeze({
+            base_capex: 'cost.guided.base-capex',
+            base_om: 'cost.guided.base-recurring-om',
+            incremental_capex: 'cost.guided.solaredge-incremental-capex',
+            incremental_om: 'cost.guided.solaredge-incremental-recurring-om',
+        });
         const TECHNOECONOMIC_RESERVED_INPUT_IDS = new Set([
             'finance.discount-rate', 'energy.shared-degradation', 'transfer.baseline',
             'transfer.incremental', 'weather.year',
@@ -83,6 +98,8 @@
         let technoeconomicSubmissionRequestInFlight = false;
         let technoeconomicWorkspaceInitialized = false;
         let technoeconomicApplyingDraft = false;
+        let technoeconomicEntryMode = TECHNOECONOMIC_GUIDED_ENTRY_MODE;
+        let technoeconomicProvisionalReferenceApplied = false;
 
         function technoeconomicPlainObject(value) {
             return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -163,6 +180,137 @@
             };
         }
 
+        function technoeconomicGuidedScaleValue(value, divisor = 1) {
+            const text = technoeconomicText(value).trim();
+            if (!text || divisor === 1) return text;
+            const number = Number(text);
+            return Number.isFinite(number) ? String(number / divisor) : text;
+        }
+
+        function technoeconomicGuidedDistribution(central, low = '', high = '', divisor = 1) {
+            const scaledCentral = technoeconomicGuidedScaleValue(central, divisor);
+            const scaledLow = technoeconomicGuidedScaleValue(low, divisor);
+            const scaledHigh = technoeconomicGuidedScaleValue(high, divisor);
+            if (!scaledLow && !scaledHigh) {
+                return technoeconomicDefaultDistribution(scaledCentral);
+            }
+            return {
+                family: 'triangular', value: '', low: scaledLow,
+                mode: scaledCentral, high: scaledHigh, mean: '', sd: '',
+            };
+        }
+
+        function technoeconomicGuidedDisplayDistribution(value, multiplier = 1) {
+            const distribution = technoeconomicSanitizeDistribution(value);
+            const display = (candidate) => {
+                const text = technoeconomicText(candidate).trim();
+                const number = Number(text);
+                return text && Number.isFinite(number) ? String(number * multiplier) : text;
+            };
+            if (distribution.family === 'triangular') {
+                return {
+                    central: display(distribution.mode),
+                    low: display(distribution.low),
+                    high: display(distribution.high),
+                };
+            }
+            return {central: display(distribution.value), low: '', high: ''};
+        }
+
+        function technoeconomicGuidedEvidence(note, accepted, options = {}) {
+            const today = technoeconomicText(options.date) || technoeconomicToday();
+            const subject = technoeconomicText(options.subject) || 'Guided SolarTAC TEA assumption';
+            const seed = technoeconomicText(options.seed) || 'unseeded-draft';
+            const provisionalReference = options.provisionalReference === true;
+            const rationale = technoeconomicText(note).trim();
+            const referenceStatement = 'Provisional SolarTAC incremental CAPEX reference range: '
+                + '$0.02 low, $0.05 central, and $0.08 high per Wdc.';
+            const derivationNote = provisionalReference
+                ? `${referenceStatement} ${rationale} The citation as-of date records the `
+                    + 'user-confirmed request-preparation date; it does not assert the '
+                    + 'original Teams or Outlook message date.'
+                : rationale;
+            return {
+                evidence_class: provisionalReference
+                    ? 'secondary_synthesis' : 'engineering_judgment',
+                citation: {
+                    title: provisionalReference
+                        ? 'User-confirmed provisional SolarTAC incremental CAPEX reference range'
+                        : subject,
+                    organization: provisionalReference
+                        ? 'User-confirmed internal Teams and Outlook TEA discussion'
+                        : 'User-supplied guided TEA assumptions',
+                    url: '',
+                    stable_reference: provisionalReference
+                        ? 'solartac-incremental-capex-provisional-reference-v1'
+                        : `guided-solartac-assumptions-${seed}`,
+                    publication_or_as_of_date: today,
+                    accessed_date: today,
+                    excerpt_or_derivation_note: derivationNote,
+                    preservation_mode: 'metadata_excerpt_only',
+                    user_supplied_content_sha256: '',
+                    metadata_only_rationale: 'The guided form preserves the user-entered '
+                        + 'assumption statement and explicit acceptance; no source document '
+                        + 'bytes are uploaded by this interface.',
+                },
+                explicit_acceptance: accepted === true,
+                acceptance_rationale: rationale,
+            };
+        }
+
+        function technoeconomicGuidedCostLine(options) {
+            const recurring = options.costType === 'recurring_om';
+            const year = technoeconomicText(options.costYear);
+            const line = technoeconomicDefaultCostLine(
+                options.ownership === 'solaredge_only' ? 'solaredge' : 'solectria', 0
+            );
+            line.input_id = options.inputId;
+            line.label = options.label;
+            line.ownership = options.ownership;
+            line.cost_type = options.costType;
+            line.distribution = technoeconomicSanitizeDistribution(options.distribution);
+            line.coverage_include_ids = [options.coverageId];
+            line.coverage_exclude_ids = options.excludeCoverageId
+                ? [options.excludeCoverageId] : [];
+            line.original_unit = recurring ? 'usd_per_unit_year' : 'usd_per_unit';
+            line.normalized_unit = recurring ? 'usd_per_wdc_year' : 'usd_per_wdc';
+            line.normalization_method = 'multiply_quantity_then_divide_by_frozen_source_wdc';
+            line.solectria_quantity = technoeconomicText(options.solectriaWdc);
+            line.solaredge_quantity = technoeconomicText(options.solaredgeWdc);
+            line.quantity_unit = 'Wdc';
+            line.normalization_derivation = 'Guided SolarTAC site-specific USD/Wdc input '
+                + 'multiplied by each applicable frozen Annual Simulation Wdc capacity and '
+                + 'divided by that same frozen capacity.';
+            line.constant_dollar_cost_year = year;
+            line.currency_year_normalization = technoeconomicDefaultCurrencyYear(year);
+            line.currency_year_normalization.derivation = `Submitted directly in ${year || 'the selected'} `
+                + 'constant-dollar year; no price-index adjustment is applied.';
+            line.evidence = technoeconomicSanitizeEvidence(options.evidence);
+            return line;
+        }
+
+        function technoeconomicApplyProvisionalReferenceValues(value = {}) {
+            return {
+                ...technoeconomicPlainObject(value),
+                incremental_capex: TECHNOECONOMIC_SOLARTAC_CAPEX_REFERENCE_RANGE.central,
+                incremental_capex_low: TECHNOECONOMIC_SOLARTAC_CAPEX_REFERENCE_RANGE.low,
+                incremental_capex_high: TECHNOECONOMIC_SOLARTAC_CAPEX_REFERENCE_RANGE.high,
+                provisional_reference_applied: true,
+            };
+        }
+
+        function technoeconomicGenerateSafeSeed() {
+            if (typeof crypto === 'object' && typeof crypto.getRandomValues === 'function') {
+                const words = new Uint32Array(2);
+                crypto.getRandomValues(words);
+                const safe = (BigInt(words[0] & 0x001fffff) << 32n) | BigInt(words[1]);
+                return safe.toString();
+            }
+            const timestamp = BigInt(Date.now() & 0x1fffffff);
+            const random = BigInt(Math.floor(Math.random() * 0x1000000));
+            return ((timestamp << 24n) | random).toString();
+        }
+
         function technoeconomicDefaultTechnologyDesign(solaredge = false) {
             return {
                 optimizer_count: '', inverter_count: '', transformer_count: '',
@@ -205,7 +353,9 @@
             }
             return {
                 schema_version: TECHNOECONOMIC_DRAFT_SCHEMA_VERSION,
-                source_annual_job_id: '', basis: '', n: '10000', seed: '',
+                entry_mode: TECHNOECONOMIC_GUIDED_ENTRY_MODE,
+                provisional_reference_applied: false,
+                source_annual_job_id: '', basis: 'solartac_site', n: '10000', seed: '',
                 cost_year: year, project_life_years: '',
                 project_life_evidence: technoeconomicDefaultEvidence(),
                 discount_rate: technoeconomicDefaultDocumented('real_fraction_per_year', ''),
@@ -377,6 +527,12 @@
             const fallback = technoeconomicDefaultDraft();
             const output = {
                 schema_version: TECHNOECONOMIC_DRAFT_SCHEMA_VERSION,
+                entry_mode: technoeconomicChoice(
+                    source.entry_mode,
+                    [TECHNOECONOMIC_GUIDED_ENTRY_MODE, TECHNOECONOMIC_ADVANCED_ENTRY_MODE],
+                    TECHNOECONOMIC_ADVANCED_ENTRY_MODE
+                ),
+                provisional_reference_applied: source.provisional_reference_applied === true,
                 source_annual_job_id: technoeconomicText(source.source_annual_job_id, 200),
                 basis: technoeconomicChoice(
                     source.basis, ['', 'solartac_site', 'commercial_representative'], ''
@@ -416,6 +572,426 @@
                 source.commercial_reference_design, output.cost_year
             );
             return output;
+        }
+
+        function technoeconomicGuidedLine(draft, key) {
+            const inputId = TECHNOECONOMIC_GUIDED_COST_IDS[key];
+            return (draft.cost_lines || []).find((line) => line.input_id === inputId) || null;
+        }
+
+        function technoeconomicGuidedInputsFromDraft(value) {
+            const draft = sanitizeTechnoeconomicDraft(value);
+            const discount = technoeconomicGuidedDisplayDistribution(
+                draft.discount_rate.distribution, 100
+            );
+            const degradation = technoeconomicGuidedDisplayDistribution(
+                draft.shared_degradation.distribution, 100
+            );
+            const baseCapex = technoeconomicGuidedDisplayDistribution(
+                technoeconomicGuidedLine(draft, 'base_capex')?.distribution
+            );
+            const baseOm = technoeconomicGuidedDisplayDistribution(
+                technoeconomicGuidedLine(draft, 'base_om')?.distribution
+            );
+            const incrementalCapex = technoeconomicGuidedDisplayDistribution(
+                technoeconomicGuidedLine(draft, 'incremental_capex')?.distribution
+            );
+            const incrementalOm = technoeconomicGuidedDisplayDistribution(
+                technoeconomicGuidedLine(draft, 'incremental_om')?.distribution
+            );
+            const evidence = technoeconomicSanitizeEvidence(draft.project_life_evidence);
+            return {
+                cost_year: draft.cost_year,
+                project_life_years: draft.project_life_years,
+                discount: discount.central,
+                discount_low: discount.low,
+                discount_high: discount.high,
+                degradation: degradation.central,
+                degradation_low: degradation.low,
+                degradation_high: degradation.high,
+                base_capex: baseCapex.central,
+                base_capex_low: baseCapex.low,
+                base_capex_high: baseCapex.high,
+                base_om: baseOm.central,
+                base_om_low: baseOm.low,
+                base_om_high: baseOm.high,
+                incremental_capex: incrementalCapex.central,
+                incremental_capex_low: incrementalCapex.low,
+                incremental_capex_high: incrementalCapex.high,
+                incremental_om: incrementalOm.central,
+                incremental_om_low: incrementalOm.low,
+                incremental_om_high: incrementalOm.high,
+                assumption_note: evidence.acceptance_rationale
+                    || evidence.citation.excerpt_or_derivation_note || '',
+                accepted: evidence.explicit_acceptance === true,
+                provisional_reference_applied: draft.provisional_reference_applied === true,
+            };
+        }
+
+        function technoeconomicBuildGuidedDraft(value, guidedValue, options = {}) {
+            const draft = sanitizeTechnoeconomicDraft(value);
+            const guided = technoeconomicPlainObject(guidedValue);
+            const seed = technoeconomicText(options.seed || draft.seed);
+            const note = technoeconomicText(guided.assumption_note);
+            const accepted = guided.accepted === true;
+            const referenceApplied = guided.provisional_reference_applied === true
+                && technoeconomicGuidedReferenceValuesMatch(guided);
+            const costYear = technoeconomicText(guided.cost_year);
+            const solectriaWdc = technoeconomicText(options.solectriaWdc);
+            const solaredgeWdc = technoeconomicText(options.solaredgeWdc);
+            const evidenceFor = (subject, provisionalReference = false) => technoeconomicGuidedEvidence(
+                note, accepted, {subject, seed, provisionalReference, date: options.date}
+            );
+            const baseCapexEvidence = evidenceFor('Shared base installed CAPEX assumption');
+            const baseOmEvidence = evidenceFor('Shared base recurring O&M assumption');
+            const incrementalCapexEvidence = evidenceFor(
+                'SolarEdge incremental installed CAPEX assumption', referenceApplied
+            );
+            const incrementalOmEvidence = evidenceFor(
+                'SolarEdge incremental recurring O&M assumption'
+            );
+            draft.entry_mode = TECHNOECONOMIC_GUIDED_ENTRY_MODE;
+            draft.provisional_reference_applied = referenceApplied;
+            draft.basis = 'solartac_site';
+            draft.n = '10000';
+            draft.seed = seed;
+            draft.cost_year = costYear;
+            draft.project_life_years = technoeconomicText(guided.project_life_years);
+            draft.project_life_evidence = evidenceFor('Project-life assumption');
+            draft.discount_rate = {
+                unit: 'real_fraction_per_year',
+                distribution: technoeconomicGuidedDistribution(
+                    guided.discount, guided.discount_low, guided.discount_high, 100
+                ),
+                evidence: evidenceFor('Real discount-rate assumption'),
+            };
+            draft.shared_degradation = {
+                unit: 'real_fraction_per_year',
+                distribution: technoeconomicGuidedDistribution(
+                    guided.degradation, guided.degradation_low, guided.degradation_high, 100
+                ),
+                evidence: evidenceFor('Shared annual module-degradation assumption'),
+            };
+            draft.cost_lines = [
+                technoeconomicGuidedCostLine({
+                    inputId: TECHNOECONOMIC_GUIDED_COST_IDS.base_capex,
+                    label: 'Shared base installed CAPEX', ownership: 'paired_shared',
+                    costType: 'initial_capex',
+                    distribution: technoeconomicGuidedDistribution(
+                        guided.base_capex, guided.base_capex_low, guided.base_capex_high
+                    ),
+                    coverageId: 'scope.guided.base.initial',
+                    excludeCoverageId: 'scope.guided.solaredge.incremental.initial',
+                    solectriaWdc, solaredgeWdc, costYear, evidence: baseCapexEvidence,
+                }),
+                technoeconomicGuidedCostLine({
+                    inputId: TECHNOECONOMIC_GUIDED_COST_IDS.base_om,
+                    label: 'Shared base recurring O&M', ownership: 'paired_shared',
+                    costType: 'recurring_om',
+                    distribution: technoeconomicGuidedDistribution(
+                        guided.base_om, guided.base_om_low, guided.base_om_high
+                    ),
+                    coverageId: 'scope.guided.base.recurring',
+                    excludeCoverageId: 'scope.guided.solaredge.incremental.recurring',
+                    solectriaWdc, solaredgeWdc, costYear, evidence: baseOmEvidence,
+                }),
+                technoeconomicGuidedCostLine({
+                    inputId: TECHNOECONOMIC_GUIDED_COST_IDS.incremental_capex,
+                    label: 'SolarEdge incremental installed CAPEX', ownership: 'solaredge_only',
+                    costType: 'initial_capex',
+                    distribution: technoeconomicGuidedDistribution(
+                        guided.incremental_capex,
+                        guided.incremental_capex_low,
+                        guided.incremental_capex_high
+                    ),
+                    coverageId: 'scope.guided.solaredge.incremental.initial',
+                    excludeCoverageId: 'scope.guided.base.initial',
+                    solectriaWdc: '0', solaredgeWdc, costYear,
+                    evidence: incrementalCapexEvidence,
+                }),
+                technoeconomicGuidedCostLine({
+                    inputId: TECHNOECONOMIC_GUIDED_COST_IDS.incremental_om,
+                    label: 'SolarEdge incremental recurring O&M', ownership: 'solaredge_only',
+                    costType: 'recurring_om',
+                    distribution: technoeconomicGuidedDistribution(
+                        guided.incremental_om,
+                        guided.incremental_om_low,
+                        guided.incremental_om_high
+                    ),
+                    coverageId: 'scope.guided.solaredge.incremental.recurring',
+                    excludeCoverageId: 'scope.guided.base.recurring',
+                    solectriaWdc: '0', solaredgeWdc, costYear,
+                    evidence: incrementalOmEvidence,
+                }),
+            ];
+            draft.commercial_reference_design = technoeconomicDefaultCommercialDesign();
+            draft.transfer_enabled = false;
+            draft.commercial_transfer = technoeconomicDefaultCommercialTransfer();
+            return sanitizeTechnoeconomicDraft(draft);
+        }
+
+        function technoeconomicReadGuidedForm() {
+            const read = (element) => element?.value || '';
+            return {
+                cost_year: read(technoeconomicElements.guidedCostYear),
+                project_life_years: read(technoeconomicElements.guidedProjectLife),
+                discount: read(technoeconomicElements.guidedDiscount),
+                discount_low: read(technoeconomicElements.guidedDiscountLow),
+                discount_high: read(technoeconomicElements.guidedDiscountHigh),
+                degradation: read(technoeconomicElements.guidedDegradation),
+                degradation_low: read(technoeconomicElements.guidedDegradationLow),
+                degradation_high: read(technoeconomicElements.guidedDegradationHigh),
+                base_capex: read(technoeconomicElements.guidedBaseCapex),
+                base_capex_low: read(technoeconomicElements.guidedBaseCapexLow),
+                base_capex_high: read(technoeconomicElements.guidedBaseCapexHigh),
+                base_om: read(technoeconomicElements.guidedBaseOm),
+                base_om_low: read(technoeconomicElements.guidedBaseOmLow),
+                base_om_high: read(technoeconomicElements.guidedBaseOmHigh),
+                incremental_capex: read(technoeconomicElements.guidedIncrementalCapex),
+                incremental_capex_low: read(technoeconomicElements.guidedIncrementalCapexLow),
+                incremental_capex_high: read(technoeconomicElements.guidedIncrementalCapexHigh),
+                incremental_om: read(technoeconomicElements.guidedIncrementalOm),
+                incremental_om_low: read(technoeconomicElements.guidedIncrementalOmLow),
+                incremental_om_high: read(technoeconomicElements.guidedIncrementalOmHigh),
+                assumption_note: read(technoeconomicElements.guidedAssumptionNote),
+                accepted: technoeconomicElements.guidedAccept?.checked === true,
+                provisional_reference_applied: technoeconomicProvisionalReferenceApplied,
+            };
+        }
+
+        function technoeconomicGuidedFormErrors() {
+            if (technoeconomicEntryMode !== TECHNOECONOMIC_GUIDED_ENTRY_MODE) {
+                return [{
+                    path: 'Saved custom TEA draft',
+                    message: 'Detailed editing is unavailable in the minimum-entry interface. '
+                        + 'Start a new Guided SolarTAC form to continue.',
+                }];
+            }
+            const guided = technoeconomicReadGuidedForm();
+            const errors = [];
+            const required = [
+                ['cost_year', 'Constant-dollar cost year'],
+                ['project_life_years', 'Project life'],
+                ['discount', 'Central real discount rate'],
+                ['degradation', 'Central shared module degradation'],
+                ['base_capex', 'Central shared baseline installed CAPEX'],
+                ['base_om', 'Central shared baseline recurring O&M'],
+                ['incremental_capex', 'Central SolarEdge incremental installed CAPEX'],
+                ['incremental_om', 'Central SolarEdge incremental recurring O&M'],
+                ['assumption_note', 'Shared assumption source or justification'],
+            ];
+            required.forEach(([key, label]) => {
+                if (!technoeconomicText(guided[key]).trim()) {
+                    errors.push({path: label, message: 'Enter a value.'});
+                }
+            });
+            for (const [key, label] of [
+                ['discount', 'Real discount rate'],
+                ['degradation', 'Shared module degradation'],
+                ['base_capex', 'Shared baseline installed CAPEX'],
+                ['base_om', 'Shared baseline recurring O&M'],
+                ['incremental_capex', 'SolarEdge incremental installed CAPEX'],
+                ['incremental_om', 'SolarEdge incremental recurring O&M'],
+            ]) {
+                const hasLow = Boolean(technoeconomicText(guided[`${key}_low`]).trim());
+                const hasHigh = Boolean(technoeconomicText(guided[`${key}_high`]).trim());
+                if (hasLow !== hasHigh) {
+                    errors.push({
+                        path: `${label} uncertainty`,
+                        message: 'Provide both low and high, or leave both blank.',
+                    });
+                }
+            }
+            if (!guided.accepted) {
+                errors.push({
+                    path: 'Guided provisional-assumption acceptance',
+                    message: 'Review and explicitly accept all seven listed assumptions.',
+                });
+            }
+            return errors;
+        }
+
+        function technoeconomicSetGuidedControl(element, value) {
+            if (element) element.value = technoeconomicText(value);
+        }
+
+        function technoeconomicRenderGuidedForm(value) {
+            const guided = technoeconomicGuidedInputsFromDraft(value);
+            const pairs = [
+                ['guidedCostYear', 'cost_year'], ['guidedProjectLife', 'project_life_years'],
+                ['guidedDiscount', 'discount'], ['guidedDiscountLow', 'discount_low'],
+                ['guidedDiscountHigh', 'discount_high'],
+                ['guidedDegradation', 'degradation'],
+                ['guidedDegradationLow', 'degradation_low'],
+                ['guidedDegradationHigh', 'degradation_high'],
+                ['guidedBaseCapex', 'base_capex'],
+                ['guidedBaseCapexLow', 'base_capex_low'],
+                ['guidedBaseCapexHigh', 'base_capex_high'],
+                ['guidedBaseOm', 'base_om'], ['guidedBaseOmLow', 'base_om_low'],
+                ['guidedBaseOmHigh', 'base_om_high'],
+                ['guidedIncrementalCapex', 'incremental_capex'],
+                ['guidedIncrementalCapexLow', 'incremental_capex_low'],
+                ['guidedIncrementalCapexHigh', 'incremental_capex_high'],
+                ['guidedIncrementalOm', 'incremental_om'],
+                ['guidedIncrementalOmLow', 'incremental_om_low'],
+                ['guidedIncrementalOmHigh', 'incremental_om_high'],
+                ['guidedAssumptionNote', 'assumption_note'],
+            ];
+            pairs.forEach(([elementKey, valueKey]) => {
+                technoeconomicSetGuidedControl(technoeconomicElements[elementKey], guided[valueKey]);
+            });
+            const referenceMismatch = guided.provisional_reference_applied === true
+                && !technoeconomicGuidedReferenceValuesMatch(guided);
+            if (technoeconomicElements.guidedAccept) {
+                technoeconomicElements.guidedAccept.checked = guided.accepted && !referenceMismatch;
+            }
+            technoeconomicProvisionalReferenceApplied = guided.provisional_reference_applied === true
+                && !referenceMismatch;
+            if (technoeconomicElements.referenceStatus) {
+                technoeconomicElements.referenceStatus.textContent = referenceMismatch
+                    ? 'A saved reference preset did not match the provisional range, so '
+                        + 'the preset and its prior acceptance were cleared.'
+                    : !technoeconomicProvisionalReferenceApplied
+                    ? 'No provisional reference range has been applied.'
+                    : 'The provisional $0.02 / $0.05 / $0.08 per Wdc reference range is applied. '
+                        + 'Explicit acceptance is still required.';
+            }
+            const hasRanges = pairs.some(([elementKey, valueKey]) =>
+                (elementKey.endsWith('Low') || elementKey.endsWith('High')) && guided[valueKey]
+            );
+            if (technoeconomicElements.guidedRanges) {
+                technoeconomicElements.guidedRanges.open = hasRanges;
+            }
+        }
+
+        function technoeconomicRenderEntryMode() {
+            const guided = technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE;
+            if (technoeconomicElements.guidedPanel) {
+                technoeconomicElements.guidedPanel.hidden = !guided;
+            }
+            if (technoeconomicElements.advancedDetails) {
+                technoeconomicElements.advancedDetails.hidden = true;
+                technoeconomicElements.advancedDetails.open = false;
+            }
+            if (technoeconomicElements.entryModeRow) {
+                technoeconomicElements.entryModeRow.hidden = guided;
+            }
+            if (technoeconomicElements.submitPanel) {
+                technoeconomicElements.submitPanel.hidden = !guided;
+            }
+            if (technoeconomicElements.useGuidedButton) {
+                technoeconomicElements.useGuidedButton.hidden = guided;
+            }
+            if (technoeconomicElements.entryModeStatus) {
+                technoeconomicElements.entryModeStatus.textContent = guided
+                    ? 'Guided SolarTAC setup is active. Detailed request fields are generated automatically.'
+                    : 'A saved custom TEA draft was found. Detailed editing is unavailable in '
+                        + 'the minimum-entry interface. Start a new Guided SolarTAC form to continue; '
+                        + 'the saved draft is preserved until you confirm the reset.';
+            }
+        }
+
+        function technoeconomicSelectedSourceCapacities(sourceId) {
+            const source = technoeconomicSources.find(
+                (item) => item?.source_annual_job_id === sourceId
+            );
+            return {
+                solectriaWdc: source?.solectria_installed_wdc ?? '',
+                solaredgeWdc: source?.solaredge_installed_wdc ?? '',
+            };
+        }
+
+        function technoeconomicApplyProvisionalReference() {
+            technoeconomicCloseStaleAdvancedPreview();
+            const guided = technoeconomicApplyProvisionalReferenceValues(
+                technoeconomicReadGuidedForm()
+            );
+            technoeconomicSetGuidedControl(
+                technoeconomicElements.guidedIncrementalCapex, guided.incremental_capex
+            );
+            technoeconomicSetGuidedControl(
+                technoeconomicElements.guidedIncrementalCapexLow, guided.incremental_capex_low
+            );
+            technoeconomicSetGuidedControl(
+                technoeconomicElements.guidedIncrementalCapexHigh, guided.incremental_capex_high
+            );
+            const existingNote = technoeconomicElements.guidedAssumptionNote?.value.trim() || '';
+            if (technoeconomicElements.guidedAssumptionNote
+                && !existingNote.includes(TECHNOECONOMIC_PROVISIONAL_REFERENCE_NOTE)) {
+                technoeconomicElements.guidedAssumptionNote.value = existingNote
+                    ? `${existingNote}\n${TECHNOECONOMIC_PROVISIONAL_REFERENCE_NOTE}`
+                    : TECHNOECONOMIC_PROVISIONAL_REFERENCE_NOTE;
+            }
+            technoeconomicProvisionalReferenceApplied = true;
+            if (technoeconomicElements.guidedAccept) {
+                technoeconomicElements.guidedAccept.checked = false;
+            }
+            if (technoeconomicElements.guidedRanges) {
+                technoeconomicElements.guidedRanges.open = true;
+            }
+            if (technoeconomicElements.referenceStatus) {
+                technoeconomicElements.referenceStatus.textContent = 'The provisional '
+                    + '$0.02 / $0.05 / $0.08 per Wdc reference range is applied. Review it and '
+                    + 'explicitly accept all provisional assumptions before submission.';
+            }
+            technoeconomicMarkDraftChanged('Provisional reference range applied for review.');
+        }
+
+        function technoeconomicGuidedReferenceValuesMatch(value) {
+            const guided = value && typeof value === 'object' ? value : {
+                incremental_capex: technoeconomicElements.guidedIncrementalCapex?.value,
+                incremental_capex_low: technoeconomicElements.guidedIncrementalCapexLow?.value,
+                incremental_capex_high: technoeconomicElements.guidedIncrementalCapexHigh?.value,
+            };
+            return technoeconomicText(guided.incremental_capex).trim()
+                    === TECHNOECONOMIC_SOLARTAC_CAPEX_REFERENCE_RANGE.central
+                && technoeconomicText(guided.incremental_capex_low).trim()
+                    === TECHNOECONOMIC_SOLARTAC_CAPEX_REFERENCE_RANGE.low
+                && technoeconomicText(guided.incremental_capex_high).trim()
+                    === TECHNOECONOMIC_SOLARTAC_CAPEX_REFERENCE_RANGE.high;
+        }
+
+        function technoeconomicMaterializeGuidedEditors() {
+            if (technoeconomicEntryMode !== TECHNOECONOMIC_GUIDED_ENTRY_MODE) return;
+            const draft = getTechnoeconomicFormState();
+            technoeconomicApplyingDraft = true;
+            try {
+                technoeconomicElements.basis.value = draft.basis;
+                technoeconomicElements.realizations.value = draft.n;
+                technoeconomicElements.seed.value = draft.seed;
+                technoeconomicElements.costYear.value = draft.cost_year;
+                technoeconomicElements.projectLife.value = draft.project_life_years;
+                technoeconomicElements.transferEnabled.checked = false;
+                technoeconomicRenderEditors(draft);
+            } finally {
+                technoeconomicApplyingDraft = false;
+            }
+        }
+
+        function technoeconomicCloseStaleAdvancedPreview() {
+            if (technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE
+                && technoeconomicElements.advancedDetails?.open) {
+                technoeconomicElements.advancedDetails.open = false;
+            }
+        }
+
+        function technoeconomicUseGuidedSolarTac() {
+            const proceed = typeof window !== 'object' || typeof window.confirm !== 'function'
+                || window.confirm(
+                    'Start a blank Guided SolarTAC form? '
+                    + 'This replaces the saved custom TEA draft in this browser.'
+                );
+            if (!proceed) return;
+            const current = getTechnoeconomicFormState();
+            const guided = technoeconomicDefaultDraft();
+            guided.source_annual_job_id = current.source_annual_job_id;
+            guided.seed = current.seed || technoeconomicGenerateSafeSeed();
+            applyTechnoeconomicFormState(guided);
+            if (technoeconomicElements.advancedDetails) {
+                technoeconomicElements.advancedDetails.open = false;
+            }
+            technoeconomicDraftRevision += 1;
+            technoeconomicMarkDraftChanged('Guided SolarTAC setup restored.');
         }
 
         function technoeconomicIsTerminalState(state) {
@@ -1098,7 +1674,9 @@
                 ?.querySelector('[data-tea-role="commercial-design"]');
             const transfer = technoeconomicElements.commercialTransferEditor
                 ?.querySelector('[data-tea-role="commercial-transfer"]');
-            return sanitizeTechnoeconomicDraft({
+            const advancedDraft = sanitizeTechnoeconomicDraft({
+                entry_mode: technoeconomicEntryMode,
+                provisional_reference_applied: technoeconomicProvisionalReferenceApplied,
                 source_annual_job_id: technoeconomicElements.sourceSelect?.value || '',
                 basis, n: technoeconomicElements.realizations?.value || '',
                 seed: technoeconomicElements.seed?.value || '', cost_year: costYear,
@@ -1120,6 +1698,18 @@
                     ? technoeconomicReadTransferEditor(transfer) : technoeconomicDefaultCommercialTransfer(),
                 active_job_id: null,
             });
+            if (technoeconomicEntryMode !== TECHNOECONOMIC_GUIDED_ENTRY_MODE) {
+                return advancedDraft;
+            }
+            const capacities = technoeconomicSelectedSourceCapacities(
+                advancedDraft.source_annual_job_id
+            );
+            return technoeconomicBuildGuidedDraft(
+                advancedDraft, technoeconomicReadGuidedForm(), {
+                    ...capacities,
+                    seed: advancedDraft.seed || technoeconomicGenerateSafeSeed(),
+                }
+            );
         }
 
         function technoeconomicEnsureSourceOption(sourceId) {
@@ -1143,8 +1733,13 @@
             else if (technoeconomicPlainObject(candidate).schema_version
                 !== TECHNOECONOMIC_DRAFT_SCHEMA_VERSION) return false;
             const draft = sanitizeTechnoeconomicDraft(candidate);
+            if (draft.entry_mode === TECHNOECONOMIC_GUIDED_ENTRY_MODE && !draft.seed) {
+                draft.seed = technoeconomicGenerateSafeSeed();
+            }
             technoeconomicApplyingDraft = true;
             try {
+                technoeconomicEntryMode = draft.entry_mode;
+                technoeconomicProvisionalReferenceApplied = draft.provisional_reference_applied;
                 technoeconomicEnsureSourceOption(draft.source_annual_job_id);
                 technoeconomicElements.sourceSelect.value = draft.source_annual_job_id;
                 technoeconomicElements.basis.value = draft.basis;
@@ -1154,6 +1749,8 @@
                 technoeconomicElements.projectLife.value = draft.project_life_years;
                 technoeconomicElements.transferEnabled.checked = draft.transfer_enabled;
                 technoeconomicRenderEditors(draft);
+                technoeconomicRenderGuidedForm(draft);
+                technoeconomicRenderEntryMode();
                 technoeconomicRenderSelectedSource();
             } finally {
                 technoeconomicApplyingDraft = false;
@@ -2270,6 +2867,7 @@
                     const id = row?.source_annual_job_id;
                     return typeof id === 'string' && id.length > 0 && id.length <= 200;
                 }).map((row) => ({...row}));
+                technoeconomicCloseStaleAdvancedPreview();
                 technoeconomicRenderSourceOptions(selectedId);
                 if (!technoeconomicSources.length) technoeconomicSetSourceState(
                     'empty', 'No verified Annual Simulation sources',
@@ -2520,6 +3118,12 @@
                     path: '',
                     message: 'Wait for or cancel the active technoeconomic job before queueing another.',
                 }]);
+                technoeconomicElements.formErrors?.focus();
+                return;
+            }
+            const guidedErrors = technoeconomicGuidedFormErrors();
+            if (guidedErrors.length) {
+                technoeconomicRenderErrors(technoeconomicElements.formErrors, guidedErrors);
                 technoeconomicElements.formErrors?.focus();
                 return;
             }
@@ -3491,15 +4095,57 @@
             const localDraft = technoeconomicLoadLocalDraft();
             applyTechnoeconomicFormState(localDraft || technoeconomicDefaultDraft());
             technoeconomicElements.form.addEventListener('submit', technoeconomicOpenConfirmation);
-            technoeconomicElements.form.addEventListener('input', () => {
+            technoeconomicElements.form.addEventListener('input', (event) => {
+                if (technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE
+                    && (technoeconomicElements.guidedPanel?.contains(event.target)
+                        || event.target === technoeconomicElements.sourceSelect)) {
+                    technoeconomicCloseStaleAdvancedPreview();
+                }
+                if (technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE
+                    && technoeconomicElements.guidedPanel?.contains(event.target)
+                    && event.target !== technoeconomicElements.guidedAccept
+                    && technoeconomicElements.guidedAccept?.checked) {
+                    technoeconomicElements.guidedAccept.checked = false;
+                }
+                if (technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE
+                    && technoeconomicElements.advancedDetails?.contains(event.target)) {
+                    technoeconomicEntryMode = TECHNOECONOMIC_ADVANCED_ENTRY_MODE;
+                    technoeconomicRenderEntryMode();
+                }
+                if (technoeconomicProvisionalReferenceApplied && [
+                    technoeconomicElements.guidedIncrementalCapex,
+                    technoeconomicElements.guidedIncrementalCapexLow,
+                    technoeconomicElements.guidedIncrementalCapexHigh,
+                ].includes(event.target) && !technoeconomicGuidedReferenceValuesMatch()) {
+                    technoeconomicProvisionalReferenceApplied = false;
+                    if (technoeconomicElements.guidedAccept) {
+                        technoeconomicElements.guidedAccept.checked = false;
+                    }
+                    if (technoeconomicElements.guidedAssumptionNote) {
+                        technoeconomicElements.guidedAssumptionNote.value =
+                            technoeconomicElements.guidedAssumptionNote.value
+                                .replace(TECHNOECONOMIC_PROVISIONAL_REFERENCE_NOTE, '')
+                                .replace(/\n{3,}/g, '\n\n').trim();
+                    }
+                    if (technoeconomicElements.referenceStatus) {
+                        technoeconomicElements.referenceStatus.textContent = 'The incremental CAPEX '
+                            + 'range was edited, so the reference preset was detached. Document and '
+                            + 'accept the revised custom assumption.';
+                    }
+                }
                 technoeconomicMarkDraftChanged();
             });
             technoeconomicElements.form.addEventListener('change', (event) => {
                 if (event.target === technoeconomicElements.sourceSelect) {
+                    technoeconomicCloseStaleAdvancedPreview();
                     technoeconomicRenderSelectedSource();
                 }
                 if (event.target === technoeconomicElements.basis
                     || event.target === technoeconomicElements.transferEnabled) {
+                    if (event.target === technoeconomicElements.basis) {
+                        technoeconomicEntryMode = TECHNOECONOMIC_ADVANCED_ENTRY_MODE;
+                        technoeconomicRenderEntryMode();
+                    }
                     technoeconomicRenderBasisVisibility();
                 }
                 if (event.target === technoeconomicElements.costYear) {
@@ -3515,11 +4161,31 @@
             });
             technoeconomicElements.costLines?.addEventListener('click', (event) => {
                 const button = event.target.closest('[data-tea-action="remove-cost-line"]');
-                if (button) technoeconomicRemoveCostLine(button);
+                if (button) {
+                    technoeconomicEntryMode = TECHNOECONOMIC_ADVANCED_ENTRY_MODE;
+                    technoeconomicRenderEntryMode();
+                    technoeconomicRemoveCostLine(button);
+                }
             });
             technoeconomicElements.addCostLineButton?.addEventListener(
-                'click', technoeconomicAddCostLine
+                'click', () => {
+                    technoeconomicEntryMode = TECHNOECONOMIC_ADVANCED_ENTRY_MODE;
+                    technoeconomicRenderEntryMode();
+                    technoeconomicAddCostLine();
+                }
             );
+            technoeconomicElements.applyReferenceButton?.addEventListener(
+                'click', technoeconomicApplyProvisionalReference
+            );
+            technoeconomicElements.useGuidedButton?.addEventListener(
+                'click', technoeconomicUseGuidedSolarTac
+            );
+            technoeconomicElements.advancedDetails?.addEventListener('toggle', () => {
+                if (technoeconomicElements.advancedDetails.open
+                    && technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE) {
+                    technoeconomicMaterializeGuidedEditors();
+                }
+            });
             technoeconomicElements.refreshSourcesButton?.addEventListener(
                 'click', () => refreshTechnoeconomicSources()
             );

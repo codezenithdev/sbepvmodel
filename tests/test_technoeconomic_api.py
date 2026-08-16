@@ -578,6 +578,146 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         self.assertEqual("disjoint_by_declared_exclusion", pair["decision"])
         self.assertFalse(pair["overlap_detected"])
 
+    def test_guided_site_per_wdc_costs_normalize_through_frozen_wdc(self) -> None:
+        payload = _site_request_payload()
+        systems = self.snapshot["capacity_manifest"]["systems"]
+        sol_wdc = systems["solectria"]["installed_wdc"]
+        se_wdc = systems["solaredge"]["installed_wdc"]
+
+        def guided_line(
+            *,
+            input_id: str,
+            label: str,
+            ownership: str,
+            cost_type: str,
+            value: float,
+            coverage_id: str,
+            coverage_exclude_id: str,
+            solectria_quantity: float,
+            solaredge_quantity: float,
+        ) -> dict:
+            recurring = cost_type.startswith("recurring_")
+            return {
+                "input_id": input_id,
+                "label": label,
+                "ownership": ownership,
+                "cost_type": cost_type,
+                "distribution": {"family": "fixed", "value": value},
+                "coverage_include_ids": [coverage_id],
+                "coverage_exclude_ids": [coverage_exclude_id],
+                "original_unit": (
+                    "usd_per_unit_year" if recurring else "usd_per_unit"
+                ),
+                "normalized_unit": (
+                    "usd_per_wdc_year" if recurring else "usd_per_wdc"
+                ),
+                "normalization_method": (
+                    "multiply_quantity_then_divide_by_frozen_source_wdc"
+                ),
+                "solectria_quantity": solectria_quantity,
+                "solaredge_quantity": solaredge_quantity,
+                "quantity_unit": "Wdc",
+                "normalization_derivation": (
+                    "Multiply the submitted site-specific USD/Wdc value by each "
+                    "applicable system's frozen source Wdc, then divide by that same "
+                    "frozen Wdc."
+                ),
+                "constant_dollar_cost_year": 2026,
+                "currency_year_normalization": _currency_year_normalization(),
+                "evidence": _evidence(),
+            }
+
+        payload["cost_lines"] = [
+            guided_line(
+                input_id="cost.base.capex",
+                label="Common base installed CAPEX",
+                ownership="paired_shared",
+                cost_type="initial_capex",
+                value=0.75,
+                coverage_id="scope.base.initial",
+                coverage_exclude_id="scope.solaredge.incremental.initial",
+                solectria_quantity=sol_wdc,
+                solaredge_quantity=se_wdc,
+            ),
+            guided_line(
+                input_id="cost.base.om",
+                label="Common base recurring O&M",
+                ownership="paired_shared",
+                cost_type="recurring_om",
+                value=0.01,
+                coverage_id="scope.base.recurring",
+                coverage_exclude_id="scope.solaredge.incremental.recurring",
+                solectria_quantity=sol_wdc,
+                solaredge_quantity=se_wdc,
+            ),
+            guided_line(
+                input_id="cost.se.incremental-capex",
+                label="Incremental SolarEdge installed CAPEX",
+                ownership="solaredge_only",
+                cost_type="initial_capex",
+                value=0.035,
+                coverage_id="scope.solaredge.incremental.initial",
+                coverage_exclude_id="scope.base.initial",
+                solectria_quantity=0.0,
+                solaredge_quantity=se_wdc,
+            ),
+            guided_line(
+                input_id="cost.se.incremental-om",
+                label="Incremental SolarEdge recurring O&M",
+                ownership="solaredge_only",
+                cost_type="recurring_om",
+                value=0.002,
+                coverage_id="scope.solaredge.incremental.recurring",
+                coverage_exclude_id="scope.base.recurring",
+                solectria_quantity=0.0,
+                solaredge_quantity=se_wdc,
+            ),
+        ]
+
+        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
+        kernel_request = tea_api.build_technoeconomic_kernel_request(
+            parsed,
+            self.snapshot,
+        )
+        lines = {line.input_id: line for line in kernel_request.cost_lines}
+
+        for input_id in ("cost.base.capex", "cost.base.om"):
+            self.assertEqual(1.0, lines[input_id].solectria_multiplier_to_intensity)
+            self.assertEqual(1.0, lines[input_id].solaredge_multiplier_to_intensity)
+        for input_id in (
+            "cost.se.incremental-capex",
+            "cost.se.incremental-om",
+        ):
+            self.assertEqual(0.0, lines[input_id].solectria_multiplier_to_intensity)
+            self.assertEqual(1.0, lines[input_id].solaredge_multiplier_to_intensity)
+
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            parsed,
+            self.envelope,
+            kernel_request,
+        )
+        receipts = {
+            line["input_id"]: line
+            for line in provenance["normalization_receipt"]["lines"]
+        }
+        self.assertEqual("Wdc", receipts["cost.base.capex"]["quantity_unit"])
+        self.assertEqual(sol_wdc, receipts["cost.base.capex"]["solectria_quantity"])
+        self.assertEqual(se_wdc, receipts["cost.base.capex"]["solaredge_quantity"])
+        self.assertEqual(
+            "multiply_quantity_then_divide_by_frozen_source_wdc",
+            receipts["cost.se.incremental-capex"]["normalization_method"],
+        )
+        capex_pair = next(
+            decision
+            for decision in provenance["overlap_receipt"]["pairwise_decisions"]
+            if {
+                decision["left_input_id"],
+                decision["right_input_id"],
+            }
+            == {"cost.base.capex", "cost.se.incremental-capex"}
+        )
+        self.assertEqual("disjoint_by_declared_exclusion", capex_pair["decision"])
+
     def test_commercial_cost_only_and_indexed_normalization_are_explicit(self) -> None:
         payload = _commercial_request_payload(include_transfer=False)
         parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
