@@ -415,6 +415,19 @@ class TechnoeconomicAnnualSourceTests(unittest.TestCase):
             {"year", "solectria_kwh", "solaredge_kwh"},
             set(eligibility["annual_energy_by_year"][0]),
         )
+        self.assertEqual(
+            {
+                "solectria": {
+                    "applied_capacity_w": 139_180.8,
+                    "rating_basis": "dc_installed_nameplate",
+                },
+                "solaredge": {
+                    "applied_capacity_w": 139_180.8,
+                    "rating_basis": "dc_installed_nameplate",
+                },
+            },
+            eligibility["applied_capacity"],
+        )
 
     def test_explicit_snapshot_hash_and_store_integration_match(self) -> None:
         envelope, _, _, _ = self._snapshot()
@@ -765,6 +778,48 @@ class TechnoeconomicAnnualSourceTests(unittest.TestCase):
             )
 
         self.assertEqual("annual_temporal_semantics_obsolete", raised.exception.code)
+
+    def test_curtailment_request_window_and_statistics_must_agree(self) -> None:
+        annual, origin, promotion = self._create_dependencies()
+        annual["request"].update(
+            {"curtailment_enabled": True, "curtailment_limit_kw": 125.0}
+        )
+        annual["result"]["window"].update(
+            {"curtailment_enabled": True, "curtailment_limit_kw": 125.0}
+        )
+        annual["result"]["stats"].update(
+            {"curtailment_enabled": True, "curtailment_limit_kw": 125.0}
+        )
+
+        for section in ("window", "stats"):
+            with self.subTest(section=section):
+                tampered = deepcopy(annual)
+                tampered["result"][section]["curtailment_limit_kw"] = 120.0
+                with self.assertRaises(
+                    tea_api.AnnualSourceValidationError
+                ) as raised:
+                    tea_api.build_annual_source_snapshot(
+                        tampered,
+                        origin_validation_job=origin,
+                        promotion_record=promotion,
+                    )
+                self.assertEqual(
+                    "annual_curtailment_provenance_mismatch",
+                    raised.exception.code,
+                )
+
+        incomplete = deepcopy(annual)
+        del incomplete["result"]["stats"]["curtailment_limit_kw"]
+        with self.assertRaises(tea_api.AnnualSourceValidationError) as raised:
+            tea_api.build_annual_source_snapshot(
+                incomplete,
+                origin_validation_job=origin,
+                promotion_record=promotion,
+            )
+        self.assertEqual(
+            "annual_curtailment_record_incomplete",
+            raised.exception.code,
+        )
 
     def test_unresolved_and_mismatched_promotions_are_rejected(self) -> None:
         annual, origin, promotion = self._create_dependencies()

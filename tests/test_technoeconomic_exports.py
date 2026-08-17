@@ -24,6 +24,7 @@ from sbepv.api import technoeconomic as technoeconomic_api
 from sbepv.api.schemas import TechnoeconomicSubmissionRequest
 from sbepv.worker import run_technoeconomic
 from tests.test_technoeconomic_api import (
+    _applied_site_request_payload,
     _commercial_request_payload,
     _site_request_payload,
 )
@@ -80,6 +81,7 @@ class TechnoeconomicExportTests(unittest.TestCase):
         payload["cost_lines"].append(shared)
         parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
         self.request_payload = parsed.model_dump(mode="json", exclude_none=False)
+        self.request_payload.pop("capacity_normalization", None)
         self.snapshot = {
             "schema_version": 1,
             "eligibility_version": technoeconomic_api.ANNUAL_SOURCE_ELIGIBILITY_VERSION,
@@ -217,6 +219,192 @@ class TechnoeconomicExportTests(unittest.TestCase):
         )
         self.assertEqual("passed", manifest["tie_outs"]["status"])
         self.assertEqual([], manifest["tie_outs"]["failed_check_ids"])
+
+    def test_v2_exports_applied_capacity_as_distinct_authority(self) -> None:
+        request_payload = TechnoeconomicSubmissionRequest.model_validate(
+            _applied_site_request_payload(
+                source_id="annual-export-source",
+                n=24,
+            )
+        ).model_dump(mode="json", exclude_none=False)
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        snapshot_sha256 = technoeconomic_api.canonical_json_sha256(snapshot)
+        request = technoeconomic_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = technoeconomic_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": snapshot_sha256,
+            },
+            request,
+        )
+        calculation = kernel.run_technoeconomic(request)
+        job_id = "tea_export_applied_v2"
+        lease_token = "lease_export_applied_v2"
+        sealed_artifact = run_technoeconomic._write_sealed_calculation_payload(
+            job_id,
+            lease_token,
+            calculation,
+            request_sha256=technoeconomic_api.canonical_json_sha256(
+                request_payload
+            ),
+            source_snapshot_sha256=snapshot_sha256,
+            submission_provenance_sha256=technoeconomic_api.canonical_json_sha256(
+                provenance
+            ),
+            publish_check=lambda: None,
+        )
+        sealed_path = self.output / Path(sealed_artifact["storage_key"])
+        routine_result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            sealed_artifact,
+            provenance,
+        )
+
+        self.assertEqual(2, routine_result["schema_version"])
+        self.assertEqual(
+            "frozen_annual_applied_capacity_w",
+            routine_result["capacity_basis"],
+        )
+        self.assertEqual(
+            125_000.0,
+            routine_result["applied_capacities"]["solectria"][
+                "applied_capacity_w"
+            ],
+        )
+        self.assertEqual(
+            139_180.8,
+            routine_result["capacities"]["solectria"]["installed_wdc"],
+        )
+
+        manifest = reporting.generate_technoeconomic_exports(
+            job_id=job_id,
+            attempt_directory=sealed_path.parent,
+            sealed_calculation_path=sealed_path,
+            sealed_calculation_artifact=sealed_artifact,
+            request_payload=request_payload,
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+            routine_result=routine_result,
+            cancellation_check=lambda: None,
+            publish_check=lambda: None,
+        )
+        self.assertEqual(
+            reporting.APPLIED_EXPORT_MANIFEST_SCHEMA_VERSION,
+            manifest["schema_version"],
+        )
+        self.assertEqual(
+            reporting.APPLIED_CSV_FORMAT_VERSION,
+            manifest["csv_format_version"],
+        )
+        v2_versions = reporting.export_contract_versions(
+            kernel.CALCULATION_CONTRACT_VERSION
+        )
+        self.assertEqual(reporting.PNG_SCHEMA_VERSION, v2_versions["png"])
+        self.assertEqual(
+            reporting.XLSX_LOGICAL_HASH_VERSION,
+            v2_versions["xlsx_logical_hash"],
+        )
+        self.assertEqual("passed", manifest["tie_outs"]["status"])
+        self.assertIn(
+            "USD/applied W",
+            reporting._human_metric(
+                "lifecycle_cost_delta_se_minus_sol",
+                applied_capacity_contract=True,
+            ),
+        )
+        run_technoeconomic._verify_export_manifest(
+            job_id,
+            lease_token,
+            manifest,
+            request_sha256=technoeconomic_api.canonical_json_sha256(
+                request_payload
+            ),
+            source_snapshot_sha256=snapshot_sha256,
+            submission_provenance_sha256=technoeconomic_api.canonical_json_sha256(
+                provenance
+            ),
+            calculation_contract_version=request.calculation_contract_version,
+            sampling_version=request.sampling_version,
+            sealed_calculation_sha256=sealed_artifact["sha256"],
+        )
+
+        archive_path = self.output / Path(
+            manifest["artifacts"]["csv_bundle"]["storage_key"]
+        )
+        with zipfile.ZipFile(archive_path) as archive:
+            self.assertIn("csv-bundle-manifest-v2.json", archive.namelist())
+            realizations = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("realizations.csv").decode("utf-8")
+                    )
+                )
+            )
+            self.assertIn(kernel.APPLIED_FIELD_DELTA_COST, realizations[0])
+            self.assertNotIn(kernel.FIELD_DELTA_COST, realizations[0])
+
+            capacity_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("capacity-and-basis.csv").decode("utf-8")
+                    )
+                )
+            )
+            self.assertTrue(
+                all(row["installed_wdc"] == "139180.8" for row in capacity_rows)
+            )
+            self.assertTrue(
+                all(
+                    row["applied_capacity_w"] == "125000.0"
+                    for row in capacity_rows
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["applied_capacity_rating_basis"]
+                    == "ac_operating_limit"
+                    for row in capacity_rows
+                )
+            )
+
+            per_year_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("per-year-summary.csv").decode("utf-8")
+                    )
+                )
+            )
+            self.assertEqual("125000.0", per_year_rows[0]["solectria_applied_w"])
+            self.assertIn(
+                "source_delta_specific_se_minus_sol_kwh_ac_per_applied_w_year",
+                per_year_rows[0],
+            )
+
+            input_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("input-specifications.csv").decode("utf-8")
+                    )
+                )
+            )
+            cost_row = next(
+                row for row in input_rows if row["input_id"] == "cost.sol.capex"
+            )
+            self.assertEqual("usd_per_applied_w", cost_row["normalized_unit"])
+            self.assertEqual(
+                "125000.0", cost_row["solectria_applied_capacity_w"]
+            )
 
     def test_csv_bundle_is_complete_stable_and_retains_zero_negative_rows(self) -> None:
         manifest = self._generate()

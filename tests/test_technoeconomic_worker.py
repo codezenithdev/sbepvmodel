@@ -20,7 +20,10 @@ from sbepv.api.schemas import TechnoeconomicSubmissionRequest
 from sbepv.store import AgentStore
 from sbepv.worker import loop as worker_loop
 from sbepv.worker import run_technoeconomic
-from tests.test_technoeconomic_api import _site_request_payload
+from tests.test_technoeconomic_api import (
+    _applied_site_request_payload,
+    _site_request_payload,
+)
 
 
 class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
@@ -91,6 +94,9 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
             _site_request_payload(source_id=self.source_id, n=8)
         )
         self.request_payload = parsed.model_dump(mode="json", exclude_none=False)
+        # The discriminator did not exist in durable v1 requests.  Keep this
+        # fixture byte-for-byte representative of that historical shape.
+        self.request_payload.pop("capacity_normalization", None)
         kernel_request = tea_api.build_technoeconomic_kernel_request(
             self.request_payload,
             self.snapshot,
@@ -206,7 +212,7 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         self.assertNotIn("realization_table", completed["result"])
         self.assertNotIn("sampled_inputs", completed["result"])
         self.assertEqual(
-            run_technoeconomic.kernel.CALCULATION_CONTRACT_VERSION,
+            run_technoeconomic.kernel.LEGACY_CALCULATION_CONTRACT_VERSION,
             completed["result"]["calculation_contract_version"],
         )
         self.assertEqual(
@@ -279,6 +285,134 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
             "Finalizing technoeconomic results",
         ):
             self.assertIn(expected_stage, observed_stages)
+
+    def test_v2_routine_result_separates_installed_and_applied_capacities(self) -> None:
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        request_payload = TechnoeconomicSubmissionRequest.model_validate(
+            _applied_site_request_payload(
+                source_id=self.source_id,
+                n=8,
+            )
+        ).model_dump(mode="json", exclude_none=False)
+        request = tea_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": tea_api.canonical_json_sha256(snapshot),
+            },
+            request,
+        )
+        calculation = run_technoeconomic.kernel.run_technoeconomic(request)
+        artifact = {
+            "schema_version": 1,
+            "artifact_kind": "sealed_technoeconomic_calculation",
+            "media_type": "application/x-npz",
+            "sha256": "a" * 64,
+            "byte_count": 1,
+            "row_count": 8,
+            "column_count": len(calculation.realization_table),
+            "pickle_allowed": False,
+            "public": False,
+        }
+
+        result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            artifact,
+            provenance,
+        )
+
+        self.assertEqual(2, result["schema_version"])
+        self.assertEqual(
+            "frozen_annual_applied_capacity_w",
+            result["capacity_basis"],
+        )
+        self.assertEqual(
+            125_000.0,
+            result["applied_capacities"]["solaredge"]["applied_capacity_w"],
+        )
+        self.assertEqual(
+            "ac_operating_limit",
+            result["applied_capacities"]["solectria"]["rating_basis"],
+        )
+        self.assertEqual(
+            139_180.8,
+            result["capacities"]["solaredge"]["installed_wdc"],
+        )
+
+    def test_v2_retry_replays_frozen_request_through_complete_worker(self) -> None:
+        self.store.cancel_technoeconomic_job(self.job_id)
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        snapshot_sha256 = tea_api.canonical_json_sha256(snapshot)
+        request_payload = TechnoeconomicSubmissionRequest.model_validate(
+            _applied_site_request_payload(source_id=self.source_id, n=8)
+        ).model_dump(mode="json", exclude_none=False)
+        kernel_request = tea_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": snapshot_sha256,
+            },
+            kernel_request,
+        )
+        original_id = "tea_worker_v2_original"
+        artifact = self.source_artifact
+        self.store.create_technoeconomic_job(
+            job_id=original_id,
+            request=request_payload,
+            source_annual_job_id=self.source_id,
+            source_artifact_storage_key=artifact["storage_key"],
+            source_artifact_sha256=artifact["sha256"],
+            source_artifact_bytes=artifact["byte_count"],
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+            atomic_source_check=lambda _connection: snapshot_sha256,
+        )
+        self.store.cancel_technoeconomic_job(original_id)
+        retried = self.store.retry_technoeconomic_job(
+            original_id,
+            new_job_id="tea_worker_v2_retry",
+        )
+        self.assertEqual(original_id, retried["retry_of_job_id"])
+
+        record = self._claim()
+        self._run(record)
+
+        completed = self.store.get_technoeconomic_job(record["id"])
+        self.assertEqual("done", completed["state"])
+        self.assertEqual(2, completed["result"]["schema_version"])
+        self.assertEqual(
+            "tea-calculation-v2",
+            completed["result"]["calculation_contract_version"],
+        )
+        self.assertEqual(
+            125_000.0,
+            completed["result"]["applied_capacities"]["solectria"][
+                "applied_capacity_w"
+            ],
+        )
+        self.assertEqual(request_payload, completed["request"])
+        self.assertEqual(provenance, completed["submission_provenance"])
 
     def test_snapshot_digest_tampering_fails_before_calculation(self) -> None:
         record = self._claim()

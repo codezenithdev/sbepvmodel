@@ -116,11 +116,14 @@ function teaBase(sourceId, basis) {
   draft.cost_lines.forEach((line, index) => {
     line.distribution = {family: 'fixed', value: index ? '1.30' : '1.20'};
     line.original_unit = basis === 'solartac_site' ? 'usd_total' : 'usd_per_wdc';
-    line.normalized_unit = 'usd_per_wdc';
+    line.normalized_unit = basis === 'solartac_site'
+      ? (line.cost_type.startsWith('recurring_')
+        ? 'usd_per_applied_w_year' : 'usd_per_applied_w')
+      : (line.cost_type.startsWith('recurring_') ? 'usd_per_wdc_year' : 'usd_per_wdc');
     line.normalization_method = basis === 'solartac_site'
-      ? 'divide_by_frozen_source_wdc' : 'already_normalized_per_wdc';
+      ? 'divide_by_frozen_applied_capacity_w' : 'already_normalized_per_wdc';
     line.normalization_derivation = basis === 'solartac_site'
-      ? 'Source total divided by frozen source Wdc.'
+      ? 'Source total divided by frozen Annual applied capacity.'
       : 'Commercial source already reports constant-dollar USD per Wdc.';
     line.constant_dollar_cost_year = '2025';
     line.currency_year_normalization = {
@@ -1055,11 +1058,11 @@ assert.equal(technoeconomicElements.sourceStatus.textContent,
 assert.ok(technoeconomicElements.sourceDetail.textContent.includes('2 eligible weather years'));
 assert.equal(technoeconomicElements.sourceOperatingLimit.textContent, '125 kWac');
 assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
-  'already reflected in energy'
+  'applied capacity used for cost and energy normalization'
 ));
-assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
-  'cost and energy normalization'
-));
+assert.equal(technoeconomicElements.sourceCapacityNote.textContent.includes(
+  'Installed DC nameplate remains separate and is used'
+), false);
 assert.equal(technoeconomicElements.sourceSolectriaCapacity.textContent, '125 kWac');
 assert.equal(technoeconomicElements.sourceSolarEdgeCapacity.textContent, '125 kWac');
 assert.equal(technoeconomicElements.sourceSolectriaEnergy.textContent, '190 MWh/year');
@@ -1084,6 +1087,9 @@ assert.equal(technoeconomicElements.sourceSolarEdgeCapacity.textContent, '139.18
 assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
   'did not enable an AC operating limit'
 ));
+assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
+  'installed DC nameplate is the applied capacity'
+));
 assert.equal(technoeconomicElements.sourceCapacityNote.textContent.includes(
   'already reflected in energy'
 ), false);
@@ -1100,6 +1106,9 @@ assert.equal(technoeconomicElements.sourceCapacityNote.textContent.includes(
 ), false);
 assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
   'valid AC operating limit is unavailable'
+));
+assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
+  'installed DC nameplate is the applied capacity'
 ));
 technoeconomicSources[0].provenance.operating_limit = {curtailment_enabled: false};
 technoeconomicRenderSelectedSource();
@@ -1254,9 +1263,10 @@ const inputs = {
 const draft = technoeconomicBuildGuidedDraft(base, inputs, {
   seed: '42', date: '2026-08-16',
 });
-assert.equal(draft.schema_version, 'technoeconomic-draft-v2');
+assert.equal(draft.schema_version, 'technoeconomic-draft-v3');
 assert.equal(draft.entry_mode, 'guided_solartac');
 assert.equal(draft.basis, 'solartac_site');
+assert.equal(draft.capacity_normalization, 'annual_applied_capacity_v1');
 assert.equal(draft.n, '10000');
 assert.equal(draft.seed, '42');
 assert.equal(draft.cost_year, '2025');
@@ -1284,7 +1294,8 @@ assert.deepEqual(draft.cost_lines.map((line) => line.original_unit), [
   'usd_total', 'usd_total_per_year', 'usd_total', 'usd_total_per_year',
 ]);
 assert.deepEqual(draft.cost_lines.map((line) => line.normalized_unit), [
-  'usd_per_wdc', 'usd_per_wdc_year', 'usd_per_wdc', 'usd_per_wdc_year',
+  'usd_per_applied_w', 'usd_per_applied_w_year',
+  'usd_per_applied_w', 'usd_per_applied_w_year',
 ]);
 assert.deepEqual(draft.cost_lines.map((line) => line.solectria_quantity), [
   '1', '1', '0', '0',
@@ -1294,7 +1305,7 @@ assert.deepEqual(draft.cost_lines.map((line) => line.solaredge_quantity), [
 ]);
 assert.ok(draft.cost_lines.every((line) =>
   line.constant_dollar_cost_year === '2025'
-  && line.normalization_method === 'divide_by_frozen_source_wdc'
+  && line.normalization_method === 'divide_by_frozen_applied_capacity_w'
   && line.quantity_unit === ''
   && line.coverage_exclude_ids.length === 0
   && line.evidence.explicit_acceptance === true
@@ -1329,6 +1340,7 @@ const serialized = serializeTechnoeconomicRequest(draft, {
 assert.equal(serialized.valid, true, JSON.stringify(serialized.errors));
 assert.equal(serialized.payload.n, 10000);
 assert.equal(serialized.payload.seed, 42);
+assert.equal(serialized.payload.capacity_normalization, 'annual_applied_capacity_v1');
 assert.equal(serialized.payload.finance.real_discount_rate.distribution.mode, 0.05);
 assert.deepEqual(serialized.payload.shared_degradation.annual_rate.distribution, {
   family: 'fixed', value: 0,
@@ -1344,6 +1356,17 @@ assert.equal(serialized.payload.cost_lines[2].solectria_quantity, 0);
 assert.equal(serialized.payload.cost_lines[2].solaredge_quantity, 1);
 assert.equal(serialized.payload.commercial_reference_design, null);
 assert.equal(serialized.payload.commercial_transfer, null);
+const sourceSummary = technoeconomicConfirmationSource({
+  source_annual_job_id: 'annual-guided-source',
+  applied_capacity: {
+    solectria: {applied_capacity_w: 125000, rating_basis: 'ac_operating_limit'},
+    solaredge: {applied_capacity_w: 125000, rating_basis: 'ac_operating_limit'},
+  },
+});
+assert.equal(
+  technoeconomicConfirmationCapacity(sourceSummary, 'solectria', true),
+  '125,000 W (AC operating limit)'
+);
 for (const derived of [
   'capacities', 'annual_energy_by_year', 'lifecycle_cost', 'annualized_cost',
   'estimated_lcoe',
@@ -1399,6 +1422,7 @@ const result = serializeTechnoeconomicRequest(solarTacDraft(), {
 assert.equal(result.valid, true);
 assert.deepEqual(result.errors, []);
 assert.equal(result.payload.basis, 'solartac_site');
+assert.equal(result.payload.capacity_normalization, 'annual_applied_capacity_v1');
 assert.equal(result.payload.n, 1000);
 assert.equal(result.payload.seed, Number.MAX_SAFE_INTEGER);
 assert.deepEqual(result.payload.cost_lines[0].distribution, {family: 'fixed', value: 1000});
@@ -1414,6 +1438,9 @@ assert.deepEqual(result.payload.shared_degradation.annual_rate.distribution, {
 assert.equal(result.nonfixedPredictorCount, 3);
 assert.equal(result.payload.commercial_reference_design, null);
 assert.equal(result.payload.commercial_transfer, null);
+assert.ok(result.payload.cost_lines.every((line) =>
+  line.normalized_unit === 'usd_per_applied_w'
+  && line.normalization_method === 'divide_by_frozen_applied_capacity_w'));
 assert.equal('capacities' in result.payload, false);
 assert.equal('annual_energy_by_year' in result.payload, false);
 assert.equal('transfer_enabled' in result.payload, false);
@@ -1519,6 +1546,7 @@ const commercial = serializeTechnoeconomicRequest(commercialDraft(true), {source
 assert.equal(commercial.valid, true);
 assert.deepEqual(commercial.errors, []);
 assert.equal(commercial.payload.basis, 'commercial_representative');
+assert.equal(commercial.payload.capacity_normalization, null);
 assert.equal(commercial.payload.commercial_reference_design.reference_wdc, 550000);
 assert.equal(commercial.payload.commercial_transfer.status, 'approved');
 assert.equal(commercial.payload.commercial_transfer.explicit_attestation, true);
@@ -1662,6 +1690,9 @@ assert.equal(technoeconomicDifferenceLabel(0, 'SE greater', 'SE lower'), 'Within
 assert.equal(technoeconomicFormatMetric(
   'DeltaLifecycleCostPerWdc_se_minus_sol_USD_per_Wdc', -1.25
 ), '-1.25 USD/Wdc');
+assert.equal(technoeconomicFormatMetric(
+  'DeltaLifecycleCostPerAppliedW_se_minus_sol_USD_per_applied_W', -1.25
+), '-1.25 USD/applied W');
 let legacyArgumentRead = false;
 const legacyAnnualResult = new Proxy({}, {get() {
   legacyArgumentRead = true;
@@ -1673,6 +1704,9 @@ console.log(JSON.stringify({
   signed: technoeconomicFormatMetric(
     'DeltaLifecycleEnergyPerWdc_se_minus_sol_kWh_AC_per_Wdc', -0.25
   ),
+  signedApplied: technoeconomicFormatMetric(
+    'DeltaLifecycleEnergyPerAppliedW_se_minus_sol_kWh_AC_per_applied_W', -0.25
+  ),
   terminal: ['done', 'error', 'cancelled', 'interrupted'].filter(
     technoeconomicIsTerminalState
   ),
@@ -1680,6 +1714,7 @@ console.log(JSON.stringify({
 """
         )
         self.assertEqual("-0.25 kWh AC/Wdc", payload["signed"])
+        self.assertEqual("-0.25 kWh AC/applied W", payload["signedApplied"])
         self.assertEqual(
             ["done", "error", "cancelled", "interrupted"],
             payload["terminal"],
@@ -1703,6 +1738,22 @@ console.log(JSON.stringify({
                 "DeltaEquivalentAnnualEnergyPerWdcYear_se_minus_sol_kWh_AC_per_Wdc_year",
                 "Equivalent annual energy delta (SolarEdge minus Solectria)",
             ),
+            (
+                "DeltaLifecycleCostPerAppliedW_se_minus_sol_USD_per_applied_W",
+                "Lifecycle cost delta (SolarEdge minus Solectria)",
+            ),
+            (
+                "DeltaLifecycleEnergyPerAppliedW_se_minus_sol_kWh_AC_per_applied_W",
+                "Lifecycle energy delta (SolarEdge minus Solectria)",
+            ),
+            (
+                "DeltaEquivalentAnnualCostPerAppliedWYear_se_minus_sol_USD_per_applied_W_year",
+                "Equivalent annual cost delta (SolarEdge minus Solectria)",
+            ),
+            (
+                "DeltaEquivalentAnnualEnergyPerAppliedWYear_se_minus_sol_kWh_AC_per_applied_W_year",
+                "Equivalent annual energy delta (SolarEdge minus Solectria)",
+            ),
         ):
             self.assertIn(f"{metric_key}: '{label}'", self.script)
 
@@ -1723,6 +1774,13 @@ console.log(JSON.stringify({
             "technoeconomicRenderArtifacts(job)",
         ):
             self.assertIn(render_call, result_renderer)
+
+        provenance_renderer = self.script.split(
+            "function technoeconomicRenderProvenance", 1
+        )[1].split("function technoeconomicSetPlot", 1)[0]
+        self.assertIn("result.applied_capacities", provenance_renderer)
+        self.assertIn("applied capacity", provenance_renderer)
+        self.assertIn("installed DC provenance", provenance_renderer)
 
         tradeoffs = self.script.split(
             "function technoeconomicRenderTradeoffs", 1
@@ -1773,6 +1831,9 @@ console.log(JSON.stringify({
         self.assertIn("item.realization_share", per_year)
         self.assertIn("source_sol_specific_kwh_ac_per_wdc_year", per_year)
         self.assertIn("source_se_specific_kwh_ac_per_wdc_year", per_year)
+        self.assertIn("source_sol_specific_kwh_ac_per_applied_w_year", per_year)
+        self.assertIn("source_se_specific_kwh_ac_per_applied_w_year", per_year)
+        self.assertIn("DeltaLifecycleCostPerAppliedW_se_minus_sol_USD_per_applied_W", per_year)
 
         sensitivity = self.script.split(
             "function technoeconomicRenderSensitivity", 1
@@ -1817,8 +1878,24 @@ globalThis.localStorage = {
   setItem(key, value) { memory.set(key, String(value)); },
   removeItem(key) { memory.delete(key); },
 };
-assert.equal(TECHNOECONOMIC_DRAFT_SCHEMA_VERSION, 'technoeconomic-draft-v2');
-assert.equal(TECHNOECONOMIC_DRAFT_STORAGE_KEY, 'sbepv.technoeconomic.draft.v2');
+assert.equal(TECHNOECONOMIC_DRAFT_SCHEMA_VERSION, 'technoeconomic-draft-v3');
+assert.equal(TECHNOECONOMIC_DRAFT_STORAGE_KEY, 'sbepv.technoeconomic.draft.v3');
+const previous = technoeconomicDefaultDraft();
+previous.schema_version = 'technoeconomic-draft-v2';
+previous.source_annual_job_id = 'annual-v2-preserved';
+previous.project_life_years = '31';
+previous.cost_lines[0].normalized_unit = 'usd_per_wdc';
+previous.cost_lines[0].normalization_method = 'divide_by_frozen_source_wdc';
+memory.set(TECHNOECONOMIC_PREVIOUS_DRAFT_STORAGE_KEY, JSON.stringify(previous));
+const previousDraft = technoeconomicLoadLocalDraft();
+assert.equal(previousDraft.schema_version, TECHNOECONOMIC_DRAFT_SCHEMA_VERSION);
+assert.equal(previousDraft.source_annual_job_id, 'annual-v2-preserved');
+assert.equal(previousDraft.project_life_years, '31');
+assert.equal(previousDraft.capacity_normalization, 'annual_applied_capacity_v1');
+assert.equal(previousDraft.cost_lines[0].normalized_unit, 'usd_per_applied_w');
+assert.equal(previousDraft.cost_lines[0].normalization_method,
+  'divide_by_frozen_applied_capacity_w');
+memory.delete(TECHNOECONOMIC_PREVIOUS_DRAFT_STORAGE_KEY);
 memory.set('sbepv.technoeconomic.draft.v1', JSON.stringify({
   schema_version: 'technoeconomic-draft-v1',
   source_annual_job_id: 'annual-obsolete-guided',
@@ -1865,8 +1942,8 @@ console.log(JSON.stringify({
 }));
 """
         )
-        self.assertEqual("technoeconomic-draft-v2", payload["version"])
-        self.assertEqual("sbepv.technoeconomic.draft.v2", payload["storageKey"])
+        self.assertEqual("technoeconomic-draft-v3", payload["version"])
+        self.assertEqual("sbepv.technoeconomic.draft.v3", payload["storageKey"])
         self.assertNotIn("result", payload["draftKeys"])
         self.assertNotIn("artifacts", payload["draftKeys"])
 
@@ -1938,7 +2015,7 @@ console.log(JSON.stringify({
 }));
 """
         )
-        self.assertEqual("technoeconomic-draft-v2", payload["version"])
+        self.assertEqual("technoeconomic-draft-v3", payload["version"])
         self.assertEqual("annual_fixture", payload["source"])
         self.assertEqual("solartac_site", payload["basis"])
         self.assertEqual("2000", payload["n"])

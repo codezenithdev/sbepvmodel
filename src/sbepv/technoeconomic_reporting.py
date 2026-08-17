@@ -48,11 +48,48 @@ XLSX_SCHEMA_VERSION = "technoeconomic-xlsx-v1"
 PNG_SCHEMA_VERSION = "technoeconomic-plot-v1"
 XLSX_LOGICAL_HASH_VERSION = "technoeconomic-xlsx-logical-row-v1"
 
+APPLIED_EXPORT_MANIFEST_SCHEMA_VERSION = "technoeconomic-exports-manifest-v2"
+APPLIED_CSV_FORMAT_VERSION = "technoeconomic-csv-v2"
+APPLIED_CSV_BUNDLE_SCHEMA_VERSION = "technoeconomic-csv-bundle-v2"
+APPLIED_XLSX_SCHEMA_VERSION = "technoeconomic-xlsx-v2"
+
 CSV_BUNDLE_FILENAME = "technoeconomic-results-csv-v1.zip"
 XLSX_FILENAME = "technoeconomic-results-v1.xlsx"
 CDF_PLOT_FILENAME = "technoeconomic-cdf-v1.png"
 SENSITIVITY_PLOT_FILENAME = "technoeconomic-sensitivity-v1.png"
 CONVERGENCE_PLOT_FILENAME = "technoeconomic-convergence-v1.png"
+
+
+def export_contract_versions(calculation_contract_version: str) -> dict[str, str]:
+    """Return the export schema family pinned to one calculation contract."""
+
+    if calculation_contract_version == technoeconomic_kernel.LEGACY_CALCULATION_CONTRACT_VERSION:
+        return {
+            "manifest": EXPORT_MANIFEST_SCHEMA_VERSION,
+            "csv_format": CSV_FORMAT_VERSION,
+            "csv_bundle": CSV_BUNDLE_SCHEMA_VERSION,
+            "csv_bundle_manifest_filename": "csv-bundle-manifest-v1.json",
+            "xlsx": XLSX_SCHEMA_VERSION,
+            "png": PNG_SCHEMA_VERSION,
+            "xlsx_logical_hash": XLSX_LOGICAL_HASH_VERSION,
+        }
+    if calculation_contract_version == technoeconomic_kernel.CALCULATION_CONTRACT_VERSION:
+        return {
+            "manifest": APPLIED_EXPORT_MANIFEST_SCHEMA_VERSION,
+            "csv_format": APPLIED_CSV_FORMAT_VERSION,
+            "csv_bundle": APPLIED_CSV_BUNDLE_SCHEMA_VERSION,
+            "csv_bundle_manifest_filename": "csv-bundle-manifest-v2.json",
+            "xlsx": APPLIED_XLSX_SCHEMA_VERSION,
+            # The PNG rendering contract and logical-row hash algorithm are
+            # unchanged.  The v2 manifest/calculation binding and XLSX schema
+            # carry the applied-capacity semantics without mis-versioning either
+            # byte-format algorithm.
+            "png": PNG_SCHEMA_VERSION,
+            "xlsx_logical_hash": XLSX_LOGICAL_HASH_VERSION,
+        }
+    raise TechnoeconomicExportError(
+        f"Unsupported calculation contract for export: {calculation_contract_version!r}"
+    )
 
 _SAFE_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -391,6 +428,55 @@ def _compact_cdf_points_for_binding(value: Any) -> Any:
     return value
 
 
+def _applied_capacity_authority(
+    submission_provenance: Mapping[str, Any],
+) -> dict[str, Mapping[str, Any]]:
+    """Return the immutable v2 applied-capacity receipt, failing closed."""
+
+    receipt = submission_provenance.get("normalization_receipt")
+    if not isinstance(receipt, Mapping):
+        raise TechnoeconomicExportError(
+            "Applied-capacity normalization receipt is missing"
+        )
+    if receipt.get("capacity_normalization") != "annual_applied_capacity_v1":
+        raise TechnoeconomicExportError(
+            "Applied-capacity normalization receipt has the wrong method"
+        )
+    records = receipt.get("applied_capacities")
+    if not isinstance(records, Mapping) or set(records) != {
+        "solectria",
+        "solaredge",
+    }:
+        raise TechnoeconomicExportError(
+            "Applied-capacity normalization receipt is incomplete"
+        )
+    result: dict[str, Mapping[str, Any]] = {}
+    for system in ("solectria", "solaredge"):
+        record = records.get(system)
+        if not isinstance(record, Mapping):
+            raise TechnoeconomicExportError(
+                "Applied-capacity normalization record is invalid"
+            )
+        applied_w = record.get("applied_capacity_w")
+        if (
+            isinstance(applied_w, bool)
+            or not isinstance(applied_w, (int, float))
+            or not math.isfinite(float(applied_w))
+            or float(applied_w) <= 0
+            or record.get("rating_basis")
+            not in {"ac_operating_limit", "dc_installed_nameplate"}
+            or record.get("selection_method")
+            != "enabled_positive_annual_curtailment_else_installed_dc"
+            or not isinstance(record.get("source_field"), str)
+            or not record.get("source_field")
+        ):
+            raise TechnoeconomicExportError(
+                "Applied-capacity normalization record is invalid"
+            )
+        result[system] = record
+    return result
+
+
 def _verify_routine_result(
     *,
     metadata: Mapping[str, Any],
@@ -441,8 +527,15 @@ def _verify_routine_result(
         raise TechnoeconomicExportError(
             "Frozen routine-result authority is incomplete"
         ) from exc
+    calculation_contract_version = submission_provenance.get(
+        "calculation_contract_version"
+    )
+    applied_capacity_contract = (
+        calculation_contract_version
+        == technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
+    )
     expected = {
-        "schema_version": 1,
+        "schema_version": 2 if applied_capacity_contract else 1,
         "calculation_contract_version": submission_provenance.get(
             "calculation_contract_version"
         ),
@@ -463,7 +556,11 @@ def _verify_routine_result(
             "source_snapshot_sha256"
         ),
         "eligible_weather_years": eligible_years,
-        "capacity_basis": "frozen_annual_module_dc_stc_wdc",
+        "capacity_basis": (
+            "frozen_annual_applied_capacity_w"
+            if applied_capacity_contract
+            else "frozen_annual_module_dc_stc_wdc"
+        ),
         "capacities": capacities,
         "input_status": evidence_receipt.get("status"),
         "evidence_class_counts": evidence_receipt.get("evidence_class_counts") or {},
@@ -476,6 +573,17 @@ def _verify_routine_result(
         "convergence": metadata.get("convergence"),
         "sealed_calculation": sealed_identity,
     }
+    if applied_capacity_contract:
+        authority = _applied_capacity_authority(submission_provenance)
+        expected["applied_capacities"] = {
+            system: {
+                "applied_capacity_w": authority[system].get(
+                    "applied_capacity_w"
+                ),
+                "rating_basis": authority[system].get("rating_basis"),
+            }
+            for system in ("solaredge", "solectria")
+        }
     for key in expected:
         if key not in routine_result:
             raise TechnoeconomicExportError(
@@ -576,6 +684,20 @@ INPUT_COLUMNS = (
     "solaredge_multiplier_to_intensity",
 )
 
+APPLIED_INPUT_COLUMNS = INPUT_COLUMNS[:-9] + (
+    "capacity_denominator_method",
+    "solectria_capacity_denominator_applied",
+    "solectria_applied_capacity_w",
+    "solectria_applied_capacity_rating_basis",
+    "solectria_applied_capacity_source_field",
+    "solaredge_capacity_denominator_applied",
+    "solaredge_applied_capacity_w",
+    "solaredge_applied_capacity_rating_basis",
+    "solaredge_applied_capacity_source_field",
+    "solectria_multiplier_to_intensity",
+    "solaredge_multiplier_to_intensity",
+)
+
 
 def _currency_normalization_columns(
     normalization: Mapping[str, Any] | None,
@@ -619,8 +741,30 @@ def _input_contract_columns(
 
 def _input_normalization_receipt_columns(
     receipt_line: Mapping[str, Any] | None,
+    *,
+    applied_capacity_contract: bool = False,
 ) -> tuple[Any, ...]:
     receipt_line = receipt_line if isinstance(receipt_line, Mapping) else {}
+    if applied_capacity_contract:
+        denominator = receipt_line.get("capacity_denominator") or {}
+        denominator = denominator if isinstance(denominator, Mapping) else {}
+        solectria = denominator.get("solectria") or {}
+        solaredge = denominator.get("solaredge") or {}
+        solectria = solectria if isinstance(solectria, Mapping) else {}
+        solaredge = solaredge if isinstance(solaredge, Mapping) else {}
+        return (
+            denominator.get("method"),
+            solectria.get("applied"),
+            solectria.get("applied_capacity_w"),
+            solectria.get("rating_basis"),
+            _safe_public_value(solectria.get("source_field")),
+            solaredge.get("applied"),
+            solaredge.get("applied_capacity_w"),
+            solaredge.get("rating_basis"),
+            _safe_public_value(solaredge.get("source_field")),
+            receipt_line.get("solectria_multiplier_to_intensity"),
+            receipt_line.get("solaredge_multiplier_to_intensity"),
+        )
     denominator = receipt_line.get("wdc_denominator") or {}
     denominator = denominator if isinstance(denominator, Mapping) else {}
     solectria = denominator.get("solectria") or {}
@@ -643,6 +787,8 @@ def _input_normalization_receipt_columns(
 def _input_rows(
     request: Mapping[str, Any],
     submission_provenance: Mapping[str, Any],
+    *,
+    applied_capacity_contract: bool = False,
 ) -> Iterator[tuple[Any, ...]]:
     cost_lines = request.get("cost_lines")
     if not isinstance(cost_lines, list):
@@ -677,7 +823,10 @@ def _input_rows(
             *_coverage_columns(line.get("coverage_exclude_ids") or []),
             *_evidence_columns(line.get("evidence")),
             *_input_contract_columns(request, line),
-            *_input_normalization_receipt_columns(receipt_line),
+            *_input_normalization_receipt_columns(
+                receipt_line,
+                applied_capacity_contract=applied_capacity_contract,
+            ),
         )
         if normalization.get("method") == "price_index_adjustment":
             yield (
@@ -703,7 +852,10 @@ def _input_rows(
                 *_coverage_columns([]),
                 *_evidence_columns(normalization.get("index_source_evidence")),
                 *_input_contract_columns(request, line),
-                *_input_normalization_receipt_columns(receipt_line),
+                *_input_normalization_receipt_columns(
+                    receipt_line,
+                    applied_capacity_contract=applied_capacity_contract,
+                ),
             )
     finance = request.get("finance") or {}
     discount = finance.get("real_discount_rate") or {}
@@ -724,7 +876,10 @@ def _input_rows(
         *_coverage_columns([]),
         *_evidence_columns(discount.get("evidence")),
         *_input_contract_columns(request),
-        *_input_normalization_receipt_columns(None),
+        *_input_normalization_receipt_columns(
+            None,
+            applied_capacity_contract=applied_capacity_contract,
+        ),
     )
     yield (
         "finance.project-life",
@@ -749,7 +904,10 @@ def _input_rows(
         *_coverage_columns([]),
         *_evidence_columns(finance.get("project_life_evidence")),
         *_input_contract_columns(request),
-        *_input_normalization_receipt_columns(None),
+        *_input_normalization_receipt_columns(
+            None,
+            applied_capacity_contract=applied_capacity_contract,
+        ),
     )
     degradation = request.get("shared_degradation") or {}
     annual_rate = degradation.get("annual_rate") or {}
@@ -770,7 +928,10 @@ def _input_rows(
         *_coverage_columns([]),
         *_evidence_columns(annual_rate.get("evidence")),
         *_input_contract_columns(request),
-        *_input_normalization_receipt_columns(None),
+        *_input_normalization_receipt_columns(
+            None,
+            applied_capacity_contract=applied_capacity_contract,
+        ),
     )
     transfer = request.get("commercial_transfer")
     reference_design = request.get("commercial_reference_design")
@@ -798,7 +959,10 @@ def _input_rows(
             *_coverage_columns([]),
             *_evidence_columns(reference_design.get("evidence")),
             *_input_contract_columns(request),
-            *_input_normalization_receipt_columns(None),
+            *_input_normalization_receipt_columns(
+                None,
+                applied_capacity_contract=applied_capacity_contract,
+            ),
         )
     if isinstance(transfer, Mapping):
         for input_id, label, field in (
@@ -823,7 +987,10 @@ def _input_rows(
                 *_coverage_columns([]),
                 *_evidence_columns(record.get("evidence")),
                 *_input_contract_columns(request),
-                *_input_normalization_receipt_columns(None),
+                *_input_normalization_receipt_columns(
+                    None,
+                    applied_capacity_contract=applied_capacity_contract,
+                ),
             )
         for mechanism in sorted(
             transfer.get("mechanisms") or [],
@@ -852,7 +1019,10 @@ def _input_rows(
                 *_coverage_columns([]),
                 *_evidence_columns(mechanism.get("evidence")),
                 *_input_contract_columns(request),
-                *_input_normalization_receipt_columns(None),
+                *_input_normalization_receipt_columns(
+                    None,
+                    applied_capacity_contract=applied_capacity_contract,
+                ),
             )
 
 
@@ -966,11 +1136,20 @@ CAPACITY_COLUMNS = (
     "source_snapshot_sha256",
 )
 
+APPLIED_CAPACITY_COLUMNS = CAPACITY_COLUMNS[:8] + (
+    "applied_capacity_w",
+    "applied_capacity_rating_basis",
+    "applied_capacity_selection_method",
+    "applied_capacity_source_field",
+) + CAPACITY_COLUMNS[8:]
+
 
 def _capacity_rows(
     source_snapshot: Mapping[str, Any],
     submission_provenance: Mapping[str, Any],
     routine_result: Mapping[str, Any],
+    *,
+    applied_capacity_contract: bool = False,
 ) -> Iterator[tuple[Any, ...]]:
     manifest = source_snapshot.get("capacity_manifest") or {}
     systems = manifest.get("systems") or {}
@@ -978,9 +1157,14 @@ def _capacity_rows(
     reference_design = (
         reference_design if isinstance(reference_design, Mapping) else {}
     )
+    applied_authority = (
+        _applied_capacity_authority(submission_provenance)
+        if applied_capacity_contract
+        else {}
+    )
     for system in ("solectria", "solaredge"):
         record = systems.get(system) or {}
-        yield (
+        base = (
             "frozen_annual_capacity",
             system,
             routine_result.get("analysis_basis"),
@@ -989,6 +1173,16 @@ def _capacity_rows(
             record.get("module_stc_wdc"),
             record.get("module_count"),
             record.get("installed_wdc"),
+        )
+        if applied_capacity_contract:
+            applied = applied_authority[system]
+            base += (
+                applied.get("applied_capacity_w"),
+                applied.get("rating_basis"),
+                applied.get("selection_method"),
+                _safe_public_value(applied.get("source_field")),
+            )
+        yield base + (
             record.get("rating_basis") or manifest.get("rating_basis"),
             record.get("strings"),
             record.get("bays_per_string"),
@@ -1226,8 +1420,31 @@ def _cdf_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
             )
 
 
-def _per_year_columns(metadata: Mapping[str, Any]) -> tuple[str, ...]:
-    base = (
+def _per_year_base_columns(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+    rows = metadata.get("per_weather_year") or []
+    applied_capacity_contract = any(
+        isinstance(row, Mapping) and "solectria_applied_w" in row
+        for row in rows
+    )
+    if applied_capacity_contract:
+        return (
+            "year",
+            "source_sol_predicted_kwh_ac",
+            "source_se_predicted_kwh_ac",
+            "solectria_installed_wdc",
+            "solaredge_installed_wdc",
+            "solectria_applied_w",
+            "solaredge_applied_w",
+            "source_sol_specific_kwh_ac_per_applied_w_year",
+            "source_se_specific_kwh_ac_per_applied_w_year",
+            "source_delta_specific_se_minus_sol_kwh_ac_per_applied_w_year",
+            "realization_count",
+            "realization_share",
+            "reason",
+            "energy_class_counts_json",
+            "energy_class_probabilities_json",
+        )
+    return (
         "year",
         "source_sol_predicted_kwh_ac",
         "source_se_predicted_kwh_ac",
@@ -1242,6 +1459,10 @@ def _per_year_columns(metadata: Mapping[str, Any]) -> tuple[str, ...]:
         "energy_class_counts_json",
         "energy_class_probabilities_json",
     )
+
+
+def _per_year_columns(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+    base = _per_year_base_columns(metadata)
     rows = metadata.get("per_weather_year") or []
     metric_ids = sorted(
         {
@@ -1258,8 +1479,10 @@ def _per_year_columns(metadata: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def _per_year_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
+    base_columns = _per_year_base_columns(metadata)
     columns = _per_year_columns(metadata)
-    metric_columns = columns[13:]
+    metric_columns = columns[len(base_columns):]
+    applied_capacity_contract = "solectria_applied_w" in base_columns
     rows = metadata.get("per_weather_year") or []
     for record in sorted(rows, key=lambda row: int(row.get("year"))):
         metrics = record.get("metrics") or {}
@@ -1276,15 +1499,32 @@ def _per_year_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
                     f"{metric_id}::p95": percentiles.get("p95"),
                 }
             )
-        yield (
+        base = (
             record.get("year"),
             record.get("source_sol_predicted_kwh_ac"),
             record.get("source_se_predicted_kwh_ac"),
             record.get("solectria_installed_wdc"),
             record.get("solaredge_installed_wdc"),
-            record.get("source_sol_specific_kwh_ac_per_wdc_year"),
-            record.get("source_se_specific_kwh_ac_per_wdc_year"),
-            record.get("source_delta_specific_se_minus_sol_kwh_ac_per_wdc_year"),
+        )
+        if applied_capacity_contract:
+            base += (
+                record.get("solectria_applied_w"),
+                record.get("solaredge_applied_w"),
+                record.get("source_sol_specific_kwh_ac_per_applied_w_year"),
+                record.get("source_se_specific_kwh_ac_per_applied_w_year"),
+                record.get(
+                    "source_delta_specific_se_minus_sol_kwh_ac_per_applied_w_year"
+                ),
+            )
+        else:
+            base += (
+                record.get("source_sol_specific_kwh_ac_per_wdc_year"),
+                record.get("source_se_specific_kwh_ac_per_wdc_year"),
+                record.get(
+                    "source_delta_specific_se_minus_sol_kwh_ac_per_wdc_year"
+                ),
+            )
+        yield base + (
             record.get("realization_count"),
             record.get("realization_share"),
             record.get("reason"),
@@ -1633,6 +1873,19 @@ def _binary64_tie_out_tolerance(*values: np.ndarray) -> float:
     return float(16.0 * np.finfo(np.float64).eps * scale)
 
 
+def _metric_fields_for_result(
+    routine_result: Mapping[str, Any],
+) -> Any:
+    contract_version = routine_result.get("calculation_contract_version")
+    if contract_version == technoeconomic_kernel.LEGACY_CALCULATION_CONTRACT_VERSION:
+        return technoeconomic_kernel.LEGACY_METRIC_FIELDS
+    if contract_version == technoeconomic_kernel.CALCULATION_CONTRACT_VERSION:
+        return technoeconomic_kernel.APPLIED_METRIC_FIELDS
+    raise TechnoeconomicExportError(
+        f"Unsupported calculation contract in routine result: {contract_version!r}"
+    )
+
+
 def _build_checks(
     calculation: _SealedCalculation,
     source_snapshot: Mapping[str, Any],
@@ -1640,6 +1893,11 @@ def _build_checks(
     routine_result: Mapping[str, Any],
 ) -> list[tuple[Any, ...]]:
     checks: list[tuple[Any, ...]] = []
+    fields = _metric_fields_for_result(routine_result)
+    applied_capacity_contract = (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
+    )
     expected_rows = routine_result.get("realization_count")
     if not isinstance(expected_rows, int) or isinstance(expected_rows, bool):
         raise TechnoeconomicExportError("Routine result realization count is invalid")
@@ -1754,6 +2012,49 @@ def _build_checks(
             )
         )
 
+    applied_capacity_authority: dict[str, Mapping[str, Any]] = {}
+    if applied_capacity_contract:
+        applied_capacity_authority = _applied_capacity_authority(
+            submission_provenance
+        )
+        result_applied = routine_result.get("applied_capacities") or {}
+        if not isinstance(result_applied, Mapping):
+            raise TechnoeconomicExportError(
+                "Durable applied-capacity result is invalid"
+            )
+        for system in ("solectria", "solaredge"):
+            actual = result_applied.get(system) or {}
+            expected = applied_capacity_authority[system]
+            if not isinstance(actual, Mapping):
+                raise TechnoeconomicExportError(
+                    "Durable applied-capacity result is incomplete"
+                )
+            checks.append(
+                _numeric_check(
+                    f"applied_capacity_w::{system}",
+                    float(actual.get("applied_capacity_w")),
+                    float(expected.get("applied_capacity_w")),
+                    tolerance=0.0,
+                    notes=(
+                        "Durable applied capacity equals the immutable "
+                        "normalization receipt."
+                    ),
+                )
+            )
+            actual_basis = actual.get("rating_basis")
+            expected_basis = expected.get("rating_basis")
+            checks.append(
+                (
+                    f"applied_capacity_rating_basis::{system}",
+                    actual_basis,
+                    expected_basis,
+                    None,
+                    None,
+                    "OK" if actual_basis == expected_basis else "FAIL",
+                    "Durable applied-capacity rating basis matches its receipt.",
+                )
+            )
+
     source_hash_actual = routine_result.get("source_snapshot_sha256")
     source_hash_expected = submission_provenance.get("source_snapshot_sha256")
     checks.append(
@@ -1805,27 +2106,27 @@ def _build_checks(
     normalized_pairs = (
         (
             "lifecycle_cost_delta",
-            technoeconomic_kernel.FIELD_PV_COST_SE,
-            technoeconomic_kernel.FIELD_PV_COST_SOL,
-            technoeconomic_kernel.FIELD_DELTA_COST,
+            fields.pv_cost_se,
+            fields.pv_cost_sol,
+            fields.delta_cost,
         ),
         (
             "equivalent_annual_cost_delta",
-            technoeconomic_kernel.FIELD_EA_COST_SE,
-            technoeconomic_kernel.FIELD_EA_COST_SOL,
-            technoeconomic_kernel.FIELD_DELTA_EA_COST,
+            fields.ea_cost_se,
+            fields.ea_cost_sol,
+            fields.delta_ea_cost,
         ),
         (
             "lifecycle_energy_delta",
-            technoeconomic_kernel.FIELD_PV_ENERGY_SE,
-            technoeconomic_kernel.FIELD_PV_ENERGY_SOL,
-            technoeconomic_kernel.FIELD_DELTA_ENERGY,
+            fields.pv_energy_se,
+            fields.pv_energy_sol,
+            fields.delta_energy,
         ),
         (
             "equivalent_annual_energy_delta",
-            technoeconomic_kernel.FIELD_EA_ENERGY_SE,
-            technoeconomic_kernel.FIELD_EA_ENERGY_SOL,
-            technoeconomic_kernel.FIELD_DELTA_EA_ENERGY,
+            fields.ea_energy_se,
+            fields.ea_energy_sol,
+            fields.delta_ea_energy,
         ),
     )
     for check_name, se_name, sol_name, delta_name in normalized_pairs:
@@ -1849,23 +2150,23 @@ def _build_checks(
         )
 
     delta_cost = np.asarray(
-        calculation.by_name[technoeconomic_kernel.FIELD_DELTA_COST],
+        calculation.by_name[fields.delta_cost],
         dtype=np.float64,
     )
     delta_energy = np.asarray(
-        calculation.by_name[technoeconomic_kernel.FIELD_DELTA_ENERGY],
+        calculation.by_name[fields.delta_energy],
         dtype=np.float64,
     )
     delta_ea_cost = np.asarray(
-        calculation.by_name[technoeconomic_kernel.FIELD_DELTA_EA_COST],
+        calculation.by_name[fields.delta_ea_cost],
         dtype=np.float64,
     )
     delta_ea_energy = np.asarray(
-        calculation.by_name[technoeconomic_kernel.FIELD_DELTA_EA_ENERGY],
+        calculation.by_name[fields.delta_ea_energy],
         dtype=np.float64,
     )
     lcoo = np.asarray(
-        calculation.by_name[technoeconomic_kernel.FIELD_LCOO],
+        calculation.by_name[fields.lcoo],
         dtype=np.float64,
     )
     crf = np.asarray(
@@ -1935,15 +2236,15 @@ def _build_checks(
     for system, cost_name, energy_name, lcoe_name in (
         (
             "solectria",
-            technoeconomic_kernel.FIELD_PV_COST_SOL,
-            technoeconomic_kernel.FIELD_PV_ENERGY_SOL,
-            technoeconomic_kernel.FIELD_LCOE_SOL,
+            fields.pv_cost_sol,
+            fields.pv_energy_sol,
+            fields.lcoe_sol,
         ),
         (
             "solaredge",
-            technoeconomic_kernel.FIELD_PV_COST_SE,
-            technoeconomic_kernel.FIELD_PV_ENERGY_SE,
-            technoeconomic_kernel.FIELD_LCOE_SE,
+            fields.pv_cost_se,
+            fields.pv_energy_se,
+            fields.lcoe_se,
         ),
     ):
         lifecycle_cost = np.asarray(calculation.by_name[cost_name], dtype=np.float64)
@@ -1980,23 +2281,23 @@ def _build_checks(
     for check_name, annual_name, lifecycle_name in (
         (
             "crf_cost_transform::solectria",
-            technoeconomic_kernel.FIELD_EA_COST_SOL,
-            technoeconomic_kernel.FIELD_PV_COST_SOL,
+            fields.ea_cost_sol,
+            fields.pv_cost_sol,
         ),
         (
             "crf_cost_transform::solaredge",
-            technoeconomic_kernel.FIELD_EA_COST_SE,
-            technoeconomic_kernel.FIELD_PV_COST_SE,
+            fields.ea_cost_se,
+            fields.pv_cost_se,
         ),
         (
             "crf_energy_transform::solectria",
-            technoeconomic_kernel.FIELD_EA_ENERGY_SOL,
-            technoeconomic_kernel.FIELD_PV_ENERGY_SOL,
+            fields.ea_energy_sol,
+            fields.pv_energy_sol,
         ),
         (
             "crf_energy_transform::solaredge",
-            technoeconomic_kernel.FIELD_EA_ENERGY_SE,
-            technoeconomic_kernel.FIELD_PV_ENERGY_SE,
+            fields.ea_energy_se,
+            fields.pv_energy_se,
         ),
     ):
         annual_values = np.asarray(calculation.by_name[annual_name], dtype=np.float64)
@@ -2083,25 +2384,36 @@ def _build_checks(
         )
 
     raw_pairs = (
-        ("site_raw_cost_sol", "PVCost_SOL_USD", technoeconomic_kernel.FIELD_PV_COST_SOL, "solectria"),
-        ("site_raw_cost_se", "PVCost_SE_USD", technoeconomic_kernel.FIELD_PV_COST_SE, "solaredge"),
-        ("site_raw_energy_sol", "PVEnergy_SOL_kWh_AC", technoeconomic_kernel.FIELD_PV_ENERGY_SOL, "solectria"),
-        ("site_raw_energy_se", "PVEnergy_SE_kWh_AC", technoeconomic_kernel.FIELD_PV_ENERGY_SE, "solaredge"),
+        ("site_raw_cost_sol", "PVCost_SOL_USD", fields.pv_cost_sol, "solectria"),
+        ("site_raw_cost_se", "PVCost_SE_USD", fields.pv_cost_se, "solaredge"),
+        ("site_raw_energy_sol", "PVEnergy_SOL_kWh_AC", fields.pv_energy_sol, "solectria"),
+        ("site_raw_energy_se", "PVEnergy_SE_kWh_AC", fields.pv_energy_se, "solaredge"),
     )
     for check_name, raw_name, normalized_name, system in raw_pairs:
         if raw_name not in calculation.by_name:
             continue
-        wdc = float((snapshot_systems.get(system) or {}).get("installed_wdc"))
+        denominator_w = float(
+            applied_capacity_authority[system].get("applied_capacity_w")
+            if applied_capacity_contract
+            else (snapshot_systems.get(system) or {}).get("installed_wdc")
+        )
         raw_values = np.asarray(calculation.by_name[raw_name], dtype=np.float64)
         normalized_values = np.asarray(calculation.by_name[normalized_name], dtype=np.float64)
-        maximum = float(np.max(np.abs(raw_values / wdc - normalized_values)))
+        maximum = float(
+            np.max(np.abs(raw_values / denominator_w - normalized_values))
+        )
         checks.append(
             _numeric_check(
                 check_name,
                 maximum,
                 0.0,
                 tolerance=1e-12,
-                notes="Raw site total divided by frozen system Wdc ties to normalized authority.",
+                notes=(
+                    "Raw site total divided by the frozen applied capacity ties "
+                    "to normalized authority."
+                    if applied_capacity_contract
+                    else "Raw site total divided by frozen system Wdc ties to normalized authority."
+                ),
             )
         )
 
@@ -2162,10 +2474,10 @@ def _build_checks(
     )
     if reference_wdc is not None:
         for check_name, raw_name, normalized_name in (
-            ("reference_raw_cost_sol", "ReferencePVCost_SOL_USD", technoeconomic_kernel.FIELD_PV_COST_SOL),
-            ("reference_raw_cost_se", "ReferencePVCost_SE_USD", technoeconomic_kernel.FIELD_PV_COST_SE),
-            ("reference_raw_energy_sol", "ReferencePVEnergy_SOL_kWh_AC", technoeconomic_kernel.FIELD_PV_ENERGY_SOL),
-            ("reference_raw_energy_se", "ReferencePVEnergy_SE_kWh_AC", technoeconomic_kernel.FIELD_PV_ENERGY_SE),
+            ("reference_raw_cost_sol", "ReferencePVCost_SOL_USD", fields.pv_cost_sol),
+            ("reference_raw_cost_se", "ReferencePVCost_SE_USD", fields.pv_cost_se),
+            ("reference_raw_energy_sol", "ReferencePVEnergy_SOL_kWh_AC", fields.pv_energy_sol),
+            ("reference_raw_energy_se", "ReferencePVEnergy_SE_kWh_AC", fields.pv_energy_se),
         ):
             if raw_name not in calculation.by_name:
                 continue
@@ -2196,6 +2508,10 @@ def _build_tables(
 ) -> tuple[_Table, ...]:
     source_snapshot_sha256 = str(submission_provenance.get("source_snapshot_sha256"))
     common_records = calculation.metadata.get("common_cost_audit") or []
+    applied_capacity_contract = (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
+    )
     return (
         _Table(
             "realizations.csv",
@@ -2206,8 +2522,12 @@ def _build_tables(
         _Table(
             "input-specifications.csv",
             "Input Specifications",
-            INPUT_COLUMNS,
-            lambda: _input_rows(request_payload, submission_provenance),
+            APPLIED_INPUT_COLUMNS if applied_capacity_contract else INPUT_COLUMNS,
+            lambda: _input_rows(
+                request_payload,
+                submission_provenance,
+                applied_capacity_contract=applied_capacity_contract,
+            ),
         ),
         _Table(
             "energy-snapshot.csv",
@@ -2218,8 +2538,17 @@ def _build_tables(
         _Table(
             "capacity-and-basis.csv",
             "Capacity and Basis",
-            CAPACITY_COLUMNS,
-            lambda: _capacity_rows(source_snapshot, submission_provenance, routine_result),
+            (
+                APPLIED_CAPACITY_COLUMNS
+                if applied_capacity_contract
+                else CAPACITY_COLUMNS
+            ),
+            lambda: _capacity_rows(
+                source_snapshot,
+                submission_provenance,
+                routine_result,
+                applied_capacity_contract=applied_capacity_contract,
+            ),
         ),
         _Table(
             "common-cost-audit.csv",
@@ -2367,7 +2696,12 @@ def _write_csv_bundle(
     staging_directory: Path,
     tables: Sequence[_Table],
     cancellation_check: Callable[[], None],
+    *,
+    schema_versions: Mapping[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
+    schema_versions = schema_versions or export_contract_versions(
+        technoeconomic_kernel.LEGACY_CALCULATION_CONTRACT_VERSION
+    )
     staging_directory.mkdir(parents=False, exist_ok=False)
     metadata: list[dict[str, Any]] = []
     try:
@@ -2381,8 +2715,8 @@ def _write_csv_bundle(
                 )
             )
         bundle_metadata = {
-            "schema_version": CSV_BUNDLE_SCHEMA_VERSION,
-            "csv_format_version": CSV_FORMAT_VERSION,
+            "schema_version": schema_versions["csv_bundle"],
+            "csv_format_version": schema_versions["csv_format"],
             "encoding": "UTF-8",
             "line_terminator": "LF",
             "float_format": "Python finite-float repr (shortest round-trip binary64)",
@@ -2400,7 +2734,10 @@ def _write_csv_bundle(
             compresslevel=9,
             strict_timestamps=True,
         ) as archive:
-            archive.writestr(_zip_info("csv-bundle-manifest-v1.json"), manifest_bytes)
+            archive.writestr(
+                _zip_info(schema_versions["csv_bundle_manifest_filename"]),
+                manifest_bytes,
+            )
             for table_metadata in metadata:
                 cancellation_check()
                 source = staging_directory / table_metadata["filename"]
@@ -2847,7 +3184,14 @@ def _normalize_xlsx_archive(
                 )
 
 
-def _human_metric(value: str) -> str:
+def _human_metric(
+    value: str,
+    *,
+    applied_capacity_contract: bool = False,
+) -> str:
+    normalized_capacity_label = (
+        "applied W" if applied_capacity_contract else "Wdc"
+    )
     replacements = {
         technoeconomic_kernel.FIELD_LCOE_SOL: "Solectria lifecycle LCOE (USD/kWh_AC)",
         technoeconomic_kernel.FIELD_LCOE_SE: "SolarEdge lifecycle LCOE (USD/kWh_AC)",
@@ -2855,12 +3199,22 @@ def _human_metric(value: str) -> str:
         technoeconomic_kernel.FIELD_DELTA_ENERGY: "Lifecycle energy delta, SE − SOL (kWh_AC/Wdc)",
         technoeconomic_kernel.FIELD_DELTA_EA_COST: "Equivalent-annual cost delta, SE − SOL (USD/Wdc-year)",
         technoeconomic_kernel.FIELD_DELTA_EA_ENERGY: "Equivalent-annual energy delta, SE − SOL (kWh_AC/Wdc-year)",
+        technoeconomic_kernel.APPLIED_FIELD_DELTA_COST: "Lifecycle cost delta, SE − SOL (USD/applied W)",
+        technoeconomic_kernel.APPLIED_FIELD_DELTA_ENERGY: "Lifecycle energy delta, SE − SOL (kWh_AC/applied W)",
+        technoeconomic_kernel.APPLIED_FIELD_DELTA_EA_COST: "Equivalent-annual cost delta, SE − SOL (USD/applied W-year)",
+        technoeconomic_kernel.APPLIED_FIELD_DELTA_EA_ENERGY: "Equivalent-annual energy delta, SE − SOL (kWh_AC/applied W-year)",
         "headline_positive_gain_lcoo": "Headline LCOO, SE − SOL (USD/kWh_AC; positive gain)",
         "signed_nonzero_lcoo": "Signed LCOO diagnostic, SE − SOL (USD/kWh_AC)",
         "lifecycle_lcoe_solectria": "Solectria lifecycle LCOE (USD/kWh_AC)",
         "lifecycle_lcoe_solaredge": "SolarEdge lifecycle LCOE (USD/kWh_AC)",
-        "lifecycle_cost_delta_se_minus_sol": "Lifecycle cost delta, SE − SOL (USD/Wdc)",
-        "lifecycle_energy_delta_se_minus_sol": "Lifecycle energy delta, SE − SOL (kWh_AC/Wdc)",
+        "lifecycle_cost_delta_se_minus_sol": (
+            "Lifecycle cost delta, SE − SOL "
+            f"(USD/{normalized_capacity_label})"
+        ),
+        "lifecycle_energy_delta_se_minus_sol": (
+            "Lifecycle energy delta, SE − SOL "
+            f"(kWh_AC/{normalized_capacity_label})"
+        ),
         "headline_positive_gain_lcoo_se_minus_sol": "Headline LCOO, SE − SOL (USD/kWh_AC)",
     }
     return replacements.get(value, value.replace("_", " "))
@@ -2981,6 +3335,11 @@ def _render_sensitivity_plot(
     path: Path,
 ) -> tuple[int, int, int, int]:
     models = metadata.get("sensitivity") or {}
+    kernel_provenance = metadata.get("kernel_provenance") or {}
+    applied_capacity_contract = (
+        isinstance(kernel_provenance, Mapping)
+        and isinstance(kernel_provenance.get("capacity_normalization"), Mapping)
+    )
     entries = list(sorted(models.items()))
     figure, axes = _figure_axes(
         len(entries),
@@ -3002,7 +3361,7 @@ def _render_sensitivity_plot(
         )[:15]
         display_step_count += len(display_steps)
         axis.set_title(
-            f"{_human_metric(response_id)}\nstatus={model.get('status')} • n={model.get('sample_count', 0)} • shown {len(display_steps)} of {len(steps)}",
+            f"{_human_metric(response_id, applied_capacity_contract=applied_capacity_contract)}\nstatus={model.get('status')} • n={model.get('sample_count', 0)} • shown {len(display_steps)} of {len(steps)}",
             loc="left",
             fontsize=9.5,
             color=_INK,
@@ -3212,6 +3571,9 @@ def generate_technoeconomic_exports(
         raise TechnoeconomicExportError("Export owner job ID is invalid")
     if not callable(cancellation_check) or not callable(publish_check):
         raise TechnoeconomicExportError("Export lease callbacks are required")
+    schema_versions = export_contract_versions(
+        str(routine_result.get("calculation_contract_version"))
+    )
     cancellation_check()
     attempt_directory = attempt_directory.resolve(strict=True)
     _confined(attempt_directory, config.OUTPUT_DIR.resolve(strict=True), label="Attempt directory")
@@ -3275,6 +3637,7 @@ def generate_technoeconomic_exports(
             staging,
             tables,
             cancellation_check,
+            schema_versions=schema_versions,
         )
         artifacts["csv_bundle"] = _publish_artifact(
             artifact_id="csv_bundle",
@@ -3284,7 +3647,7 @@ def generate_technoeconomic_exports(
             cancellation_check=cancellation_check,
             publish_check=publish_check,
             extra={
-                "schema_version": CSV_BUNDLE_SCHEMA_VERSION,
+                "schema_version": schema_versions["csv_bundle"],
                 "table_count": len(csv_tables),
                 "row_count": csv_row_count,
                 "tables": csv_tables,
@@ -3314,7 +3677,7 @@ def generate_technoeconomic_exports(
             cancellation_check=cancellation_check,
             publish_check=publish_check,
             extra={
-                "schema_version": XLSX_SCHEMA_VERSION,
+                "schema_version": schema_versions["xlsx"],
                 "sheet_count": len(workbook_sheets),
                 "row_count": workbook_row_count,
                 "sheets": workbook_sheets,
@@ -3334,7 +3697,7 @@ def generate_technoeconomic_exports(
             cancellation_check=cancellation_check,
             publish_check=publish_check,
             extra={
-                "schema_version": PNG_SCHEMA_VERSION,
+                "schema_version": schema_versions["png"],
                 "row_count": row_count,
                 "source_point_count": row_count,
                 "display_point_count": display_count,
@@ -3355,7 +3718,7 @@ def generate_technoeconomic_exports(
             cancellation_check=cancellation_check,
             publish_check=publish_check,
             extra={
-                "schema_version": PNG_SCHEMA_VERSION,
+                "schema_version": schema_versions["png"],
                 "row_count": row_count,
                 "source_step_count": row_count,
                 "display_step_count": display_count,
@@ -3376,7 +3739,7 @@ def generate_technoeconomic_exports(
             cancellation_check=cancellation_check,
             publish_check=publish_check,
             extra={
-                "schema_version": PNG_SCHEMA_VERSION,
+                "schema_version": schema_versions["png"],
                 "row_count": row_count,
                 "width_px": width,
                 "height_px": height,
@@ -3402,8 +3765,8 @@ def generate_technoeconomic_exports(
         submission_provenance
     )
     manifest: dict[str, Any] = {
-        "schema_version": EXPORT_MANIFEST_SCHEMA_VERSION,
-        "csv_format_version": CSV_FORMAT_VERSION,
+        "schema_version": schema_versions["manifest"],
+        "csv_format_version": schema_versions["csv_format"],
         "owner_workflow": "technoeconomic",
         "owner_job_id": job_id,
         "request_sha256": request_sha256,
@@ -3437,10 +3800,15 @@ def generate_technoeconomic_exports(
 
 
 __all__ = [
+    "APPLIED_CSV_BUNDLE_SCHEMA_VERSION",
+    "APPLIED_CSV_FORMAT_VERSION",
+    "APPLIED_EXPORT_MANIFEST_SCHEMA_VERSION",
+    "APPLIED_XLSX_SCHEMA_VERSION",
     "CHART_CONTRACTS",
     "CSV_FORMAT_VERSION",
     "EXPORT_MANIFEST_SCHEMA_VERSION",
     "TechnoeconomicExportError",
     "XLSX_LOGICAL_HASH_VERSION",
+    "export_contract_versions",
     "generate_technoeconomic_exports",
 ]

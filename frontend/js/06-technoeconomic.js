@@ -1,10 +1,13 @@
         // The browser collects evidence and provides clearly labeled setup estimates;
         // authoritative probabilistic calculations and artifact verification happen
         // on the server.
-        const TECHNOECONOMIC_DRAFT_SCHEMA_VERSION = 'technoeconomic-draft-v2';
-        const TECHNOECONOMIC_DRAFT_STORAGE_KEY = 'sbepv.technoeconomic.draft.v2';
+        const TECHNOECONOMIC_DRAFT_SCHEMA_VERSION = 'technoeconomic-draft-v3';
+        const TECHNOECONOMIC_DRAFT_STORAGE_KEY = 'sbepv.technoeconomic.draft.v3';
+        const TECHNOECONOMIC_PREVIOUS_DRAFT_SCHEMA_VERSION = 'technoeconomic-draft-v2';
+        const TECHNOECONOMIC_PREVIOUS_DRAFT_STORAGE_KEY = 'sbepv.technoeconomic.draft.v2';
         const TECHNOECONOMIC_LEGACY_DRAFT_SCHEMA_VERSION = 'technoeconomic-draft-v1';
         const TECHNOECONOMIC_LEGACY_DRAFT_STORAGE_KEY = 'sbepv.technoeconomic.draft.v1';
+        const TECHNOECONOMIC_APPLIED_CAPACITY_NORMALIZATION = 'annual_applied_capacity_v1';
         const TECHNOECONOMIC_ACTIVE_JOB_STORAGE_KEY = 'sbepv.technoeconomic.active-job.v1';
         const TECHNOECONOMIC_MAX_SAFE_SEED = Number.MAX_SAFE_INTEGER;
         const TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS = 8000000;
@@ -52,6 +55,10 @@
             DeltaLifecycleEnergyPerWdc_se_minus_sol_kWh_AC_per_Wdc: 'Lifecycle energy delta (SolarEdge minus Solectria)',
             DeltaEquivalentAnnualCostPerWdcYear_se_minus_sol_USD_per_Wdc_year: 'Equivalent annual cost delta (SolarEdge minus Solectria)',
             DeltaEquivalentAnnualEnergyPerWdcYear_se_minus_sol_kWh_AC_per_Wdc_year: 'Equivalent annual energy delta (SolarEdge minus Solectria)',
+            DeltaLifecycleCostPerAppliedW_se_minus_sol_USD_per_applied_W: 'Lifecycle cost delta (SolarEdge minus Solectria)',
+            DeltaLifecycleEnergyPerAppliedW_se_minus_sol_kWh_AC_per_applied_W: 'Lifecycle energy delta (SolarEdge minus Solectria)',
+            DeltaEquivalentAnnualCostPerAppliedWYear_se_minus_sol_USD_per_applied_W_year: 'Equivalent annual cost delta (SolarEdge minus Solectria)',
+            DeltaEquivalentAnnualEnergyPerAppliedWYear_se_minus_sol_kWh_AC_per_applied_W_year: 'Equivalent annual energy delta (SolarEdge minus Solectria)',
             headline_positive_gain_lcoo: 'Headline LCOO, positive lifecycle gain',
             signed_nonzero_lcoo: 'Signed LCOO, nonzero lifecycle energy',
         };
@@ -164,8 +171,8 @@
                 cost_type: 'initial_capex', distribution: technoeconomicDefaultDistribution(''),
                 coverage_include_ids: [solaredge ? 'equipment.solaredge' : 'equipment.solectria'],
                 coverage_exclude_ids: [], original_unit: 'usd_total',
-                normalized_unit: 'usd_per_wdc',
-                normalization_method: 'divide_by_frozen_source_wdc',
+                normalized_unit: 'usd_per_applied_w',
+                normalization_method: 'divide_by_frozen_applied_capacity_w',
                 solectria_quantity: solaredge ? '0' : '1',
                 solaredge_quantity: solaredge ? '1' : '0', quantity_unit: '',
                 normalization_derivation: '', constant_dollar_cost_year: '',
@@ -251,14 +258,15 @@
             line.coverage_include_ids = [options.coverageId];
             line.coverage_exclude_ids = [];
             line.original_unit = recurring ? 'usd_total_per_year' : 'usd_total';
-            line.normalized_unit = recurring ? 'usd_per_wdc_year' : 'usd_per_wdc';
-            line.normalization_method = 'divide_by_frozen_source_wdc';
+            line.normalized_unit = recurring ? 'usd_per_applied_w_year' : 'usd_per_applied_w';
+            line.normalization_method = 'divide_by_frozen_applied_capacity_w';
             line.solectria_quantity = options.ownership === 'solectria_only' ? '1' : '0';
             line.solaredge_quantity = options.ownership === 'solaredge_only' ? '1' : '0';
             line.quantity_unit = '';
             line.normalization_derivation = 'Guided SolarTAC total-dollar input divided by '
-                + 'the applicable system\'s verified frozen Annual Simulation Wdc nameplate. '
-                + 'The selected Annual energy already reflects its modeled AC operating limit.';
+                + 'the applicable system\'s verified frozen Annual applied capacity in watts. '
+                + 'When clipping is enabled this is the AC operating limit; otherwise it is '
+                + 'the installed DC nameplate.';
             line.constant_dollar_cost_year = year;
             line.currency_year_normalization = technoeconomicDefaultCurrencyYear(year);
             line.currency_year_normalization.derivation = `Submitted directly in ${year || 'the selected'} `
@@ -323,7 +331,9 @@
                 schema_version: TECHNOECONOMIC_DRAFT_SCHEMA_VERSION,
                 entry_mode: TECHNOECONOMIC_GUIDED_ENTRY_MODE,
                 provisional_reference_applied: false,
-                source_annual_job_id: '', basis: 'solartac_site', n: '10000', seed: '',
+                source_annual_job_id: '', basis: 'solartac_site',
+                capacity_normalization: TECHNOECONOMIC_APPLIED_CAPACITY_NORMALIZATION,
+                n: '10000', seed: '',
                 cost_year: year, project_life_years: '',
                 project_life_evidence: technoeconomicDefaultEvidence(),
                 discount_rate: technoeconomicDefaultDocumented('real_fraction_per_year', ''),
@@ -417,15 +427,31 @@
                 'usd_total', 'usd_total_per_year', 'usd_per_unit', 'usd_per_unit_year',
                 'usd_per_wdc', 'usd_per_wdc_year',
             ], output.original_unit);
-            output.normalized_unit = technoeconomicChoice(
-                source.normalized_unit, ['usd_per_wdc', 'usd_per_wdc_year'], output.normalized_unit
-            );
+            output.normalized_unit = technoeconomicChoice(source.normalized_unit, [
+                'usd_per_wdc', 'usd_per_wdc_year',
+                'usd_per_applied_w', 'usd_per_applied_w_year',
+            ], output.normalized_unit);
             output.normalization_method = technoeconomicChoice(source.normalization_method, [
                 'divide_by_frozen_source_wdc',
                 'multiply_quantity_then_divide_by_frozen_source_wdc',
+                'divide_by_frozen_applied_capacity_w',
+                'multiply_quantity_then_divide_by_frozen_applied_capacity_w',
                 'already_normalized_per_wdc',
-            ], basis === 'commercial_representative'
-                ? 'already_normalized_per_wdc' : output.normalization_method);
+            ], output.normalization_method);
+            const recurring = output.cost_type.startsWith('recurring_');
+            if (basis === 'solartac_site') {
+                output.normalized_unit = recurring
+                    ? 'usd_per_applied_w_year' : 'usd_per_applied_w';
+                output.normalization_method = source.normalization_method ===
+                    'multiply_quantity_then_divide_by_frozen_source_wdc'
+                    || source.normalization_method ===
+                    'multiply_quantity_then_divide_by_frozen_applied_capacity_w'
+                    ? 'multiply_quantity_then_divide_by_frozen_applied_capacity_w'
+                    : 'divide_by_frozen_applied_capacity_w';
+            } else if (basis === 'commercial_representative') {
+                output.normalized_unit = recurring ? 'usd_per_wdc_year' : 'usd_per_wdc';
+                output.normalization_method = 'already_normalized_per_wdc';
+            }
             for (const key of [
                 'solectria_quantity', 'solaredge_quantity', 'quantity_unit',
                 'normalization_derivation',
@@ -493,6 +519,9 @@
         function sanitizeTechnoeconomicDraft(value) {
             const source = technoeconomicPlainObject(value);
             const fallback = technoeconomicDefaultDraft();
+            const basis = technoeconomicChoice(
+                source.basis, ['', 'solartac_site', 'commercial_representative'], ''
+            );
             const output = {
                 schema_version: TECHNOECONOMIC_DRAFT_SCHEMA_VERSION,
                 entry_mode: technoeconomicChoice(
@@ -502,9 +531,9 @@
                 ),
                 provisional_reference_applied: source.provisional_reference_applied === true,
                 source_annual_job_id: technoeconomicText(source.source_annual_job_id, 200),
-                basis: technoeconomicChoice(
-                    source.basis, ['', 'solartac_site', 'commercial_representative'], ''
-                ),
+                basis,
+                capacity_normalization: basis === 'solartac_site'
+                    ? TECHNOECONOMIC_APPLIED_CAPACITY_NORMALIZATION : null,
                 n: source.n !== undefined
                     ? technoeconomicText(source.n, 12)
                     : source.realizations !== undefined
@@ -1239,6 +1268,20 @@
 
         function technoeconomicCreateCostLineEditor(value, index, costYear, basis) {
             const line = technoeconomicSanitizeCostLine(value, index, costYear, basis);
+            const site = basis === 'solartac_site';
+            const normalizedUnits = site ? [
+                ['usd_per_applied_w', 'USD per applied W'],
+                ['usd_per_applied_w_year', 'USD per applied W-year'],
+            ] : [
+                ['usd_per_wdc', 'USD per Wdc'], ['usd_per_wdc_year', 'USD per Wdc-year'],
+            ];
+            const normalizationMethods = site ? [
+                ['divide_by_frozen_applied_capacity_w', 'Divide total by frozen applied capacity'],
+                ['multiply_quantity_then_divide_by_frozen_applied_capacity_w',
+                    'Multiply quantity then divide by frozen applied capacity'],
+            ] : [
+                ['already_normalized_per_wdc', 'Already normalized per Wdc'],
+            ];
             const root = technoeconomicNode('article', {className: 'tea-cost-line tea-editor-card'});
             root.dataset.teaRole = 'cost-line';
             const header = technoeconomicNode('div', {className: 'tea-section-heading'});
@@ -1273,15 +1316,12 @@
                     ['usd_per_unit', 'USD per unit'], ['usd_per_unit_year', 'USD per unit-year'],
                     ['usd_per_wdc', 'USD per Wdc'], ['usd_per_wdc_year', 'USD per Wdc-year'],
                 ]})),
-                technoeconomicField('Normalized unit', technoeconomicControl('normalized_unit', line.normalized_unit, {values: [
-                    ['usd_per_wdc', 'USD per Wdc'], ['usd_per_wdc_year', 'USD per Wdc-year'],
-                ]})),
+                technoeconomicField('Normalized unit', technoeconomicControl(
+                    'normalized_unit', line.normalized_unit, {values: normalizedUnits}
+                )),
                 technoeconomicField('Normalization method', technoeconomicControl(
-                    'normalization_method', line.normalization_method, {values: [
-                        ['divide_by_frozen_source_wdc', 'Divide total by frozen source Wdc'],
-                        ['multiply_quantity_then_divide_by_frozen_source_wdc', 'Multiply quantity then divide by frozen source Wdc'],
-                        ['already_normalized_per_wdc', 'Already normalized per Wdc'],
-                    ]}
+                    'normalization_method', line.normalization_method,
+                    {values: normalizationMethods}
                 ), {wide: true}),
                 technoeconomicField('Solectria quantity', technoeconomicControl(
                     'solectria_quantity', line.solectria_quantity, {type: 'number', min: '0', step: 'any'}
@@ -1631,8 +1671,10 @@
             if (candidate === undefined) candidate = technoeconomicLoadLocalDraft()
                 || technoeconomicDefaultDraft();
             else if (candidate === null) candidate = technoeconomicDefaultDraft();
-            else if (technoeconomicPlainObject(candidate).schema_version
-                !== TECHNOECONOMIC_DRAFT_SCHEMA_VERSION) return false;
+            else {
+                candidate = technoeconomicMigrateDraftCandidate(candidate);
+                if (!candidate) return false;
+            }
             const draft = sanitizeTechnoeconomicDraft(candidate);
             if (draft.entry_mode === TECHNOECONOMIC_GUIDED_ENTRY_MODE && !draft.seed) {
                 draft.seed = technoeconomicGenerateSafeSeed();
@@ -1697,13 +1739,33 @@
             if (parsed?.schema_version === TECHNOECONOMIC_DRAFT_SCHEMA_VERSION) {
                 return sanitizeTechnoeconomicDraft(parsed);
             }
+            const previous = read(TECHNOECONOMIC_PREVIOUS_DRAFT_STORAGE_KEY);
+            if (previous?.schema_version === TECHNOECONOMIC_PREVIOUS_DRAFT_SCHEMA_VERSION) {
+                return technoeconomicMigrateDraftCandidate(previous);
+            }
             const legacy = read(TECHNOECONOMIC_LEGACY_DRAFT_STORAGE_KEY);
             if (legacy?.schema_version !== TECHNOECONOMIC_LEGACY_DRAFT_SCHEMA_VERSION) return null;
-            return sanitizeTechnoeconomicDraft({
-                ...legacy,
-                schema_version: TECHNOECONOMIC_DRAFT_SCHEMA_VERSION,
-                entry_mode: TECHNOECONOMIC_ADVANCED_ENTRY_MODE,
-            });
+            return technoeconomicMigrateDraftCandidate(legacy);
+        }
+
+        function technoeconomicMigrateDraftCandidate(value) {
+            const source = technoeconomicPlainObject(value);
+            if (source.schema_version === TECHNOECONOMIC_DRAFT_SCHEMA_VERSION) {
+                return sanitizeTechnoeconomicDraft(source);
+            }
+            if (source.schema_version === TECHNOECONOMIC_PREVIOUS_DRAFT_SCHEMA_VERSION) {
+                return sanitizeTechnoeconomicDraft({
+                    ...source, schema_version: TECHNOECONOMIC_DRAFT_SCHEMA_VERSION,
+                });
+            }
+            if (source.schema_version === TECHNOECONOMIC_LEGACY_DRAFT_SCHEMA_VERSION) {
+                return sanitizeTechnoeconomicDraft({
+                    ...source,
+                    schema_version: TECHNOECONOMIC_DRAFT_SCHEMA_VERSION,
+                    entry_mode: TECHNOECONOMIC_ADVANCED_ENTRY_MODE,
+                });
+            }
+            return null;
         }
 
         function technoeconomicMarkDraftChanged(action = 'Draft updated.') {
@@ -2119,12 +2181,17 @@
             ].includes(line.original_unit)) {
                 technoeconomicPushError(errors, `${path}.original_unit`, 'Select a supported original unit.');
             }
-            if (!['usd_per_wdc', 'usd_per_wdc_year'].includes(line.normalized_unit)) {
+            if (![
+                'usd_per_wdc', 'usd_per_wdc_year',
+                'usd_per_applied_w', 'usd_per_applied_w_year',
+            ].includes(line.normalized_unit)) {
                 technoeconomicPushError(errors, `${path}.normalized_unit`, 'Select a supported normalized unit.');
             }
             if (![
                 'divide_by_frozen_source_wdc',
                 'multiply_quantity_then_divide_by_frozen_source_wdc',
+                'divide_by_frozen_applied_capacity_w',
+                'multiply_quantity_then_divide_by_frozen_applied_capacity_w',
                 'already_normalized_per_wdc',
             ].includes(line.normalization_method)) {
                 technoeconomicPushError(errors, `${path}.normalization_method`,
@@ -2165,7 +2232,9 @@
             if (line.ownership === 'paired_shared' && !(solQuantity > 0 && seQuantity > 0)) {
                 technoeconomicPushError(errors, path, 'Paired/shared lines require positive quantities for both systems.');
             }
-            const expectedNormalized = recurring ? 'usd_per_wdc_year' : 'usd_per_wdc';
+            const expectedNormalized = draft.basis === 'solartac_site'
+                ? recurring ? 'usd_per_applied_w_year' : 'usd_per_applied_w'
+                : recurring ? 'usd_per_wdc_year' : 'usd_per_wdc';
             if (line.normalized_unit !== expectedNormalized) technoeconomicPushError(
                 errors, `${path}.normalized_unit`, `${costType} requires ${expectedNormalized}.`);
             const annualOriginals = ['usd_total_per_year', 'usd_per_unit_year', 'usd_per_wdc_year'];
@@ -2174,14 +2243,19 @@
             let quantityUnit = technoeconomicStrictText(
                 line.quantity_unit, `${path}.quantity_unit`, errors, {optional: true}
             ) || null;
-            if (line.normalization_method === 'divide_by_frozen_source_wdc') {
+            if (['divide_by_frozen_source_wdc', 'divide_by_frozen_applied_capacity_w'].includes(
+                line.normalization_method
+            )) {
                 if (!['usd_total', 'usd_total_per_year'].includes(line.original_unit)) {
-                    technoeconomicPushError(errors, path, 'Total-Wdc normalization requires a total-USD unit.');
+                    technoeconomicPushError(errors, path, 'Total-capacity normalization requires a total-USD unit.');
                 }
                 if (quantityUnit) technoeconomicPushError(errors, `${path}.quantity_unit`,
-                    'Total-Wdc normalization must not declare a quantity unit.');
+                    'Total-capacity normalization must not declare a quantity unit.');
                 quantityUnit = null;
-            } else if (line.normalization_method === 'multiply_quantity_then_divide_by_frozen_source_wdc') {
+            } else if ([
+                'multiply_quantity_then_divide_by_frozen_source_wdc',
+                'multiply_quantity_then_divide_by_frozen_applied_capacity_w',
+            ].includes(line.normalization_method)) {
                 if (!['usd_per_unit', 'usd_per_unit_year'].includes(line.original_unit)) {
                     technoeconomicPushError(errors, path, 'Quantity normalization requires a per-unit USD unit.');
                 }
@@ -2195,16 +2269,21 @@
                     'Already-normalized costs must not declare a quantity unit.');
                 quantityUnit = null;
             }
-            if (['divide_by_frozen_source_wdc', 'already_normalized_per_wdc'].includes(
+            if ([
+                'divide_by_frozen_source_wdc', 'divide_by_frozen_applied_capacity_w',
+                'already_normalized_per_wdc',
+            ].includes(
                 line.normalization_method
             ) && ![solQuantity, seQuantity].every((item) => item === 0 || item === 1)) {
                 technoeconomicPushError(errors, path,
                     'Total or already-normalized lines use quantity 1 for each applicable system and 0 otherwise.');
             }
-            if (draft.basis === 'solartac_site'
-                && line.normalization_method === 'already_normalized_per_wdc') {
+            if (draft.basis === 'solartac_site' && ![
+                'divide_by_frozen_applied_capacity_w',
+                'multiply_quantity_then_divide_by_frozen_applied_capacity_w',
+            ].includes(line.normalization_method)) {
                 technoeconomicPushError(errors, path,
-                    'SolarTAC site costs must be source totals normalized by frozen Wdc.');
+                    'SolarTAC site costs must be normalized by frozen applied capacity.');
             }
             if (draft.basis === 'commercial_representative'
                 && line.normalization_method !== 'already_normalized_per_wdc') {
@@ -2523,6 +2602,8 @@
             const payload = {
                 source_annual_job_id: sourceId,
                 basis: draft.basis,
+                capacity_normalization: draft.basis === 'solartac_site'
+                    ? TECHNOECONOMIC_APPLIED_CAPACITY_NORMALIZATION : null,
                 n,
                 seed,
                 cost_stack_completeness: 'full_system',
@@ -2738,7 +2819,7 @@
                 ? number.toLocaleString('en-US', {
                     style: 'currency', currency: 'USD', maximumFractionDigits: 0,
                 })
-                : '—';
+                : 'Not available';
         }
 
         function technoeconomicFormatLcoe(value) {
@@ -2748,7 +2829,7 @@
                     style: 'currency', currency: 'USD',
                     minimumFractionDigits: 3, maximumFractionDigits: 3,
                 })
-                : '—';
+                : 'Not available';
         }
 
         function technoeconomicLifecycleFactors(
@@ -2931,12 +3012,12 @@
                 ? technoeconomicFormatCurrency(estimate.lifecycleCost)
                 : technoeconomicGuidedEstimatePrompt(system, source, guided);
             if (annualized) annualized.textContent = estimate
-                ? `${technoeconomicFormatCurrency(estimate.annualizedCost)}/year` : '—';
+                ? `${technoeconomicFormatCurrency(estimate.annualizedCost)}/year` : 'Not available';
             if (lcoe) lcoe.textContent = estimate
                 ? `${technoeconomicFormatLcoe(estimate.lcoeLow)}–${technoeconomicFormatLcoe(
                     estimate.lcoeHigh
                 )}/kWh · central ${technoeconomicFormatLcoe(estimate.lcoeCentral)}`
-                : '—';
+                : 'Not available';
         }
 
         function technoeconomicRenderGuidedEstimates() {
@@ -3001,12 +3082,14 @@
             setText(
                 technoeconomicElements.sourceCapacityNote,
                 (limit !== null
-                    ? 'The AC operating limit is already reflected in energy. '
+                    ? 'The AC operating limit is already reflected in energy and is the '
+                        + 'applied capacity used for cost and energy normalization. '
                     : operatingLimit.curtailment_enabled === false
-                        ? 'The selected run did not enable an AC operating limit. '
-                        : 'A valid AC operating limit is unavailable for this source. ')
-                    + 'Installed DC nameplate remains separate and is used for contract-required '
-                    + 'cost and energy normalization.'
+                        ? 'The selected run did not enable an AC operating limit, so installed '
+                            + 'DC nameplate is the applied capacity used for normalization. '
+                        : 'A valid AC operating limit is unavailable, so installed DC nameplate '
+                            + 'is the applied capacity used for normalization. ')
+                    + 'The installed DC record remains separate engineering provenance.'
             );
             setText(
                 technoeconomicElements.sourceSolectriaCapacity,
@@ -3161,7 +3244,7 @@
             const locator = citation.url || citation.stable_reference || 'no locator';
             const parts = [
                 evidence.evidence_class || 'unknown class',
-                [citation.organization, citation.title].filter(Boolean).join(' — '),
+                [citation.organization, citation.title].filter(Boolean).join(' | '),
                 locator,
                 [
                     citation.publication_or_as_of_date
@@ -3207,6 +3290,17 @@
 
         function technoeconomicConfirmationSource(source) {
             const value = technoeconomicPlainObject(source);
+            const applied = technoeconomicPlainObject(value.applied_capacity);
+            const appliedFor = (system) => {
+                const item = technoeconomicPlainObject(applied[system]);
+                const watts = Number(item.applied_capacity_w);
+                return {
+                    applied_capacity_w: Number.isFinite(watts) && watts > 0 ? watts : null,
+                    rating_basis: ['ac_operating_limit', 'dc_installed_nameplate'].includes(
+                        item.rating_basis
+                    ) ? item.rating_basis : null,
+                };
+            };
             return {
                 source_annual_job_id: typeof value.source_annual_job_id === 'string'
                     ? value.source_annual_job_id : '',
@@ -3218,7 +3312,28 @@
                     ? Number(value.solectria_installed_wdc) : null,
                 solaredge_installed_wdc: Number.isFinite(Number(value.solaredge_installed_wdc))
                     ? Number(value.solaredge_installed_wdc) : null,
+                applied_capacity: {
+                    solectria: appliedFor('solectria'),
+                    solaredge: appliedFor('solaredge'),
+                },
             };
+        }
+
+        function technoeconomicConfirmationCapacity(sourceSummary, system, applied) {
+            if (applied) {
+                const item = technoeconomicPlainObject(sourceSummary.applied_capacity?.[system]);
+                const watts = Number(item.applied_capacity_w);
+                if (Number.isFinite(watts) && watts > 0) {
+                    const basis = item.rating_basis === 'ac_operating_limit'
+                        ? 'AC operating limit' : 'installed DC nameplate fallback';
+                    return `${technoeconomicFormatNumber(watts, 1)} W (${basis})`;
+                }
+                return 'Re-verified by server at submission';
+            }
+            const installed = system === 'solectria'
+                ? sourceSummary.solectria_installed_wdc : sourceSummary.solaredge_installed_wdc;
+            return installed === null ? 'Unavailable'
+                : `${technoeconomicFormatNumber(installed, 1)} Wdc`;
         }
 
         function technoeconomicRenderConfirmation(serialized, sourceSummary) {
@@ -3231,12 +3346,22 @@
                         sourceSummary.source_snapshot_sha256 || 'Re-verified by server at submission'),
                     technoeconomicSummaryItem('Eligible weather years',
                         sourceSummary.eligible_years.join(', ') || 'Re-verified by server at submission'),
-                    technoeconomicSummaryItem('Frozen Solectria capacity',
-                        sourceSummary.solectria_installed_wdc === null ? 'Unavailable'
-                            : `${technoeconomicFormatNumber(sourceSummary.solectria_installed_wdc, 1)} Wdc`),
-                    technoeconomicSummaryItem('Frozen SolarEdge capacity',
-                        sourceSummary.solaredge_installed_wdc === null ? 'Unavailable'
-                            : `${technoeconomicFormatNumber(sourceSummary.solaredge_installed_wdc, 1)} Wdc`),
+                    technoeconomicSummaryItem(
+                        payload.capacity_normalization
+                            ? 'Frozen Solectria applied capacity' : 'Frozen Solectria capacity',
+                        technoeconomicConfirmationCapacity(
+                            sourceSummary, 'solectria', Boolean(payload.capacity_normalization)
+                        )
+                    ),
+                    technoeconomicSummaryItem(
+                        payload.capacity_normalization
+                            ? 'Frozen SolarEdge applied capacity' : 'Frozen SolarEdge capacity',
+                        technoeconomicConfirmationCapacity(
+                            sourceSummary, 'solaredge', Boolean(payload.capacity_normalization)
+                        )
+                    ),
+                    technoeconomicSummaryItem('Capacity normalization',
+                        payload.capacity_normalization || 'Legacy installed-Wdc contract'),
                     technoeconomicSummaryItem('Basis', payload.basis === 'solartac_site'
                         ? 'SolarTAC site as-built' : 'Commercial representative'),
                     technoeconomicSummaryItem('Realizations', payload.n.toLocaleString('en-US')),
@@ -3790,6 +3915,12 @@
 
         function technoeconomicMetricUnit(metricName) {
             if (metricName.includes('LCOE') || metricName.includes('lcoo')) return 'USD/kWh AC';
+            const applied = metricName.includes('per_applied_W')
+                || metricName.includes('PerAppliedW');
+            if (applied && metricName.includes('AnnualCost')) return 'USD/applied W-year';
+            if (applied && metricName.includes('Cost')) return 'USD/applied W';
+            if (applied && metricName.includes('AnnualEnergy')) return 'kWh AC/applied W-year';
+            if (applied && metricName.includes('Energy')) return 'kWh AC/applied W';
             if (metricName.includes('AnnualCost')) return 'USD/Wdc-year';
             if (metricName.includes('Cost')) return 'USD/Wdc';
             if (metricName.includes('AnnualEnergy')) return 'kWh AC/Wdc-year';
@@ -3917,20 +4048,32 @@
             if (!body) return;
             body.replaceChildren();
             for (const item of Array.isArray(result.per_weather_year) ? result.per_weather_year : []) {
+                const applied = Object.prototype.hasOwnProperty.call(
+                    item, 'source_sol_specific_kwh_ac_per_applied_w_year'
+                );
+                const solSpecific = applied
+                    ? item.source_sol_specific_kwh_ac_per_applied_w_year
+                    : item.source_sol_specific_kwh_ac_per_wdc_year;
+                const seSpecific = applied
+                    ? item.source_se_specific_kwh_ac_per_applied_w_year
+                    : item.source_se_specific_kwh_ac_per_wdc_year;
+                const capacityUnit = applied ? 'applied W' : 'Wdc';
+                const costMetric = applied
+                    ? 'DeltaLifecycleCostPerAppliedW_se_minus_sol_USD_per_applied_W'
+                    : 'DeltaLifecycleCostPerWdc_se_minus_sol_USD_per_Wdc';
+                const energyMetric = applied
+                    ? 'DeltaLifecycleEnergyPerAppliedW_se_minus_sol_kWh_AC_per_applied_W'
+                    : 'DeltaLifecycleEnergyPerWdc_se_minus_sol_kWh_AC_per_Wdc';
                 const row = technoeconomicNode('tr');
                 technoeconomicTableCell(row, String(item.year ?? 'Unavailable'));
                 technoeconomicTableCell(row, technoeconomicFormatNumber(item.realization_count, 0));
                 technoeconomicTableCell(row, technoeconomicFormatPercent(item.realization_share));
                 technoeconomicTableCell(row,
-                    `${technoeconomicFormatNumber(item.source_sol_specific_kwh_ac_per_wdc_year, 4)} kWh AC/Wdc-year`);
+                    `${technoeconomicFormatNumber(solSpecific, 4)} kWh AC/${capacityUnit}-year`);
                 technoeconomicTableCell(row,
-                    `${technoeconomicFormatNumber(item.source_se_specific_kwh_ac_per_wdc_year, 4)} kWh AC/Wdc-year`);
-                technoeconomicTableCell(row, technoeconomicMetricP50(
-                    item.metrics, 'DeltaLifecycleCostPerWdc_se_minus_sol_USD_per_Wdc'
-                ));
-                technoeconomicTableCell(row, technoeconomicMetricP50(
-                    item.metrics, 'DeltaLifecycleEnergyPerWdc_se_minus_sol_kWh_AC_per_Wdc'
-                ));
+                    `${technoeconomicFormatNumber(seSpecific, 4)} kWh AC/${capacityUnit}-year`);
+                technoeconomicTableCell(row, technoeconomicMetricP50(item.metrics, costMetric));
+                technoeconomicTableCell(row, technoeconomicMetricP50(item.metrics, energyMetric));
                 technoeconomicTableCell(row, technoeconomicMetricP50(
                     item.metrics, 'headline_positive_gain_lcoo'
                 ));
@@ -4082,17 +4225,39 @@
                 }
             }
             const capacities = technoeconomicPlainObject(result.capacities);
+            const appliedCapacities = technoeconomicPlainObject(result.applied_capacities);
             for (const system of ['solectria', 'solaredge']) {
+                const systemLabel = system === 'solectria' ? 'Solectria' : 'SolarEdge';
                 const capacity = technoeconomicPlainObject(capacities[system]);
-                if (!Object.keys(capacity).length) continue;
-                technoeconomicDefinition(
-                    root, `${system === 'solectria' ? 'Solectria' : 'SolarEdge'} capacity`,
-                    `${technoeconomicFormatNumber(capacity.installed_wdc, 1)} Wdc | ${capacity.module_model || 'module unavailable'}`
-                );
-                technoeconomicDefinition(
-                    root, `${system === 'solectria' ? 'Solectria' : 'SolarEdge'} physics`,
-                    `${capacity.physics_version || 'Unavailable'} | ${capacity.physics_fingerprint || 'fingerprint unavailable'}`
-                );
+                const applied = technoeconomicPlainObject(appliedCapacities[system]);
+                const appliedWatts = Number(applied.applied_capacity_w);
+                if (Number.isFinite(appliedWatts) && appliedWatts > 0) {
+                    const appliedUnit = applied.rating_basis === 'ac_operating_limit'
+                        ? 'kWac' : 'kWdc';
+                    const appliedBasis = applied.rating_basis === 'ac_operating_limit'
+                        ? 'AC operating limit' : 'installed DC nameplate fallback';
+                    technoeconomicDefinition(
+                        root, `${systemLabel} applied capacity`,
+                        `${technoeconomicFormatNumber(appliedWatts / 1000, 2)} ${appliedUnit} | ${appliedBasis}`
+                    );
+                } else if (Object.keys(capacity).length) {
+                    technoeconomicDefinition(
+                        root, `${systemLabel} capacity`,
+                        `${technoeconomicFormatNumber(capacity.installed_wdc, 1)} Wdc | ${capacity.module_model || 'module unavailable'}`
+                    );
+                }
+                if (Object.keys(capacity).length) {
+                    if (Number.isFinite(appliedWatts) && appliedWatts > 0) {
+                        technoeconomicDefinition(
+                            root, `${systemLabel} installed DC provenance`,
+                            `${technoeconomicFormatNumber(capacity.installed_wdc, 1)} Wdc | ${capacity.module_model || 'module unavailable'}`
+                        );
+                    }
+                    technoeconomicDefinition(
+                        root, `${systemLabel} physics`,
+                        `${capacity.physics_version || 'Unavailable'} | ${capacity.physics_fingerprint || 'fingerprint unavailable'}`
+                    );
+                }
             }
         }
 

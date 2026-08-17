@@ -19,7 +19,7 @@ from sbepv.api.artifacts import (
     _technoeconomic_attempt_directory,
 )
 from sbepv.worker import loop as worker_loop
-from tests.test_technoeconomic_api import _site_request_payload
+from tests.test_technoeconomic_api import _applied_site_request_payload
 from tests import test_technoeconomic_source as source_fixtures
 
 
@@ -69,7 +69,7 @@ class TechnoeconomicPhase3IntegrationTests(unittest.TestCase):
     def _post_real_job(self):
         return self.client.post(
             "/api/technoeconomic/jobs",
-            json=_site_request_payload(source_id=self.annual["id"], n=8),
+            json=_applied_site_request_payload(source_id=self.annual["id"], n=8),
         )
 
     def test_eligible_source_route_uses_unbounded_durable_listing(self) -> None:

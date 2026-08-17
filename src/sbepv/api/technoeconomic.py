@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import asdict
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -30,6 +29,7 @@ from sbepv import calibration, model, reporting
 from sbepv import technoeconomic as technoeconomic_kernel
 from sbepv.api import config, timewindows
 from sbepv.api.schemas import (
+    ANNUAL_APPLIED_CAPACITY_NORMALIZATION,
     TechnoeconomicDistributionRequest,
     TechnoeconomicEvidenceRequest,
     TechnoeconomicSubmissionRequest,
@@ -132,6 +132,97 @@ def _finite_float(value: Any, code: str, detail: str) -> float:
     if not math.isfinite(result):
         _fail(code, detail)
     return result
+
+
+def _annual_curtailment_state(
+    record: Mapping[str, Any],
+    *,
+    label: str,
+) -> tuple[bool, float | None] | None:
+    """Validate one optional Annual curtailment record.
+
+    Older uncurtailed Annual fixtures may omit both keys.  Once either key is
+    present, both are required so a clipped TEA denominator is never inferred from
+    partial or contradictory provenance.
+    """
+
+    has_enabled = "curtailment_enabled" in record
+    has_limit = "curtailment_limit_kw" in record
+    if not has_enabled and not has_limit:
+        return None
+    if not has_enabled or not has_limit:
+        _fail(
+            "annual_curtailment_record_incomplete",
+            f"The Annual {label} curtailment record is incomplete.",
+        )
+    enabled = record.get("curtailment_enabled")
+    if not isinstance(enabled, bool):
+        _fail(
+            "annual_curtailment_record_invalid",
+            f"The Annual {label} curtailment-enabled value is invalid.",
+        )
+    raw_limit = record.get("curtailment_limit_kw")
+    if not enabled:
+        if raw_limit is not None:
+            _fail(
+                "annual_curtailment_record_invalid",
+                f"The disabled Annual {label} curtailment record retains a limit.",
+            )
+        return False, None
+    limit = _finite_float(
+        raw_limit,
+        "annual_curtailment_record_invalid",
+        f"The enabled Annual {label} curtailment limit is invalid.",
+    )
+    if limit <= 0:
+        _fail(
+            "annual_curtailment_record_invalid",
+            f"The enabled Annual {label} curtailment limit must be positive.",
+        )
+    return True, limit
+
+
+def _verify_annual_curtailment_consistency(
+    request: Mapping[str, Any],
+    window: Mapping[str, Any],
+    stats: Mapping[str, Any],
+) -> None:
+    """Prove that the requested and actually reported clipping settings agree."""
+
+    request_state = _annual_curtailment_state(request, label="request")
+    window_state = _annual_curtailment_state(window, label="result window")
+    stats_state = _annual_curtailment_state(stats, label="result statistics")
+    if request_state is None and window_state is None and stats_state is None:
+        return
+
+    # An omitted legacy request means the historical default: curtailment off.
+    expected = request_state or (False, None)
+    if window_state is None or stats_state is None:
+        _fail(
+            "annual_curtailment_provenance_missing",
+            "The Annual result does not fully report its applied curtailment setting.",
+        )
+    if window_state[0] != expected[0] or stats_state[0] != expected[0]:
+        _fail(
+            "annual_curtailment_provenance_mismatch",
+            "The Annual request and result disagree about whether curtailment was applied.",
+        )
+    if not expected[0]:
+        return
+    assert expected[1] is not None
+    assert window_state[1] is not None
+    assert stats_state[1] is not None
+    if Decimal(str(window_state[1])) != Decimal(str(expected[1])):
+        _fail(
+            "annual_curtailment_provenance_mismatch",
+            "The Annual request and result window use different curtailment limits.",
+        )
+    # Annual statistics intentionally round the applied limit to three decimals.
+    if not math.isclose(stats_state[1], expected[1], rel_tol=0.0, abs_tol=0.0005):
+        _fail(
+            "annual_curtailment_provenance_mismatch",
+            "The Annual request and result statistics use different curtailment limits.",
+        )
 
 
 def _canonical_equal(left: Any, right: Any) -> bool:
@@ -2135,6 +2226,7 @@ def build_annual_source_snapshot(
             "annual_window_interval_mismatch",
             "The Annual result window interval differs from its immutable request.",
         )
+    _verify_annual_curtailment_consistency(request, window, stats)
 
     annual_source = _verified_source_identity(annual, label="annual_midc")
     provenance = _mapping(
@@ -2455,6 +2547,12 @@ def inspect_annual_source_eligibility(
         }
     snapshot = envelope["source_snapshot"]
     capacity = snapshot["capacity_manifest"]["systems"]
+    capacity_specs_tuple = _snapshot_capacity_specs(snapshot)
+    capacity_specs = {item.system: item for item in capacity_specs_tuple}
+    applied_capacity_specs = _snapshot_applied_capacity_specs(
+        snapshot,
+        capacity_specs,
+    )
     annual_energy_by_year = [
         {
             "year": row["year"],
@@ -2473,6 +2571,13 @@ def inspect_annual_source_eligibility(
         ],
         "solectria_installed_wdc": capacity["solectria"]["installed_wdc"],
         "solaredge_installed_wdc": capacity["solaredge"]["installed_wdc"],
+        "applied_capacity": {
+            item.system: {
+                "applied_capacity_w": item.applied_capacity_w,
+                "rating_basis": item.rating_basis,
+            }
+            for item in applied_capacity_specs
+        },
         "annual_energy_by_year": annual_energy_by_year,
         "capacity_manifest_source": snapshot["capacity_manifest_source"],
         "source_snapshot_sha256": envelope["source_snapshot_sha256"],
@@ -2616,6 +2721,71 @@ def _snapshot_capacity_specs(
     return result[0], result[1]
 
 
+def _snapshot_applied_capacity_specs(
+    source_snapshot: Mapping[str, Any],
+    capacities: Mapping[str, technoeconomic_kernel.CapacitySpec],
+) -> tuple[
+    technoeconomic_kernel.AppliedCapacitySpec,
+    technoeconomic_kernel.AppliedCapacitySpec,
+]:
+    """Derive the v2 normalization basis from the frozen Annual request.
+
+    The source snapshot already seals the complete Annual job and its immutable
+    request, so the applied-capacity evidence does not need a second mutable or
+    duplicated snapshot field.  A valid enabled AC operating limit is shared by
+    both systems.  Otherwise each system falls back to its independently verified
+    installed DC nameplate.
+    """
+
+    frozen_job = _mapping(
+        source_snapshot.get("source_annual_job"),
+        "source_snapshot_applied_capacity_missing",
+        "The frozen source snapshot has no Annual job record.",
+    )
+    annual_request = _mapping(
+        frozen_job.get("request"),
+        "source_snapshot_applied_capacity_missing",
+        "The frozen Annual job has no immutable request.",
+    )
+
+    operating_limit_kw: float | None = None
+    raw_limit = annual_request.get("curtailment_limit_kw")
+    if annual_request.get("curtailment_enabled") is True and not isinstance(
+        raw_limit, bool
+    ):
+        try:
+            candidate = float(raw_limit)
+        except (TypeError, ValueError, OverflowError):
+            candidate = math.nan
+        if math.isfinite(candidate) and candidate > 0:
+            operating_limit_kw = candidate
+
+    if operating_limit_kw is not None:
+        applied_w = operating_limit_kw * 1_000.0
+        if not math.isfinite(applied_w):
+            _fail(
+                "source_snapshot_applied_capacity_invalid",
+                "The frozen Annual AC operating limit cannot be represented in watts.",
+            )
+        return tuple(
+            technoeconomic_kernel.AppliedCapacitySpec(
+                system=system,
+                applied_capacity_w=applied_w,
+                rating_basis="ac_operating_limit",
+            )
+            for system in ("solectria", "solaredge")
+        )  # type: ignore[return-value]
+
+    return tuple(
+        technoeconomic_kernel.AppliedCapacitySpec(
+            system=system,
+            applied_capacity_w=capacities[system].installed_wdc,
+            rating_basis="dc_installed_nameplate",
+        )
+        for system in ("solectria", "solaredge")
+    )  # type: ignore[return-value]
+
+
 def _snapshot_energy_rows(
     source_snapshot: Mapping[str, Any],
 ) -> tuple[technoeconomic_kernel.PairedEnergyRow, ...]:
@@ -2652,7 +2822,7 @@ def _cost_intensity_multipliers(
     line: Any,
     *,
     basis: str,
-    capacities: Mapping[str, technoeconomic_kernel.CapacitySpec],
+    normalization_capacity_w: Mapping[str, float],
 ) -> tuple[float, float]:
     quantities = {
         "solectria": float(line.solectria_quantity),
@@ -2665,8 +2835,8 @@ def _cost_intensity_multipliers(
         # is not applied a second time.
         return quantities["solectria"], quantities["solaredge"]
     return (
-        quantities["solectria"] / capacities["solectria"].installed_wdc,
-        quantities["solaredge"] / capacities["solaredge"].installed_wdc,
+        quantities["solectria"] / normalization_capacity_w["solectria"],
+        quantities["solaredge"] / normalization_capacity_w["solaredge"],
     )
 
 
@@ -2701,6 +2871,21 @@ def build_technoeconomic_kernel_request(
 
     capacities_tuple = _snapshot_capacity_specs(snapshot)
     capacities = {item.system: item for item in capacities_tuple}
+    applied_capacities = (
+        _snapshot_applied_capacity_specs(snapshot, capacities)
+        if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+        else None
+    )
+    if applied_capacities is None:
+        normalization_capacity_w = {
+            system: capacity.installed_wdc
+            for system, capacity in capacities.items()
+        }
+    else:
+        normalization_capacity_w = {
+            capacity.system: capacity.applied_capacity_w
+            for capacity in applied_capacities
+        }
     paired_rows = _snapshot_energy_rows(snapshot)
 
     cost_lines: list[technoeconomic_kernel.CostLineSpec] = []
@@ -2708,7 +2893,7 @@ def build_technoeconomic_kernel_request(
         sol_multiplier, se_multiplier = _cost_intensity_multipliers(
             line,
             basis=request.basis,
-            capacities=capacities,
+            normalization_capacity_w=normalization_capacity_w,
         )
         cost_lines.append(
             technoeconomic_kernel.CostLineSpec(
@@ -2759,6 +2944,7 @@ def build_technoeconomic_kernel_request(
             "energy.shared-degradation",
             request.shared_degradation.annual_rate.distribution,
         ),
+        applied_capacities=applied_capacities,
         transfer=transfer,
         commercial_reference_wdc=(
             request.commercial_reference_design.reference_wdc
@@ -2768,6 +2954,8 @@ def build_technoeconomic_kernel_request(
         cost_stack_completeness=request.cost_stack_completeness,
         calculation_contract_version=(
             technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
+            if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+            else technoeconomic_kernel.LEGACY_CALCULATION_CONTRACT_VERSION
         ),
         sampling_version=technoeconomic_kernel.SAMPLING_VERSION,
     )
@@ -2883,11 +3071,69 @@ def _normalization_receipt(
 ) -> dict[str, Any]:
     source_lines = {line.input_id: line for line in request.cost_lines}
     capacities = {item.system: item for item in kernel_request.capacities}
+    applied_capacities = {
+        item.system: item
+        for item in (kernel_request.applied_capacities or ())
+    }
+    applied_capacity_receipt: dict[str, dict[str, Any]] | None = None
+    if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION:
+        applied_capacity_receipt = {}
+        for system in ("solectria", "solaredge"):
+            applied = applied_capacities[system]
+            applied_capacity_receipt[system] = {
+                "applied_capacity_w": applied.applied_capacity_w,
+                "rating_basis": applied.rating_basis,
+                "selection_method": (
+                    "enabled_positive_annual_curtailment_else_installed_dc"
+                ),
+                "source_field": (
+                    "source_snapshot.source_annual_job.request."
+                    "curtailment_limit_kw"
+                    if applied.rating_basis == "ac_operating_limit"
+                    else "source_snapshot.capacity_manifest.systems."
+                    f"{system}.installed_wdc"
+                ),
+            }
     receipts: list[dict[str, Any]] = []
     for line in kernel_request.cost_lines:
         source = source_lines[line.input_id]
-        if request.basis == "solartac_site":
-            wdc_denominator: dict[str, Any] = {
+        if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION:
+            capacity_denominator: dict[str, Any] = {
+                "method": "frozen_annual_applied_capacity_v1",
+                "solectria": {
+                    "applied_capacity_w": applied_capacities[
+                        "solectria"
+                    ].applied_capacity_w,
+                    "rating_basis": applied_capacities["solectria"].rating_basis,
+                    "source_field": (
+                        "source_snapshot.source_annual_job.request."
+                        "curtailment_limit_kw"
+                        if applied_capacities["solectria"].rating_basis
+                        == "ac_operating_limit"
+                        else "source_snapshot.capacity_manifest.systems."
+                        "solectria.installed_wdc"
+                    ),
+                    "applied": source.solectria_quantity > 0,
+                },
+                "solaredge": {
+                    "applied_capacity_w": applied_capacities[
+                        "solaredge"
+                    ].applied_capacity_w,
+                    "rating_basis": applied_capacities["solaredge"].rating_basis,
+                    "source_field": (
+                        "source_snapshot.source_annual_job.request."
+                        "curtailment_limit_kw"
+                        if applied_capacities["solaredge"].rating_basis
+                        == "ac_operating_limit"
+                        else "source_snapshot.capacity_manifest.systems."
+                        "solaredge.installed_wdc"
+                    ),
+                    "applied": source.solaredge_quantity > 0,
+                },
+            }
+            denominator_field = "capacity_denominator"
+        elif request.basis == "solartac_site":
+            capacity_denominator = {
                 "method": "frozen_annual_source_capacity_manifest",
                 "solectria": {
                     "installed_wdc": capacities["solectria"].installed_wdc,
@@ -2906,6 +3152,7 @@ def _normalization_receipt(
                     "applied": source.solaredge_quantity > 0,
                 },
             }
+            denominator_field = "wdc_denominator"
         else:
             design = request.commercial_reference_design
             if design is None:  # guarded by the strict request model
@@ -2913,14 +3160,14 @@ def _normalization_receipt(
                     "commercial_reference_design_missing",
                     "Commercial normalization has no reference design.",
                 )
-            wdc_denominator = {
+            capacity_denominator = {
                 "method": "declared_commercial_per_wdc_basis",
                 "reference_design_id": design.design_id,
                 "reference_wdc": design.reference_wdc,
                 "applied_to_input_normalization": False,
             }
-        receipts.append(
-            {
+            denominator_field = "wdc_denominator"
+        receipt = {
                 "input_id": line.input_id,
                 "basis": request.basis,
                 "ownership": line.ownership,
@@ -2932,7 +3179,6 @@ def _normalization_receipt(
                 "solaredge_quantity": source.solaredge_quantity,
                 "quantity_unit": source.quantity_unit,
                 "normalization_derivation": source.normalization_derivation,
-                "wdc_denominator": wdc_denominator,
                 "constant_dollar_cost_year": source.constant_dollar_cost_year,
                 "currency_year_normalization": (
                     source.currency_year_normalization.model_dump(
@@ -2950,11 +3196,18 @@ def _normalization_receipt(
                     line.solaredge_multiplier_to_intensity
                 ),
             }
-        )
-    return {
+        receipt[denominator_field] = capacity_denominator
+        receipts.append(receipt)
+    normalization_receipt: dict[str, Any] = {
         "status": "validated",
         "lines": receipts,
     }
+    if applied_capacity_receipt is not None:
+        normalization_receipt["capacity_normalization"] = (
+            request.capacity_normalization
+        )
+        normalization_receipt["applied_capacities"] = applied_capacity_receipt
+    return normalization_receipt
 
 
 def _overlap_receipt(
@@ -3165,8 +3418,12 @@ def build_technoeconomic_submission_provenance(
 
     expected_kernel = build_technoeconomic_kernel_request(request, snapshot)
     supplied_kernel = technoeconomic_kernel.validate_request(validated_kernel_request)
-    expected_kernel_payload = asdict(expected_kernel)
-    supplied_kernel_payload = asdict(supplied_kernel)
+    expected_kernel_payload = technoeconomic_kernel.canonical_request_payload(
+        expected_kernel
+    )
+    supplied_kernel_payload = technoeconomic_kernel.canonical_request_payload(
+        supplied_kernel
+    )
     expected_kernel_hash = canonical_json_sha256(expected_kernel_payload)
     supplied_kernel_hash = canonical_json_sha256(supplied_kernel_payload)
     if not secrets.compare_digest(expected_kernel_hash, supplied_kernel_hash):
@@ -3176,6 +3433,10 @@ def build_technoeconomic_submission_provenance(
         )
 
     canonical_request = request.model_dump(mode="json", exclude_none=False)
+    if request.capacity_normalization is None:
+        # This field did not exist on v1 durable requests.  Omitting its default
+        # preserves their exact immutable request/provenance hashes on retry.
+        canonical_request.pop("capacity_normalization", None)
     normalization = _normalization_receipt(request, supplied_kernel)
     overlap = _overlap_receipt(request, supplied_kernel)
     evidence = _evidence_receipt(request)
@@ -3187,8 +3448,12 @@ def build_technoeconomic_submission_provenance(
         "evidence": evidence,
         "commercial_transfer": transfer,
     }
-    return {
-        "schema_version": TECHNOECONOMIC_SUBMISSION_PROVENANCE_SCHEMA_VERSION,
+    provenance = {
+        "schema_version": (
+            2
+            if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+            else TECHNOECONOMIC_SUBMISSION_PROVENANCE_SCHEMA_VERSION
+        ),
         "source_annual_job_id": request.source_annual_job_id,
         "analysis_basis": request.basis,
         "commercial_transfer_status": transfer["status"],
@@ -3205,7 +3470,11 @@ def build_technoeconomic_submission_provenance(
         ),
         "calculation_contract_version": supplied_kernel.calculation_contract_version,
         "sampling_version": supplied_kernel.sampling_version,
-        "request_schema": "technoeconomic-submission-v1",
+        "request_schema": (
+            "technoeconomic-submission-v2"
+            if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+            else "technoeconomic-submission-v1"
+        ),
         "request_sha256": canonical_json_sha256(canonical_request),
         "source_snapshot_sha256": snapshot_sha256,
         "validated_kernel_request_sha256": supplied_kernel_hash,
@@ -3220,6 +3489,9 @@ def build_technoeconomic_submission_provenance(
         "validation_receipts_sha256": canonical_json_sha256(receipts),
         "provisional_inputs": evidence["status"] == "provisional_inputs",
     }
+    if request.capacity_normalization is not None:
+        provenance["capacity_normalization"] = request.capacity_normalization
+    return provenance
 
 
 __all__ = [

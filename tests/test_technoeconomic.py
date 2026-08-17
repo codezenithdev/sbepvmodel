@@ -1,3 +1,5 @@
+import hashlib
+import json
 import math
 import unittest
 from collections import Counter
@@ -163,6 +165,43 @@ def golden_request(*, n=1, seed=7, se_energy=215_000.0, rows=None, cost_lines=No
         cost_lines=tuple(cost_lines or golden_cost_lines()),
         discount_rate=fixed("finance.discount-rate", 0.05),
         shared_degradation=fixed("energy.shared-degradation", 0.005),
+    )
+
+
+def applied_capacity_request(*, applied_w=125_000.0, rating_basis="ac_operating_limit"):
+    costs = (
+        cost_line(
+            "cost.sol.total",
+            100_000,
+            "solectria_only",
+            "initial_capex",
+            1 / applied_w,
+            0,
+        ),
+        cost_line(
+            "cost.se.total",
+            120_000,
+            "solaredge_only",
+            "initial_capex",
+            0,
+            1 / applied_w,
+        ),
+    )
+    return tea.TechnoeconomicRequest(
+        basis="solartac_site",
+        n=1,
+        seed=7,
+        project_life_years=1,
+        capacities=(capacity("solectria"), capacity("solaredge")),
+        applied_capacities=(
+            tea.AppliedCapacitySpec("solectria", applied_w, rating_basis),
+            tea.AppliedCapacitySpec("solaredge", applied_w, rating_basis),
+        ),
+        paired_energy_rows=(tea.PairedEnergyRow(2021, 172_263.0, 174_227.0),),
+        cost_lines=costs,
+        discount_rate=fixed("finance.discount-rate", 0),
+        shared_degradation=fixed("energy.shared-degradation", 0),
+        calculation_contract_version=tea.CALCULATION_CONTRACT_VERSION,
     )
 
 
@@ -575,6 +614,111 @@ class CapacityAndRequestValidationTests(unittest.TestCase):
             ):
                 tea.validate_capacity(spec)
 
+    def test_v2_requires_complete_consistent_applied_capacity_evidence(self):
+        good = applied_capacity_request()
+        invalid = (
+            (replace(good, applied_capacities=None), "require applied_capacities"),
+            (
+                replace(
+                    good,
+                    applied_capacities=(
+                        tea.AppliedCapacitySpec(
+                            "solectria", 125_000, "ac_operating_limit"
+                        ),
+                        tea.AppliedCapacitySpec(
+                            "solaredge", 124_999, "ac_operating_limit"
+                        ),
+                    ),
+                ),
+                "identical for both systems",
+            ),
+            (
+                replace(
+                    good,
+                    applied_capacities=(
+                        tea.AppliedCapacitySpec(
+                            "solectria", 125_000, "ac_operating_limit"
+                        ),
+                        tea.AppliedCapacitySpec(
+                            "solaredge", GOLDEN_WDC, "dc_installed_nameplate"
+                        ),
+                    ),
+                ),
+                "one shared rating basis",
+            ),
+        )
+        for request, message in invalid:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                tea.TechnoeconomicValidationError, message
+            ):
+                tea.validate_request(request)
+
+    def test_contract_versions_fail_closed_around_applied_capacity(self):
+        v2 = applied_capacity_request()
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError, "v1 must not define"
+        ):
+            tea.validate_request(
+                replace(
+                    v2,
+                    calculation_contract_version=(
+                        tea.LEGACY_CALCULATION_CONTRACT_VERSION
+                    ),
+                )
+            )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError, "only for the SolarTAC"
+        ):
+            tea.validate_request(
+                replace(
+                    commercial_request(),
+                    calculation_contract_version=tea.CALCULATION_CONTRACT_VERSION,
+                    applied_capacities=v2.applied_capacities,
+                )
+            )
+
+    def test_v2_dc_fallback_must_match_installed_manifests(self):
+        request = applied_capacity_request(
+            applied_w=GOLDEN_WDC,
+            rating_basis="dc_installed_nameplate",
+        )
+        validated = tea.validate_request(request)
+        self.assertEqual(validated.applied_capacities, request.applied_capacities)
+
+        mismatched = replace(
+            request,
+            applied_capacities=(
+                request.applied_capacities[0],
+                replace(request.applied_capacities[1], applied_capacity_w=GOLDEN_WDC - 1),
+            ),
+        )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError, "must exactly match"
+        ):
+            tea.validate_request(mismatched)
+
+    def test_canonical_payload_preserves_literal_v1_shape(self):
+        legacy_payload = tea.canonical_request_payload(golden_request())
+        applied_payload = tea.canonical_request_payload(applied_capacity_request())
+
+        self.assertNotIn("applied_capacities", legacy_payload)
+        self.assertIn("applied_capacities", applied_payload)
+        self.assertEqual(
+            applied_payload["calculation_contract_version"],
+            tea.CALCULATION_CONTRACT_VERSION,
+        )
+        legacy_bytes = json.dumps(
+            legacy_payload,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        self.assertEqual(
+            "b7fce66548f1d9b2504f8d7b0b9c6ff242259899cc5b10c82527b3e42a2c432c",
+            hashlib.sha256(legacy_bytes).hexdigest(),
+        )
+
     def test_request_canonicalizes_energy_and_cost_order(self):
         rows = (
             tea.PairedEnergyRow(2022, 210_000, 220_000),
@@ -937,6 +1081,76 @@ class LifecycleCalculationTests(unittest.TestCase):
         )
         self.assertEqual(row["energy_class"][0], "positive_lifecycle_gain")
         self.assertEqual(row["tradeoff_class"][0], "cost_increase_energy_gain")
+
+    def test_v2_normalizes_site_energy_and_cost_by_applied_capacity(self):
+        result = tea.run_technoeconomic(applied_capacity_request())
+        row = result.realization_table
+
+        self.assertNotIn(tea.FIELD_DELTA_ENERGY, row)
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_YEAR1_SOL][0],
+            172_263 / 125_000,
+        )
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_YEAR1_SE][0],
+            174_227 / 125_000,
+        )
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_YEAR1_DELTA][0],
+            1_964 / 125_000,
+        )
+        self.assertAlmostEqual(row[tea.APPLIED_FIELD_DELTA_COST][0], 0.16)
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_DELTA_ENERGY][0],
+            1_964 / 125_000,
+        )
+        self.assertAlmostEqual(row[tea.FIELD_LCOE_SOL][0], 100_000 / 172_263)
+        self.assertAlmostEqual(row[tea.FIELD_LCOE_SE][0], 120_000 / 174_227)
+        self.assertAlmostEqual(row[tea.FIELD_LCOO][0], 20_000 / 1_964)
+        self.assertAlmostEqual(row["PVCost_SOL_USD"][0], 100_000)
+        self.assertAlmostEqual(row["PVCost_SE_USD"][0], 120_000)
+        self.assertEqual(row["PVEnergy_SOL_kWh_AC"][0], 172_263)
+        self.assertEqual(row["PVEnergy_SE_kWh_AC"][0], 174_227)
+        self.assertAlmostEqual(
+            result.summaries[tea.APPLIED_FIELD_DELTA_ENERGY]["percentiles"]["p50"],
+            1_964 / 125_000,
+        )
+
+        normalization = result.provenance["capacity_normalization"]
+        self.assertEqual(normalization["method"], "annual_applied_capacity_v1")
+        self.assertEqual(
+            normalization["systems"]["solectria"],
+            {
+                "applied_capacity_w": 125_000.0,
+                "rating_basis": "ac_operating_limit",
+                "installed_wdc": GOLDEN_WDC,
+            },
+        )
+        per_year = result.per_weather_year[0]
+        self.assertEqual(per_year["solectria_applied_w"], 125_000)
+        self.assertAlmostEqual(
+            per_year["source_delta_specific_se_minus_sol_kwh_ac_per_applied_w_year"],
+            1_964 / 125_000,
+        )
+
+    def test_v2_dc_nameplate_fallback_uses_installed_capacity(self):
+        request = applied_capacity_request(
+            applied_w=GOLDEN_WDC,
+            rating_basis="dc_installed_nameplate",
+        )
+        result = tea.run_technoeconomic(request)
+        row = result.realization_table
+
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_YEAR1_DELTA][0],
+            1_964 / GOLDEN_WDC,
+        )
+        self.assertEqual(
+            result.provenance["capacity_normalization"]["systems"]["solaredge"][
+                "rating_basis"
+            ],
+            "dc_installed_nameplate",
+        )
 
     def test_public_signed_field_names_pin_order_and_units(self):
         self.assertEqual(

@@ -162,6 +162,9 @@ def _reject_xml_10_illegal_text(value: Any) -> None:
             _reject_xml_10_illegal_text(item)
 
 
+ANNUAL_APPLIED_CAPACITY_NORMALIZATION = "annual_applied_capacity_v1"
+
+
 class StrictTechnoeconomicRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -394,10 +397,17 @@ class TechnoeconomicCostLineRequest(StrictTechnoeconomicRequest):
         "usd_per_wdc",
         "usd_per_wdc_year",
     ]
-    normalized_unit: Literal["usd_per_wdc", "usd_per_wdc_year"]
+    normalized_unit: Literal[
+        "usd_per_wdc",
+        "usd_per_wdc_year",
+        "usd_per_applied_w",
+        "usd_per_applied_w_year",
+    ]
     normalization_method: Literal[
         "divide_by_frozen_source_wdc",
         "multiply_quantity_then_divide_by_frozen_source_wdc",
+        "divide_by_frozen_applied_capacity_w",
+        "multiply_quantity_then_divide_by_frozen_applied_capacity_w",
         "already_normalized_per_wdc",
     ]
     solectria_quantity: FiniteNonnegativeFloat
@@ -420,10 +430,15 @@ class TechnoeconomicCostLineRequest(StrictTechnoeconomicRequest):
             raise ValueError("included and excluded coverage IDs must be disjoint")
 
         recurring = self.cost_type.startswith("recurring_")
-        expected_normalized = "usd_per_wdc_year" if recurring else "usd_per_wdc"
-        if self.normalized_unit != expected_normalized:
+        expected_normalized = (
+            {"usd_per_wdc_year", "usd_per_applied_w_year"}
+            if recurring
+            else {"usd_per_wdc", "usd_per_applied_w"}
+        )
+        if self.normalized_unit not in expected_normalized:
             raise ValueError(
-                f"{self.cost_type} requires normalized_unit={expected_normalized!r}"
+                f"{self.cost_type} requires one of normalized_unit="
+                f"{sorted(expected_normalized)!r}"
             )
         annual_originals = {
             "usd_total_per_year",
@@ -433,12 +448,18 @@ class TechnoeconomicCostLineRequest(StrictTechnoeconomicRequest):
         if (self.original_unit in annual_originals) != recurring:
             raise ValueError("original-unit timing must match the cost type")
 
-        if self.normalization_method == "divide_by_frozen_source_wdc":
+        if self.normalization_method in {
+            "divide_by_frozen_source_wdc",
+            "divide_by_frozen_applied_capacity_w",
+        }:
             if self.original_unit not in {"usd_total", "usd_total_per_year"}:
                 raise ValueError("total-Wdc normalization requires a total-USD unit")
             if self.quantity_unit is not None:
                 raise ValueError("total-Wdc normalization must not declare quantity_unit")
-        elif self.normalization_method == "multiply_quantity_then_divide_by_frozen_source_wdc":
+        elif self.normalization_method in {
+            "multiply_quantity_then_divide_by_frozen_source_wdc",
+            "multiply_quantity_then_divide_by_frozen_applied_capacity_w",
+        }:
             if self.original_unit not in {"usd_per_unit", "usd_per_unit_year"}:
                 raise ValueError("quantity normalization requires a per-unit USD unit")
             if self.quantity_unit is None:
@@ -459,6 +480,7 @@ class TechnoeconomicCostLineRequest(StrictTechnoeconomicRequest):
             raise ValueError("paired_shared requires positive quantities for both systems")
         if self.normalization_method in {
             "divide_by_frozen_source_wdc",
+            "divide_by_frozen_applied_capacity_w",
             "already_normalized_per_wdc",
         }:
             for value in (sol, se):
@@ -622,6 +644,7 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
         StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
     ]
     basis: Literal["solartac_site", "commercial_representative"]
+    capacity_normalization: Literal["annual_applied_capacity_v1"] | None = None
     n: Annotated[int, Field(ge=1, le=100_000)]
     seed: Annotated[int, Field(ge=0, le=(1 << 64) - 1)]
     cost_stack_completeness: Literal["full_system"]
@@ -663,14 +686,39 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                 raise ValueError(
                     "SolarTAC site requests must not include commercial design or transfer"
                 )
-            if any(
-                line.normalization_method == "already_normalized_per_wdc"
+            if self.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION:
+                expected_units = {
+                    "usd_per_applied_w",
+                    "usd_per_applied_w_year",
+                }
+                expected_methods = {
+                    "divide_by_frozen_applied_capacity_w",
+                    "multiply_quantity_then_divide_by_frozen_applied_capacity_w",
+                }
+                if any(
+                    line.normalized_unit not in expected_units
+                    or line.normalization_method not in expected_methods
+                    for line in self.cost_lines
+                ):
+                    raise ValueError(
+                        "annual_applied_capacity_v1 SolarTAC costs must be source "
+                        "totals normalized by frozen applied-capacity watts"
+                    )
+            elif any(
+                line.normalized_unit not in {"usd_per_wdc", "usd_per_wdc_year"}
+                or line.normalization_method == "already_normalized_per_wdc"
+                or "applied_capacity" in line.normalization_method
                 for line in self.cost_lines
             ):
                 raise ValueError(
-                    "SolarTAC site costs must be source totals normalized by frozen Wdc"
+                    "legacy SolarTAC site costs must be source totals normalized "
+                    "by frozen Wdc"
                 )
         else:
+            if self.capacity_normalization is not None:
+                raise ValueError(
+                    "commercial_representative must not declare SolarTAC capacity normalization"
+                )
             if self.commercial_reference_design is None:
                 raise ValueError(
                     "commercial_representative requires a commercial reference design"
@@ -684,6 +732,8 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                 )
             if any(
                 line.normalization_method != "already_normalized_per_wdc"
+                or line.normalized_unit
+                not in {"usd_per_wdc", "usd_per_wdc_year"}
                 for line in self.cost_lines
             ):
                 raise ValueError(
@@ -737,6 +787,7 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
 
 
 __all__ = [
+    "ANNUAL_APPLIED_CAPACITY_NORMALIZATION",
     "AnnualRunRequest",
     "AnnualRunSubmission",
     "BoundedNormalDistributionRequest",

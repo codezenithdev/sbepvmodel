@@ -8,7 +8,6 @@ places TEA state in the legacy in-memory model cache.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict
 import hashlib
 import json
 import logging
@@ -37,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 SEALED_CALCULATION_SCHEMA_VERSION = 1
 ROUTINE_RESULT_SCHEMA_VERSION = 1
+APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION = 2
 RESULT_PROVENANCE_SCHEMA_VERSION = 1
 SEALED_CALCULATION_FILENAME = "calculation_payload_v1.npz"
 _REQUIRED_EXPORT_ARTIFACT_IDS = frozenset(
@@ -392,11 +392,17 @@ def _verify_export_manifest(
 
     if not isinstance(manifest, Mapping):
         raise ValueError("The technoeconomic export manifest is not an object")
+    try:
+        schema_versions = technoeconomic_reporting.export_contract_versions(
+            calculation_contract_version
+        )
+    except technoeconomic_reporting.TechnoeconomicExportError as exc:
+        raise ValueError("The technoeconomic export contract is unsupported") from exc
     if (
         manifest.get("schema_version")
-        != technoeconomic_reporting.EXPORT_MANIFEST_SCHEMA_VERSION
+        != schema_versions["manifest"]
         or manifest.get("csv_format_version")
-        != technoeconomic_reporting.CSV_FORMAT_VERSION
+        != schema_versions["csv_format"]
     ):
         raise ValueError("The technoeconomic export manifest has the wrong schema")
     expected_manifest_sha256 = manifest.get("manifest_sha256")
@@ -473,11 +479,11 @@ def _verify_export_manifest(
         if entry.get("public") is not True:
             raise ValueError("A published technoeconomic export is not public")
         expected_schema_version = (
-            technoeconomic_reporting.CSV_BUNDLE_SCHEMA_VERSION
+            schema_versions["csv_bundle"]
             if artifact_id == "csv_bundle"
-            else technoeconomic_reporting.XLSX_SCHEMA_VERSION
+            else schema_versions["xlsx"]
             if artifact_id == "xlsx_workbook"
-            else technoeconomic_reporting.PNG_SCHEMA_VERSION
+            else schema_versions["png"]
         )
         if entry.get("schema_version") != expected_schema_version:
             raise ValueError(
@@ -624,7 +630,7 @@ def _verify_export_manifest(
                     or len(sheet_name) > 31
                     or sheet_name in sheet_names
                     or sheet.get("logical_hash_version")
-                    != technoeconomic_reporting.XLSX_LOGICAL_HASH_VERSION
+                    != schema_versions["xlsx_logical_hash"]
                     or not isinstance(logical_sha256, str)
                     or len(logical_sha256) != 64
                     or any(
@@ -669,6 +675,12 @@ def _routine_result(
     submission_provenance: Mapping[str, Any],
 ) -> dict[str, Any]:
     capacity_map = {capacity.system: capacity for capacity in request.capacities}
+    applied_capacity_map = {
+        capacity.system: capacity for capacity in (request.applied_capacities or ())
+    }
+    applied_capacity_contract = (
+        request.calculation_contract_version == kernel.CALCULATION_CONTRACT_VERSION
+    )
     if request.basis == "solartac_site":
         transfer_status = "not_applicable"
     elif request.transfer is None:
@@ -683,8 +695,12 @@ def _routine_result(
     )
     if not isinstance(commercial_reference, Mapping):
         commercial_reference = None
-    return {
-        "schema_version": ROUTINE_RESULT_SCHEMA_VERSION,
+    result = {
+        "schema_version": (
+            APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION
+            if applied_capacity_contract
+            else ROUTINE_RESULT_SCHEMA_VERSION
+        ),
         "calculation_contract_version": request.calculation_contract_version,
         "sampling_version": request.sampling_version,
         "analysis_basis": request.basis,
@@ -699,7 +715,11 @@ def _routine_result(
             submission_provenance.get("source_snapshot_sha256")
         ),
         "eligible_weather_years": [row.year for row in request.paired_energy_rows],
-        "capacity_basis": "frozen_annual_module_dc_stc_wdc",
+        "capacity_basis": (
+            "frozen_annual_applied_capacity_w"
+            if applied_capacity_contract
+            else "frozen_annual_module_dc_stc_wdc"
+        ),
         "capacities": {
             system: {
                 "module_model": capacity.module_model,
@@ -720,6 +740,19 @@ def _routine_result(
         "convergence": _json_safe(calculation.convergence),
         "sealed_calculation": _public_calculation_identity(artifact),
     }
+    if applied_capacity_contract:
+        if set(applied_capacity_map) != {"solectria", "solaredge"}:
+            raise ValueError(
+                "The applied-capacity result is missing a system normalization basis"
+            )
+        result["applied_capacities"] = {
+            system: {
+                "applied_capacity_w": capacity.applied_capacity_w,
+                "rating_basis": capacity.rating_basis,
+            }
+            for system, capacity in sorted(applied_capacity_map.items())
+        }
+    return result
 
 
 def _verify_frozen_inputs(
@@ -952,7 +985,7 @@ def _run_technoeconomic_job(
         )
         request = kernel.validate_request(request)
         kernel_request_sha256 = technoeconomic_api.canonical_json_sha256(
-            asdict(request)
+            kernel.canonical_request_payload(request)
         )
         if not secrets.compare_digest(
             kernel_request_sha256,
@@ -1119,6 +1152,7 @@ def _run_technoeconomic_job(
 
 
 __all__ = [
+    "APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION",
     "RESULT_PROVENANCE_SCHEMA_VERSION",
     "ROUTINE_RESULT_SCHEMA_VERSION",
     "SEALED_CALCULATION_SCHEMA_VERSION",

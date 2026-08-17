@@ -150,6 +150,25 @@ def _site_request_payload(*, source_id: str = "annual-source", n: int = 8) -> di
     }
 
 
+def _applied_site_request_payload(
+    *, source_id: str = "annual-source", n: int = 8
+) -> dict:
+    payload = _site_request_payload(source_id=source_id, n=n)
+    payload["capacity_normalization"] = "annual_applied_capacity_v1"
+    for line in payload["cost_lines"]:
+        recurring = line["cost_type"].startswith("recurring_")
+        line["normalized_unit"] = (
+            "usd_per_applied_w_year" if recurring else "usd_per_applied_w"
+        )
+        line["normalization_method"] = (
+            "divide_by_frozen_applied_capacity_w"
+        )
+        line["normalization_derivation"] = (
+            "Divide the project total by the frozen Annual applied capacity."
+        )
+    return payload
+
+
 def _commercial_request_payload(*, include_transfer: bool) -> dict:
     payload = _site_request_payload()
     payload["basis"] = "commercial_representative"
@@ -339,6 +358,12 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
             "schema_version": 1,
             "eligibility_version": tea_api.ANNUAL_SOURCE_ELIGIBILITY_VERSION,
             "source_annual_job_id": source_id,
+            "source_annual_job": {
+                "request": {
+                    "curtailment_enabled": True,
+                    "curtailment_limit_kw": 125.0,
+                }
+            },
             "capacity_manifest": model.capacity_manifest(),
             "eligible_paired_energy_rows": [
                 {
@@ -380,6 +405,23 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
             "origin_validation_job": {},
             "promotion_record": {},
         }
+        submitted = deepcopy(payload) if payload is not None else _applied_site_request_payload()
+        if (
+            submitted.get("basis") == "solartac_site"
+            and "capacity_normalization" not in submitted
+        ):
+            submitted["capacity_normalization"] = "annual_applied_capacity_v1"
+            for line in submitted["cost_lines"]:
+                recurring = line["cost_type"].startswith("recurring_")
+                line["normalized_unit"] = (
+                    "usd_per_applied_w_year" if recurring else "usd_per_applied_w"
+                )
+                line["normalization_method"] = (
+                    "divide_by_frozen_applied_capacity_w"
+                    if line["normalization_method"]
+                    == "divide_by_frozen_source_wdc"
+                    else "multiply_quantity_then_divide_by_frozen_applied_capacity_w"
+                )
         with (
             patch.object(
                 tea_api,
@@ -399,7 +441,7 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         ):
             return self.client.post(
                 "/api/technoeconomic/jobs",
-                json=payload or _site_request_payload(),
+                json=submitted,
             )
 
     def test_strict_schema_rejects_derived_duplicates_and_coercion(self) -> None:
@@ -452,6 +494,129 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
             self.assertEqual(422, response.status_code, response.text)
         self.assertEqual([], self.store.list_technoeconomic_jobs())
         state._WORKER_WAKE.set.assert_not_called()
+
+    def test_new_site_route_requires_explicit_applied_capacity_contract(self) -> None:
+        response = self.client.post(
+            "/api/technoeconomic/jobs",
+            json=_site_request_payload(),
+        )
+
+        self.assertEqual(422, response.status_code, response.text)
+        self.assertIn("annual_applied_capacity_v1", response.text)
+        self.assertEqual([], self.store.list_technoeconomic_jobs())
+
+    def test_v2_site_request_derives_clipped_capacity_from_frozen_annual(self) -> None:
+        payload = _applied_site_request_payload()
+        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
+        kernel_request = tea_api.build_technoeconomic_kernel_request(
+            parsed,
+            self.snapshot,
+        )
+
+        self.assertEqual(
+            "tea-calculation-v2",
+            kernel_request.calculation_contract_version,
+        )
+        self.assertEqual(
+            [
+                ("solectria", 125_000.0, "ac_operating_limit"),
+                ("solaredge", 125_000.0, "ac_operating_limit"),
+            ],
+            [
+                (item.system, item.applied_capacity_w, item.rating_basis)
+                for item in kernel_request.applied_capacities or ()
+            ],
+        )
+        lines = {line.input_id: line for line in kernel_request.cost_lines}
+        self.assertAlmostEqual(
+            1.0 / 125_000.0,
+            lines["cost.sol.capex"].solectria_multiplier_to_intensity,
+        )
+        self.assertAlmostEqual(
+            1.0 / 125_000.0,
+            lines["cost.se.capex"].solaredge_multiplier_to_intensity,
+        )
+
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            parsed,
+            self.envelope,
+            kernel_request,
+        )
+        self.assertEqual(2, provenance["schema_version"])
+        self.assertEqual(
+            "annual_applied_capacity_v1",
+            provenance["capacity_normalization"],
+        )
+        applied = provenance["normalization_receipt"]["applied_capacities"]
+        self.assertEqual(125_000.0, applied["solectria"]["applied_capacity_w"])
+        self.assertEqual(
+            "ac_operating_limit",
+            applied["solaredge"]["rating_basis"],
+        )
+
+    def test_v2_site_request_falls_back_to_installed_dc_without_clipping(self) -> None:
+        cases = (
+            (False, 125.0),
+            (True, None),
+            (True, "invalid"),
+            (True, 0.0),
+            (True, -1.0),
+            (True, float("inf")),
+            (True, float("nan")),
+            (True, True),
+        )
+        for enabled, raw_limit in cases:
+            with self.subTest(enabled=enabled, raw_limit=raw_limit):
+                snapshot = deepcopy(self.snapshot)
+                snapshot["source_annual_job"]["request"] = {
+                    "curtailment_enabled": enabled,
+                    "curtailment_limit_kw": raw_limit,
+                }
+                kernel_request = tea_api.build_technoeconomic_kernel_request(
+                    _applied_site_request_payload(),
+                    snapshot,
+                )
+                installed = snapshot["capacity_manifest"]["systems"]
+
+                self.assertEqual(
+                    [
+                        (
+                            system,
+                            installed[system]["installed_wdc"],
+                            "dc_installed_nameplate",
+                        )
+                        for system in ("solectria", "solaredge")
+                    ],
+                    [
+                        (item.system, item.applied_capacity_w, item.rating_basis)
+                        for item in kernel_request.applied_capacities or ()
+                    ],
+                )
+
+    def test_missing_discriminator_preserves_legacy_kernel_payload(self) -> None:
+        kernel_request = tea_api.build_technoeconomic_kernel_request(
+            _site_request_payload(),
+            self.snapshot,
+        )
+
+        self.assertEqual(
+            "tea-calculation-v1",
+            kernel_request.calculation_contract_version,
+        )
+        self.assertIsNone(kernel_request.applied_capacities)
+        self.assertNotIn(
+            "applied_capacities",
+            tea_api.technoeconomic_kernel.canonical_request_payload(kernel_request),
+        )
+
+    def test_commercial_request_rejects_applied_watt_unit_labels(self) -> None:
+        payload = _commercial_request_payload(include_transfer=False)
+        payload["cost_lines"][0]["normalized_unit"] = "usd_per_applied_w"
+
+        with self.assertRaises(ValidationError) as raised:
+            TechnoeconomicSubmissionRequest.model_validate(payload)
+
+        self.assertIn("sourced per-Wdc basis", str(raised.exception))
 
     def test_strict_schema_rejects_xml_illegal_text_before_enqueue(self) -> None:
         valid = _site_request_payload()
@@ -838,7 +1003,7 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         ):
             response = self.client.post(
                 "/api/technoeconomic/jobs",
-                json=_site_request_payload(),
+                json=_applied_site_request_payload(),
             )
         self.assertEqual(409, response.status_code)
         self.assertEqual([], self.store.list_technoeconomic_jobs())

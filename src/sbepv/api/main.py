@@ -146,6 +146,7 @@ from sbepv.agent.tool_schemas import (
     SWEEPABLE_PARAMETER_CONFIG,
 )
 from sbepv.api.schemas import (
+    ANNUAL_APPLIED_CAPACITY_NORMALIZATION,
     AnnualRunRequest,
     AnnualRunSubmission,
     CalibrationDecisionRequest,
@@ -1043,7 +1044,22 @@ def create_technoeconomic_job(
 ) -> JSONResponse:
     """Verify, freeze, validate, and enqueue one probabilistic TEA job."""
 
+    if (
+        req.basis == "solartac_site"
+        and req.capacity_normalization
+        != ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "New SolarTAC jobs must declare "
+                "capacity_normalization='annual_applied_capacity_v1'."
+            ),
+        )
+
     request_payload = req.model_dump(mode="json", exclude_none=False)
+    if req.capacity_normalization is None:
+        request_payload.pop("capacity_normalization", None)
     try:
         with state._ORCHESTRATION_LOCK:
             if state.AGENT_STORE.get_job(req.source_annual_job_id) is None:
