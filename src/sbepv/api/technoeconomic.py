@@ -2455,6 +2455,14 @@ def inspect_annual_source_eligibility(
         }
     snapshot = envelope["source_snapshot"]
     capacity = snapshot["capacity_manifest"]["systems"]
+    annual_energy_by_year = [
+        {
+            "year": row["year"],
+            "solectria_kwh": row["sol_predicted_kwh"],
+            "solaredge_kwh": row["se_predicted_kwh"],
+        }
+        for row in snapshot["eligible_paired_energy_rows"]
+    ]
     return {
         "eligible": True,
         "reason_code": None,
@@ -2465,6 +2473,7 @@ def inspect_annual_source_eligibility(
         ],
         "solectria_installed_wdc": capacity["solectria"]["installed_wdc"],
         "solaredge_installed_wdc": capacity["solaredge"]["installed_wdc"],
+        "annual_energy_by_year": annual_energy_by_year,
         "capacity_manifest_source": snapshot["capacity_manifest_source"],
         "source_snapshot_sha256": envelope["source_snapshot_sha256"],
     }

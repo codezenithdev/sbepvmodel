@@ -3,7 +3,7 @@
                         <div>
                             <p class="annual-kicker">Probabilistic lifecycle economics</p>
                             <h2 class="section-title" id="technoeconomicInputsHeading">Technoeconomic analysis setup</h2>
-                            <p class="section-subtitle">Select a verified Annual Simulation, enter the essential economic assumptions, and review the fully expanded request before running a reproducible SolarEdge minus Solectria lifecycle comparison.</p>
+                            <p class="section-subtitle">Choose calibrated annual energy, enter separate financial assumptions for each system, and review the estimated cost picture before running the full lifecycle analysis.</p>
                         </div>
                         <span class="tea-contract-badge">Server calculated</span>
                     </div>
@@ -13,8 +13,8 @@
                             <div class="tea-section-heading">
                                 <div>
                                     <p class="tea-step-label">Step 1</p>
-                                    <h3 id="technoeconomicSourceHeading">Source and reproducibility</h3>
-                                    <p>Only a completed, calibrated Annual Simulation that passes the current provenance checks can be submitted.</p>
+                                    <h3 id="technoeconomicSourceHeading">Choose the modeled energy source</h3>
+                                    <p>Use a completed calibrated Annual Simulation so both systems start from verified, year-by-year energy.</p>
                                 </div>
                                 <button class="tea-button tea-button-secondary" id="technoeconomicRefreshSourcesBtn" type="button">Refresh sources</button>
                             </div>
@@ -34,110 +34,224 @@
                                 <span class="tea-state-icon" aria-hidden="true"></span>
                                 <div>
                                     <strong id="technoeconomicSourceStatus" role="status" aria-live="polite" aria-atomic="true">Choose an Annual Simulation source</strong>
-                                    <p id="technoeconomicSourceDetail">Refresh the list to inspect eligible years, frozen Wdc capacities, and calibration lineage.</p>
+                                    <p id="technoeconomicSourceDetail">Select a source to review the modeled operating limit, applied capacity, and yearly energy for each system.</p>
                                 </div>
                             </div>
-                            <dl class="tea-definition-grid" id="technoeconomicSourceDetails" aria-label="Selected Annual Simulation evidence"></dl>
+                            <div class="tea-source-summary" id="technoeconomicSourceDetails" aria-label="Selected Annual Simulation energy and applied capacity" hidden>
+                                <div class="tea-source-basis-row">
+                                    <div class="tea-source-basis-callout">
+                                        <span>Modeled AC operating limit</span>
+                                        <strong id="technoeconomicSourceOperatingLimit">Unavailable</strong>
+                                        <small>The selected Annual Simulation's operating settings are already reflected in the yearly energy below.</small>
+                                    </div>
+                                    <p id="technoeconomicSourceCapacityNote">Installed module capacity remains the verified DC nameplate used by the TEA calculation contract.</p>
+                                </div>
+                                <div class="tea-source-system-grid">
+                                    <article class="tea-source-system-card" aria-labelledby="technoeconomicSourceSolectriaHeading">
+                                        <div>
+                                            <span class="tea-system-eyebrow">System 01</span>
+                                            <h4 id="technoeconomicSourceSolectriaHeading">Solectria</h4>
+                                        </div>
+                                        <dl>
+                                            <div>
+                                                <dt>Applied capacity</dt>
+                                                <dd id="technoeconomicSourceSolectriaCapacity">Unavailable</dd>
+                                            </div>
+                                            <div>
+                                                <dt>Typical annual energy</dt>
+                                                <dd id="technoeconomicSourceSolectriaEnergy">Unavailable</dd>
+                                            </div>
+                                        </dl>
+                                    </article>
+                                    <article class="tea-source-system-card" aria-labelledby="technoeconomicSourceSolarEdgeHeading">
+                                        <div>
+                                            <span class="tea-system-eyebrow">System 02</span>
+                                            <h4 id="technoeconomicSourceSolarEdgeHeading">SolarEdge</h4>
+                                        </div>
+                                        <dl>
+                                            <div>
+                                                <dt>Applied capacity</dt>
+                                                <dd id="technoeconomicSourceSolarEdgeCapacity">Unavailable</dd>
+                                            </div>
+                                            <div>
+                                                <dt>Typical annual energy</dt>
+                                                <dd id="technoeconomicSourceSolarEdgeEnergy">Unavailable</dd>
+                                            </div>
+                                        </dl>
+                                    </article>
+                                </div>
+                                <div class="tea-yearly-energy">
+                                    <div class="tea-yearly-energy-heading">
+                                        <h4>Yearly modeled energy</h4>
+                                        <span>AC energy from the selected Annual Simulation</span>
+                                    </div>
+                                    <div class="tea-table-region" tabindex="0" aria-label="Yearly modeled energy by system">
+                                        <table class="tea-table tea-energy-table">
+                                            <thead>
+                                                <tr>
+                                                    <th scope="col">Weather year</th>
+                                                    <th scope="col">Solectria (MWh AC)</th>
+                                                    <th scope="col">SolarEdge (MWh AC)</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="technoeconomicSourceEnergyRows"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
 
                         </section>
 
                         <section class="tea-panel tea-guided-panel" id="technoeconomicGuidedPanel" aria-labelledby="technoeconomicGuidedHeading">
                             <div class="tea-section-heading">
                                 <div>
-                                    <p class="tea-step-label">Guided SolarTAC setup</p>
-                                    <h3 id="technoeconomicGuidedHeading">Enter the decision-driving assumptions</h3>
-                                    <p>Provide only the lifecycle and cost assumptions that drive the decision. Sampling, evidence records, normalization, and the complete server request are generated automatically.</p>
+                                    <p class="tea-step-label">Step 2 · Guided SolarTAC setup</p>
+                                    <h3 id="technoeconomicGuidedHeading">Build a clear cost picture for each system</h3>
+                                    <p>Enter financial assumptions separately for Solectria and SolarEdge. The cards update with setup estimates while the final probabilistic calculation remains server-generated.</p>
                                 </div>
                                 <div class="tea-guided-basis" id="technoeconomicGuidedBasis" data-basis="solartac_site" aria-label="Fixed guided analysis basis">
                                     <span>Analysis basis</span>
-                                    <strong>SolarTAC site as-built</strong>
-                                    <small>Fixed in Guided mode</small>
+                                    <strong>Selected calibrated Annual Simulation</strong>
+                                    <small>Energy already reflects the selected run's operating settings</small>
                                 </div>
                             </div>
 
-                            <div class="tea-field tea-guided-assumption-note">
-                                <label for="technoeconomicGuidedAssumptionNote">Shared assumption source or justification</label>
-                                <textarea id="technoeconomicGuidedAssumptionNote" rows="3" maxlength="4000" aria-describedby="technoeconomicGuidedAssumptionNoteHelp" placeholder="Identify the source, estimate basis, or reason these assumptions are appropriate for this run." required></textarea>
-                                <p class="tea-field-help" id="technoeconomicGuidedAssumptionNoteHelp">This one note is recorded with each of the seven provisional assumptions listed below. Guided mode creates the complete, server-validated request automatically.</p>
-                            </div>
+                            <section class="tea-guided-common" aria-labelledby="technoeconomicGuidedCommonHeading">
+                                <div class="tea-subsection-heading">
+                                    <div>
+                                        <span class="tea-system-eyebrow">Shared project settings</span>
+                                        <h4 id="technoeconomicGuidedCommonHeading">Financial horizon</h4>
+                                    </div>
+                                    <p>These settings apply equally to both systems.</p>
+                                </div>
+                                <div class="tea-guided-grid">
+                                    <div class="tea-field">
+                                        <label for="technoeconomicGuidedCostYear">Constant-dollar cost year</label>
+                                        <input id="technoeconomicGuidedCostYear" type="number" min="1900" max="3000" step="1" inputmode="numeric" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedCostYearHelp" required>
+                                        <p class="tea-field-help" id="technoeconomicGuidedCostYearHelp">All submitted costs are normalized to this year.</p>
+                                    </div>
+                                    <div class="tea-field">
+                                        <label for="technoeconomicGuidedProjectLife">Project life</label>
+                                        <div class="tea-input-with-unit">
+                                            <input id="technoeconomicGuidedProjectLife" type="number" min="1" step="1" inputmode="numeric" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedProjectLifeHelp" required>
+                                            <span aria-hidden="true">years</span>
+                                        </div>
+                                        <p class="tea-field-help" id="technoeconomicGuidedProjectLifeHelp">A fixed positive whole number of operating years.</p>
+                                    </div>
+                                    <div class="tea-field">
+                                        <label for="technoeconomicGuidedDiscount">Central real discount rate</label>
+                                        <div class="tea-input-with-unit">
+                                            <input id="technoeconomicGuidedDiscount" type="number" min="-99.99" step="0.01" inputmode="decimal" placeholder="e.g. 5" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedDiscountHelp" required>
+                                            <span aria-hidden="true">%/year</span>
+                                        </div>
+                                        <p class="tea-field-help" id="technoeconomicGuidedDiscountHelp">Enter 5 for a 5% real annual rate. Guided mode converts the percentage to the server's fraction-per-year unit.</p>
+                                    </div>
+                                    <div class="tea-field">
+                                        <label for="technoeconomicGuidedDegradation">Annual module degradation <span class="tea-optional-label">Optional</span></label>
+                                        <div class="tea-input-with-unit">
+                                            <input id="technoeconomicGuidedDegradation" type="number" min="0" max="99.99" step="0.01" inputmode="decimal" placeholder="0" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedDegradationHelp">
+                                            <span aria-hidden="true">%/year</span>
+                                        </div>
+                                        <p class="tea-field-help" id="technoeconomicGuidedDegradationHelp">Leave blank to use 0%. The current calculation contract applies one documented module rate to both systems.</p>
+                                    </div>
+                                </div>
+                            </section>
 
-                            <div class="tea-guided-grid">
-                                <div class="tea-field">
-                                    <label for="technoeconomicGuidedCostYear">Constant-dollar cost year</label>
-                                    <input id="technoeconomicGuidedCostYear" type="number" min="1900" max="3000" step="1" inputmode="numeric" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedCostYearHelp" required>
-                                    <p class="tea-field-help" id="technoeconomicGuidedCostYearHelp">All submitted costs are normalized to this year.</p>
-                                </div>
-                                <div class="tea-field">
-                                    <label for="technoeconomicGuidedProjectLife">Project life</label>
-                                    <div class="tea-input-with-unit">
-                                        <input id="technoeconomicGuidedProjectLife" type="number" min="1" step="1" inputmode="numeric" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedProjectLifeHelp" required>
-                                        <span aria-hidden="true">years</span>
+                            <div class="tea-system-cost-grid">
+                                <article class="tea-system-cost-card tea-system-cost-card-sol" aria-labelledby="technoeconomicGuidedSolectriaHeading">
+                                    <div class="tea-system-cost-heading">
+                                        <div>
+                                            <span class="tea-system-eyebrow">System 01</span>
+                                            <h4 id="technoeconomicGuidedSolectriaHeading">Solectria</h4>
+                                        </div>
+                                        <dl class="tea-system-context">
+                                            <div><dt>Applied capacity</dt><dd id="technoeconomicGuidedSolectriaCapacity">Select a source</dd></div>
+                                            <div><dt>Typical energy</dt><dd id="technoeconomicGuidedSolectriaEnergy">Select a source</dd></div>
+                                        </dl>
                                     </div>
-                                    <p class="tea-field-help" id="technoeconomicGuidedProjectLifeHelp">A fixed positive whole number of operating years.</p>
-                                </div>
-                                <div class="tea-field">
-                                    <label for="technoeconomicGuidedDiscount">Central real discount rate</label>
-                                    <div class="tea-input-with-unit">
-                                        <input id="technoeconomicGuidedDiscount" type="number" min="-99.99" step="0.01" inputmode="decimal" placeholder="5" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedDiscountHelp" required>
-                                        <span aria-hidden="true">%/year</span>
+                                    <div class="tea-system-financial-fields">
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedSolectriaCapex">Installed CAPEX</label>
+                                            <div class="tea-input-with-unit tea-input-with-unit-both">
+                                                <span class="tea-unit-prefix" aria-hidden="true">$</span>
+                                                <input id="technoeconomicGuidedSolectriaCapex" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedSolectriaCapexHelp" required>
+                                                <span class="tea-unit-suffix" aria-hidden="true">total</span>
+                                            </div>
+                                            <p class="tea-field-help" id="technoeconomicGuidedSolectriaCapexHelp">Total installed project cost in the selected constant-dollar year.</p>
+                                        </div>
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedSolectriaOm">Annual O&amp;M</label>
+                                            <div class="tea-input-with-unit tea-input-with-unit-both">
+                                                <span class="tea-unit-prefix" aria-hidden="true">$</span>
+                                                <input id="technoeconomicGuidedSolectriaOm" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedSolectriaOmHelp" required>
+                                                <span class="tea-unit-suffix" aria-hidden="true">/year</span>
+                                            </div>
+                                            <p class="tea-field-help" id="technoeconomicGuidedSolectriaOmHelp">Typical recurring operations and maintenance cost for this system only.</p>
+                                        </div>
                                     </div>
-                                    <p class="tea-field-help" id="technoeconomicGuidedDiscountHelp">Enter 5 for a 5% real annual rate. Guided mode converts the percentage to the server's fraction-per-year unit.</p>
-                                </div>
-                                <div class="tea-field">
-                                    <label for="technoeconomicGuidedDegradation">Central shared module degradation</label>
-                                    <div class="tea-input-with-unit">
-                                        <input id="technoeconomicGuidedDegradation" type="number" min="0" max="99.99" step="0.01" inputmode="decimal" placeholder="0.5" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedDegradationHelp" required>
-                                        <span aria-hidden="true">%/year</span>
+                                    <div class="tea-system-estimate" id="technoeconomicGuidedSolectriaEstimate" data-state="empty" aria-live="polite">
+                                        <span class="tea-estimate-label">Setup estimate</span>
+                                        <div class="tea-estimate-primary">
+                                            <span>Lifecycle cost</span>
+                                            <strong id="technoeconomicGuidedSolectriaLifecycleCost">Complete setup inputs</strong>
+                                        </div>
+                                        <dl>
+                                            <div><dt>Typical annualized cost</dt><dd id="technoeconomicGuidedSolectriaAnnualizedCost">—</dd></div>
+                                            <div><dt>Estimated LCOE range</dt><dd id="technoeconomicGuidedSolectriaLcoeRange">—</dd></div>
+                                        </dl>
                                     </div>
-                                    <p class="tea-field-help" id="technoeconomicGuidedDegradationHelp">Enter 0.5 for 0.5% annual degradation shared by both systems. Guided mode converts it to a fraction per year.</p>
-                                </div>
-                                <div class="tea-field">
-                                    <label for="technoeconomicGuidedBaseCapex">Central shared baseline installed CAPEX</label>
-                                    <div class="tea-input-with-unit tea-input-with-unit-both">
-                                        <span class="tea-unit-prefix" aria-hidden="true">$</span>
-                                        <input id="technoeconomicGuidedBaseCapex" type="number" min="0" step="0.001" inputmode="decimal" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedBaseCapexHelp" required>
-                                        <span class="tea-unit-suffix" aria-hidden="true">/Wdc</span>
-                                    </div>
-                                    <p class="tea-field-help" id="technoeconomicGuidedBaseCapexHelp">Base installed cost applied to both systems before adding the SolarEdge increment, in constant-dollar USD per Wdc.</p>
-                                </div>
-                                <div class="tea-field">
-                                    <label for="technoeconomicGuidedBaseOm">Central shared baseline recurring O&amp;M</label>
-                                    <div class="tea-input-with-unit tea-input-with-unit-both">
-                                        <span class="tea-unit-prefix" aria-hidden="true">$</span>
-                                        <input id="technoeconomicGuidedBaseOm" type="number" min="0" step="0.0001" inputmode="decimal" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedBaseOmHelp" required>
-                                        <span class="tea-unit-suffix" aria-hidden="true">/Wdc-year</span>
-                                    </div>
-                                    <p class="tea-field-help" id="technoeconomicGuidedBaseOmHelp">Base recurring cost applied to both systems before adding the SolarEdge increment, in constant-dollar USD per Wdc-year.</p>
-                                </div>
-                                <div class="tea-field">
-                                    <label for="technoeconomicGuidedIncrementalCapex">Central SolarEdge incremental installed CAPEX</label>
-                                    <div class="tea-input-with-unit tea-input-with-unit-both">
-                                        <span class="tea-unit-prefix" aria-hidden="true">$</span>
-                                        <input id="technoeconomicGuidedIncrementalCapex" type="number" min="0" step="0.001" inputmode="decimal" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedIncrementalCapexHelp technoeconomicReferenceStatus" required>
-                                        <span class="tea-unit-suffix" aria-hidden="true">/Wdc</span>
-                                    </div>
-                                    <p class="tea-field-help" id="technoeconomicGuidedIncrementalCapexHelp">Additional SolarEdge installed cost above the Solectria baseline.</p>
-                                </div>
-                                <div class="tea-field">
-                                    <label for="technoeconomicGuidedIncrementalOm">Central SolarEdge incremental recurring O&amp;M</label>
-                                    <div class="tea-input-with-unit tea-input-with-unit-both">
-                                        <span class="tea-unit-prefix" aria-hidden="true">$</span>
-                                        <input id="technoeconomicGuidedIncrementalOm" type="number" min="0" step="0.0001" inputmode="decimal" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedIncrementalOmHelp" required>
-                                        <span class="tea-unit-suffix" aria-hidden="true">/Wdc-year</span>
-                                    </div>
-                                    <p class="tea-field-help" id="technoeconomicGuidedIncrementalOmHelp">Additional SolarEdge recurring cost above the Solectria baseline, including replacement labor and truck rolls.</p>
-                                </div>
-                            </div>
+                                </article>
 
-                            <div class="tea-guided-reference-action">
-                                <button class="tea-button tea-button-secondary" id="technoeconomicApplyReferenceBtn" type="button" aria-describedby="technoeconomicReferenceStatus">Apply provisional SolarTAC CAPEX reference range</button>
-                                <p id="technoeconomicReferenceStatus" role="status" aria-live="polite">Not applied. This reference range is provisional and is never inserted without this explicit action.</p>
+                                <article class="tea-system-cost-card tea-system-cost-card-se" aria-labelledby="technoeconomicGuidedSolarEdgeHeading">
+                                    <div class="tea-system-cost-heading">
+                                        <div>
+                                            <span class="tea-system-eyebrow">System 02</span>
+                                            <h4 id="technoeconomicGuidedSolarEdgeHeading">SolarEdge</h4>
+                                        </div>
+                                        <dl class="tea-system-context">
+                                            <div><dt>Applied capacity</dt><dd id="technoeconomicGuidedSolarEdgeCapacity">Select a source</dd></div>
+                                            <div><dt>Typical energy</dt><dd id="technoeconomicGuidedSolarEdgeEnergy">Select a source</dd></div>
+                                        </dl>
+                                    </div>
+                                    <div class="tea-system-financial-fields">
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedSolarEdgeCapex">Installed CAPEX</label>
+                                            <div class="tea-input-with-unit tea-input-with-unit-both">
+                                                <span class="tea-unit-prefix" aria-hidden="true">$</span>
+                                                <input id="technoeconomicGuidedSolarEdgeCapex" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedSolarEdgeCapexHelp" required>
+                                                <span class="tea-unit-suffix" aria-hidden="true">total</span>
+                                            </div>
+                                            <p class="tea-field-help" id="technoeconomicGuidedSolarEdgeCapexHelp">Total installed project cost for SolarEdge, entered independently of Solectria.</p>
+                                        </div>
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedSolarEdgeOm">Annual O&amp;M</label>
+                                            <div class="tea-input-with-unit tea-input-with-unit-both">
+                                                <span class="tea-unit-prefix" aria-hidden="true">$</span>
+                                                <input id="technoeconomicGuidedSolarEdgeOm" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedSolarEdgeOmHelp" required>
+                                                <span class="tea-unit-suffix" aria-hidden="true">/year</span>
+                                            </div>
+                                            <p class="tea-field-help" id="technoeconomicGuidedSolarEdgeOmHelp">Typical recurring operations and maintenance cost for this system only.</p>
+                                        </div>
+                                    </div>
+                                    <div class="tea-system-estimate" id="technoeconomicGuidedSolarEdgeEstimate" data-state="empty" aria-live="polite">
+                                        <span class="tea-estimate-label">Setup estimate</span>
+                                        <div class="tea-estimate-primary">
+                                            <span>Lifecycle cost</span>
+                                            <strong id="technoeconomicGuidedSolarEdgeLifecycleCost">Complete setup inputs</strong>
+                                        </div>
+                                        <dl>
+                                            <div><dt>Typical annualized cost</dt><dd id="technoeconomicGuidedSolarEdgeAnnualizedCost">—</dd></div>
+                                            <div><dt>Estimated LCOE range</dt><dd id="technoeconomicGuidedSolarEdgeLcoeRange">—</dd></div>
+                                        </dl>
+                                    </div>
+                                </article>
                             </div>
+                            <p class="tea-estimate-disclosure">Setup estimates combine entered CAPEX and discounted annual O&amp;M with the selected source's weather-year energy spread. They help check the assumptions before submission; final P5/P50/P95 results come only from the server run.</p>
 
                             <details class="tea-guided-ranges" id="technoeconomicGuidedRanges">
-                                <summary>Optional low and high uncertainty values</summary>
+                                <summary>Optional uncertainty ranges</summary>
                                 <div class="tea-guided-ranges-body">
-                                    <p class="tea-field-help" id="technoeconomicGuidedRangesHelp">Leave both values blank to use the central value as fixed. If uncertainty is used, provide both low and high; the central value is the triangular mode.</p>
+                                    <p class="tea-field-help" id="technoeconomicGuidedRangesHelp">Add low and high values only where you have an uncertainty range. The setup LCOE range combines these bounds with the observed spread across eligible weather years.</p>
                                     <div class="tea-guided-range-grid">
                                         <fieldset class="tea-guided-range-group">
                                             <legend>Real discount rate</legend>
@@ -153,7 +267,7 @@
                                             </div>
                                         </fieldset>
                                         <fieldset class="tea-guided-range-group">
-                                            <legend>Shared module degradation</legend>
+                                            <legend>Annual module degradation</legend>
                                             <div class="tea-guided-range-pair">
                                                 <div class="tea-field">
                                                     <label for="technoeconomicGuidedDegradationLow">Low (%/year)</label>
@@ -166,54 +280,54 @@
                                             </div>
                                         </fieldset>
                                         <fieldset class="tea-guided-range-group">
-                                            <legend>Shared baseline installed CAPEX</legend>
+                                            <legend>Solectria installed CAPEX</legend>
                                             <div class="tea-guided-range-pair">
                                                 <div class="tea-field">
-                                                    <label for="technoeconomicGuidedBaseCapexLow">Low ($/Wdc)</label>
-                                                    <input id="technoeconomicGuidedBaseCapexLow" type="number" min="0" step="0.001" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
+                                                    <label for="technoeconomicGuidedSolectriaCapexLow">Low ($ total)</label>
+                                                    <input id="technoeconomicGuidedSolectriaCapexLow" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
                                                 </div>
                                                 <div class="tea-field">
-                                                    <label for="technoeconomicGuidedBaseCapexHigh">High ($/Wdc)</label>
-                                                    <input id="technoeconomicGuidedBaseCapexHigh" type="number" min="0" step="0.001" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
+                                                    <label for="technoeconomicGuidedSolectriaCapexHigh">High ($ total)</label>
+                                                    <input id="technoeconomicGuidedSolectriaCapexHigh" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
                                                 </div>
                                             </div>
                                         </fieldset>
                                         <fieldset class="tea-guided-range-group">
-                                            <legend>Shared baseline recurring O&amp;M</legend>
+                                            <legend>Solectria annual O&amp;M</legend>
                                             <div class="tea-guided-range-pair">
                                                 <div class="tea-field">
-                                                    <label for="technoeconomicGuidedBaseOmLow">Low ($/Wdc-year)</label>
-                                                    <input id="technoeconomicGuidedBaseOmLow" type="number" min="0" step="0.0001" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
+                                                    <label for="technoeconomicGuidedSolectriaOmLow">Low ($/year)</label>
+                                                    <input id="technoeconomicGuidedSolectriaOmLow" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
                                                 </div>
                                                 <div class="tea-field">
-                                                    <label for="technoeconomicGuidedBaseOmHigh">High ($/Wdc-year)</label>
-                                                    <input id="technoeconomicGuidedBaseOmHigh" type="number" min="0" step="0.0001" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
+                                                    <label for="technoeconomicGuidedSolectriaOmHigh">High ($/year)</label>
+                                                    <input id="technoeconomicGuidedSolectriaOmHigh" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
                                                 </div>
                                             </div>
                                         </fieldset>
                                         <fieldset class="tea-guided-range-group">
-                                            <legend>SolarEdge incremental installed CAPEX</legend>
+                                            <legend>SolarEdge installed CAPEX</legend>
                                             <div class="tea-guided-range-pair">
                                                 <div class="tea-field">
-                                                    <label for="technoeconomicGuidedIncrementalCapexLow">Low ($/Wdc)</label>
-                                                    <input id="technoeconomicGuidedIncrementalCapexLow" type="number" min="0" step="0.001" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
+                                                    <label for="technoeconomicGuidedSolarEdgeCapexLow">Low ($ total)</label>
+                                                    <input id="technoeconomicGuidedSolarEdgeCapexLow" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
                                                 </div>
                                                 <div class="tea-field">
-                                                    <label for="technoeconomicGuidedIncrementalCapexHigh">High ($/Wdc)</label>
-                                                    <input id="technoeconomicGuidedIncrementalCapexHigh" type="number" min="0" step="0.001" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
+                                                    <label for="technoeconomicGuidedSolarEdgeCapexHigh">High ($ total)</label>
+                                                    <input id="technoeconomicGuidedSolarEdgeCapexHigh" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
                                                 </div>
                                             </div>
                                         </fieldset>
                                         <fieldset class="tea-guided-range-group">
-                                            <legend>SolarEdge incremental recurring O&amp;M</legend>
+                                            <legend>SolarEdge annual O&amp;M</legend>
                                             <div class="tea-guided-range-pair">
                                                 <div class="tea-field">
-                                                    <label for="technoeconomicGuidedIncrementalOmLow">Low ($/Wdc-year)</label>
-                                                    <input id="technoeconomicGuidedIncrementalOmLow" type="number" min="0" step="0.0001" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
+                                                    <label for="technoeconomicGuidedSolarEdgeOmLow">Low ($/year)</label>
+                                                    <input id="technoeconomicGuidedSolarEdgeOmLow" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
                                                 </div>
                                                 <div class="tea-field">
-                                                    <label for="technoeconomicGuidedIncrementalOmHigh">High ($/Wdc-year)</label>
-                                                    <input id="technoeconomicGuidedIncrementalOmHigh" type="number" min="0" step="0.0001" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
+                                                    <label for="technoeconomicGuidedSolarEdgeOmHigh">High ($/year)</label>
+                                                    <input id="technoeconomicGuidedSolarEdgeOmHigh" type="number" min="0" step="1" inputmode="decimal" aria-describedby="technoeconomicGuidedRangesHelp">
                                                 </div>
                                             </div>
                                         </fieldset>
@@ -221,24 +335,18 @@
                                 </div>
                             </details>
 
+                            <div class="tea-field tea-guided-assumption-note">
+                                <label for="technoeconomicGuidedAssumptionNote">Financial assumption source or justification</label>
+                                <textarea id="technoeconomicGuidedAssumptionNote" rows="3" maxlength="4000" aria-describedby="technoeconomicGuidedAssumptionNoteHelp" placeholder="Identify the budget, quote, estimate, or reasoning behind these financial assumptions." required></textarea>
+                                <p class="tea-field-help" id="technoeconomicGuidedAssumptionNoteHelp">This note is attached to the separate Solectria and SolarEdge assumptions in the server-validated request.</p>
+                            </div>
+
                             <div class="tea-guided-acceptance">
-                                <div>
-                                    <strong>One acceptance covers these seven provisional assumptions:</strong>
-                                    <ol>
-                                        <li>project life,</li>
-                                        <li>real discount rate,</li>
-                                        <li>shared module degradation,</li>
-                                        <li>shared baseline installed CAPEX,</li>
-                                        <li>shared baseline recurring O&amp;M,</li>
-                                        <li>SolarEdge incremental installed CAPEX, and</li>
-                                        <li>SolarEdge incremental recurring O&amp;M.</li>
-                                    </ol>
-                                </div>
                                 <label class="tea-checkbox-row" for="technoeconomicGuidedAccept">
                                     <input id="technoeconomicGuidedAccept" type="checkbox" aria-describedby="technoeconomicGuidedAssumptionNoteHelp technoeconomicGuidedAcceptanceHelp" required>
                                     <span>
-                                        <strong>I explicitly accept all seven listed provisional assumptions for this analysis.</strong>
-                                        <small id="technoeconomicGuidedAcceptanceHelp">The submitted request records the same acceptance against each corresponding evidence record; cost year is a normalization setting and is not one of the seven assumptions.</small>
+                                        <strong>I confirm these financial and lifecycle assumptions are appropriate for this analysis.</strong>
+                                        <small id="technoeconomicGuidedAcceptanceHelp">Setup estimates are directional. The completed job will report the authoritative server-calculated probabilistic results.</small>
                                     </span>
                                 </label>
                             </div>

@@ -267,7 +267,9 @@ function commercialDraft(transferEnabled = true) {
             self.annual_run_script.index("technoeconomicTab.addEventListener"),
         )
 
-    def test_guided_solartac_controls_are_minimal_and_internal_editor_is_hidden(self) -> None:
+    def test_guided_solartac_controls_separate_system_financials_and_hide_internal_editor(
+        self,
+    ) -> None:
         self.assertRegex(
             self.markup,
             r'<select id="technoeconomicSourceSelect"[^>]*\brequired\b',
@@ -277,25 +279,73 @@ function commercialDraft(transferEnabled = true) {
             self.markup,
         )
         self.assertIn("Selection is explicit", self.markup)
-        self.assertIn("frozen Wdc capacities", self.markup)
+        self.assertIn("Modeled AC operating limit", self.markup)
+        self.assertIn("operating settings are already reflected", self.markup)
+        self.assertIn("Applied capacity", self.markup)
+        self.assertNotIn("<dt>Installed DC capacity</dt>", self.markup)
+        self.assertNotIn("<dt>DC nameplate</dt>", self.markup)
+        self.assertIn("Typical annual energy", self.markup)
+        self.assertIn("Yearly modeled energy", self.markup)
+        self.assertIn("Solectria (MWh AC)", self.markup)
+        self.assertIn("SolarEdge (MWh AC)", self.markup)
         self.assertIn("SolarTAC site", self.markup)
         self.assertIn("Commercial representative", self.markup)
         self.assertIn("SolarTAC and commercial assumptions are never blended", self.markup)
 
+        source_ids = (
+            "technoeconomicSourceDetails",
+            "technoeconomicSourceOperatingLimit",
+            "technoeconomicSourceCapacityNote",
+            "technoeconomicSourceSolectriaHeading",
+            "technoeconomicSourceSolectriaCapacity",
+            "technoeconomicSourceSolectriaEnergy",
+            "technoeconomicSourceSolarEdgeHeading",
+            "technoeconomicSourceSolarEdgeCapacity",
+            "technoeconomicSourceSolarEdgeEnergy",
+            "technoeconomicSourceEnergyRows",
+        )
+        for element_id in source_ids:
+            self.assertEqual(self.markup.count(f'id="{element_id}"'), 1, element_id)
+
+        source_summary = self.markup.split(
+            'id="technoeconomicSourceDetails"', 1
+        )[1].split('id="technoeconomicGuidedPanel"', 1)[0]
+        for internal_label in (
+            "Annual job",
+            "Capacity manifest",
+            "Source snapshot SHA-256",
+            "Calibration baseline",
+            "Completed",
+        ):
+            self.assertNotIn(internal_label, source_summary)
+
         guided_ids = (
             "technoeconomicGuidedPanel",
+            "technoeconomicGuidedCommonHeading",
             "technoeconomicGuidedCostYear",
             "technoeconomicGuidedProjectLife",
             "technoeconomicGuidedDiscount",
             "technoeconomicGuidedDegradation",
-            "technoeconomicGuidedBaseCapex",
-            "technoeconomicGuidedBaseOm",
-            "technoeconomicGuidedIncrementalCapex",
-            "technoeconomicGuidedIncrementalOm",
+            "technoeconomicGuidedSolectriaHeading",
+            "technoeconomicGuidedSolectriaCapex",
+            "technoeconomicGuidedSolectriaOm",
+            "technoeconomicGuidedSolectriaCapacity",
+            "technoeconomicGuidedSolectriaEnergy",
+            "technoeconomicGuidedSolectriaEstimate",
+            "technoeconomicGuidedSolectriaLifecycleCost",
+            "technoeconomicGuidedSolectriaAnnualizedCost",
+            "technoeconomicGuidedSolectriaLcoeRange",
+            "technoeconomicGuidedSolarEdgeHeading",
+            "technoeconomicGuidedSolarEdgeCapex",
+            "technoeconomicGuidedSolarEdgeOm",
+            "technoeconomicGuidedSolarEdgeCapacity",
+            "technoeconomicGuidedSolarEdgeEnergy",
+            "technoeconomicGuidedSolarEdgeEstimate",
+            "technoeconomicGuidedSolarEdgeLifecycleCost",
+            "technoeconomicGuidedSolarEdgeAnnualizedCost",
+            "technoeconomicGuidedSolarEdgeLcoeRange",
             "technoeconomicGuidedAssumptionNote",
             "technoeconomicGuidedAccept",
-            "technoeconomicApplyReferenceBtn",
-            "technoeconomicReferenceStatus",
             "technoeconomicGuidedRanges",
             "technoeconomicAdvancedDetails",
             "technoeconomicUseGuidedBtn",
@@ -309,10 +359,10 @@ function commercialDraft(transferEnabled = true) {
         for stem in (
             "Discount",
             "Degradation",
-            "BaseCapex",
-            "BaseOm",
-            "IncrementalCapex",
-            "IncrementalOm",
+            "SolectriaCapex",
+            "SolectriaOm",
+            "SolarEdgeCapex",
+            "SolarEdgeOm",
         ):
             for suffix in ("Low", "High"):
                 element_id = f"technoeconomicGuided{stem}{suffix}"
@@ -338,15 +388,7 @@ function commercialDraft(transferEnabled = true) {
 
         self.assertRegex(
             self.markup,
-            r'<button[^>]*\bid="technoeconomicApplyReferenceBtn"[^>]*\btype="button"',
-        )
-        self.assertRegex(
-            self.markup,
             r'<input[^>]*\bid="technoeconomicGuidedAccept"[^>]*\btype="checkbox"',
-        )
-        self.assertRegex(
-            self.markup,
-            r'id="technoeconomicReferenceStatus"[^>]*\brole="status"',
         )
         self.assertRegex(
             self.markup,
@@ -370,22 +412,28 @@ function commercialDraft(transferEnabled = true) {
             "technoeconomicGuidedCostYear",
             "technoeconomicGuidedProjectLife",
             "technoeconomicGuidedDiscount",
-            "technoeconomicGuidedDegradation",
-            "technoeconomicGuidedBaseCapex",
-            "technoeconomicGuidedBaseOm",
-            "technoeconomicGuidedIncrementalCapex",
-            "technoeconomicGuidedIncrementalOm",
+            "technoeconomicGuidedSolectriaCapex",
+            "technoeconomicGuidedSolectriaOm",
+            "technoeconomicGuidedSolarEdgeCapex",
+            "technoeconomicGuidedSolarEdgeOm",
         ):
             self.assertRegex(
                 self.markup,
                 rf'<input[^>]*\bid="{element_id}"[^>]*\brequired\b',
                 element_id,
             )
+        degradation_input = re.search(
+            r'<input[^>]*\bid="technoeconomicGuidedDegradation"[^>]*>',
+            self.markup,
+        )
+        self.assertIsNotNone(degradation_input)
+        assert degradation_input is not None
+        self.assertNotRegex(degradation_input.group(0), r"\brequired\b")
         for element_id in (
-            "technoeconomicGuidedBaseCapex",
-            "technoeconomicGuidedBaseOm",
-            "technoeconomicGuidedIncrementalCapex",
-            "technoeconomicGuidedIncrementalOm",
+            "technoeconomicGuidedSolectriaCapex",
+            "technoeconomicGuidedSolectriaOm",
+            "technoeconomicGuidedSolarEdgeCapex",
+            "technoeconomicGuidedSolarEdgeOm",
         ):
             self.assertRegex(
                 self.markup,
@@ -393,7 +441,21 @@ function commercialDraft(transferEnabled = true) {
                 element_id,
             )
         self.assertIn("Enter 5 for a 5% real annual rate", self.markup)
-        self.assertIn("Enter 0.5 for 0.5% annual degradation", self.markup)
+        self.assertIn("Leave blank to use 0%", self.markup)
+        self.assertIn("$ total", self.markup)
+        self.assertIn("$/year", self.markup)
+        self.assertIn("Typical annualized cost", self.markup)
+        self.assertIn("Estimated LCOE range", self.markup)
+        self.assertIn("final P5/P50/P95 results come only from the server run", self.markup)
+        for removed_id in (
+            "technoeconomicGuidedBaseCapex",
+            "technoeconomicGuidedBaseOm",
+            "technoeconomicGuidedIncrementalCapex",
+            "technoeconomicGuidedIncrementalOm",
+            "technoeconomicApplyReferenceBtn",
+            "technoeconomicReferenceStatus",
+        ):
+            self.assertNotIn(f'id="{removed_id}"', self.markup)
         advanced_index = self.markup.index('id="technoeconomicAdvancedDetails"')
         for advanced_id in (
             "technoeconomicBasis",
@@ -506,6 +568,10 @@ function commercialDraft(transferEnabled = true) {
             ".tea-table-region {",
             "overflow-x: auto",
             "overscroll-behavior-inline: contain",
+            ".tea-source-summary {",
+            ".tea-source-system-grid,",
+            ".tea-system-cost-grid {",
+            ".tea-system-estimate[data-state=\"ready\"]",
             ".tea-figure-card img {",
             "max-width: 100%",
             "overflow-wrap: anywhere",
@@ -526,6 +592,9 @@ function commercialDraft(transferEnabled = true) {
         self.assertIn(".tea-evidence-grid", tablet)
         self.assertIn(".tea-design-grid", tablet)
         self.assertIn(".tea-transfer-grid", tablet)
+        self.assertIn(".tea-source-basis-row", tablet)
+        self.assertIn(".tea-source-system-grid", tablet)
+        self.assertIn(".tea-system-cost-grid", tablet)
         self.assertIn("grid-template-columns: 1fr", tablet)
         self.assertIn(".tea-figure-grid", tablet)
 
@@ -535,6 +604,9 @@ function commercialDraft(transferEnabled = true) {
         self.assertIn(".tea-metric-grid", mobile)
         self.assertIn(".tea-tradeoff-grid", mobile)
         self.assertIn(".tea-confirm-summary", mobile)
+        self.assertIn(".tea-system-financial-fields", mobile)
+        self.assertIn(".tea-system-estimate dl", mobile)
+        self.assertIn(".tea-source-system-card", mobile)
         self.assertIn("grid-template-columns: 1fr", mobile)
         self.assertIn("min-height: 44px", mobile)
         self.assertIn("font-size: 16px", mobile)
@@ -642,7 +714,7 @@ console.log(JSON.stringify(context));
         self.assertNotIn("sealed_calculation", source)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_default_draft_never_silently_prefills_reference_values(self) -> None:
+    def test_default_draft_never_silently_prefills_financial_values(self) -> None:
         payload = self.run_node(
             r"""
 const assert = require('node:assert/strict');
@@ -675,7 +747,7 @@ console.log(JSON.stringify({
         self.assertTrue(all(value == "" for value in payload["costValues"]))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_guided_helpers_expand_ranges_evidence_and_reference_action(self) -> None:
+    def test_guided_helpers_expand_ranges_and_document_evidence(self) -> None:
         payload = self.run_node(
             r"""
 const assert = require('node:assert/strict');
@@ -715,28 +787,7 @@ const rejected = technoeconomicGuidedEvidence('Not accepted.', false, {
 });
 assert.equal(rejected.explicit_acceptance, false);
 
-const original = {base_capex: '1.2', incremental_capex: '9.9'};
-const reference = technoeconomicApplyProvisionalReferenceValues(original);
-assert.deepEqual(original, {base_capex: '1.2', incremental_capex: '9.9'});
-assert.equal(reference.base_capex, '1.2');
-assert.equal(reference.incremental_capex_low, '0.02');
-assert.equal(reference.incremental_capex, '0.05');
-assert.equal(reference.incremental_capex_high, '0.08');
-assert.equal(reference.provisional_reference_applied, true);
-const referenceEvidence = technoeconomicGuidedEvidence(
-  'I explicitly reviewed and accepted the provisional reference range.',
-  true,
-  {date: '2026-08-16', seed: '123', provisionalReference: true},
-);
-assert.equal(referenceEvidence.evidence_class, 'secondary_synthesis');
-assert.equal(referenceEvidence.explicit_acceptance, true);
-assert.equal(referenceEvidence.citation.stable_reference,
-  'solartac-incremental-capex-provisional-reference-v1');
-assert.ok(referenceEvidence.citation.excerpt_or_derivation_note.includes('$0.02'));
-assert.ok(referenceEvidence.citation.excerpt_or_derivation_note.includes('$0.05'));
-assert.ok(referenceEvidence.citation.excerpt_or_derivation_note.includes('$0.08'));
-
-console.log(JSON.stringify({fixed, triangular, percent, evidence, rejected, reference}));
+console.log(JSON.stringify({fixed, triangular, percent, evidence, rejected}));
 """
         )
         self.assertEqual("fixed", payload["fixed"]["family"])
@@ -744,7 +795,8 @@ console.log(JSON.stringify({fixed, triangular, percent, evidence, rejected, refe
         self.assertEqual("0.05", payload["percent"]["mode"])
         self.assertTrue(payload["evidence"]["explicit_acceptance"])
         self.assertFalse(payload["rejected"]["explicit_acceptance"])
-        self.assertTrue(payload["reference"]["provisional_reference_applied"])
+        self.assertNotIn("TECHNOECONOMIC_SOLARTAC_CAPEX_REFERENCE_RANGE", self.script)
+        self.assertNotIn("technoeconomicApplyProvisionalReferenceValues", self.script)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_internal_detailed_editor_is_never_exposed(self) -> None:
@@ -802,89 +854,270 @@ console.log(JSON.stringify({
         self.assertTrue(payload["blocked"])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_tampered_reference_preset_clears_provenance_and_acceptance(self) -> None:
+    def test_guided_estimate_helper_is_pure_separate_and_fails_closed(self) -> None:
         payload = self.run_node(
             r"""
 const assert = require('node:assert/strict');
-const base = technoeconomicDefaultDraft();
-base.source_annual_job_id = 'annual-guided-source';
-const inputs = technoeconomicApplyProvisionalReferenceValues({
-  cost_year: '2025', project_life_years: '25',
-  discount: '5', discount_low: '', discount_high: '',
-  degradation: '0.5', degradation_low: '', degradation_high: '',
-  base_capex: '1.2', base_capex_low: '', base_capex_high: '',
-  base_om: '0.012', base_om_low: '', base_om_high: '',
-  incremental_capex: '', incremental_capex_low: '', incremental_capex_high: '',
-  incremental_om: '0.004', incremental_om_low: '', incremental_om_high: '',
-  assumption_note: 'Reviewed provisional assumptions.', accepted: true,
-});
-const options = {
-  seed: '42', date: '2026-08-16',
-  solectriaWdc: '140000', solaredgeWdc: '175000',
+const close = (actual, expected, tolerance = 1e-12) => {
+  assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
 };
-const saved = technoeconomicBuildGuidedDraft(base, inputs, options);
-const savedIncremental = saved.cost_lines.find((line) =>
-  line.input_id === TECHNOECONOMIC_GUIDED_COST_IDS.incremental_capex);
-assert.equal(saved.provisional_reference_applied, true);
-assert.equal(savedIncremental.evidence.evidence_class, 'secondary_synthesis');
-assert.equal(savedIncremental.evidence.explicit_acceptance, true);
+const solectriaInput = {
+  capex: '100000', annualOm: '5000', projectLifeYears: '1',
+  discountPercent: '0', degradationPercent: '',
+  annualEnergies: [250000, 200000],
+};
+const frozenInput = JSON.stringify(solectriaInput);
+const solectria = technoeconomicGuidedEstimate(solectriaInput);
+assert.ok(solectria);
+assert.equal(JSON.stringify(solectriaInput), frozenInput);
+assert.equal(solectria.lifecycleCost, 105000);
+assert.equal(solectria.annualizedCost, 105000);
+assert.equal(solectria.typicalEnergy, 225000);
+close(solectria.lcoeLow, 0.42);
+close(solectria.lcoeCentral, 105000 / 225000);
+close(solectria.lcoeHigh, 0.525);
 
-// Simulate a stale or tampered persisted draft whose flag no longer matches
-// the only defined provisional reference triple.
-savedIncremental.distribution.mode = '0.06';
-const controlKeys = [
-  'guidedCostYear', 'guidedProjectLife',
-  'guidedDiscount', 'guidedDiscountLow', 'guidedDiscountHigh',
-  'guidedDegradation', 'guidedDegradationLow', 'guidedDegradationHigh',
-  'guidedBaseCapex', 'guidedBaseCapexLow', 'guidedBaseCapexHigh',
-  'guidedBaseOm', 'guidedBaseOmLow', 'guidedBaseOmHigh',
-  'guidedIncrementalCapex', 'guidedIncrementalCapexLow',
-  'guidedIncrementalCapexHigh', 'guidedIncrementalOm',
-  'guidedIncrementalOmLow', 'guidedIncrementalOmHigh',
-  'guidedAssumptionNote',
-];
-globalThis.technoeconomicElements = Object.fromEntries(
-  controlKeys.map((key) => [key, {value: ''}])
+const solaredge = technoeconomicGuidedEstimate({
+  capex: '130000', annualOm: '6000', projectLifeYears: '1',
+  discountPercent: '0', degradationPercent: '0',
+  annualEnergies: [215000, 260000],
+});
+assert.ok(solaredge);
+assert.equal(solaredge.lifecycleCost, 136000);
+close(solaredge.lcoeLow, 136000 / 260000);
+close(solaredge.lcoeCentral, 136000 / 237500);
+close(solaredge.lcoeHigh, 136000 / 215000);
+assert.equal(solectria.lifecycleCost, 105000);
+
+const ranged = technoeconomicGuidedEstimate({
+  ...solectriaInput,
+  capexLow: '90000', capexHigh: '110000', omLow: '4000', omHigh: '6000',
+});
+assert.ok(ranged);
+close(ranged.lcoeLow, 94000 / 250000);
+close(ranged.lcoeCentral, 105000 / 225000);
+close(ranged.lcoeHigh, 116000 / 200000);
+const centralLifecycle = technoeconomicGuidedEstimate({
+  ...solectriaInput,
+  projectLifeYears: '25', discountPercent: '5', degradationPercent: '0.5',
+});
+const lifecycleRange = technoeconomicGuidedEstimate({
+  ...solectriaInput,
+  projectLifeYears: '25', discountPercent: '5',
+  discountLowPercent: '3', discountHighPercent: '7',
+  degradationPercent: '0.5',
+  degradationLowPercent: '0.2', degradationHighPercent: '0.8',
+});
+assert.ok(centralLifecycle);
+assert.ok(lifecycleRange);
+assert.ok(lifecycleRange.lcoeLow < centralLifecycle.lcoeLow);
+assert.ok(lifecycleRange.lcoeHigh > centralLifecycle.lcoeHigh);
+assert.ok(technoeconomicGuidedEstimate({
+  ...solectriaInput, projectLifeYears: '1001', discountPercent: '5',
+}));
+assert.deepEqual(
+  technoeconomicGuidedEstimate({...solectriaInput, degradationPercent: '0'}),
+  solectria,
 );
-technoeconomicElements.guidedAccept = {checked: true};
-technoeconomicElements.referenceStatus = {textContent: ''};
-technoeconomicElements.guidedRanges = {open: false};
-technoeconomicProvisionalReferenceApplied = true;
 
-technoeconomicRenderGuidedForm(saved);
-assert.equal(technoeconomicElements.guidedIncrementalCapex.value, '0.06');
-assert.equal(technoeconomicElements.guidedAccept.checked, false);
-assert.equal(technoeconomicProvisionalReferenceApplied, false);
-assert.ok(technoeconomicElements.referenceStatus.textContent.includes('cleared'));
+for (const invalid of [
+  {...solectriaInput, capex: ''},
+  {...solectriaInput, annualOm: ''},
+  {...solectriaInput, projectLifeYears: '0'},
+  {...solectriaInput, discountPercent: '-100'},
+  {...solectriaInput, degradationPercent: '100'},
+  {...solectriaInput, discountLowPercent: '1', discountHighPercent: '-1'},
+  {...solectriaInput, degradationLowPercent: '1', degradationHighPercent: '0.5'},
+  {...solectriaInput, annualEnergies: []},
+]) assert.equal(technoeconomicGuidedEstimate(invalid), null);
 
-const rebuilt = technoeconomicBuildGuidedDraft(
-  saved, technoeconomicReadGuidedForm(), options
-);
-const rebuiltIncremental = rebuilt.cost_lines.find((line) =>
-  line.input_id === TECHNOECONOMIC_GUIDED_COST_IDS.incremental_capex);
-assert.equal(rebuilt.provisional_reference_applied, false);
-assert.equal(rebuiltIncremental.evidence.evidence_class, 'engineering_judgment');
-assert.equal(rebuiltIncremental.evidence.explicit_acceptance, false);
+assert.equal(technoeconomicFormatCapacity(139180.8), '139.18 kWdc');
+assert.equal(technoeconomicFormatEnergy(200000), '200 MWh/year');
+const clippedSource = {
+  eligible: true,
+  solectria_installed_wdc: 139180.8,
+  solaredge_installed_wdc: 139180.8,
+  annual_energy_by_year: [
+    {year: 2024, solectria_kwh: 200000, solaredge_kwh: 215000},
+  ],
+  provenance: {
+    operating_limit: {curtailment_enabled: true, curtailment_limit_kw: 125},
+  },
+};
+assert.equal(technoeconomicAppliedCapacity(clippedSource, 'solectria'), '125 kWac');
+assert.equal(technoeconomicAppliedCapacity(clippedSource, 'solaredge'), '125 kWac');
+const unclippedSource = {
+  ...clippedSource,
+  provenance: {operating_limit: {curtailment_enabled: false}},
+};
+assert.equal(technoeconomicAppliedCapacity(unclippedSource, 'solectria'), '139.18 kWdc');
+assert.equal(technoeconomicAppliedCapacity(unclippedSource, 'solaredge'), '139.18 kWdc');
+for (const invalidLimit of [undefined, null, 0, -1, 'not-a-number']) {
+  const invalidClippedSource = {
+    ...clippedSource,
+    provenance: {
+      operating_limit: {
+        curtailment_enabled: true,
+        curtailment_limit_kw: invalidLimit,
+      },
+    },
+  };
+  assert.equal(
+    technoeconomicAppliedCapacity(invalidClippedSource, 'solectria'),
+    '139.18 kWdc',
+  );
+  assert.equal(
+    technoeconomicAppliedCapacity(invalidClippedSource, 'solaredge'),
+    '139.18 kWdc',
+  );
+}
+const screenshotInputs = {
+  project_life_years: '', discount: '',
+  solectria_capex: '25000', solectria_om: '5000',
+  solaredge_capex: '27000', solaredge_om: '7000',
+};
 assert.equal(
-  rebuiltIncremental.evidence.citation.stable_reference,
-  'guided-solartac-assumptions-42',
+  technoeconomicGuidedEstimatePrompt('solectria', clippedSource, screenshotInputs),
+  'Enter project life and discount rate',
 );
+assert.equal(
+  technoeconomicGuidedEstimatePrompt('solaredge', clippedSource, screenshotInputs),
+  'Enter project life and discount rate',
+);
+console.log(JSON.stringify({solectria, solaredge, ranged, lifecycleRange}));
+"""
+        )
+        self.assertEqual(105000, payload["solectria"]["lifecycleCost"])
+        self.assertEqual(136000, payload["solaredge"]["lifecycleCost"])
+        self.assertLess(
+            payload["solectria"]["lcoeLow"],
+            payload["solectria"]["lcoeHigh"],
+        )
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_selected_source_renders_only_energy_capacity_and_actual_operating_limit(
+        self,
+    ) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+globalThis.document = {
+  createElement(tag) {
+    return {
+      tag, textContent: '', children: [], dataset: {},
+      append(...children) { this.children.push(...children); },
+    };
+  },
+};
+const energyRows = {
+  children: [],
+  replaceChildren() { this.children = []; },
+  append(...children) { this.children.push(...children); },
+};
+globalThis.technoeconomicElements = {
+  sourceSelect: {value: 'annual-guided-source'},
+  sourceDetails: {hidden: true},
+  sourceEnergyRows: energyRows,
+  sourceStatusPanel: {dataset: {}},
+  sourceStatus: {textContent: ''},
+  sourceDetail: {textContent: ''},
+  sourceOperatingLimit: {textContent: ''},
+  sourceCapacityNote: {textContent: ''},
+  sourceSolectriaCapacity: {textContent: ''},
+  sourceSolectriaEnergy: {textContent: ''},
+  sourceSolarEdgeCapacity: {textContent: ''},
+  sourceSolarEdgeEnergy: {textContent: ''},
+};
+technoeconomicRenderGuidedEstimates = () => {};
+technoeconomicSources = [{
+  eligible: true,
+  source_annual_job_id: 'annual-guided-source',
+  solectria_installed_wdc: 139180.8,
+  solaredge_installed_wdc: 139180.8,
+  capacity_manifest_source: 'secret-manifest-detail',
+  source_snapshot_sha256: 'f'.repeat(64),
+  annual_energy_by_year: [
+    {year: 2024, solectria_kwh: 200000, solaredge_kwh: 215000},
+    {year: 2023, solectria_kwh: 180000, solaredge_kwh: 195000},
+  ],
+  provenance: {
+    completed_at: 'private-timestamp',
+    calibration: {baseline_job_id: 'private-baseline'},
+    operating_limit: {curtailment_enabled: true, curtailment_limit_kw: 125},
+  },
+}];
+
+technoeconomicRenderSelectedSource();
+assert.equal(technoeconomicElements.sourceDetails.hidden, false);
+assert.equal(technoeconomicElements.sourceStatusPanel.dataset.state, 'ready');
+assert.equal(technoeconomicElements.sourceStatus.textContent,
+  'Calibrated annual energy is ready');
+assert.ok(technoeconomicElements.sourceDetail.textContent.includes('2 eligible weather years'));
+assert.equal(technoeconomicElements.sourceOperatingLimit.textContent, '125 kWac');
+assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
+  'already reflected in energy'
+));
+assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
+  'cost and energy normalization'
+));
+assert.equal(technoeconomicElements.sourceSolectriaCapacity.textContent, '125 kWac');
+assert.equal(technoeconomicElements.sourceSolarEdgeCapacity.textContent, '125 kWac');
+assert.equal(technoeconomicElements.sourceSolectriaEnergy.textContent, '190 MWh/year');
+assert.equal(technoeconomicElements.sourceSolarEdgeEnergy.textContent, '205 MWh/year');
+assert.deepEqual(
+  energyRows.children.map((row) => row.children.map((cell) => cell.textContent)),
+  [
+    ['2023', '180 MWh/year', '195 MWh/year'],
+    ['2024', '200 MWh/year', '215 MWh/year'],
+  ],
+);
+const renderedText = JSON.stringify(technoeconomicElements) + JSON.stringify(energyRows);
+for (const internal of [
+  'secret-manifest-detail', 'private-timestamp', 'private-baseline', 'ffffffff',
+]) assert.equal(renderedText.includes(internal), false, internal);
+
+technoeconomicSources[0].provenance.operating_limit = {curtailment_enabled: false};
+technoeconomicRenderSelectedSource();
+assert.equal(technoeconomicElements.sourceOperatingLimit.textContent, 'No AC limit enabled');
+assert.equal(technoeconomicElements.sourceSolectriaCapacity.textContent, '139.18 kWdc');
+assert.equal(technoeconomicElements.sourceSolarEdgeCapacity.textContent, '139.18 kWdc');
+assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
+  'did not enable an AC operating limit'
+));
+assert.equal(technoeconomicElements.sourceCapacityNote.textContent.includes(
+  'already reflected in energy'
+), false);
+technoeconomicSources[0].provenance.operating_limit = {
+  curtailment_enabled: true,
+  curtailment_limit_kw: null,
+};
+technoeconomicRenderSelectedSource();
+assert.equal(technoeconomicElements.sourceOperatingLimit.textContent, 'Unavailable');
+assert.equal(technoeconomicElements.sourceSolectriaCapacity.textContent, '139.18 kWdc');
+assert.equal(technoeconomicElements.sourceSolarEdgeCapacity.textContent, '139.18 kWdc');
+assert.equal(technoeconomicElements.sourceCapacityNote.textContent.includes(
+  'already reflected in energy'
+), false);
+assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
+  'valid AC operating limit is unavailable'
+));
+technoeconomicSources[0].provenance.operating_limit = {curtailment_enabled: false};
+technoeconomicRenderSelectedSource();
 console.log(JSON.stringify({
-  accepted: technoeconomicElements.guidedAccept.checked,
-  referenceApplied: rebuilt.provisional_reference_applied,
-  evidenceClass: rebuiltIncremental.evidence.evidence_class,
-  evidenceAccepted: rebuiltIncremental.evidence.explicit_acceptance,
+  operatingLimit: technoeconomicElements.sourceOperatingLimit.textContent,
+  capacity: technoeconomicElements.sourceSolectriaCapacity.textContent,
+  typicalEnergy: technoeconomicElements.sourceSolectriaEnergy.textContent,
+  rowCount: energyRows.children.length,
 }));
 """
         )
-        self.assertFalse(payload["accepted"])
-        self.assertFalse(payload["referenceApplied"])
-        self.assertEqual("engineering_judgment", payload["evidenceClass"])
-        self.assertFalse(payload["evidenceAccepted"])
+        self.assertEqual("No AC limit enabled", payload["operatingLimit"])
+        self.assertEqual("139.18 kWdc", payload["capacity"])
+        self.assertEqual("190 MWh/year", payload["typicalEnergy"])
+        self.assertEqual(2, payload["rowCount"])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_legacy_v1_draft_is_preserved_without_exposing_detailed_editor(self) -> None:
+    def test_legacy_custom_draft_is_preserved_without_exposing_detailed_editor(self) -> None:
         payload = self.run_node(
             r"""
 const assert = require('node:assert/strict');
@@ -996,7 +1229,9 @@ console.log(JSON.stringify({
         self.assertEqual("Guided SolarTAC setup restored.", payload["resetMarked"])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_guided_draft_expands_to_the_existing_strict_request_contract(self) -> None:
+    def test_guided_draft_expands_separate_system_totals_to_the_strict_contract(
+        self,
+    ) -> None:
         payload = self.run_node(
             r"""
 const assert = require('node:assert/strict');
@@ -1006,21 +1241,20 @@ const inputs = {
   cost_year: '2025',
   project_life_years: '25',
   discount: '5', discount_low: '3', discount_high: '7',
-  degradation: '0.5', degradation_low: '0.3', degradation_high: '0.7',
-  base_capex: '1.2', base_capex_low: '', base_capex_high: '',
-  base_om: '0.012', base_om_low: '', base_om_high: '',
-  incremental_capex: '0.05', incremental_capex_low: '0.02',
-  incremental_capex_high: '0.08',
-  incremental_om: '0.004', incremental_om_low: '', incremental_om_high: '',
-  assumption_note: 'Analyst reviewed this shared provisional assumption set.',
+  degradation: '', degradation_low: '', degradation_high: '',
+  solectria_capex: '100000', solectria_capex_low: '90000',
+  solectria_capex_high: '110000',
+  solectria_om: '5000', solectria_om_low: '', solectria_om_high: '',
+  solaredge_capex: '130000', solaredge_capex_low: '120000',
+  solaredge_capex_high: '140000',
+  solaredge_om: '6000', solaredge_om_low: '', solaredge_om_high: '',
+  assumption_note: 'Analyst reviewed the separate system financial assumptions.',
   accepted: true,
-  provisional_reference_applied: false,
 };
-const referenceInputs = technoeconomicApplyProvisionalReferenceValues(inputs);
-const draft = technoeconomicBuildGuidedDraft(base, referenceInputs, {
+const draft = technoeconomicBuildGuidedDraft(base, inputs, {
   seed: '42', date: '2026-08-16',
-  solectriaWdc: '140000', solaredgeWdc: '175000',
 });
+assert.equal(draft.schema_version, 'technoeconomic-draft-v2');
 assert.equal(draft.entry_mode, 'guided_solartac');
 assert.equal(draft.basis, 'solartac_site');
 assert.equal(draft.n, '10000');
@@ -1031,44 +1265,42 @@ assert.deepEqual(draft.discount_rate.distribution, {
   family: 'triangular', value: '', low: '0.03', mode: '0.05', high: '0.07',
   mean: '', sd: '',
 });
-assert.equal(draft.shared_degradation.distribution.family, 'triangular');
-assert.equal(draft.shared_degradation.distribution.low, '0.003');
-assert.equal(draft.shared_degradation.distribution.mode, '0.005');
-assert.ok(Math.abs(Number(draft.shared_degradation.distribution.high) - 0.007) < 1e-12);
+assert.deepEqual(draft.shared_degradation.distribution, {
+  family: 'fixed', value: '0', low: '', mode: '', high: '', mean: '', sd: '',
+});
 assert.deepEqual(draft.cost_lines.map((line) => line.input_id), [
-  'cost.guided.base-capex',
-  'cost.guided.base-recurring-om',
-  'cost.guided.solaredge-incremental-capex',
-  'cost.guided.solaredge-incremental-recurring-om',
+  'cost.guided.solectria-capex',
+  'cost.guided.solectria-recurring-om',
+  'cost.guided.solaredge-capex',
+  'cost.guided.solaredge-recurring-om',
 ]);
 assert.deepEqual(draft.cost_lines.map((line) => line.ownership), [
-  'paired_shared', 'paired_shared', 'solaredge_only', 'solaredge_only',
+  'solectria_only', 'solectria_only', 'solaredge_only', 'solaredge_only',
 ]);
 assert.deepEqual(draft.cost_lines.map((line) => line.cost_type), [
   'initial_capex', 'recurring_om', 'initial_capex', 'recurring_om',
 ]);
 assert.deepEqual(draft.cost_lines.map((line) => line.original_unit), [
-  'usd_per_unit', 'usd_per_unit_year', 'usd_per_unit', 'usd_per_unit_year',
+  'usd_total', 'usd_total_per_year', 'usd_total', 'usd_total_per_year',
 ]);
 assert.deepEqual(draft.cost_lines.map((line) => line.normalized_unit), [
   'usd_per_wdc', 'usd_per_wdc_year', 'usd_per_wdc', 'usd_per_wdc_year',
 ]);
 assert.deepEqual(draft.cost_lines.map((line) => line.solectria_quantity), [
-  '140000', '140000', '0', '0',
+  '1', '1', '0', '0',
 ]);
 assert.deepEqual(draft.cost_lines.map((line) => line.solaredge_quantity), [
-  '175000', '175000', '175000', '175000',
+  '0', '0', '1', '1',
 ]);
 assert.ok(draft.cost_lines.every((line) =>
   line.constant_dollar_cost_year === '2025'
-  && line.normalization_method === 'multiply_quantity_then_divide_by_frozen_source_wdc'
-  && line.quantity_unit === 'Wdc'
+  && line.normalization_method === 'divide_by_frozen_source_wdc'
+  && line.quantity_unit === ''
+  && line.coverage_exclude_ids.length === 0
   && line.evidence.explicit_acceptance === true
   && line.evidence.acceptance_rationale === inputs.assumption_note));
-assert.deepEqual(draft.cost_lines.map((line) => line.evidence.evidence_class), [
-  'engineering_judgment', 'engineering_judgment',
-  'secondary_synthesis', 'engineering_judgment',
-]);
+assert.ok(draft.cost_lines.every((line) =>
+  line.evidence.evidence_class === 'engineering_judgment'));
 assert.deepEqual(
   [draft.project_life_evidence, draft.discount_rate.evidence,
     draft.shared_degradation.evidence].map((item) => item.explicit_acceptance),
@@ -1080,13 +1312,16 @@ const roundTrip = technoeconomicGuidedInputsFromDraft(draft);
 assert.equal(roundTrip.discount, '5');
 assert.equal(roundTrip.discount_low, '3');
 assert.ok(Math.abs(Number(roundTrip.discount_high) - 7) < 1e-12);
-assert.equal(roundTrip.degradation, '0.5');
-assert.equal(roundTrip.degradation_low, '0.3');
-assert.equal(roundTrip.degradation_high, '0.7');
-assert.equal(roundTrip.base_capex, '1.2');
-assert.equal(roundTrip.incremental_capex, '0.05');
+assert.equal(roundTrip.degradation, '0');
+assert.equal(roundTrip.degradation_low, '');
+assert.equal(roundTrip.degradation_high, '');
+assert.equal(roundTrip.solectria_capex, '100000');
+assert.equal(roundTrip.solectria_capex_low, '90000');
+assert.equal(roundTrip.solectria_capex_high, '110000');
+assert.equal(roundTrip.solectria_om, '5000');
+assert.equal(roundTrip.solaredge_capex, '130000');
+assert.equal(roundTrip.solaredge_om, '6000');
 assert.equal(roundTrip.accepted, true);
-assert.equal(roundTrip.provisional_reference_applied, true);
 
 const serialized = serializeTechnoeconomicRequest(draft, {
   sources: [{source_annual_job_id: 'annual-guided-source', eligible: true}],
@@ -1095,15 +1330,28 @@ assert.equal(serialized.valid, true, JSON.stringify(serialized.errors));
 assert.equal(serialized.payload.n, 10000);
 assert.equal(serialized.payload.seed, 42);
 assert.equal(serialized.payload.finance.real_discount_rate.distribution.mode, 0.05);
-assert.equal(serialized.payload.shared_degradation.annual_rate.distribution.mode, 0.005);
+assert.deepEqual(serialized.payload.shared_degradation.annual_rate.distribution, {
+  family: 'fixed', value: 0,
+});
 assert.equal(serialized.payload.cost_lines.length, 4);
+assert.deepEqual(serialized.payload.cost_lines[0].distribution, {
+  family: 'triangular', low: 90000, mode: 100000, high: 110000,
+});
+assert.equal(serialized.payload.cost_lines[0].solectria_quantity, 1);
+assert.equal(serialized.payload.cost_lines[0].solaredge_quantity, 0);
+assert.equal(serialized.payload.cost_lines[0].quantity_unit, null);
+assert.equal(serialized.payload.cost_lines[2].solectria_quantity, 0);
+assert.equal(serialized.payload.cost_lines[2].solaredge_quantity, 1);
 assert.equal(serialized.payload.commercial_reference_design, null);
 assert.equal(serialized.payload.commercial_transfer, null);
+for (const derived of [
+  'capacities', 'annual_energy_by_year', 'lifecycle_cost', 'annualized_cost',
+  'estimated_lcoe',
+]) assert.equal(derived in serialized.payload, false, derived);
 
-const rejectedDraft = technoeconomicBuildGuidedDraft(base, {...inputs, accepted: false}, {
-  seed: '42', date: '2026-08-16',
-  solectriaWdc: '140000', solaredgeWdc: '175000',
-});
+const rejectedDraft = technoeconomicBuildGuidedDraft(
+  base, {...inputs, accepted: false}, {seed: '42', date: '2026-08-16'}
+);
 const rejected = serializeTechnoeconomicRequest(rejectedDraft, {
   sources: [{source_annual_job_id: 'annual-guided-source', eligible: true}],
 });
@@ -1123,7 +1371,7 @@ console.log(JSON.stringify({
   valid: serialized.valid,
   costLineCount: serialized.payload.cost_lines.length,
   discountMode: serialized.payload.finance.real_discount_rate.distribution.mode,
-  degradationMode: serialized.payload.shared_degradation.annual_rate.distribution.mode,
+  degradationValue: serialized.payload.shared_degradation.annual_rate.distribution.value,
   roundTrip,
   rejectionCount: rejected.errors.length,
 }));
@@ -1132,9 +1380,11 @@ console.log(JSON.stringify({
         self.assertTrue(payload["valid"])
         self.assertEqual(4, payload["costLineCount"])
         self.assertEqual(0.05, payload["discountMode"])
-        self.assertEqual(0.005, payload["degradationMode"])
+        self.assertEqual(0, payload["degradationValue"])
         self.assertEqual("5", payload["roundTrip"]["discount"])
-        self.assertEqual("0.5", payload["roundTrip"]["degradation"])
+        self.assertEqual("0", payload["roundTrip"]["degradation"])
+        self.assertEqual("100000", payload["roundTrip"]["solectria_capex"])
+        self.assertEqual("130000", payload["roundTrip"]["solaredge_capex"])
         self.assertGreaterEqual(payload["rejectionCount"], 7)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
@@ -1567,6 +1817,19 @@ globalThis.localStorage = {
   setItem(key, value) { memory.set(key, String(value)); },
   removeItem(key) { memory.delete(key); },
 };
+assert.equal(TECHNOECONOMIC_DRAFT_SCHEMA_VERSION, 'technoeconomic-draft-v2');
+assert.equal(TECHNOECONOMIC_DRAFT_STORAGE_KEY, 'sbepv.technoeconomic.draft.v2');
+memory.set('sbepv.technoeconomic.draft.v1', JSON.stringify({
+  schema_version: 'technoeconomic-draft-v1',
+  source_annual_job_id: 'annual-obsolete-guided',
+  cost_lines: [{input_id: 'cost.guided.base-capex'}],
+}));
+const legacyDraft = technoeconomicLoadLocalDraft();
+assert.equal(legacyDraft.schema_version, TECHNOECONOMIC_DRAFT_SCHEMA_VERSION);
+assert.equal(legacyDraft.entry_mode, TECHNOECONOMIC_ADVANCED_ENTRY_MODE);
+assert.equal(legacyDraft.source_annual_job_id, 'annual-obsolete-guided');
+assert.equal(memory.has(TECHNOECONOMIC_DRAFT_STORAGE_KEY), false);
+memory.delete(TECHNOECONOMIC_LEGACY_DRAFT_STORAGE_KEY);
 memory.set(TECHNOECONOMIC_DRAFT_STORAGE_KEY, JSON.stringify({
   schema_version: 'obsolete-draft-v0', source_annual_job_id: 'annual-old',
 }));
@@ -1596,12 +1859,14 @@ assert.throws(() => technoeconomicNormalizeJob({
 }), (error) => error.code === 'invalid_job_response');
 console.log(JSON.stringify({
   version: loaded.schema_version,
+  storageKey: TECHNOECONOMIC_DRAFT_STORAGE_KEY,
   draftKeys: Object.keys(loaded).sort(),
   storedJob: memory.get(TECHNOECONOMIC_ACTIVE_JOB_STORAGE_KEY),
 }));
 """
         )
-        self.assertEqual("technoeconomic-draft-v1", payload["version"])
+        self.assertEqual("technoeconomic-draft-v2", payload["version"])
+        self.assertEqual("sbepv.technoeconomic.draft.v2", payload["storageKey"])
         self.assertNotIn("result", payload["draftKeys"])
         self.assertNotIn("artifacts", payload["draftKeys"])
 
@@ -1673,7 +1938,7 @@ console.log(JSON.stringify({
 }));
 """
         )
-        self.assertEqual("technoeconomic-draft-v1", payload["version"])
+        self.assertEqual("technoeconomic-draft-v2", payload["version"])
         self.assertEqual("annual_fixture", payload["source"])
         self.assertEqual("solartac_site", payload["basis"])
         self.assertEqual("2000", payload["n"])

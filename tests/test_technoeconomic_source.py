@@ -391,6 +391,31 @@ class TechnoeconomicAnnualSourceTests(unittest.TestCase):
                 manifest["systems"][system]["installed_wdc"],
             )
 
+    def test_eligibility_projection_exposes_only_verified_yearly_energy(self) -> None:
+        _, annual, origin, promotion = self._snapshot()
+
+        eligibility = tea_api.inspect_annual_source_eligibility(
+            annual,
+            origin_validation_job=origin,
+            promotion_record=promotion,
+        )
+
+        self.assertEqual([2024], eligibility["eligible_years"])
+        self.assertEqual(
+            [
+                {
+                    "year": 2024,
+                    "solectria_kwh": 200_000.0,
+                    "solaredge_kwh": 215_000.0,
+                }
+            ],
+            eligibility["annual_energy_by_year"],
+        )
+        self.assertEqual(
+            {"year", "solectria_kwh", "solaredge_kwh"},
+            set(eligibility["annual_energy_by_year"][0]),
+        )
+
     def test_explicit_snapshot_hash_and_store_integration_match(self) -> None:
         envelope, _, _, _ = self._snapshot()
         payload = envelope["source_snapshot"]

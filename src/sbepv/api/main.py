@@ -938,6 +938,7 @@ def _public_annual_source_context(job: dict[str, Any]) -> dict[str, Any]:
 
     request = job.get("request") if isinstance(job.get("request"), dict) else {}
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    curtailment_enabled = request.get("curtailment_enabled") is True
     application = (
         result.get("calibration_application")
         if isinstance(result.get("calibration_application"), dict)
@@ -957,6 +958,15 @@ def _public_annual_source_context(job: dict[str, Any]) -> dict[str, Any]:
                 "interval_unit",
             )
             if key in request
+        },
+        "operating_limit": {
+            "curtailment_enabled": curtailment_enabled,
+            "curtailment_limit_kw": (
+                deepcopy(request.get("curtailment_limit_kw"))
+                if curtailment_enabled
+                else None
+            ),
+            "unit": "kWac",
         },
         "calibration": {
             key: deepcopy(application.get(key))

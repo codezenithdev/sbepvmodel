@@ -299,6 +299,8 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
                 "years": [2024],
                 "interval_value": 1,
                 "interval_unit": "hours",
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
             },
             provenance={
                 "calibration_application": {
@@ -578,7 +580,7 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         self.assertEqual("disjoint_by_declared_exclusion", pair["decision"])
         self.assertFalse(pair["overlap_detected"])
 
-    def test_guided_site_per_wdc_costs_normalize_through_frozen_wdc(self) -> None:
+    def test_guided_separate_system_totals_normalize_through_frozen_wdc(self) -> None:
         payload = _site_request_payload()
         systems = self.snapshot["capacity_manifest"]["systems"]
         sol_wdc = systems["solectria"]["installed_wdc"]
@@ -592,11 +594,9 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
             cost_type: str,
             value: float,
             coverage_id: str,
-            coverage_exclude_id: str,
-            solectria_quantity: float,
-            solaredge_quantity: float,
         ) -> dict:
             recurring = cost_type.startswith("recurring_")
+            solaredge = ownership == "solaredge_only"
             return {
                 "input_id": input_id,
                 "label": label,
@@ -604,23 +604,18 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
                 "cost_type": cost_type,
                 "distribution": {"family": "fixed", "value": value},
                 "coverage_include_ids": [coverage_id],
-                "coverage_exclude_ids": [coverage_exclude_id],
-                "original_unit": (
-                    "usd_per_unit_year" if recurring else "usd_per_unit"
-                ),
+                "coverage_exclude_ids": [],
+                "original_unit": "usd_total_per_year" if recurring else "usd_total",
                 "normalized_unit": (
                     "usd_per_wdc_year" if recurring else "usd_per_wdc"
                 ),
-                "normalization_method": (
-                    "multiply_quantity_then_divide_by_frozen_source_wdc"
-                ),
-                "solectria_quantity": solectria_quantity,
-                "solaredge_quantity": solaredge_quantity,
-                "quantity_unit": "Wdc",
+                "normalization_method": "divide_by_frozen_source_wdc",
+                "solectria_quantity": 0.0 if solaredge else 1.0,
+                "solaredge_quantity": 1.0 if solaredge else 0.0,
+                "quantity_unit": None,
                 "normalization_derivation": (
-                    "Multiply the submitted site-specific USD/Wdc value by each "
-                    "applicable system's frozen source Wdc, then divide by that same "
-                    "frozen Wdc."
+                    "Divide the submitted system total by the applicable system's "
+                    "verified frozen Annual Simulation Wdc nameplate."
                 ),
                 "constant_dollar_cost_year": 2026,
                 "currency_year_normalization": _currency_year_normalization(),
@@ -629,48 +624,36 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
 
         payload["cost_lines"] = [
             guided_line(
-                input_id="cost.base.capex",
-                label="Common base installed CAPEX",
-                ownership="paired_shared",
+                input_id="cost.guided.solectria-capex",
+                label="Solectria total installed CAPEX",
+                ownership="solectria_only",
                 cost_type="initial_capex",
-                value=0.75,
-                coverage_id="scope.base.initial",
-                coverage_exclude_id="scope.solaredge.incremental.initial",
-                solectria_quantity=sol_wdc,
-                solaredge_quantity=se_wdc,
+                value=200_000.0,
+                coverage_id="scope.guided.solectria.initial",
             ),
             guided_line(
-                input_id="cost.base.om",
-                label="Common base recurring O&M",
-                ownership="paired_shared",
+                input_id="cost.guided.solectria-recurring-om",
+                label="Solectria annual O&M",
+                ownership="solectria_only",
                 cost_type="recurring_om",
-                value=0.01,
-                coverage_id="scope.base.recurring",
-                coverage_exclude_id="scope.solaredge.incremental.recurring",
-                solectria_quantity=sol_wdc,
-                solaredge_quantity=se_wdc,
+                value=5_000.0,
+                coverage_id="scope.guided.solectria.recurring",
             ),
             guided_line(
-                input_id="cost.se.incremental-capex",
-                label="Incremental SolarEdge installed CAPEX",
+                input_id="cost.guided.solaredge-capex",
+                label="SolarEdge total installed CAPEX",
                 ownership="solaredge_only",
                 cost_type="initial_capex",
-                value=0.035,
-                coverage_id="scope.solaredge.incremental.initial",
-                coverage_exclude_id="scope.base.initial",
-                solectria_quantity=0.0,
-                solaredge_quantity=se_wdc,
+                value=215_000.0,
+                coverage_id="scope.guided.solaredge.initial",
             ),
             guided_line(
-                input_id="cost.se.incremental-om",
-                label="Incremental SolarEdge recurring O&M",
+                input_id="cost.guided.solaredge-recurring-om",
+                label="SolarEdge annual O&M",
                 ownership="solaredge_only",
                 cost_type="recurring_om",
-                value=0.002,
-                coverage_id="scope.solaredge.incremental.recurring",
-                coverage_exclude_id="scope.base.recurring",
-                solectria_quantity=0.0,
-                solaredge_quantity=se_wdc,
+                value=4_500.0,
+                coverage_id="scope.guided.solaredge.recurring",
             ),
         ]
 
@@ -681,15 +664,24 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         )
         lines = {line.input_id: line for line in kernel_request.cost_lines}
 
-        for input_id in ("cost.base.capex", "cost.base.om"):
-            self.assertEqual(1.0, lines[input_id].solectria_multiplier_to_intensity)
-            self.assertEqual(1.0, lines[input_id].solaredge_multiplier_to_intensity)
         for input_id in (
-            "cost.se.incremental-capex",
-            "cost.se.incremental-om",
+            "cost.guided.solectria-capex",
+            "cost.guided.solectria-recurring-om",
+        ):
+            self.assertAlmostEqual(
+                1.0 / sol_wdc,
+                lines[input_id].solectria_multiplier_to_intensity,
+            )
+            self.assertEqual(0.0, lines[input_id].solaredge_multiplier_to_intensity)
+        for input_id in (
+            "cost.guided.solaredge-capex",
+            "cost.guided.solaredge-recurring-om",
         ):
             self.assertEqual(0.0, lines[input_id].solectria_multiplier_to_intensity)
-            self.assertEqual(1.0, lines[input_id].solaredge_multiplier_to_intensity)
+            self.assertAlmostEqual(
+                1.0 / se_wdc,
+                lines[input_id].solaredge_multiplier_to_intensity,
+            )
 
         provenance = tea_api.build_technoeconomic_submission_provenance(
             parsed,
@@ -700,23 +692,21 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
             line["input_id"]: line
             for line in provenance["normalization_receipt"]["lines"]
         }
-        self.assertEqual("Wdc", receipts["cost.base.capex"]["quantity_unit"])
-        self.assertEqual(sol_wdc, receipts["cost.base.capex"]["solectria_quantity"])
-        self.assertEqual(se_wdc, receipts["cost.base.capex"]["solaredge_quantity"])
+        sol_capex = receipts["cost.guided.solectria-capex"]
+        se_capex = receipts["cost.guided.solaredge-capex"]
+        self.assertIsNone(sol_capex["quantity_unit"])
+        self.assertEqual(1.0, sol_capex["solectria_quantity"])
+        self.assertEqual(0.0, sol_capex["solaredge_quantity"])
+        self.assertTrue(sol_capex["wdc_denominator"]["solectria"]["applied"])
+        self.assertFalse(sol_capex["wdc_denominator"]["solaredge"]["applied"])
+        self.assertEqual(0.0, se_capex["solectria_quantity"])
+        self.assertEqual(1.0, se_capex["solaredge_quantity"])
+        self.assertFalse(se_capex["wdc_denominator"]["solectria"]["applied"])
+        self.assertTrue(se_capex["wdc_denominator"]["solaredge"]["applied"])
         self.assertEqual(
-            "multiply_quantity_then_divide_by_frozen_source_wdc",
-            receipts["cost.se.incremental-capex"]["normalization_method"],
+            "divide_by_frozen_source_wdc",
+            se_capex["normalization_method"],
         )
-        capex_pair = next(
-            decision
-            for decision in provenance["overlap_receipt"]["pairwise_decisions"]
-            if {
-                decision["left_input_id"],
-                decision["right_input_id"],
-            }
-            == {"cost.base.capex", "cost.se.incremental-capex"}
-        )
-        self.assertEqual("disjoint_by_declared_exclusion", capex_pair["decision"])
 
     def test_commercial_cost_only_and_indexed_normalization_are_explicit(self) -> None:
         payload = _commercial_request_payload(include_transfer=False)
@@ -890,6 +880,13 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
             "eligible_years": [2024],
             "solectria_installed_wdc": 139_180.8,
             "solaredge_installed_wdc": 139_180.8,
+            "annual_energy_by_year": [
+                {
+                    "year": 2024,
+                    "solectria_kwh": 200_000.0,
+                    "solaredge_kwh": 215_000.0,
+                }
+            ],
             "capacity_manifest_source": "explicit_annual_manifest",
             "source_snapshot_sha256": "2" * 64,
             "source_artifact_storage_key": "private/secret.csv",
@@ -911,6 +908,25 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         self.assertEqual(200, response.status_code, response.text)
         body = response.json()
         self.assertEqual(["annual-source"], [row["source_annual_job_id"] for row in body["sources"]])
+        source = body["sources"][0]
+        self.assertEqual(
+            [
+                {
+                    "year": 2024,
+                    "solectria_kwh": 200_000.0,
+                    "solaredge_kwh": 215_000.0,
+                }
+            ],
+            source["annual_energy_by_year"],
+        )
+        self.assertEqual(
+            {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+                "unit": "kWac",
+            },
+            source["provenance"]["operating_limit"],
+        )
         encoded = json.dumps(body)
         self.assertNotIn("storage_key", encoded)
         self.assertNotIn(str(self.test_root), encoded)
