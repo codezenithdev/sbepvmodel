@@ -943,6 +943,7 @@
         .tea-button:focus-visible,
         .tea-download-link:focus-visible,
         .tea-disclosure-panel > summary:focus-visible,
+        .tea-result-disclosure > summary:focus-visible,
         .tea-guided-ranges > summary:focus-visible,
         .tea-advanced-workspace > summary:focus-visible,
         .tea-table-region:focus-visible,
@@ -1086,6 +1087,115 @@
             padding: 20px;
             border-bottom: 1px solid var(--border);
             background: linear-gradient(135deg, #f5fbfa 0%, #f7f9ff 100%);
+        }
+
+        .tea-decision-section {
+            padding: 20px;
+        }
+
+        .tea-decision-callout {
+            padding: 20px;
+            border: 1px solid #c7d6d4;
+            border-left: 5px solid var(--warning);
+            border-radius: 9px;
+            background: #f8faf9;
+        }
+
+        .tea-decision-callout[data-decision="solaredge"] {
+            border-left-color: var(--success);
+            background: #f2faf6;
+        }
+
+        .tea-decision-callout[data-decision="solectria"] {
+            border-left-color: var(--info);
+            background: #f3f8fc;
+        }
+
+        .tea-decision-callout h3 {
+            margin-top: 5px;
+            color: var(--text);
+            font-size: clamp(20px, 2.4vw, 28px);
+            line-height: 1.2;
+        }
+
+        .tea-decision-callout > p:not(.tea-step-label) {
+            max-width: 76ch;
+            margin-top: 8px;
+            color: var(--muted-strong);
+            line-height: 1.55;
+        }
+
+        .tea-decision-caveat {
+            font-weight: 720;
+        }
+
+        .tea-decision-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .tea-decision-grid .tea-summary-card {
+            background: var(--surface);
+        }
+
+        .tea-driver-section {
+            background: var(--surface-muted);
+        }
+
+        .tea-driver-figure {
+            max-width: 980px;
+            background: var(--surface);
+        }
+
+        .tea-result-disclosure {
+            margin: 0 20px 14px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface);
+        }
+
+        .tea-result-disclosure > summary {
+            min-height: 52px;
+            padding: 15px 17px;
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 830;
+            cursor: pointer;
+        }
+
+        .tea-result-disclosure[open] > summary {
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-muted);
+        }
+
+        .tea-result-disclosure-body {
+            padding-top: 18px;
+        }
+
+        .tea-result-disclosure .tea-result-section {
+            margin-bottom: 18px;
+        }
+
+        .tea-formula-panel {
+            margin: 6px 20px 20px;
+            padding: 16px 18px;
+            border-top: 1px solid var(--border);
+            color: var(--muted-strong);
+            font-size: 12px;
+            line-height: 1.55;
+        }
+
+        .tea-formula-panel h3 {
+            margin-bottom: 7px;
+            color: var(--text);
+            font-size: 14px;
+        }
+
+        .tea-formula-note {
+            margin-top: 5px;
+            color: var(--muted);
         }
 
         .tea-summary-grid,
@@ -1608,6 +1718,7 @@
             }
 
             .tea-summary-grid,
+            .tea-decision-grid,
             .tea-metric-grid,
             .tea-tradeoff-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1642,6 +1753,8 @@
             .tea-panel,
             .tea-results-heading,
             .tea-summary-grid,
+            .tea-decision-section,
+            .tea-decision-grid,
             .tea-metric-grid,
             .tea-tradeoff-grid,
             .tea-result-section,
@@ -1661,8 +1774,15 @@
                 margin: 0 16px 16px;
             }
 
+            .tea-result-disclosure,
+            .tea-formula-panel {
+                margin-right: 16px;
+                margin-left: 16px;
+            }
+
             .tea-definition-grid,
             .tea-summary-grid,
+            .tea-decision-grid,
             .tea-metric-grid,
             .tea-tradeoff-grid,
             .tea-confirm-summary,

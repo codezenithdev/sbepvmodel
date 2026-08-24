@@ -1657,3 +1657,39 @@ truth and both Python/Vite assemblers must remain equivalent.
 - [X] Recheck project-layout invariants, clean source/output boundaries, immutable
   provenance, API safety, and unrelated workspace changes.
 - [X] Report exact test/build counts and any remaining caveats.
+
+## 15. Version 2 addendum — SolarTAC applied-capacity normalization
+
+Contract `tea-calculation-v2` changes only the `solartac_site` normalization
+denominator. It does not add commercial target scaling or a marginal-cost workflow.
+Commercial-representative requests remain on `tea-calculation-v1`.
+
+For each frozen Annual source, the applied capacity is selected deterministically:
+
+```text
+if curtailment_enabled is true and curtailment_limit_kw is finite and positive:
+    P_applied_SOL = P_applied_SE = 1,000 * curtailment_limit_kw
+    rating_basis = ac_operating_limit
+else:
+    P_applied_system = installed_wdc_system
+    rating_basis = dc_installed_nameplate
+```
+
+Version 2 divides each SolarTAC system's source energy and entered project-total
+cost by its own `P_applied_system` before differencing. Authoritative intensity
+units are therefore `kWh_AC/applied_W-year`, `USD/applied_W`, and
+`USD/applied_W-year`. Lifecycle LCOE and LCOO remain `USD/kWh_AC`; their formulas,
+discounting, degradation, sign convention, sampling, and classification semantics
+are otherwise unchanged.
+
+The immutable receipt records `applied_capacity_w`, `rating_basis`, selection
+method, and source field for both systems. Installed module DC-STC capacities remain
+separately preserved as physics/nameplate evidence and are never relabeled as AC
+operating limits.
+
+Literal version-1 requests, results, exports, and kernel-request hashes retain their
+historical field shapes and Wdc semantics. Version-2 routine results, manifests,
+tabular bundles, and workbook exports use distinct schema versions and explicit
+`per_applied_W` field names so the two authorities cannot be silently mixed. The
+unchanged PNG rendering contract and XLSX logical-row hash algorithm retain their
+algorithm-version identifiers.

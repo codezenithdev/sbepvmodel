@@ -566,6 +566,35 @@ function commercialDraft(transferEnabled = true) {
         self.assertIn("accessible table records", self.markup)
         self.assertIn("No Annual baseline, model promotion, or comparison", self.markup)
 
+    def test_results_prioritize_decision_and_keep_formulas_last(self) -> None:
+        decision_index = self.markup.index('id="technoeconomicDecision"')
+        detail_index = self.markup.index(
+            "Detailed percentile and outcome evidence"
+        )
+        audit_index = self.markup.index(
+            "Methodology, diagnostics, and audit trail"
+        )
+        formula_index = self.markup.index('id="technoeconomicFormulaHeading"')
+        export_index = self.markup.index('id="technoeconomicXlsxLink"')
+        results_end = self.markup.index(
+            'id="technoeconomicLegacyDraftNotice"'
+        )
+        self.assertLess(decision_index, detail_index)
+        self.assertLess(detail_index, audit_index)
+        self.assertLess(audit_index, export_index)
+        self.assertLess(export_index, formula_index)
+        self.assertLess(audit_index, formula_index)
+        self.assertLess(formula_index, results_end)
+        self.assertIn("Lifecycle cost difference · P50", self.script)
+        self.assertIn("Lifecycle energy difference · P50", self.script)
+        self.assertIn("Joint cost-and-energy advantage", self.script)
+        self.assertIn("Decision confidence", self.script)
+        self.assertIn("discounted lifecycle cost / discounted lifecycle AC energy", self.markup)
+        self.assertIn("SolarEdge lifecycle cost − Solectria lifecycle cost", self.markup)
+        audit_close = self.markup.index("</details>", audit_index)
+        self.assertGreater(export_index, audit_close)
+        self.assertIn("Export workbook", self.markup)
+
     def test_responsive_reduced_motion_and_high_contrast_styles(self) -> None:
         for marker in (
             ".tea-table-region {",

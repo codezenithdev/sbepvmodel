@@ -4174,6 +4174,122 @@
             }
         }
 
+        function technoeconomicDecisionMetric(summaries, metricNames) {
+            for (const metricName of metricNames) {
+                const summary = technoeconomicPlainObject(summaries[metricName]);
+                if (summary.status === 'available') return {metricName, summary};
+            }
+            return {metricName: metricNames[0], summary: {}};
+        }
+
+        function technoeconomicProbabilityTotal(probabilities, keys) {
+            let total = 0;
+            let available = false;
+            for (const key of keys) {
+                const rawValue = probabilities[key];
+                if (rawValue === null || rawValue === undefined || rawValue === '') continue;
+                const value = Number(rawValue);
+                if (Number.isFinite(value)) {
+                    total += value;
+                    available = true;
+                }
+            }
+            return available ? total : null;
+        }
+
+        function technoeconomicRenderDecision(result) {
+            const summaries = technoeconomicPlainObject(result.summaries);
+            const cost = technoeconomicDecisionMetric(summaries, [
+                'DeltaLifecycleCostPerAppliedW_se_minus_sol_USD_per_applied_W',
+                'DeltaLifecycleCostPerWdc_se_minus_sol_USD_per_Wdc',
+            ]);
+            const energy = technoeconomicDecisionMetric(summaries, [
+                'DeltaLifecycleEnergyPerAppliedW_se_minus_sol_kWh_AC_per_applied_W',
+                'DeltaLifecycleEnergyPerWdc_se_minus_sol_kWh_AC_per_Wdc',
+            ]);
+            const costPercentiles = technoeconomicPlainObject(cost.summary.percentiles);
+            const energyPercentiles = technoeconomicPlainObject(energy.summary.percentiles);
+            const costP50 = costPercentiles.p50 === null || costPercentiles.p50 === undefined
+                || costPercentiles.p50 === '' ? NaN : Number(costPercentiles.p50);
+            const energyP50 = energyPercentiles.p50 === null || energyPercentiles.p50 === undefined
+                || energyPercentiles.p50 === '' ? NaN : Number(energyPercentiles.p50);
+            const hasMedians = cost.summary.status === 'available'
+                && energy.summary.status === 'available'
+                && Number.isFinite(costP50) && Number.isFinite(energyP50);
+
+            let state = 'tradeoff';
+            let heading = 'No decisive median advantage';
+            let explanation = 'The completed result does not support a single-system decision from cost and energy together.';
+            if (hasMedians && costP50 < 0 && energyP50 > 0) {
+                state = 'solaredge';
+                heading = 'SolarEdge has the stronger median outcome';
+                explanation = 'At P50, SolarEdge has lower lifecycle cost and higher lifecycle AC energy than Solectria.';
+            } else if (hasMedians && costP50 > 0 && energyP50 < 0) {
+                state = 'solectria';
+                heading = 'Solectria has the stronger median outcome';
+                explanation = 'At P50, Solectria has lower lifecycle cost and higher lifecycle AC energy than SolarEdge.';
+            } else if (hasMedians) {
+                heading = 'The median result is a cost–energy trade-off';
+                explanation = costP50 >= 0 && energyP50 >= 0
+                    ? 'At P50, SolarEdge produces more lifecycle energy but also costs more.'
+                    : 'At P50, SolarEdge costs less but also produces less lifecycle energy.';
+            }
+
+            const finitePercentile = (value) => value === null || value === undefined
+                || value === '' || !Number.isFinite(Number(value)) ? null : Number(value);
+            const costP5 = finitePercentile(costPercentiles.p5);
+            const costP95 = finitePercentile(costPercentiles.p95);
+            const energyP5 = finitePercentile(energyPercentiles.p5);
+            const energyP95 = finitePercentile(energyPercentiles.p95);
+            const stable = result.convergence?.status === 'stable';
+            const rangeSupportsDecision = state === 'solaredge'
+                ? costP95 !== null && energyP5 !== null && costP95 < 0 && energyP5 > 0
+                : state === 'solectria' && costP5 !== null && energyP95 !== null
+                    ? costP5 > 0 && energyP95 < 0 : false;
+            const confidence = rangeSupportsDecision && stable ? 'Strong'
+                : stable ? 'Mixed' : 'Provisional';
+            const caveat = state === 'tradeoff'
+                ? 'Choose only after deciding how much additional lifecycle energy is worth relative to lifecycle cost.'
+                : rangeSupportsDecision
+                    ? 'The P5–P95 ranges support the same direction as the median result.'
+                    : 'The P5–P95 ranges overlap a decision boundary, so the median result is not decisive in every realization.';
+
+            if (technoeconomicElements.decision) {
+                technoeconomicElements.decision.dataset.decision = state;
+            }
+            if (technoeconomicElements.decisionHeading) {
+                technoeconomicElements.decisionHeading.textContent = heading;
+            }
+            if (technoeconomicElements.decisionText) {
+                technoeconomicElements.decisionText.textContent = explanation;
+            }
+            if (technoeconomicElements.decisionCaveat) {
+                technoeconomicElements.decisionCaveat.textContent = `${confidence} decision confidence. ${caveat}`;
+            }
+
+            const tradeoffs = technoeconomicPlainObject(summaries.tradeoff_classes);
+            const probabilities = technoeconomicPlainObject(tradeoffs.probabilities);
+            const solarEdgeAdvantage = technoeconomicProbabilityTotal(probabilities, [
+                'cost_saving_energy_gain', 'cost_neutral_energy_gain',
+                'cost_saving_zero_energy_change',
+            ]);
+            const solectriaAdvantage = technoeconomicProbabilityTotal(probabilities, [
+                'cost_increase_energy_loss', 'cost_neutral_energy_loss',
+                'cost_increase_zero_energy_change',
+            ]);
+            const advantageText = solarEdgeAdvantage === null || solectriaAdvantage === null
+                ? 'Unavailable'
+                : `SolarEdge ${technoeconomicFormatPercent(solarEdgeAdvantage)} · Solectria ${technoeconomicFormatPercent(solectriaAdvantage)}`;
+            technoeconomicElements.decisionMetrics?.replaceChildren(
+                technoeconomicSummaryItem('Lifecycle cost difference · P50',
+                    technoeconomicFormatMetric(cost.metricName, costPercentiles.p50)),
+                technoeconomicSummaryItem('Lifecycle energy difference · P50',
+                    technoeconomicFormatMetric(energy.metricName, energyPercentiles.p50)),
+                technoeconomicSummaryItem('Joint cost-and-energy advantage', advantageText),
+                technoeconomicSummaryItem('Decision confidence', confidence)
+            );
+        }
+
         function technoeconomicRenderResultSummary(job, result) {
             const root = technoeconomicElements.resultSummary;
             if (!root) return;
@@ -4326,6 +4442,7 @@
                 if (technoeconomicElements.results) technoeconomicElements.results.hidden = true;
                 return;
             }
+            technoeconomicRenderDecision(result);
             technoeconomicRenderResultSummary(job, result);
             technoeconomicRenderMetrics(result);
             technoeconomicRenderTradeoffs(result);
@@ -4426,6 +4543,7 @@
         function technoeconomicClearResults() {
             if (technoeconomicElements.results) technoeconomicElements.results.hidden = true;
             for (const root of [
+                technoeconomicElements.decisionMetrics,
                 technoeconomicElements.resultSummary, technoeconomicElements.metricSummary,
                 technoeconomicElements.tradeoffs, technoeconomicElements.perYearBody,
                 technoeconomicElements.sensitivityBody, technoeconomicElements.convergenceBody,

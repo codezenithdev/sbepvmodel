@@ -379,34 +379,64 @@
                             <div class="annual-results-heading tea-results-heading">
                                 <div>
                                     <p class="tea-step-label">Completed evidence</p>
-                                    <h2 id="technoeconomicResultsHeading">Probabilistic lifecycle results</h2>
-                                    <p>Percentiles, classifications, diagnostics, and downloads below come from the completed durable job.</p>
+                                    <h2 id="technoeconomicResultsHeading">Lifecycle decision summary</h2>
+                                    <p>The decision, its size, and its uncertainty are shown first. Detailed evidence remains available below.</p>
                                 </div>
                                 <span class="annual-results-note">SolarEdge minus Solectria</span>
                             </div>
 
-                            <div class="tea-summary-grid" id="technoeconomicResultSummary" aria-label="Job and evidence summary"></div>
-
-                            <section class="tea-result-section" aria-labelledby="technoeconomicMetricsHeading">
-                                <div class="tea-section-heading">
-                                    <div>
-                                        <h3 id="technoeconomicMetricsHeading">Lifecycle metric percentiles</h3>
-                                        <p>P5, P50, and P95 use the server's fixed type-7 quantile contract.</p>
-                                    </div>
+                            <section class="tea-decision-section" aria-labelledby="technoeconomicDecisionHeading">
+                                <div class="tea-decision-callout" id="technoeconomicDecision" role="status" aria-live="polite">
+                                    <p class="tea-step-label">Decision signal</p>
+                                    <h3 id="technoeconomicDecisionHeading">Preparing decision summary</h3>
+                                    <p id="technoeconomicDecisionText">The completed distributions are being summarized.</p>
+                                    <p class="tea-decision-caveat" id="technoeconomicDecisionCaveat"></p>
                                 </div>
-                                <div class="tea-metric-grid" id="technoeconomicMetricSummary"></div>
+                                <div class="tea-decision-grid" id="technoeconomicDecisionMetrics" aria-label="Key decision measures"></div>
                             </section>
 
-                            <section class="tea-result-section" aria-labelledby="technoeconomicTradeoffsHeading">
+                            <section class="tea-result-section tea-driver-section" aria-labelledby="technoeconomicDriversHeading">
                                 <div class="tea-section-heading">
                                     <div>
-                                        <h3 id="technoeconomicTradeoffsHeading">Cost and energy outcomes</h3>
-                                        <p>Every realization remains represented, including energy-loss and within-tolerance outcomes.</p>
+                                        <h3 id="technoeconomicDriversHeading">What drives the result</h3>
+                                        <p>The sensitivity ranking highlights the assumptions with the greatest demonstrated influence.</p>
                                     </div>
                                 </div>
-                                <div class="tea-tradeoff-grid" id="technoeconomicTradeoffs"></div>
+                                <figure class="tea-figure-card tea-driver-figure">
+                                    <img id="technoeconomicSensitivityPlot" alt="Sensitivity rankings for available technoeconomic response metrics" hidden>
+                                    <p class="tea-figure-fallback" id="technoeconomicSensitivityPlotFallback" role="status">Sensitivity figure is not available.</p>
+                                    <figcaption>Direction and magnitude come from the completed job. The accessible table records entries and exclusions in detailed evidence.</figcaption>
+                                </figure>
                             </section>
 
+                            <details class="tea-result-disclosure">
+                                <summary>Detailed percentile and outcome evidence</summary>
+                                <div class="tea-result-disclosure-body">
+                                    <section class="tea-result-section" aria-labelledby="technoeconomicMetricsHeading">
+                                        <div class="tea-section-heading">
+                                            <div>
+                                                <h3 id="technoeconomicMetricsHeading">Lifecycle metric percentiles</h3>
+                                                <p>P5, P50, and P95 use the server's fixed type-7 quantile contract.</p>
+                                            </div>
+                                        </div>
+                                        <div class="tea-metric-grid" id="technoeconomicMetricSummary"></div>
+                                    </section>
+
+                                    <section class="tea-result-section" aria-labelledby="technoeconomicTradeoffsHeading">
+                                        <div class="tea-section-heading">
+                                            <div>
+                                                <h3 id="technoeconomicTradeoffsHeading">Cost and energy outcomes</h3>
+                                                <p>Every realization remains represented, including energy-loss and within-tolerance outcomes.</p>
+                                            </div>
+                                        </div>
+                                        <div class="tea-tradeoff-grid" id="technoeconomicTradeoffs"></div>
+                                    </section>
+                                </div>
+                            </details>
+
+                            <details class="tea-result-disclosure">
+                                <summary>Methodology, diagnostics, and audit trail</summary>
+                                <div class="tea-result-disclosure-body">
                             <section class="tea-result-section" aria-labelledby="technoeconomicPerYearHeading">
                                 <div class="tea-section-heading">
                                     <div>
@@ -499,11 +529,6 @@
                                         <figcaption>Empirical CDFs. Population and denominator details are repeated in the metric summaries.</figcaption>
                                     </figure>
                                     <figure class="tea-figure-card">
-                                        <img id="technoeconomicSensitivityPlot" alt="Sensitivity rankings for available technoeconomic response metrics" hidden>
-                                        <p class="tea-figure-fallback" id="technoeconomicSensitivityPlotFallback" role="status">Sensitivity figure is not available.</p>
-                                        <figcaption>Sensitivity ranking. The accessible table records entries, effects, exclusions, and unavailable reasons.</figcaption>
-                                    </figure>
-                                    <figure class="tea-figure-card">
                                         <img id="technoeconomicConvergencePlot" alt="Percentile stability across cumulative realization checkpoints" hidden>
                                         <p class="tea-figure-fallback" id="technoeconomicConvergencePlotFallback" role="status">Convergence figure is not available.</p>
                                         <figcaption>Convergence checkpoints. The accessible table reports the underlying percentile evidence.</figcaption>
@@ -521,16 +546,36 @@
                                 <dl class="tea-definition-grid" id="technoeconomicProvenance"></dl>
                             </section>
 
+                            <section class="tea-result-section" aria-labelledby="technoeconomicJobEvidenceHeading">
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <h3 id="technoeconomicJobEvidenceHeading">Job and evidence record</h3>
+                                        <p>Reproducibility and execution metadata for the completed durable job.</p>
+                                    </div>
+                                </div>
+                                <div class="tea-summary-grid" id="technoeconomicResultSummary" aria-label="Job and evidence summary"></div>
+                            </section>
+
+                                </div>
+                            </details>
+
                             <div class="tea-download-panel" aria-labelledby="technoeconomicDownloadsHeading">
                                 <div>
-                                    <h3 id="technoeconomicDownloadsHeading">Verified downloads</h3>
-                                    <p>Exports include realization-level values, assumptions, diagnostics, provenance, and integrity tie-outs.</p>
+                                    <h3 id="technoeconomicDownloadsHeading">Export results</h3>
+                                    <p>Download the complete verified workbook or the underlying CSV bundle.</p>
                                 </div>
                                 <div class="tea-action-row">
+                                    <a class="tea-download-link" id="technoeconomicXlsxLink" href="#" hidden>Export workbook</a>
                                     <a class="tea-download-link" id="technoeconomicCsvLink" href="#" hidden>Download CSV bundle</a>
-                                    <a class="tea-download-link" id="technoeconomicXlsxLink" href="#" hidden>Download XLSX workbook</a>
                                 </div>
                             </div>
+
+                            <section class="tea-formula-panel" aria-labelledby="technoeconomicFormulaHeading">
+                                <h3 id="technoeconomicFormulaHeading">LCOE and LCOO formulas</h3>
+                                <p><strong>LCOE</strong> = discounted lifecycle cost / discounted lifecycle AC energy.</p>
+                                <p><strong>LCOO</strong> = (SolarEdge lifecycle cost − Solectria lifecycle cost) / (SolarEdge lifecycle AC energy − Solectria lifecycle AC energy).</p>
+                                <p class="tea-formula-note">LCOO is reported only where its energy-change denominator is valid under the calculation contract.</p>
+                            </section>
                         </section>
 
                         <div class="tea-entry-mode-row" id="technoeconomicLegacyDraftNotice" hidden>
