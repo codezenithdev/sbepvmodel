@@ -22,7 +22,7 @@
         });
         const TECHNOECONOMIC_RESERVED_INPUT_IDS = new Set([
             'finance.discount-rate', 'energy.shared-degradation', 'transfer.baseline',
-            'transfer.incremental', 'weather.year',
+            'transfer.incremental', 'commercial.marginal-cost-difference', 'weather.year',
         ]);
         const TECHNOECONOMIC_TERMINAL_STATES = new Set([
             'done', 'error', 'cancelled', 'interrupted',
@@ -48,6 +48,41 @@
             'availability_and_outages', 'curtailment', 'soiling',
             'weather_representativeness', 'degradation', 'size_independence',
         ];
+        const TECHNOECONOMIC_COMMERCIAL_METRICS = Object.freeze([
+            ['CommercialTargetCapacity_W', 'Commercial target capacity'],
+            [
+                'CommercialYear1DeltaEnergy_se_minus_sol_kWh_AC',
+                'Year-one energy difference (SolarEdge minus Solectria)',
+            ],
+            [
+                'CommercialLifecycleDeltaEnergy_se_minus_sol_kWh_AC',
+                'Lifecycle energy difference (SolarEdge minus Solectria)',
+            ],
+            [
+                'CommercialEquivalentAnnualDeltaEnergy_se_minus_sol_kWh_AC_per_year',
+                'Equivalent annual energy difference (SolarEdge minus Solectria)',
+            ],
+            [
+                'CommercialLifecycleMarginalCostDelta_se_minus_sol_USD',
+                'Lifecycle marginal cost difference (SolarEdge minus Solectria)',
+            ],
+            [
+                'CommercialEquivalentAnnualMarginalCostDelta_se_minus_sol_USD_per_year',
+                'Equivalent annual marginal cost difference (SolarEdge minus Solectria)',
+            ],
+            [
+                'CommercialMarginalLCOO_se_minus_sol_USD_per_kWh_AC',
+                'Commercial marginal LCOO (SolarEdge minus Solectria)',
+            ],
+        ]);
+        const TECHNOECONOMIC_COMMERCIAL_METRIC_ALIASES = Object.freeze({
+            CommercialLifecycleMarginalCostDelta_se_minus_sol_USD: [
+                'CommercialLifecycleDeltaCost_se_minus_sol_USD',
+            ],
+            CommercialEquivalentAnnualMarginalCostDelta_se_minus_sol_USD_per_year: [
+                'CommercialEquivalentAnnualDeltaCost_se_minus_sol_USD_per_year',
+            ],
+        });
         const TECHNOECONOMIC_METRIC_LABELS = {
             LifecycleLCOE_SOL_USD_per_kWh_AC: 'Solectria lifecycle LCOE',
             LifecycleLCOE_SE_USD_per_kWh_AC: 'SolarEdge lifecycle LCOE',
@@ -319,6 +354,17 @@
             };
         }
 
+        function technoeconomicDefaultCommercialScaling() {
+            return {
+                target_capacity: '', target_capacity_unit: 'mw', target_rating_basis: '',
+                marginal_cost_difference: technoeconomicDefaultDistribution(''),
+                marginal_cost_timing: 'lifecycle_present_value',
+                marginal_cost_unit: 'constant_usd',
+                transfer_method: 'direct_capacity_scaling', transfer_rationale: '',
+                evidence: technoeconomicDefaultEvidence(),
+            };
+        }
+
         function technoeconomicDefaultDraft() {
             const year = '';
             const sol = technoeconomicDefaultCostLine('solectria', 0);
@@ -342,6 +388,7 @@
                 commercial_reference_design: technoeconomicDefaultCommercialDesign(),
                 transfer_enabled: false,
                 commercial_transfer: technoeconomicDefaultCommercialTransfer(),
+                commercial_scaling: null,
                 active_job_id: null,
             };
         }
@@ -516,6 +563,34 @@
             return output;
         }
 
+        function technoeconomicSanitizeCommercialScaling(value) {
+            if (value === null || value === undefined || value === false) return null;
+            const source = technoeconomicPlainObject(value);
+            const output = technoeconomicDefaultCommercialScaling();
+            output.target_capacity = technoeconomicText(source.target_capacity);
+            output.target_capacity_unit = technoeconomicChoice(
+                source.target_capacity_unit, ['kw', 'mw'], output.target_capacity_unit
+            );
+            output.target_rating_basis = technoeconomicChoice(
+                source.target_rating_basis,
+                ['', 'ac_operating_limit', 'dc_installed_nameplate'], ''
+            );
+            output.marginal_cost_difference = technoeconomicSanitizeDistribution(
+                source.marginal_cost_difference
+            );
+            output.marginal_cost_timing = technoeconomicChoice(
+                source.marginal_cost_timing,
+                ['lifecycle_present_value', 'equivalent_annual'],
+                output.marginal_cost_timing
+            );
+            output.marginal_cost_unit = output.marginal_cost_timing === 'equivalent_annual'
+                ? 'constant_usd_per_year' : 'constant_usd';
+            output.transfer_method = 'direct_capacity_scaling';
+            output.transfer_rationale = technoeconomicText(source.transfer_rationale);
+            output.evidence = technoeconomicSanitizeEvidence(source.evidence);
+            return output;
+        }
+
         function sanitizeTechnoeconomicDraft(value) {
             const source = technoeconomicPlainObject(value);
             const fallback = technoeconomicDefaultDraft();
@@ -555,6 +630,9 @@
                 cost_lines: [], commercial_reference_design: {},
                 transfer_enabled: source.transfer_enabled === true,
                 commercial_transfer: technoeconomicSanitizeTransfer(source.commercial_transfer),
+                commercial_scaling: technoeconomicSanitizeCommercialScaling(
+                    source.commercial_scaling
+                ),
                 active_job_id: typeof source.active_job_id === 'string'
                     && source.active_job_id.length <= 200
                     && /^tea_[A-Za-z0-9._:-]+$/.test(source.active_job_id)
@@ -597,6 +675,13 @@
                 technoeconomicGuidedLine(draft, 'solaredge_om')?.distribution
             );
             const evidence = technoeconomicSanitizeEvidence(draft.project_life_evidence);
+            const commercial = technoeconomicSanitizeCommercialScaling(
+                draft.commercial_scaling
+            ) || technoeconomicDefaultCommercialScaling();
+            const commercialCost = technoeconomicGuidedDisplayDistribution(
+                commercial.marginal_cost_difference
+            );
+            const commercialEvidence = technoeconomicSanitizeEvidence(commercial.evidence);
             return {
                 cost_year: draft.cost_year,
                 project_life_years: draft.project_life_years,
@@ -621,6 +706,18 @@
                 assumption_note: evidence.acceptance_rationale
                     || evidence.citation.excerpt_or_derivation_note || '',
                 accepted: evidence.explicit_acceptance === true,
+                commercial_enabled: draft.commercial_scaling !== null,
+                commercial_target_capacity: commercial.target_capacity,
+                commercial_target_unit: commercial.target_capacity_unit,
+                commercial_rating_basis: commercial.target_rating_basis,
+                commercial_cost: commercialCost.central,
+                commercial_cost_low: commercialCost.low,
+                commercial_cost_high: commercialCost.high,
+                commercial_cost_timing: commercial.marginal_cost_timing,
+                commercial_rationale: commercial.transfer_rationale
+                    || commercialEvidence.acceptance_rationale
+                    || commercialEvidence.citation.excerpt_or_derivation_note || '',
+                commercial_accepted: commercialEvidence.explicit_acceptance === true,
             };
         }
 
@@ -716,11 +813,59 @@
             draft.commercial_reference_design = technoeconomicDefaultCommercialDesign();
             draft.transfer_enabled = false;
             draft.commercial_transfer = technoeconomicDefaultCommercialTransfer();
+            if (guided.commercial_enabled === true) {
+                const commercialRationale = technoeconomicText(guided.commercial_rationale);
+                const commercialAccepted = guided.commercial_accepted === true;
+                const timing = technoeconomicChoice(
+                    guided.commercial_cost_timing,
+                    ['lifecycle_present_value', 'equivalent_annual'],
+                    'lifecycle_present_value'
+                );
+                draft.commercial_scaling = {
+                    target_capacity: technoeconomicText(guided.commercial_target_capacity),
+                    target_capacity_unit: technoeconomicChoice(
+                        guided.commercial_target_unit, ['kw', 'mw'], 'mw'
+                    ),
+                    target_rating_basis: technoeconomicChoice(
+                        guided.commercial_rating_basis,
+                        ['', 'ac_operating_limit', 'dc_installed_nameplate'], ''
+                    ),
+                    marginal_cost_difference: technoeconomicGuidedDistribution(
+                        guided.commercial_cost,
+                        guided.commercial_cost_low,
+                        guided.commercial_cost_high
+                    ),
+                    marginal_cost_timing: timing,
+                    marginal_cost_unit: timing === 'equivalent_annual'
+                        ? 'constant_usd_per_year' : 'constant_usd',
+                    transfer_method: 'direct_capacity_scaling',
+                    transfer_rationale: commercialRationale,
+                    evidence: technoeconomicGuidedEvidence(
+                        commercialRationale, commercialAccepted, {
+                            subject: 'Commercial direct-capacity scaling and marginal-cost assumption',
+                            seed, date: options.date,
+                        }
+                    ),
+                };
+            } else {
+                draft.commercial_scaling = null;
+            }
             return sanitizeTechnoeconomicDraft(draft);
+        }
+
+        function technoeconomicDomElement(id) {
+            return typeof document === 'object' && typeof document.getElementById === 'function'
+                ? document.getElementById(id) : null;
         }
 
         function technoeconomicReadGuidedForm() {
             const read = (element) => element?.value || '';
+            const commercialEnabled = technoeconomicDomElement(
+                'technoeconomicGuidedCommercialEnabled'
+            );
+            const commercialAccept = technoeconomicDomElement(
+                'technoeconomicGuidedCommercialAccept'
+            );
             return {
                 cost_year: read(technoeconomicElements.guidedCostYear),
                 project_life_years: read(technoeconomicElements.guidedProjectLife),
@@ -744,6 +889,32 @@
                 solaredge_om_high: read(technoeconomicElements.guidedSolarEdgeOmHigh),
                 assumption_note: read(technoeconomicElements.guidedAssumptionNote),
                 accepted: technoeconomicElements.guidedAccept?.checked === true,
+                commercial_enabled: commercialEnabled?.checked === true,
+                commercial_target_capacity: read(technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialTargetCapacity'
+                )),
+                commercial_target_unit: read(technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialTargetUnit'
+                )),
+                commercial_rating_basis: read(technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialRatingBasis'
+                )),
+                commercial_cost: read(technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialCost'
+                )),
+                commercial_cost_low: read(technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialCostLow'
+                )),
+                commercial_cost_high: read(technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialCostHigh'
+                )),
+                commercial_cost_timing: read(technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialCostTiming'
+                )),
+                commercial_rationale: read(technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialRationale'
+                )),
+                commercial_accepted: commercialAccept?.checked === true,
             };
         }
 
@@ -810,6 +981,64 @@
                     message: 'Confirm the financial and lifecycle assumptions.',
                 });
             }
+            if (guided.commercial_enabled) {
+                for (const [key, label] of [
+                    ['commercial_target_capacity', 'Commercial target capacity'],
+                    ['commercial_target_unit', 'Commercial target capacity unit'],
+                    ['commercial_rating_basis', 'Commercial target rating basis'],
+                    ['commercial_cost', 'Commercial marginal cost difference'],
+                    ['commercial_cost_timing', 'Commercial marginal cost timing'],
+                    ['commercial_rationale', 'Commercial direct-scaling rationale'],
+                ]) {
+                    if (!technoeconomicText(guided[key]).trim()) {
+                        errors.push({path: label, message: 'Enter a value.'});
+                    }
+                }
+                const target = Number(guided.commercial_target_capacity);
+                if (technoeconomicText(guided.commercial_target_capacity).trim()
+                    && (!Number.isFinite(target) || !(target > 0))) {
+                    errors.push({
+                        path: 'Commercial target capacity',
+                        message: 'Enter a finite capacity greater than zero.',
+                    });
+                }
+                const hasLow = Boolean(technoeconomicText(guided.commercial_cost_low).trim());
+                const hasHigh = Boolean(technoeconomicText(guided.commercial_cost_high).trim());
+                if (hasLow !== hasHigh) {
+                    errors.push({
+                        path: 'Commercial marginal cost uncertainty',
+                        message: 'Provide both low and high, or leave both blank.',
+                    });
+                } else if (hasLow && hasHigh) {
+                    const low = Number(guided.commercial_cost_low);
+                    const central = Number(guided.commercial_cost);
+                    const high = Number(guided.commercial_cost_high);
+                    if ([low, central, high].every(Number.isFinite)
+                        && !(low <= central && central <= high)) {
+                        errors.push({
+                            path: 'Commercial marginal cost uncertainty',
+                            message: 'Use low <= central <= high.',
+                        });
+                    }
+                }
+                const sourceId = technoeconomicElements.sourceSelect?.value || '';
+                const source = technoeconomicSources.find(
+                    (item) => item?.source_annual_job_id === sourceId
+                );
+                const sourceBasis = technoeconomicSourceRatingBasis(source);
+                if (sourceBasis && guided.commercial_rating_basis !== sourceBasis) {
+                    errors.push({
+                        path: 'Commercial target rating basis',
+                        message: 'Match the selected Annual Simulation applied-capacity rating basis.',
+                    });
+                }
+                if (!guided.commercial_accepted) {
+                    errors.push({
+                        path: 'Commercial direct-scaling confirmation',
+                        message: 'Confirm the direct capacity-scaling rationale and rating basis.',
+                    });
+                }
+            }
             return errors;
         }
 
@@ -846,12 +1075,36 @@
             if (technoeconomicElements.guidedAccept) {
                 technoeconomicElements.guidedAccept.checked = guided.accepted;
             }
+            const commercialPairs = [
+                ['technoeconomicGuidedCommercialTargetCapacity', 'commercial_target_capacity'],
+                ['technoeconomicGuidedCommercialTargetUnit', 'commercial_target_unit'],
+                ['technoeconomicGuidedCommercialRatingBasis', 'commercial_rating_basis'],
+                ['technoeconomicGuidedCommercialCost', 'commercial_cost'],
+                ['technoeconomicGuidedCommercialCostLow', 'commercial_cost_low'],
+                ['technoeconomicGuidedCommercialCostHigh', 'commercial_cost_high'],
+                ['technoeconomicGuidedCommercialCostTiming', 'commercial_cost_timing'],
+                ['technoeconomicGuidedCommercialRationale', 'commercial_rationale'],
+            ];
+            commercialPairs.forEach(([elementId, valueKey]) => {
+                technoeconomicSetGuidedControl(
+                    technoeconomicDomElement(elementId), guided[valueKey]
+                );
+            });
+            const commercialEnabled = technoeconomicDomElement(
+                'technoeconomicGuidedCommercialEnabled'
+            );
+            if (commercialEnabled) commercialEnabled.checked = guided.commercial_enabled;
+            const commercialAccept = technoeconomicDomElement(
+                'technoeconomicGuidedCommercialAccept'
+            );
+            if (commercialAccept) commercialAccept.checked = guided.commercial_accepted;
             const hasRanges = pairs.some(([elementKey, valueKey]) =>
                 (elementKey.endsWith('Low') || elementKey.endsWith('High')) && guided[valueKey]
             );
             if (technoeconomicElements.guidedRanges) {
                 technoeconomicElements.guidedRanges.open = hasRanges;
             }
+            technoeconomicRenderGuidedCommercialControls();
             technoeconomicRenderGuidedEstimates();
         }
 
@@ -2495,6 +2748,75 @@
             }
         }
 
+        function technoeconomicSerializeCommercialScaling(
+            value, source, errors, context
+        ) {
+            if (value === null || value === undefined) return null;
+            const scaling = technoeconomicSanitizeCommercialScaling(value);
+            if (!scaling) return null;
+            const path = 'commercial_scaling';
+            const targetCapacity = technoeconomicFiniteNumber(
+                scaling.target_capacity, `${path}.target_capacity`, errors, {positive: true}
+            );
+            if (!['kw', 'mw'].includes(scaling.target_capacity_unit)) {
+                technoeconomicPushError(
+                    errors, `${path}.target_capacity_unit`, 'Select kW or MW.'
+                );
+            }
+            const multiplier = scaling.target_capacity_unit === 'mw' ? 1000000 : 1000;
+            if (targetCapacity !== null && !Number.isFinite(targetCapacity * multiplier)) {
+                technoeconomicPushError(
+                    errors, `${path}.target_capacity`,
+                    'The target capacity cannot be represented in watts.'
+                );
+            }
+            if (!['ac_operating_limit', 'dc_installed_nameplate'].includes(
+                scaling.target_rating_basis
+            )) {
+                technoeconomicPushError(
+                    errors, `${path}.target_rating_basis`,
+                    'Select AC operating limit or DC installed nameplate.'
+                );
+            }
+            const sourceBasis = technoeconomicSourceRatingBasis(source);
+            if (sourceBasis && scaling.target_rating_basis !== sourceBasis) {
+                technoeconomicPushError(
+                    errors, `${path}.target_rating_basis`,
+                    'The commercial target rating basis must match the frozen source applied-capacity rating basis.'
+                );
+            }
+            const marginalCost = technoeconomicSerializeDistribution(
+                scaling.marginal_cost_difference,
+                `${path}.marginal_cost_difference`, errors, 'signed_marginal_cost'
+            );
+            if (marginalCost.nonfixed) context.nonfixedPredictorCount += 1;
+            if (!['lifecycle_present_value', 'equivalent_annual'].includes(
+                scaling.marginal_cost_timing
+            )) {
+                technoeconomicPushError(
+                    errors, `${path}.marginal_cost_timing`,
+                    'Select lifecycle present value or equivalent annual timing.'
+                );
+            }
+            const marginalCostUnit = scaling.marginal_cost_timing === 'equivalent_annual'
+                ? 'constant_usd_per_year' : 'constant_usd';
+            return {
+                target_capacity: targetCapacity,
+                target_capacity_unit: scaling.target_capacity_unit,
+                target_rating_basis: scaling.target_rating_basis,
+                marginal_cost_difference: marginalCost.payload,
+                marginal_cost_timing: scaling.marginal_cost_timing,
+                marginal_cost_unit: marginalCostUnit,
+                transfer_method: 'direct_capacity_scaling',
+                transfer_rationale: technoeconomicStrictText(
+                    scaling.transfer_rationale, `${path}.transfer_rationale`, errors
+                ),
+                evidence: technoeconomicSerializeEvidence(
+                    scaling.evidence, `${path}.evidence`, errors, context
+                ),
+            };
+        }
+
         function serializeTechnoeconomicRequest(value, options = {}) {
             const draft = sanitizeTechnoeconomicDraft(value);
             const errors = [];
@@ -2573,6 +2895,21 @@
             const projectEvidence = technoeconomicSerializeEvidence(
                 draft.project_life_evidence, 'finance.project_life_evidence', errors, context
             );
+            const selectedSource = Array.isArray(options.sources)
+                ? options.sources.find((item) => item?.source_annual_job_id === sourceId) : null;
+            let commercialScaling = null;
+            if (draft.commercial_scaling !== null) {
+                if (draft.basis !== 'solartac_site'
+                    || draft.capacity_normalization !== TECHNOECONOMIC_APPLIED_CAPACITY_NORMALIZATION) {
+                    technoeconomicPushError(
+                        errors, 'commercial_scaling',
+                        'Commercial direct scaling requires the SolarTAC site applied-capacity basis.'
+                    );
+                }
+                commercialScaling = technoeconomicSerializeCommercialScaling(
+                    draft.commercial_scaling, selectedSource, errors, context
+                );
+            }
             let commercialDesign = null;
             let commercialTransfer = null;
             if (draft.basis === 'commercial_representative') {
@@ -2587,7 +2924,8 @@
                     'SolarTAC site requests cannot include commercial transfer.');
             }
             if (n !== null) {
-                const declaredInputs = serializedLines.length + 2 + (commercialTransfer ? 2 : 0);
+                const declaredInputs = serializedLines.length + 2
+                    + (commercialTransfer ? 2 : 0) + (commercialScaling ? 1 : 0);
                 const exportCells = n * (48 + declaredInputs);
                 if (exportCells > TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS) {
                     technoeconomicPushError(errors, 'n',
@@ -2621,6 +2959,7 @@
                 },
                 commercial_reference_design: commercialDesign,
                 commercial_transfer: commercialTransfer,
+                commercial_scaling: commercialScaling,
             };
             return {
                 payload,
@@ -2794,6 +3133,63 @@
             const limit = Number(operatingLimit.curtailment_limit_kw);
             return operatingLimit.curtailment_enabled === true
                 && Number.isFinite(limit) && limit > 0 ? limit : null;
+        }
+
+        function technoeconomicSourceRatingBasis(source) {
+            if (!source) return '';
+            const applied = technoeconomicPlainObject(source.applied_capacity);
+            const bases = ['solectria', 'solaredge'].map((system) =>
+                technoeconomicPlainObject(applied[system]).rating_basis
+            ).filter((basis) => ['ac_operating_limit', 'dc_installed_nameplate'].includes(basis));
+            if (bases.length === 2 && bases[0] === bases[1]) return bases[0];
+            return technoeconomicOperatingLimitKwac(source) !== null
+                ? 'ac_operating_limit' : 'dc_installed_nameplate';
+        }
+
+        function technoeconomicRatingBasisLabel(value) {
+            return value === 'ac_operating_limit'
+                ? 'AC operating limit' : value === 'dc_installed_nameplate'
+                    ? 'DC installed nameplate' : 'Unavailable';
+        }
+
+        function technoeconomicSyncGuidedCommercialSourceBasis(source) {
+            const select = technoeconomicDomElement(
+                'technoeconomicGuidedCommercialRatingBasis'
+            );
+            const status = technoeconomicDomElement(
+                'technoeconomicGuidedCommercialSourceBasis'
+            );
+            const sourceId = technoeconomicElements.sourceSelect?.value || '';
+            if (!source) {
+                if (select && !sourceId) select.value = '';
+                if (status) status.textContent = sourceId
+                    ? 'Refresh the saved Annual Simulation source to verify its rating basis.'
+                    : 'Select an Annual Simulation source to determine the matching applied-capacity basis.';
+                return;
+            }
+            const basis = technoeconomicSourceRatingBasis(source);
+            if (select) select.value = basis;
+            if (status) status.textContent = `${technoeconomicRatingBasisLabel(basis)} is required `
+                + 'because it is the selected source\'s frozen applied-capacity basis.';
+        }
+
+        function technoeconomicRenderGuidedCommercialControls() {
+            const enabled = technoeconomicDomElement(
+                'technoeconomicGuidedCommercialEnabled'
+            );
+            const fields = technoeconomicDomElement('technoeconomicGuidedCommercialFields');
+            const active = enabled?.checked === true;
+            if (enabled) enabled.setAttribute('aria-expanded', active ? 'true' : 'false');
+            if (fields) fields.hidden = !active;
+            const timing = technoeconomicDomElement(
+                'technoeconomicGuidedCommercialCostTiming'
+            )?.value;
+            const unit = timing === 'equivalent_annual' ? '/year' : 'total PV';
+            if (typeof document === 'object' && typeof document.querySelectorAll === 'function') {
+                document.querySelectorAll('.tea-commercial-cost-unit').forEach((element) => {
+                    element.textContent = unit;
+                });
+            }
         }
 
         function technoeconomicAppliedCapacity(source, system) {
@@ -3028,6 +3424,7 @@
             const guided = technoeconomicReadGuidedForm();
             technoeconomicSetGuidedEstimate('solectria', source, guided);
             technoeconomicSetGuidedEstimate('solaredge', source, guided);
+            technoeconomicRenderGuidedCommercialControls();
         }
 
         function technoeconomicRenderSelectedSource() {
@@ -3035,6 +3432,7 @@
             const source = technoeconomicSources.find((item) => item.source_annual_job_id === sourceId);
             const details = technoeconomicElements.sourceDetails;
             const energyRows = technoeconomicElements.sourceEnergyRows;
+            technoeconomicSyncGuidedCommercialSourceBasis(source);
             if (details) details.hidden = true;
             if (energyRows) energyRows.replaceChildren();
             if (!sourceId) {
@@ -3396,6 +3794,36 @@
                 payload.cost_lines.forEach((line, index) => {
                     items.push(technoeconomicReviewCostLine(line, index));
                 });
+                if (payload.commercial_scaling) {
+                    const scaling = payload.commercial_scaling;
+                    const capacityUnit = scaling.target_capacity_unit === 'mw' ? 'MW' : 'kW';
+                    const costUnit = scaling.marginal_cost_unit === 'constant_usd_per_year'
+                        ? 'constant USD/year' : 'constant USD';
+                    items.push(
+                        technoeconomicSummaryItem(
+                            'Commercial target capacity',
+                            `${technoeconomicFormatNumber(scaling.target_capacity, 6)} ${capacityUnit} `
+                                + `(${technoeconomicRatingBasisLabel(scaling.target_rating_basis)})`
+                        ),
+                        technoeconomicSummaryItem(
+                            'Commercial marginal cost difference',
+                            `${technoeconomicReviewDistribution(
+                                scaling.marginal_cost_difference
+                            )} ${costUnit}; ${technoeconomicHumanize(
+                                scaling.marginal_cost_timing
+                            )}`
+                        ),
+                        technoeconomicSummaryItem(
+                            'Commercial energy transfer',
+                            `${technoeconomicHumanize(scaling.transfer_method)}; `
+                                + scaling.transfer_rationale
+                        ),
+                        technoeconomicSummaryItem(
+                            'Commercial scaling evidence',
+                            technoeconomicReviewEvidence(scaling.evidence)
+                        )
+                    );
+                }
                 if (payload.commercial_reference_design) items.push(
                     technoeconomicSummaryItem('Commercial reference capacity',
                         `${technoeconomicFormatNumber(
@@ -3914,7 +4342,15 @@
         }
 
         function technoeconomicMetricUnit(metricName) {
-            if (metricName.includes('LCOE') || metricName.includes('lcoo')) return 'USD/kWh AC';
+            if (metricName === 'CommercialTargetCapacity_W') return 'W';
+            if (metricName.includes('LCOE') || metricName.includes('LCOO')
+                || metricName.includes('lcoo')) return 'USD/kWh AC';
+            if (metricName.startsWith('CommercialEquivalentAnnual')
+                && metricName.includes('Cost')) return 'USD/year';
+            if (metricName.startsWith('Commercial') && metricName.includes('Cost')) return 'USD';
+            if (metricName.startsWith('CommercialEquivalentAnnual')
+                && metricName.includes('Energy')) return 'kWh AC/year';
+            if (metricName.startsWith('Commercial') && metricName.includes('Energy')) return 'kWh AC';
             const applied = metricName.includes('per_applied_W')
                 || metricName.includes('PerAppliedW');
             if (applied && metricName.includes('AnnualCost')) return 'USD/applied W-year';
@@ -3952,8 +4388,12 @@
 
         function technoeconomicMetricCard(metricName, summary) {
             const card = technoeconomicNode('article', {className: 'tea-metric-card'});
+            const commercialLabel = TECHNOECONOMIC_COMMERCIAL_METRICS.find(
+                ([name]) => name === metricName
+            )?.[1];
             card.appendChild(technoeconomicNode('h4', {
-                text: TECHNOECONOMIC_METRIC_LABELS[metricName] || technoeconomicHumanize(metricName),
+                text: TECHNOECONOMIC_METRIC_LABELS[metricName]
+                    || commercialLabel || technoeconomicHumanize(metricName),
             }));
             const value = technoeconomicPlainObject(summary);
             if (value.status !== 'available') {
@@ -3985,6 +4425,91 @@
                 if (Object.prototype.hasOwnProperty.call(summaries, metricName)) {
                     root.appendChild(technoeconomicMetricCard(metricName, summaries[metricName]));
                 }
+            }
+        }
+
+        function technoeconomicCommercialMetricSummary(result, metricName) {
+            const summaries = technoeconomicPlainObject(result.summaries);
+            const candidates = [
+                metricName,
+                ...(TECHNOECONOMIC_COMMERCIAL_METRIC_ALIASES[metricName] || []),
+            ];
+            for (const candidate of candidates) {
+                if (Object.prototype.hasOwnProperty.call(summaries, candidate)) {
+                    return technoeconomicPlainObject(summaries[candidate]);
+                }
+            }
+            let directValue = null;
+            for (const candidate of candidates) {
+                if (Object.prototype.hasOwnProperty.call(result, candidate)) {
+                    directValue = result[candidate];
+                    break;
+                }
+            }
+            if (metricName === 'CommercialTargetCapacity_W'
+                && (directValue === null || directValue === undefined)) {
+                directValue = technoeconomicPlainObject(result.commercial_scaling).target_capacity_w;
+            }
+            const number = directValue === null || directValue === undefined || directValue === ''
+                ? NaN : Number(directValue);
+            if (Number.isFinite(number)) {
+                return {
+                    status: 'available', count: Number(result.realization_count) || 1,
+                    percentiles: {p5: number, p50: number, p95: number},
+                };
+            }
+            const scaling = technoeconomicPlainObject(result.commercial_scaling);
+            return {
+                status: 'unavailable', count: 0,
+                reason: result.commercial_marginal_lcoo_unavailable_reason
+                    || scaling.unavailable_reason || 'commercial_scaling_result_unavailable',
+                percentiles: {p5: null, p50: null, p95: null},
+            };
+        }
+
+        function technoeconomicRenderCommercialScaling(result) {
+            const section = technoeconomicDomElement('technoeconomicCommercialResults');
+            const root = technoeconomicDomElement('technoeconomicCommercialResultMetrics');
+            const status = technoeconomicDomElement('technoeconomicCommercialResultStatus');
+            if (!section || !root) return;
+            const summaries = technoeconomicPlainObject(result.summaries);
+            const scaling = technoeconomicPlainObject(result.commercial_scaling);
+            const requested = Object.keys(scaling).length > 0
+                || TECHNOECONOMIC_COMMERCIAL_METRICS.some(([metricName]) => [
+                    metricName,
+                    ...(TECHNOECONOMIC_COMMERCIAL_METRIC_ALIASES[metricName] || []),
+                ].some((candidate) => Object.prototype.hasOwnProperty.call(summaries, candidate)
+                    || Object.prototype.hasOwnProperty.call(result, candidate)));
+            root.replaceChildren();
+            section.hidden = !requested;
+            if (!requested) {
+                if (status) {
+                    status.textContent = '';
+                    delete status.dataset.state;
+                }
+                return;
+            }
+            const rendered = new Map();
+            for (const [metricName] of TECHNOECONOMIC_COMMERCIAL_METRICS) {
+                const summary = technoeconomicCommercialMetricSummary(result, metricName);
+                rendered.set(metricName, summary);
+                root.appendChild(technoeconomicMetricCard(metricName, summary));
+            }
+            if (status) {
+                const marginal = technoeconomicPlainObject(rendered.get(
+                    'CommercialMarginalLCOO_se_minus_sol_USD_per_kWh_AC'
+                ));
+                const unavailable = marginal.status !== 'available';
+                status.dataset.state = unavailable ? 'unavailable' : 'available';
+                status.textContent = unavailable
+                    ? `Commercial marginal LCOO unavailable: ${technoeconomicHumanize(
+                        marginal.reason
+                    )}. The target, energy, and cost fields retain their completed server evidence.`
+                    : `Commercial marginal LCOO is available using ${technoeconomicHumanize(
+                        scaling.marginal_cost_timing
+                    )} cost timing and the ${technoeconomicRatingBasisLabel(
+                        scaling.target_rating_basis
+                    )} capacity basis.`;
             }
         }
 
@@ -4333,6 +4858,27 @@
             technoeconomicDefinition(root, 'Submission provenance SHA-256',
                 job.submission_provenance_sha256 || resultProvenance.submission_provenance_sha256);
             technoeconomicDefinition(root, 'Completed at', job.completed_at);
+            const commercialScaling = technoeconomicPlainObject(result.commercial_scaling);
+            if (Object.keys(commercialScaling).length) {
+                const targetWatts = Number(commercialScaling.target_capacity_w);
+                technoeconomicDefinition(
+                    root, 'Commercial scaling target',
+                    Number.isFinite(targetWatts) && targetWatts > 0
+                        ? `${technoeconomicFormatNumber(targetWatts / 1000, 6)} kW `
+                            + `(${technoeconomicRatingBasisLabel(
+                                commercialScaling.target_rating_basis
+                            )})`
+                        : 'Unavailable'
+                );
+                technoeconomicDefinition(
+                    root, 'Commercial marginal-cost timing',
+                    technoeconomicHumanize(commercialScaling.marginal_cost_timing)
+                );
+                technoeconomicDefinition(
+                    root, 'Commercial transfer method',
+                    technoeconomicHumanize(commercialScaling.transfer_method)
+                );
+            }
             const counts = technoeconomicPlainObject(result.evidence_class_counts);
             for (const evidenceClass of TECHNOECONOMIC_EVIDENCE_CLASSES.map((item) => item[0])) {
                 if (Object.prototype.hasOwnProperty.call(counts, evidenceClass)) {
@@ -4444,6 +4990,7 @@
             }
             technoeconomicRenderDecision(result);
             technoeconomicRenderResultSummary(job, result);
+            technoeconomicRenderCommercialScaling(result);
             technoeconomicRenderMetrics(result);
             technoeconomicRenderTradeoffs(result);
             technoeconomicRenderPerYear(result);
@@ -4549,6 +5096,19 @@
                 technoeconomicElements.sensitivityBody, technoeconomicElements.convergenceBody,
                 technoeconomicElements.provenance,
             ]) root?.replaceChildren();
+            const commercialSection = technoeconomicDomElement('technoeconomicCommercialResults');
+            const commercialMetrics = technoeconomicDomElement(
+                'technoeconomicCommercialResultMetrics'
+            );
+            const commercialStatus = technoeconomicDomElement(
+                'technoeconomicCommercialResultStatus'
+            );
+            if (commercialSection) commercialSection.hidden = true;
+            commercialMetrics?.replaceChildren();
+            if (commercialStatus) {
+                commercialStatus.textContent = '';
+                delete commercialStatus.dataset.state;
+            }
             if (technoeconomicElements.convergenceStatus) {
                 technoeconomicElements.convergenceStatus.textContent = '';
             }
@@ -4615,16 +5175,28 @@
             applyTechnoeconomicFormState(localDraft || technoeconomicDefaultDraft());
             technoeconomicElements.form.addEventListener('submit', technoeconomicOpenConfirmation);
             technoeconomicElements.form.addEventListener('input', (event) => {
+                const commercialAccept = technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialAccept'
+                );
+                const guidedDependency = technoeconomicElements.guidedPanel?.contains(event.target)
+                    || event.target === technoeconomicElements.sourceSelect;
                 if (technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE
-                    && (technoeconomicElements.guidedPanel?.contains(event.target)
-                        || event.target === technoeconomicElements.sourceSelect)) {
+                    && guidedDependency) {
                     technoeconomicCloseStaleAdvancedPreview();
                 }
                 if (technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE
-                    && technoeconomicElements.guidedPanel?.contains(event.target)
+                    && guidedDependency
                     && event.target !== technoeconomicElements.guidedAccept
+                    && event.target !== commercialAccept
                     && technoeconomicElements.guidedAccept?.checked) {
                     technoeconomicElements.guidedAccept.checked = false;
+                }
+                if (technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE
+                    && guidedDependency
+                    && event.target !== technoeconomicElements.guidedAccept
+                    && event.target !== commercialAccept
+                    && commercialAccept?.checked) {
+                    commercialAccept.checked = false;
                 }
                 if (technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE
                     && technoeconomicElements.advancedDetails?.contains(event.target)) {
@@ -4659,6 +5231,11 @@
                         )
                     );
                 }
+                if (event.target === technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialEnabled'
+                ) || event.target === technoeconomicDomElement(
+                    'technoeconomicGuidedCommercialCostTiming'
+                )) technoeconomicRenderGuidedCommercialControls();
                 technoeconomicMarkDraftChanged();
             });
             technoeconomicElements.costLines?.addEventListener('click', (event) => {

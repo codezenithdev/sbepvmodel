@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+import math
 import re
 from typing import Annotated, Any, Literal
 
@@ -199,6 +200,9 @@ FinitePositiveFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 # weakening the pre-enqueue resource gate.  Every declared distribution is also
 # exported as a realization column, including fixed inputs.
 TECHNOECONOMIC_REALIZATION_COLUMN_OVERHEAD = 48
+# V3 emits eight additional fixed commercial-scaling result/audit columns.  Keep
+# this incremental so v1/v2 admission behavior remains byte-for-byte compatible.
+TECHNOECONOMIC_COMMERCIAL_SCALING_REALIZATION_COLUMN_OVERHEAD = 8
 TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS = 8_000_000
 # Forward stepwise rank regression repeatedly fits expanding predictor sets.  The
 # deterministic n*p^2 gate is a conservative lower-bound proxy for that work.
@@ -638,6 +642,46 @@ class CommercialEnergyTransferRequest(StrictTechnoeconomicRequest):
         return self
 
 
+class CommercialScalingRequest(StrictTechnoeconomicRequest):
+    """Directly scale the frozen SolarTAC marginal energy to a target size."""
+
+    target_capacity: FinitePositiveFloat
+    target_capacity_unit: Literal["kw", "mw"]
+    target_rating_basis: Literal[
+        "ac_operating_limit",
+        "dc_installed_nameplate",
+    ]
+    marginal_cost_difference: TechnoeconomicDistributionRequest
+    marginal_cost_timing: Literal[
+        "lifecycle_present_value",
+        "equivalent_annual",
+    ]
+    marginal_cost_unit: Literal[
+        "constant_usd",
+        "constant_usd_per_year",
+    ]
+    transfer_method: Literal["direct_capacity_scaling"]
+    transfer_rationale: NonemptyTechnoeconomicText
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_commercial_scaling_contract(self) -> "CommercialScalingRequest":
+        expected_unit = (
+            "constant_usd"
+            if self.marginal_cost_timing == "lifecycle_present_value"
+            else "constant_usd_per_year"
+        )
+        if self.marginal_cost_unit != expected_unit:
+            raise ValueError(
+                f"{self.marginal_cost_timing} marginal cost requires "
+                f"marginal_cost_unit={expected_unit!r}"
+            )
+        multiplier = 1_000.0 if self.target_capacity_unit == "kw" else 1_000_000.0
+        if not math.isfinite(self.target_capacity * multiplier):
+            raise ValueError("commercial target capacity is not representable in watts")
+        return self
+
+
 class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
     source_annual_job_id: Annotated[
         str,
@@ -653,6 +697,7 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
     shared_degradation: SharedDegradationRequest
     commercial_reference_design: CommercialReferenceDesignRequest | None = None
     commercial_transfer: CommercialEnergyTransferRequest | None = None
+    commercial_scaling: CommercialScalingRequest | None = None
 
     @model_validator(mode="after")
     def validate_submission_contract(self) -> "TechnoeconomicSubmissionRequest":
@@ -664,6 +709,7 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
             "energy.shared-degradation",
             "transfer.baseline",
             "transfer.incremental",
+            "commercial.marginal-cost-difference",
             "weather.year",
         }
         collision = reserved & set(input_ids)
@@ -714,7 +760,19 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                     "legacy SolarTAC site costs must be source totals normalized "
                     "by frozen Wdc"
                 )
+            if self.commercial_scaling is not None and (
+                self.capacity_normalization
+                != ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+            ):
+                raise ValueError(
+                    "commercial_scaling requires SolarTAC "
+                    "capacity_normalization='annual_applied_capacity_v1'"
+                )
         else:
+            if self.commercial_scaling is not None:
+                raise ValueError(
+                    "commercial_scaling is only valid for the SolarTAC site basis"
+                )
             if self.capacity_normalization is not None:
                 raise ValueError(
                     "commercial_representative must not declare SolarTAC capacity normalization"
@@ -743,9 +801,15 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
         declared_input_count = len(self.cost_lines) + 2
         if self.commercial_transfer is not None:
             declared_input_count += 2
+        if self.commercial_scaling is not None:
+            declared_input_count += 1
         estimated_realization_columns = (
             TECHNOECONOMIC_REALIZATION_COLUMN_OVERHEAD + declared_input_count
         )
+        if self.commercial_scaling is not None:
+            estimated_realization_columns += (
+                TECHNOECONOMIC_COMMERCIAL_SCALING_REALIZATION_COLUMN_OVERHEAD
+            )
         realization_export_cells = self.n * estimated_realization_columns
         if realization_export_cells > TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS:
             raise ValueError(
@@ -768,6 +832,8 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                     self.commercial_transfer.incremental_factor.distribution,
                 )
             )
+        if self.commercial_scaling is not None:
+            distributions.append(self.commercial_scaling.marginal_cost_difference)
         nonfixed_predictor_count = sum(
             distribution.family != "fixed"
             and not (
@@ -797,6 +863,7 @@ __all__ = [
     "COMMERCIAL_TRANSFER_MECHANISMS",
     "CommercialEnergyTransferRequest",
     "CommercialReferenceDesignRequest",
+    "CommercialScalingRequest",
     "CommercialTechnologyDesignRequest",
     "CommercialTransferMechanismRequest",
     "CurrencyYearNormalizationRequest",

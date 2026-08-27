@@ -335,6 +335,94 @@
                                 </div>
                             </details>
 
+                            <section class="tea-guided-commercial" id="technoeconomicGuidedCommercial" aria-labelledby="technoeconomicGuidedCommercialHeading">
+                                <div class="tea-subsection-heading">
+                                    <div>
+                                        <span class="tea-system-eyebrow">Optional commercial scaling</span>
+                                        <h4 id="technoeconomicGuidedCommercialHeading">Scale the SolarEdge-minus-Solectria energy difference</h4>
+                                    </div>
+                                    <p>Use the selected Annual Simulation's applied-capacity basis.</p>
+                                </div>
+                                <label class="tea-switch-row" for="technoeconomicGuidedCommercialEnabled">
+                                    <input id="technoeconomicGuidedCommercialEnabled" type="checkbox" aria-controls="technoeconomicGuidedCommercialFields" aria-expanded="false" aria-describedby="technoeconomicGuidedCommercialEnableHelp">
+                                    <span>
+                                        <strong>Calculate a commercial marginal energy difference and marginal LCOO</strong>
+                                        <small id="technoeconomicGuidedCommercialEnableHelp">The server normalizes each source system's energy by its frozen applied capacity, scales the specific SolarEdge-minus-Solectria difference to the target capacity, and uses the separately entered marginal cost.</small>
+                                    </span>
+                                </label>
+                                <div class="tea-guided-commercial-fields" id="technoeconomicGuidedCommercialFields" hidden>
+                                    <div class="tea-guided-commercial-grid">
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedCommercialTargetCapacity">Commercial target capacity</label>
+                                            <div class="tea-capacity-input-group">
+                                                <input id="technoeconomicGuidedCommercialTargetCapacity" type="number" min="0" step="any" inputmode="decimal" aria-describedby="technoeconomicGuidedCommercialTargetHelp">
+                                                <label class="sr-only" for="technoeconomicGuidedCommercialTargetUnit">Target capacity unit</label>
+                                                <select id="technoeconomicGuidedCommercialTargetUnit" aria-describedby="technoeconomicGuidedCommercialTargetHelp">
+                                                    <option value="kw">kW</option>
+                                                    <option value="mw">MW</option>
+                                                </select>
+                                            </div>
+                                            <p class="tea-field-help" id="technoeconomicGuidedCommercialTargetHelp">Enter the rated capacity of the commercial system. The value is dynamic and is never inferred from an example.</p>
+                                        </div>
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedCommercialRatingBasis">Target capacity rating basis</label>
+                                            <select id="technoeconomicGuidedCommercialRatingBasis" aria-describedby="technoeconomicGuidedCommercialSourceBasis">
+                                                <option value="">Select the source-matched basis</option>
+                                                <option value="ac_operating_limit">AC operating limit</option>
+                                                <option value="dc_installed_nameplate">DC installed nameplate</option>
+                                            </select>
+                                            <p class="tea-field-help" id="technoeconomicGuidedCommercialSourceBasis" role="status" aria-live="polite">Select an Annual Simulation source to determine the matching applied-capacity basis.</p>
+                                        </div>
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedCommercialCostTiming">Marginal cost timing</label>
+                                            <select id="technoeconomicGuidedCommercialCostTiming" aria-describedby="technoeconomicGuidedCommercialCostTimingHelp">
+                                                <option value="lifecycle_present_value">Lifecycle present value</option>
+                                                <option value="equivalent_annual">Equivalent annual</option>
+                                            </select>
+                                            <p class="tea-field-help" id="technoeconomicGuidedCommercialCostTimingHelp">Timing determines whether the signed marginal cost is constant USD or constant USD/year and which consistently timed energy delta is used.</p>
+                                        </div>
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedCommercialCost">Signed marginal cost difference · central</label>
+                                            <div class="tea-input-with-unit tea-input-with-unit-both">
+                                                <span class="tea-unit-prefix" aria-hidden="true">$</span>
+                                                <input id="technoeconomicGuidedCommercialCost" type="number" step="any" inputmode="decimal" aria-describedby="technoeconomicGuidedCommercialCostHelp">
+                                                <span class="tea-unit-suffix tea-commercial-cost-unit" id="technoeconomicGuidedCommercialCostUnit" aria-hidden="true">total PV</span>
+                                            </div>
+                                            <p class="tea-field-help" id="technoeconomicGuidedCommercialCostHelp">Enter SolarEdge minus Solectria. Negative, zero, and positive values are supported.</p>
+                                        </div>
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedCommercialCostLow">Signed marginal cost · low <span class="tea-optional-label">Optional</span></label>
+                                            <div class="tea-input-with-unit tea-input-with-unit-both">
+                                                <span class="tea-unit-prefix" aria-hidden="true">$</span>
+                                                <input id="technoeconomicGuidedCommercialCostLow" type="number" step="any" inputmode="decimal" aria-describedby="technoeconomicGuidedCommercialCostRangeHelp">
+                                                <span class="tea-unit-suffix tea-commercial-cost-unit" aria-hidden="true">total PV</span>
+                                            </div>
+                                        </div>
+                                        <div class="tea-field">
+                                            <label for="technoeconomicGuidedCommercialCostHigh">Signed marginal cost · high <span class="tea-optional-label">Optional</span></label>
+                                            <div class="tea-input-with-unit tea-input-with-unit-both">
+                                                <span class="tea-unit-prefix" aria-hidden="true">$</span>
+                                                <input id="technoeconomicGuidedCommercialCostHigh" type="number" step="any" inputmode="decimal" aria-describedby="technoeconomicGuidedCommercialCostRangeHelp">
+                                                <span class="tea-unit-suffix tea-commercial-cost-unit" aria-hidden="true">total PV</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="tea-field-help" id="technoeconomicGuidedCommercialCostRangeHelp">Provide both low and high to create a triangular uncertainty distribution, with low ≤ central ≤ high.</p>
+                                    <div class="tea-field tea-guided-commercial-rationale">
+                                        <label for="technoeconomicGuidedCommercialRationale">Direct-scaling rationale and evidence</label>
+                                        <textarea id="technoeconomicGuidedCommercialRationale" rows="3" maxlength="4000" aria-describedby="technoeconomicGuidedCommercialRationaleHelp" placeholder="Explain why direct applied-capacity scaling is appropriate and identify the source for the commercial marginal cost."></textarea>
+                                        <p class="tea-field-help" id="technoeconomicGuidedCommercialRationaleHelp">This statement becomes the preserved provisional evidence and transfer rationale for the commercial-scaling request.</p>
+                                    </div>
+                                    <label class="tea-checkbox-row tea-guided-commercial-acceptance" for="technoeconomicGuidedCommercialAccept">
+                                        <input id="technoeconomicGuidedCommercialAccept" type="checkbox" aria-describedby="technoeconomicGuidedCommercialAcceptanceHelp">
+                                        <span>
+                                            <strong>I confirm direct capacity scaling is appropriate for this target and rating basis.</strong>
+                                            <small id="technoeconomicGuidedCommercialAcceptanceHelp">I reviewed the source and target rating basis, accept the stated transfer rationale, and understand that the commercial marginal cost is a separate user-provided input.</small>
+                                        </span>
+                                    </label>
+                                </div>
+                            </section>
+
                             <div class="tea-field tea-guided-assumption-note">
                                 <label for="technoeconomicGuidedAssumptionNote">Financial assumption source or justification</label>
                                 <textarea id="technoeconomicGuidedAssumptionNote" rows="3" maxlength="4000" aria-describedby="technoeconomicGuidedAssumptionNoteHelp" placeholder="Identify the budget, quote, estimate, or reasoning behind these financial assumptions." required></textarea>
@@ -393,6 +481,18 @@
                                     <p class="tea-decision-caveat" id="technoeconomicDecisionCaveat"></p>
                                 </div>
                                 <div class="tea-decision-grid" id="technoeconomicDecisionMetrics" aria-label="Key decision measures"></div>
+                            </section>
+
+                            <section class="tea-result-section tea-commercial-result-section" id="technoeconomicCommercialResults" aria-labelledby="technoeconomicCommercialResultsHeading" hidden>
+                                <div class="tea-section-heading">
+                                    <div>
+                                        <p class="tea-step-label">Commercial scaling</p>
+                                        <h3 id="technoeconomicCommercialResultsHeading">Commercial marginal energy and LCOO</h3>
+                                        <p>Target capacity, scaled SolarEdge-minus-Solectria energy, consistently timed marginal cost, and marginal LCOO come from the completed server run.</p>
+                                    </div>
+                                </div>
+                                <p class="tea-commercial-result-status" id="technoeconomicCommercialResultStatus" role="status" aria-live="polite"></p>
+                                <div class="tea-metric-grid tea-commercial-metric-grid" id="technoeconomicCommercialResultMetrics" aria-label="Commercial marginal scaling results"></div>
                             </section>
 
                             <section class="tea-result-section tea-driver-section" aria-labelledby="technoeconomicDriversHeading">
@@ -574,6 +674,7 @@
                                 <h3 id="technoeconomicFormulaHeading">LCOE and LCOO formulas</h3>
                                 <p><strong>LCOE</strong> = discounted lifecycle cost / discounted lifecycle AC energy.</p>
                                 <p><strong>LCOO</strong> = (SolarEdge lifecycle cost − Solectria lifecycle cost) / (SolarEdge lifecycle AC energy − Solectria lifecycle AC energy).</p>
+                                <p><strong>Commercial marginal LCOO</strong> = user-provided commercial marginal cost difference / consistently timed commercial energy difference scaled from the source-specific kWh per applied kW difference.</p>
                                 <p class="tea-formula-note">LCOO is reported only where its energy-change denominator is valid under the calculation contract.</p>
                             </section>
                         </section>

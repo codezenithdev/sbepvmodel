@@ -53,6 +53,13 @@ APPLIED_CSV_FORMAT_VERSION = "technoeconomic-csv-v2"
 APPLIED_CSV_BUNDLE_SCHEMA_VERSION = "technoeconomic-csv-bundle-v2"
 APPLIED_XLSX_SCHEMA_VERSION = "technoeconomic-xlsx-v2"
 
+COMMERCIAL_SCALING_EXPORT_MANIFEST_SCHEMA_VERSION = (
+    "technoeconomic-exports-manifest-v3"
+)
+COMMERCIAL_SCALING_CSV_FORMAT_VERSION = "technoeconomic-csv-v3"
+COMMERCIAL_SCALING_CSV_BUNDLE_SCHEMA_VERSION = "technoeconomic-csv-bundle-v3"
+COMMERCIAL_SCALING_XLSX_SCHEMA_VERSION = "technoeconomic-xlsx-v3"
+
 CSV_BUNDLE_FILENAME = "technoeconomic-results-csv-v1.zip"
 XLSX_FILENAME = "technoeconomic-results-v1.xlsx"
 CDF_PLOT_FILENAME = "technoeconomic-cdf-v1.png"
@@ -84,6 +91,19 @@ def export_contract_versions(calculation_contract_version: str) -> dict[str, str
             # unchanged.  The v2 manifest/calculation binding and XLSX schema
             # carry the applied-capacity semantics without mis-versioning either
             # byte-format algorithm.
+            "png": PNG_SCHEMA_VERSION,
+            "xlsx_logical_hash": XLSX_LOGICAL_HASH_VERSION,
+        }
+    if (
+        calculation_contract_version
+        == technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
+    ):
+        return {
+            "manifest": COMMERCIAL_SCALING_EXPORT_MANIFEST_SCHEMA_VERSION,
+            "csv_format": COMMERCIAL_SCALING_CSV_FORMAT_VERSION,
+            "csv_bundle": COMMERCIAL_SCALING_CSV_BUNDLE_SCHEMA_VERSION,
+            "csv_bundle_manifest_filename": "csv-bundle-manifest-v3.json",
+            "xlsx": COMMERCIAL_SCALING_XLSX_SCHEMA_VERSION,
             "png": PNG_SCHEMA_VERSION,
             "xlsx_logical_hash": XLSX_LOGICAL_HASH_VERSION,
         }
@@ -530,12 +550,20 @@ def _verify_routine_result(
     calculation_contract_version = submission_provenance.get(
         "calculation_contract_version"
     )
-    applied_capacity_contract = (
+    commercial_scaling_contract = (
         calculation_contract_version
-        == technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
+        == technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
     )
+    applied_capacity_contract = calculation_contract_version in {
+        technoeconomic_kernel.CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+    }
     expected = {
-        "schema_version": 2 if applied_capacity_contract else 1,
+        "schema_version": (
+            3
+            if commercial_scaling_contract
+            else (2 if applied_capacity_contract else 1)
+        ),
         "calculation_contract_version": submission_provenance.get(
             "calculation_contract_version"
         ),
@@ -583,6 +611,29 @@ def _verify_routine_result(
                 "rating_basis": authority[system].get("rating_basis"),
             }
             for system in ("solaredge", "solectria")
+        }
+    if commercial_scaling_contract:
+        scaling = request_payload.get("commercial_scaling") or {}
+        if not isinstance(scaling, Mapping):
+            raise TechnoeconomicExportError(
+                "Frozen commercial-scaling request is invalid"
+            )
+        unit_multiplier = {"kw": 1_000.0, "mw": 1_000_000.0}.get(
+            scaling.get("target_capacity_unit")
+        )
+        if unit_multiplier is None:
+            raise TechnoeconomicExportError(
+                "Frozen commercial target-capacity unit is invalid"
+            )
+        expected["commercial_scaling"] = {
+            "target_capacity_w": float(scaling.get("target_capacity"))
+            * unit_multiplier,
+            "target_rating_basis": scaling.get("target_rating_basis"),
+            "marginal_cost_input_id": (
+                technoeconomic_kernel.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID
+            ),
+            "marginal_cost_timing": scaling.get("marginal_cost_timing"),
+            "transfer_method": scaling.get("transfer_method"),
         }
     for key in expected:
         if key not in routine_result:
@@ -933,6 +984,33 @@ def _input_rows(
             applied_capacity_contract=applied_capacity_contract,
         ),
     )
+    commercial_scaling = request.get("commercial_scaling")
+    if isinstance(commercial_scaling, Mapping):
+        marginal_unit = commercial_scaling.get("marginal_cost_unit")
+        yield (
+            technoeconomic_kernel.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID,
+            "commercial_marginal_cost",
+            "Commercial marginal cost difference, SolarEdge minus Solectria",
+            "se_minus_sol",
+            commercial_scaling.get("marginal_cost_timing"),
+            marginal_unit,
+            *_distribution_columns(
+                commercial_scaling.get("marginal_cost_difference") or {}
+            ),
+            marginal_unit,
+            marginal_unit,
+            commercial_scaling.get("transfer_method"),
+            finance.get("constant_dollar_cost_year"),
+            *_currency_normalization_columns(None),
+            *_coverage_columns([]),
+            *_coverage_columns([]),
+            *_evidence_columns(commercial_scaling.get("evidence")),
+            *_input_contract_columns(request),
+            *_input_normalization_receipt_columns(
+                None,
+                applied_capacity_contract=applied_capacity_contract,
+            ),
+        )
     transfer = request.get("commercial_transfer")
     reference_design = request.get("commercial_reference_design")
     if isinstance(reference_design, Mapping):
@@ -1879,7 +1957,10 @@ def _metric_fields_for_result(
     contract_version = routine_result.get("calculation_contract_version")
     if contract_version == technoeconomic_kernel.LEGACY_CALCULATION_CONTRACT_VERSION:
         return technoeconomic_kernel.LEGACY_METRIC_FIELDS
-    if contract_version == technoeconomic_kernel.CALCULATION_CONTRACT_VERSION:
+    if contract_version in {
+        technoeconomic_kernel.CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+    }:
         return technoeconomic_kernel.APPLIED_METRIC_FIELDS
     raise TechnoeconomicExportError(
         f"Unsupported calculation contract in routine result: {contract_version!r}"
@@ -1894,10 +1975,12 @@ def _build_checks(
 ) -> list[tuple[Any, ...]]:
     checks: list[tuple[Any, ...]] = []
     fields = _metric_fields_for_result(routine_result)
-    applied_capacity_contract = (
-        routine_result.get("calculation_contract_version")
-        == technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
-    )
+    applied_capacity_contract = routine_result.get(
+        "calculation_contract_version"
+    ) in {
+        technoeconomic_kernel.CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+    }
     expected_rows = routine_result.get("realization_count")
     if not isinstance(expected_rows, int) or isinstance(expected_rows, bool):
         raise TechnoeconomicExportError("Routine result realization count is invalid")
@@ -2495,6 +2578,276 @@ def _build_checks(
                     notes="Commercial reference total divided by declared reference Wdc ties out.",
                 )
             )
+    if (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
+    ):
+        commercial_names = (
+            technoeconomic_kernel.COMMERCIAL_FIELD_TARGET_CAPACITY,
+            technoeconomic_kernel.COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY,
+            technoeconomic_kernel.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY,
+            technoeconomic_kernel.COMMERCIAL_FIELD_EA_DELTA_ENERGY,
+            technoeconomic_kernel.COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST,
+            technoeconomic_kernel.COMMERCIAL_FIELD_EA_MARGINAL_COST,
+            technoeconomic_kernel.COMMERCIAL_FIELD_MARGINAL_LCOO,
+            technoeconomic_kernel.COMMERCIAL_FIELD_MARGINAL_LCOO_REASON,
+        )
+        missing = [name for name in commercial_names if name not in calculation.by_name]
+        if missing:
+            raise TechnoeconomicExportError(
+                f"Commercial-scaling realization fields are missing: {missing!r}"
+            )
+        scaling = routine_result.get("commercial_scaling") or {}
+        receipt = submission_provenance.get("commercial_scaling_receipt") or {}
+        if not isinstance(scaling, Mapping) or not isinstance(receipt, Mapping):
+            raise TechnoeconomicExportError(
+                "Commercial-scaling result or immutable receipt is invalid"
+            )
+        target_w = float(scaling.get("target_capacity_w"))
+        checks.append(
+            _numeric_check(
+                "commercial_target_capacity_receipt",
+                target_w,
+                float(receipt.get("target_capacity_w")),
+                tolerance=0.0,
+                notes="Canonical target watts equal the immutable submission receipt.",
+            )
+        )
+        checks.append(
+            (
+                "commercial_target_rating_basis_receipt",
+                scaling.get("target_rating_basis"),
+                receipt.get("target_rating_basis"),
+                None,
+                None,
+                "OK"
+                if scaling.get("target_rating_basis")
+                == receipt.get("target_rating_basis")
+                else "FAIL",
+                "Commercial target and frozen source use the receipt-bound rating basis.",
+            )
+        )
+        target_column = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_FIELD_TARGET_CAPACITY
+            ],
+            dtype=np.float64,
+        )
+        checks.append(
+            _numeric_check(
+                "commercial_target_capacity_realizations",
+                float(np.max(np.abs(target_column - target_w))),
+                0.0,
+                tolerance=0.0,
+                notes="Every realization uses the frozen commercial target capacity.",
+            )
+        )
+        commercial_energy_pairs = (
+            (
+                "commercial_year1_energy_scaling",
+                technoeconomic_kernel.COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY,
+                fields.year1_delta,
+            ),
+            (
+                "commercial_lifecycle_energy_scaling",
+                technoeconomic_kernel.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY,
+                fields.delta_energy,
+            ),
+            (
+                "commercial_equivalent_annual_energy_scaling",
+                technoeconomic_kernel.COMMERCIAL_FIELD_EA_DELTA_ENERGY,
+                fields.delta_ea_energy,
+            ),
+        )
+        for check_id, commercial_name, normalized_name in commercial_energy_pairs:
+            commercial_values = np.asarray(
+                calculation.by_name[commercial_name], dtype=np.float64
+            )
+            normalized_values = np.asarray(
+                calculation.by_name[normalized_name], dtype=np.float64
+            )
+            error = float(
+                np.max(np.abs(commercial_values - normalized_values * target_w))
+            )
+            checks.append(
+                _numeric_check(
+                    check_id,
+                    error,
+                    0.0,
+                    tolerance=_binary64_tie_out_tolerance(commercial_values),
+                    notes="Commercial energy equals normalized source authority times target watts.",
+                )
+            )
+        commercial_lifecycle_cost = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST
+            ],
+            dtype=np.float64,
+        )
+        commercial_ea_cost = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_FIELD_EA_MARGINAL_COST
+            ],
+            dtype=np.float64,
+        )
+        marginal_cost_sample_name = (
+            "SampledInput::"
+            f"{technoeconomic_kernel.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID}"
+        )
+        if marginal_cost_sample_name not in calculation.by_name:
+            raise TechnoeconomicExportError(
+                "The sampled commercial marginal-cost authority is missing"
+            )
+        marginal_cost_sample = np.asarray(
+            calculation.by_name[marginal_cost_sample_name], dtype=np.float64
+        )
+        marginal_cost_timing = receipt.get("marginal_cost_timing")
+        if marginal_cost_timing == "lifecycle_present_value":
+            authoritative_cost = commercial_lifecycle_cost
+            authoritative_cost_field = (
+                technoeconomic_kernel.COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST
+            )
+        elif marginal_cost_timing == "equivalent_annual":
+            authoritative_cost = commercial_ea_cost
+            authoritative_cost_field = (
+                technoeconomic_kernel.COMMERCIAL_FIELD_EA_MARGINAL_COST
+            )
+        else:
+            raise TechnoeconomicExportError(
+                "The commercial marginal-cost timing receipt is invalid"
+            )
+        sampled_cost_error = float(
+            np.max(np.abs(authoritative_cost - marginal_cost_sample))
+        )
+        checks.append(
+            _numeric_check(
+                "commercial_marginal_cost_sampled_input_authority",
+                sampled_cost_error,
+                0.0,
+                tolerance=_binary64_tie_out_tolerance(authoritative_cost),
+                notes=(
+                    "The sampled commercial marginal-cost input equals the receipt-"
+                    f"selected authoritative {authoritative_cost_field} field."
+                ),
+            )
+        )
+        cost_transform_error = float(
+            np.max(np.abs(commercial_ea_cost - crf * commercial_lifecycle_cost))
+        )
+        checks.append(
+            _numeric_check(
+                "commercial_marginal_cost_crf_transform",
+                cost_transform_error,
+                0.0,
+                tolerance=_binary64_tie_out_tolerance(commercial_ea_cost),
+                notes="Equivalent-annual commercial marginal cost equals CRF times lifecycle present value.",
+            )
+        )
+        commercial_lifecycle_energy = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY
+            ],
+            dtype=np.float64,
+        )
+        commercial_ea_energy = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_FIELD_EA_DELTA_ENERGY
+            ],
+            dtype=np.float64,
+        )
+        commercial_lcoo = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_FIELD_MARGINAL_LCOO
+            ],
+            dtype=np.float64,
+        )
+        commercial_ratio_mask = np.isfinite(commercial_lcoo)
+        lifecycle_ratio_error = (
+            float(
+                np.max(
+                    np.abs(
+                        commercial_lcoo[commercial_ratio_mask]
+                        - commercial_lifecycle_cost[commercial_ratio_mask]
+                        / commercial_lifecycle_energy[commercial_ratio_mask]
+                    )
+                )
+            )
+            if commercial_ratio_mask.any()
+            else 0.0
+        )
+        annual_ratio_error = (
+            float(
+                np.max(
+                    np.abs(
+                        commercial_lcoo[commercial_ratio_mask]
+                        - commercial_ea_cost[commercial_ratio_mask]
+                        / commercial_ea_energy[commercial_ratio_mask]
+                    )
+                )
+            )
+            if commercial_ratio_mask.any()
+            else 0.0
+        )
+        checks.append(
+            _numeric_check(
+                "commercial_marginal_lcoo_lifecycle_ratio",
+                lifecycle_ratio_error,
+                0.0,
+                tolerance=_binary64_tie_out_tolerance(commercial_lcoo),
+                notes="Commercial marginal LCOO equals lifecycle marginal cost divided by scaled lifecycle energy.",
+            )
+        )
+        checks.append(
+            _numeric_check(
+                "commercial_marginal_lcoo_equivalent_annual_ratio",
+                annual_ratio_error,
+                0.0,
+                tolerance=_binary64_tie_out_tolerance(commercial_lcoo),
+                notes="Commercial marginal LCOO also equals the equivalent-annual ratio.",
+            )
+        )
+        commercial_reason = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_FIELD_MARGINAL_LCOO_REASON
+            ]
+        )
+        unavailable = (
+            commercial_reason == technoeconomic_kernel.COMMERCIAL_ZERO_ENERGY_REASON
+        )
+        reason_violations = int(
+            np.count_nonzero(
+                (unavailable & np.isfinite(commercial_lcoo))
+                | (~unavailable & ~np.isfinite(commercial_lcoo))
+            )
+        )
+        zero_energy_class = (
+            np.asarray(calculation.by_name["energy_class"])
+            == "zero_lifecycle_gain"
+        )
+        reason_class_violations = int(
+            np.count_nonzero(unavailable != zero_energy_class)
+        )
+        checks.append(
+            _numeric_check(
+                "commercial_zero_energy_lcoo_null_and_reason",
+                reason_violations,
+                0,
+                tolerance=0.0,
+                notes="Commercial LCOO is null exactly for normalized zero-energy rows with an explicit reason.",
+            )
+        )
+        checks.append(
+            _numeric_check(
+                "commercial_zero_energy_reason_matches_energy_class",
+                reason_class_violations,
+                0,
+                tolerance=0.0,
+                notes=(
+                    "The commercial unavailable-reason mask equals the authoritative "
+                    "energy_class == zero_lifecycle_gain mask."
+                ),
+            )
+        )
     return checks
 
 
@@ -2508,10 +2861,12 @@ def _build_tables(
 ) -> tuple[_Table, ...]:
     source_snapshot_sha256 = str(submission_provenance.get("source_snapshot_sha256"))
     common_records = calculation.metadata.get("common_cost_audit") or []
-    applied_capacity_contract = (
-        routine_result.get("calculation_contract_version")
-        == technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
-    )
+    applied_capacity_contract = routine_result.get(
+        "calculation_contract_version"
+    ) in {
+        technoeconomic_kernel.CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+    }
     return (
         _Table(
             "realizations.csv",
@@ -3203,6 +3558,13 @@ def _human_metric(
         technoeconomic_kernel.APPLIED_FIELD_DELTA_ENERGY: "Lifecycle energy delta, SE − SOL (kWh_AC/applied W)",
         technoeconomic_kernel.APPLIED_FIELD_DELTA_EA_COST: "Equivalent-annual cost delta, SE − SOL (USD/applied W-year)",
         technoeconomic_kernel.APPLIED_FIELD_DELTA_EA_ENERGY: "Equivalent-annual energy delta, SE − SOL (kWh_AC/applied W-year)",
+        technoeconomic_kernel.COMMERCIAL_FIELD_TARGET_CAPACITY: "Commercial target capacity (W; explicit rating basis)",
+        technoeconomic_kernel.COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY: "Commercial first-year energy delta, SE − SOL (kWh_AC)",
+        technoeconomic_kernel.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY: "Commercial lifecycle energy delta, SE − SOL (kWh_AC)",
+        technoeconomic_kernel.COMMERCIAL_FIELD_EA_DELTA_ENERGY: "Commercial equivalent-annual energy delta, SE − SOL (kWh_AC/year)",
+        technoeconomic_kernel.COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST: "Commercial lifecycle marginal cost delta, SE − SOL (constant USD)",
+        technoeconomic_kernel.COMMERCIAL_FIELD_EA_MARGINAL_COST: "Commercial equivalent-annual marginal cost delta, SE − SOL (constant USD/year)",
+        technoeconomic_kernel.COMMERCIAL_FIELD_MARGINAL_LCOO: "Commercial marginal LCOO, SE − SOL (constant USD/kWh_AC)",
         "headline_positive_gain_lcoo": "Headline LCOO, SE − SOL (USD/kWh_AC; positive gain)",
         "signed_nonzero_lcoo": "Signed LCOO diagnostic, SE − SOL (USD/kWh_AC)",
         "lifecycle_lcoe_solectria": "Solectria lifecycle LCOE (USD/kWh_AC)",
@@ -3529,7 +3891,10 @@ def _publish_artifact(
 def _signed_metric_counts(calculation: _SealedCalculation) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for column_name, raw_values in zip(calculation.column_names, calculation.columns):
-        if "Delta" not in column_name and column_name != technoeconomic_kernel.FIELD_LCOO:
+        if "Delta" not in column_name and column_name not in {
+            technoeconomic_kernel.FIELD_LCOO,
+            technoeconomic_kernel.COMMERCIAL_FIELD_MARGINAL_LCOO,
+        }:
             continue
         try:
             values = np.asarray(raw_values, dtype=np.float64)
@@ -3804,6 +4169,10 @@ __all__ = [
     "APPLIED_CSV_FORMAT_VERSION",
     "APPLIED_EXPORT_MANIFEST_SCHEMA_VERSION",
     "APPLIED_XLSX_SCHEMA_VERSION",
+    "COMMERCIAL_SCALING_CSV_BUNDLE_SCHEMA_VERSION",
+    "COMMERCIAL_SCALING_CSV_FORMAT_VERSION",
+    "COMMERCIAL_SCALING_EXPORT_MANIFEST_SCHEMA_VERSION",
+    "COMMERCIAL_SCALING_XLSX_SCHEMA_VERSION",
     "CHART_CONTRACTS",
     "CSV_FORMAT_VERSION",
     "EXPORT_MANIFEST_SCHEMA_VERSION",

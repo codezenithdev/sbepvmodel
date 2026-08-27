@@ -1693,3 +1693,147 @@ tabular bundles, and workbook exports use distinct schema versions and explicit
 `per_applied_W` field names so the two authorities cannot be silently mixed. The
 unchanged PNG rendering contract and XLSX logical-row hash algorithm retain their
 algorithm-version identifiers.
+
+## 16. Version 3 addendum — direct commercial marginal scaling
+
+Contract `tea-calculation-v3` adds a commercial marginal-energy and marginal-LCOO
+view to the version-2 SolarTAC calculation. The illustrative SolarTAC and commercial
+capacity numbers used in examples are not constants in the calculation. Every
+source energy, source applied capacity, target capacity, finance assumption, and
+marginal-cost value comes from the frozen request and its selected Annual Simulation.
+
+Version 3 is valid only for `basis = solartac_site`. It requires the same complete,
+two-system `applied_capacities` evidence as version 2 and one
+`CommercialScalingSpec`. Version-1 and version-2 requests must not contain that
+specification. Commercial-representative transfer calculations remain on their
+existing contract and do not silently enter this direct-scaling path.
+
+### 16.1 Frozen commercial-scaling inputs
+
+The immutable version-3 specification contains:
+
+- `target_capacity_w`, a finite, strictly positive commercial rated capacity in W;
+- `target_rating_basis`, either `ac_operating_limit` or
+  `dc_installed_nameplate`, exactly matching the shared rating basis of the two
+  frozen source applied capacities;
+- `marginal_cost_difference`, a `DistributionSpec` whose required stable input ID
+  is `commercial.marginal-cost-difference`;
+- `marginal_cost_timing`, either `lifecycle_present_value` or
+  `equivalent_annual`; and
+- `transfer_method = direct_capacity_scaling`, the only approved method.
+
+The marginal cost is signed SolarEdge minus Solectria. Negative, zero, and positive
+support are valid; unlike a system cost line, it is not constrained to nonnegative
+support. Its unit is USD for `lifecycle_present_value` and USD/year for
+`equivalent_annual`. The currency basis remains the request's constant-real-dollar
+basis.
+
+The request fails closed if the target/source rating bases differ, either source
+capacity is absent, the transfer method or timing is unknown, the stable input ID is
+wrong, or any closed-support endpoint can overflow a required binary64 result.
+
+### 16.2 Energy normalization and direct scaling
+
+For each sampled paired weather year `y`, each source system is normalized before
+the two systems are differenced:
+
+```text
+q_SOL,y = E_SOL,y / P_applied,SOL
+q_SE,y  = E_SE,y  / P_applied,SE
+
+Delta_q_y = q_SE,y - q_SOL,y
+
+Delta_E_commercial,year1,y = Delta_q_y * P_target
+```
+
+Here `E` is Annual Simulation AC energy in kWh_AC, `P_applied` and `P_target`
+are in W on the same explicit rating basis, and `Delta_q` is in
+kWh_AC/applied_W-year. Separate denominators are mandatory, so unequal DC-nameplate
+source capacities are normalized independently before differencing. When the two
+source denominators are identical, the implementation may use the algebraically
+equivalent `(E_SE - E_SOL) / P_applied * P_target` form to avoid cancellation.
+
+Using the existing lifecycle factor `F_E(r,g,L)` and capital recovery factor
+`CRF(r,L)`:
+
+```text
+Delta_E_commercial,lifecycle = Delta_E_commercial,year1 * F_E
+Delta_E_commercial,EA        = CRF * Delta_E_commercial,lifecycle
+```
+
+The direct-capacity method assumes the source specific-energy difference transfers
+linearly to the target capacity. It does not assert that the commercial system has
+the SolarTAC physical design, nor does it apply the separate
+commercial-representative baseline/incremental transfer model.
+
+The regression example is therefore an instance of the general formula, not a
+hardcoded case:
+
+```text
+(174,227 - 172,263) kWh / 125,000 W * 100,000,000 W
+    = 1,571,200 kWh
+```
+
+### 16.3 Cost timing and commercial marginal LCOO
+
+The sampled marginal cost is converted to both lifecycle-present-value and
+equivalent-annual forms with the realization's finance factor:
+
+```text
+if input timing is lifecycle_present_value:
+    Delta_C_PV = sampled marginal cost
+    Delta_C_EA = CRF * Delta_C_PV
+
+if input timing is equivalent_annual:
+    Delta_C_EA = sampled marginal cost
+    Delta_C_PV = Delta_C_EA / CRF
+```
+
+The separate commercial marginal LCOO is:
+
+```text
+CommercialMarginalLCOO = Delta_C_PV / Delta_E_commercial,lifecycle
+                       = Delta_C_EA / Delta_E_commercial,EA
+```
+
+It is signed SolarEdge minus Solectria in USD/kWh_AC. This numerator is never
+substituted into the existing site all-in LCOO: version 3 retains all version-2 site
+cost, LCOE, LCOO, outcome-classification, and common-cost calculations unchanged.
+
+The commercial ratio uses the existing normalized lifecycle-energy zero class:
+absolute tolerance `1e-9 kWh_AC/applied_W` and relative tolerance `1e-12` against
+the larger absolute system lifecycle energy. A realization classified
+`zero_lifecycle_gain` has a null commercial marginal LCOO and reason
+`zero_commercial_lifecycle_delta_energy`, even if a sub-tolerance floating-point
+delta remains visible in the scaled diagnostic field. Zero and negative energy
+deltas remain in the realization population; negative denominators produce the
+corresponding signed ratio.
+
+### 16.4 Required outputs and audit evidence
+
+Version 3 adds the following explicit realization fields, all SolarEdge minus
+Solectria where a delta is named:
+
+- `CommercialTargetCapacity_W`;
+- `CommercialYear1DeltaEnergy_se_minus_sol_kWh_AC`;
+- `CommercialLifecycleDeltaEnergy_se_minus_sol_kWh_AC`;
+- `CommercialEquivalentAnnualDeltaEnergy_se_minus_sol_kWh_AC_per_year`;
+- `CommercialLifecycleMarginalCostDelta_se_minus_sol_USD`;
+- `CommercialEquivalentAnnualMarginalCostDelta_se_minus_sol_USD_per_year`;
+- `CommercialMarginalLCOO_se_minus_sol_USD_per_kWh_AC`; and
+- `commercial_marginal_lcoo_unavailable_reason`.
+
+The marginal-cost draw also appears under its ordinary
+`SampledInput::commercial.marginal-cost-difference` realization column. Summaries
+cover target capacity, all three scaled energy forms, both cost timings, and finite
+commercial marginal-LCOO realizations. Per-weather-year output records the source
+energies, both source applied capacities, source-specific delta, target capacity and
+basis, directly scaled year-1 delta, realization share, and conditional metric
+summaries.
+
+Provenance freezes the transfer method and formulas, target capacity and rating
+basis, both source applied capacities and rating basis, signed cost distribution and
+stable ID, input timing and PV/EA conversion, units, sign convention, and null-ratio
+rule. Request hashing includes the complete commercial specification only for
+version 3; literal version-1 and version-2 canonical payloads omit the new defaulted
+field so their historical hashes and retry comparisons remain unchanged.

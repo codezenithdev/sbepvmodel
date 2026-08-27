@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 SEALED_CALCULATION_SCHEMA_VERSION = 1
 ROUTINE_RESULT_SCHEMA_VERSION = 1
 APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION = 2
+COMMERCIAL_SCALING_ROUTINE_RESULT_SCHEMA_VERSION = 3
 RESULT_PROVENANCE_SCHEMA_VERSION = 1
 SEALED_CALCULATION_FILENAME = "calculation_payload_v1.npz"
 _REQUIRED_EXPORT_ARTIFACT_IDS = frozenset(
@@ -678,9 +679,14 @@ def _routine_result(
     applied_capacity_map = {
         capacity.system: capacity for capacity in (request.applied_capacities or ())
     }
-    applied_capacity_contract = (
-        request.calculation_contract_version == kernel.CALCULATION_CONTRACT_VERSION
+    commercial_scaling_contract = (
+        request.calculation_contract_version
+        == kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
     )
+    applied_capacity_contract = request.calculation_contract_version in {
+        kernel.CALCULATION_CONTRACT_VERSION,
+        kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+    }
     if request.basis == "solartac_site":
         transfer_status = "not_applicable"
     elif request.transfer is None:
@@ -697,9 +703,13 @@ def _routine_result(
         commercial_reference = None
     result = {
         "schema_version": (
-            APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION
-            if applied_capacity_contract
-            else ROUTINE_RESULT_SCHEMA_VERSION
+            COMMERCIAL_SCALING_ROUTINE_RESULT_SCHEMA_VERSION
+            if commercial_scaling_contract
+            else (
+                APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION
+                if applied_capacity_contract
+                else ROUTINE_RESULT_SCHEMA_VERSION
+            )
         ),
         "calculation_contract_version": request.calculation_contract_version,
         "sampling_version": request.sampling_version,
@@ -751,6 +761,19 @@ def _routine_result(
                 "rating_basis": capacity.rating_basis,
             }
             for system, capacity in sorted(applied_capacity_map.items())
+        }
+    if commercial_scaling_contract:
+        scaling = request.commercial_scaling
+        if scaling is None:
+            raise ValueError(
+                "The commercial-scaling result is missing its frozen scaling inputs"
+            )
+        result["commercial_scaling"] = {
+            "target_capacity_w": scaling.target_capacity_w,
+            "target_rating_basis": scaling.target_rating_basis,
+            "marginal_cost_input_id": scaling.marginal_cost_difference.input_id,
+            "marginal_cost_timing": scaling.marginal_cost_timing,
+            "transfer_method": scaling.transfer_method,
         }
     return result
 
@@ -1153,6 +1176,7 @@ def _run_technoeconomic_job(
 
 __all__ = [
     "APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION",
+    "COMMERCIAL_SCALING_ROUTINE_RESULT_SCHEMA_VERSION",
     "RESULT_PROVENANCE_SCHEMA_VERSION",
     "ROUTINE_RESULT_SCHEMA_VERSION",
     "SEALED_CALCULATION_SCHEMA_VERSION",

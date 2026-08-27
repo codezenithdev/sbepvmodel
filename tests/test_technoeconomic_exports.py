@@ -26,6 +26,7 @@ from sbepv.worker import run_technoeconomic
 from tests.test_technoeconomic_api import (
     _applied_site_request_payload,
     _commercial_request_payload,
+    _commercial_scaling_request_payload,
     _site_request_payload,
 )
 
@@ -405,6 +406,309 @@ class TechnoeconomicExportTests(unittest.TestCase):
             self.assertEqual(
                 "125000.0", cost_row["solectria_applied_capacity_w"]
             )
+
+    def test_v3_exports_dynamic_commercial_scaling_and_independent_tie_outs(self) -> None:
+        payload = _commercial_scaling_request_payload(
+            target_capacity=100.0,
+            target_capacity_unit="mw",
+            marginal_cost_value=-2_500_000.0,
+        )
+        payload["source_annual_job_id"] = "annual-export-source"
+        payload["n"] = 8
+        request_payload = TechnoeconomicSubmissionRequest.model_validate(
+            payload
+        ).model_dump(mode="json", exclude_none=False)
+        snapshot = deepcopy(self.snapshot)
+        snapshot["eligible_paired_energy_rows"] = [
+            {
+                "year": 2024,
+                "period_start": "2024-01-01",
+                "period_end": "2024-12-31",
+                "sol_predicted_kwh": 172_263.0,
+                "se_predicted_kwh": 174_227.0,
+            }
+        ]
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        snapshot_sha256 = technoeconomic_api.canonical_json_sha256(snapshot)
+        request = technoeconomic_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = technoeconomic_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": snapshot_sha256,
+            },
+            request,
+        )
+        calculation = kernel.run_technoeconomic(request)
+        # Keep the nested attempt path below legacy Windows MAX_PATH.
+        job_id = "tea_export_v3"
+        lease_token = "lease_v3"
+        sealed_artifact = run_technoeconomic._write_sealed_calculation_payload(
+            job_id,
+            lease_token,
+            calculation,
+            request_sha256=technoeconomic_api.canonical_json_sha256(request_payload),
+            source_snapshot_sha256=snapshot_sha256,
+            submission_provenance_sha256=technoeconomic_api.canonical_json_sha256(
+                provenance
+            ),
+            publish_check=lambda: None,
+        )
+        sealed_path = self.output / Path(sealed_artifact["storage_key"])
+        routine_result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            sealed_artifact,
+            provenance,
+        )
+
+        self.assertEqual(3, routine_result["schema_version"])
+        self.assertEqual(
+            100_000_000.0,
+            routine_result["commercial_scaling"]["target_capacity_w"],
+        )
+        self.assertEqual(
+            "ac_operating_limit",
+            routine_result["commercial_scaling"]["target_rating_basis"],
+        )
+
+        manifest = reporting.generate_technoeconomic_exports(
+            job_id=job_id,
+            attempt_directory=sealed_path.parent,
+            sealed_calculation_path=sealed_path,
+            sealed_calculation_artifact=sealed_artifact,
+            request_payload=request_payload,
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+            routine_result=routine_result,
+            cancellation_check=lambda: None,
+            publish_check=lambda: None,
+        )
+        self.assertEqual(
+            reporting.COMMERCIAL_SCALING_EXPORT_MANIFEST_SCHEMA_VERSION,
+            manifest["schema_version"],
+        )
+        self.assertEqual("passed", manifest["tie_outs"]["status"])
+        archive_path = self.output / Path(
+            manifest["artifacts"]["csv_bundle"]["storage_key"]
+        )
+        with zipfile.ZipFile(archive_path) as archive:
+            self.assertIn("csv-bundle-manifest-v3.json", archive.namelist())
+            realizations = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("realizations.csv").decode("utf-8")
+                    )
+                )
+            )
+            first = realizations[0]
+            self.assertEqual(
+                1_571_200.0,
+                float(first[kernel.COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY]),
+            )
+            self.assertEqual(
+                100_000_000.0,
+                float(first[kernel.COMMERCIAL_FIELD_TARGET_CAPACITY]),
+            )
+            lifecycle_ratio = (
+                float(first[kernel.COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST])
+                / float(first[kernel.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY])
+            )
+            self.assertAlmostEqual(
+                lifecycle_ratio,
+                float(first[kernel.COMMERCIAL_FIELD_MARGINAL_LCOO]),
+            )
+            input_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("input-specifications.csv").decode("utf-8")
+                    )
+                )
+            )
+            marginal_row = next(
+                row
+                for row in input_rows
+                if row["input_id"]
+                == kernel.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID
+            )
+            self.assertEqual("constant_usd", marginal_row["unit"])
+            checks = {
+                row["check_id"]: row
+                for row in csv.DictReader(
+                    io.StringIO(archive.read("checks.csv").decode("utf-8"))
+                )
+            }
+            for check_id in (
+                "commercial_target_capacity_receipt",
+                "commercial_year1_energy_scaling",
+                "commercial_lifecycle_energy_scaling",
+                "commercial_marginal_cost_sampled_input_authority",
+                "commercial_marginal_cost_crf_transform",
+                "commercial_marginal_lcoo_lifecycle_ratio",
+                "commercial_marginal_lcoo_equivalent_annual_ratio",
+                "commercial_zero_energy_reason_matches_energy_class",
+            ):
+                self.assertEqual("OK", checks[check_id]["status_authority"])
+
+    def test_v3_commercial_cost_timing_and_zero_reason_checks_are_independent(self) -> None:
+        for timing in ("lifecycle_present_value", "equivalent_annual"):
+            with self.subTest(timing=timing):
+                payload = _commercial_scaling_request_payload(
+                    marginal_cost_timing=timing,
+                    marginal_cost_value=-1_250_000.0,
+                )
+                payload["source_annual_job_id"] = "annual-export-source"
+                payload["n"] = 8
+                request_payload = TechnoeconomicSubmissionRequest.model_validate(
+                    payload
+                ).model_dump(mode="json", exclude_none=False)
+                snapshot = deepcopy(self.snapshot)
+                snapshot["eligible_paired_energy_rows"] = [
+                    {
+                        "year": 2024,
+                        "period_start": "2024-01-01",
+                        "period_end": "2024-12-31",
+                        "sol_predicted_kwh": 172_263.0,
+                        "se_predicted_kwh": 174_227.0,
+                    }
+                ]
+                snapshot["source_annual_job"] = {
+                    "request": {
+                        "curtailment_enabled": True,
+                        "curtailment_limit_kw": 125.0,
+                    }
+                }
+                snapshot_sha256 = technoeconomic_api.canonical_json_sha256(snapshot)
+                request = technoeconomic_api.build_technoeconomic_kernel_request(
+                    request_payload,
+                    snapshot,
+                )
+                provenance = (
+                    technoeconomic_api.build_technoeconomic_submission_provenance(
+                        request_payload,
+                        {
+                            "source_snapshot": snapshot,
+                            "source_snapshot_sha256": snapshot_sha256,
+                        },
+                        request,
+                    )
+                )
+                calculation = kernel.run_technoeconomic(request)
+                metadata = run_technoeconomic._sealed_metadata(
+                    calculation,
+                    request_sha256=technoeconomic_api.canonical_json_sha256(
+                        request_payload
+                    ),
+                    source_snapshot_sha256=snapshot_sha256,
+                    submission_provenance_sha256=(
+                        technoeconomic_api.canonical_json_sha256(provenance)
+                    ),
+                )
+                artifact = dict(self.sealed_artifact)
+                artifact["row_count"] = request.n
+                routine_result = run_technoeconomic._routine_result(
+                    request,
+                    calculation,
+                    artifact,
+                    provenance,
+                )
+
+                def sealed_with_columns(columns):
+                    return reporting._SealedCalculation(
+                        metadata=metadata,
+                        column_names=list(calculation.realization_table),
+                        columns=columns,
+                        row_count=request.n,
+                    )
+
+                column_names = list(calculation.realization_table)
+                base_columns = [
+                    np.asarray(values).copy()
+                    for values in calculation.realization_table.values()
+                ]
+                checks = {
+                    row[0]: row
+                    for row in reporting._build_checks(
+                        sealed_with_columns(base_columns),
+                        snapshot,
+                        provenance,
+                        routine_result,
+                    )
+                }
+                self.assertEqual(
+                    "OK",
+                    checks[
+                        "commercial_marginal_cost_sampled_input_authority"
+                    ][5],
+                )
+                self.assertEqual(
+                    "OK",
+                    checks[
+                        "commercial_zero_energy_reason_matches_energy_class"
+                    ][5],
+                )
+
+                corrupted_sample_columns = [values.copy() for values in base_columns]
+                sampled_name = (
+                    "SampledInput::"
+                    f"{kernel.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID}"
+                )
+                corrupted_sample_columns[column_names.index(sampled_name)][0] += 1.0
+                corrupted_sample_checks = {
+                    row[0]: row
+                    for row in reporting._build_checks(
+                        sealed_with_columns(corrupted_sample_columns),
+                        snapshot,
+                        provenance,
+                        routine_result,
+                    )
+                }
+                self.assertEqual(
+                    "FAIL",
+                    corrupted_sample_checks[
+                        "commercial_marginal_cost_sampled_input_authority"
+                    ][5],
+                )
+                self.assertEqual(
+                    "OK",
+                    corrupted_sample_checks[
+                        "commercial_marginal_cost_crf_transform"
+                    ][5],
+                )
+
+                corrupted_class_columns = [values.copy() for values in base_columns]
+                corrupted_class_columns[column_names.index("energy_class")][0] = (
+                    "zero_lifecycle_gain"
+                )
+                corrupted_class_checks = {
+                    row[0]: row
+                    for row in reporting._build_checks(
+                        sealed_with_columns(corrupted_class_columns),
+                        snapshot,
+                        provenance,
+                        routine_result,
+                    )
+                }
+                self.assertEqual(
+                    "FAIL",
+                    corrupted_class_checks[
+                        "commercial_zero_energy_reason_matches_energy_class"
+                    ][5],
+                )
+                self.assertEqual(
+                    "OK",
+                    corrupted_class_checks[
+                        "commercial_zero_energy_lcoo_null_and_reason"
+                    ][5],
+                )
 
     def test_csv_bundle_is_complete_stable_and_retains_zero_negative_rows(self) -> None:
         manifest = self._generate()

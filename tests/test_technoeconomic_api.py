@@ -169,6 +169,39 @@ def _applied_site_request_payload(
     return payload
 
 
+def _commercial_scaling_request_payload(
+    *,
+    target_capacity: float = 100.0,
+    target_capacity_unit: str = "mw",
+    target_rating_basis: str = "ac_operating_limit",
+    marginal_cost_timing: str = "lifecycle_present_value",
+    marginal_cost_value: float = -2_500_000.0,
+) -> dict:
+    payload = _applied_site_request_payload()
+    payload["commercial_scaling"] = {
+        "target_capacity": target_capacity,
+        "target_capacity_unit": target_capacity_unit,
+        "target_rating_basis": target_rating_basis,
+        "marginal_cost_difference": {
+            "family": "fixed",
+            "value": marginal_cost_value,
+        },
+        "marginal_cost_timing": marginal_cost_timing,
+        "marginal_cost_unit": (
+            "constant_usd"
+            if marginal_cost_timing == "lifecycle_present_value"
+            else "constant_usd_per_year"
+        ),
+        "transfer_method": "direct_capacity_scaling",
+        "transfer_rationale": (
+            "Scale the frozen SolarEdge-minus-Solectria specific energy delta "
+            "directly to the submitted same-rating-basis target capacity."
+        ),
+        "evidence": _evidence(),
+    }
+    return payload
+
+
 def _commercial_request_payload(*, include_transfer: bool) -> dict:
     payload = _site_request_payload()
     payload["basis"] = "commercial_representative"
@@ -553,6 +586,203 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
             "ac_operating_limit",
             applied["solaredge"]["rating_basis"],
         )
+        self.assertNotIn("commercial_scaling_receipt", provenance)
+
+    def test_v3_commercial_scaling_converts_dynamic_capacity_and_signed_cost(self) -> None:
+        cases = (
+            (100.0, "mw", 100_000_000.0),
+            (250.5, "kw", 250_500.0),
+        )
+        for target, unit, expected_w in cases:
+            with self.subTest(target=target, unit=unit):
+                payload = _commercial_scaling_request_payload(
+                    target_capacity=target,
+                    target_capacity_unit=unit,
+                    marginal_cost_value=-1_234_567.0,
+                )
+                parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
+                self.assertEqual(
+                    -1_234_567.0,
+                    parsed.commercial_scaling.marginal_cost_difference.value,
+                )
+
+                kernel_request = tea_api.build_technoeconomic_kernel_request(
+                    parsed,
+                    self.snapshot,
+                )
+
+                self.assertEqual(
+                    "tea-calculation-v3",
+                    kernel_request.calculation_contract_version,
+                )
+                scaling = kernel_request.commercial_scaling
+                self.assertIsNotNone(scaling)
+                self.assertEqual(expected_w, scaling.target_capacity_w)
+                self.assertEqual("ac_operating_limit", scaling.target_rating_basis)
+                self.assertEqual(
+                    "commercial.marginal-cost-difference",
+                    scaling.marginal_cost_difference.input_id,
+                )
+                self.assertEqual(
+                    -1_234_567.0,
+                    scaling.marginal_cost_difference.value,
+                )
+
+    def test_v3_commercial_scaling_supports_both_cost_timings_and_units(self) -> None:
+        cases = (
+            ("lifecycle_present_value", "constant_usd"),
+            ("equivalent_annual", "constant_usd_per_year"),
+        )
+        for timing, expected_unit in cases:
+            with self.subTest(timing=timing):
+                payload = _commercial_scaling_request_payload(
+                    marginal_cost_timing=timing,
+                )
+                parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
+                scaling = parsed.commercial_scaling
+                self.assertEqual(timing, scaling.marginal_cost_timing)
+                self.assertEqual(expected_unit, scaling.marginal_cost_unit)
+                kernel_request = tea_api.build_technoeconomic_kernel_request(
+                    parsed,
+                    self.snapshot,
+                )
+                self.assertEqual(
+                    timing,
+                    kernel_request.commercial_scaling.marginal_cost_timing,
+                )
+
+    def test_v3_commercial_scaling_forbids_wrong_basis_contract_and_units(self) -> None:
+        legacy_site = _commercial_scaling_request_payload()
+        legacy_site.pop("capacity_normalization")
+        for line in legacy_site["cost_lines"]:
+            line["normalized_unit"] = "usd_per_wdc"
+            line["normalization_method"] = "divide_by_frozen_source_wdc"
+
+        commercial_basis = _commercial_request_payload(include_transfer=False)
+        commercial_basis["commercial_scaling"] = deepcopy(
+            _commercial_scaling_request_payload()["commercial_scaling"]
+        )
+
+        mistimed_unit = _commercial_scaling_request_payload()
+        mistimed_unit["commercial_scaling"]["marginal_cost_unit"] = (
+            "constant_usd_per_year"
+        )
+
+        reserved_id = _commercial_scaling_request_payload()
+        reserved_id["cost_lines"][0]["input_id"] = (
+            "commercial.marginal-cost-difference"
+        )
+
+        for payload in (legacy_site, commercial_basis, mistimed_unit, reserved_id):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValidationError):
+                    TechnoeconomicSubmissionRequest.model_validate(payload)
+
+    def test_v3_rating_basis_mismatch_is_a_clean_api_rejection(self) -> None:
+        payload = _commercial_scaling_request_payload(
+            target_rating_basis="dc_installed_nameplate",
+        )
+
+        response = self._create_via_api(payload)
+
+        self.assertEqual(422, response.status_code, response.text)
+        self.assertIn("rating basis", response.text.lower())
+        self.assertEqual([], self.store.list_technoeconomic_jobs())
+        state._WORKER_WAKE.set.assert_not_called()
+
+    def test_v3_dc_target_matches_unclipped_installed_nameplate_source(self) -> None:
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"]["request"] = {
+            "curtailment_enabled": False,
+            "curtailment_limit_kw": 125.0,
+        }
+        payload = _commercial_scaling_request_payload(
+            target_rating_basis="dc_installed_nameplate",
+        )
+
+        kernel_request = tea_api.build_technoeconomic_kernel_request(
+            payload,
+            snapshot,
+        )
+
+        self.assertEqual(
+            "dc_installed_nameplate",
+            kernel_request.commercial_scaling.target_rating_basis,
+        )
+        self.assertEqual(
+            {"dc_installed_nameplate"},
+            {item.rating_basis for item in kernel_request.applied_capacities or ()},
+        )
+
+    def test_v3_commercial_scaling_provenance_freezes_units_and_evidence(self) -> None:
+        payload = _commercial_scaling_request_payload(
+            target_capacity=87.25,
+            target_capacity_unit="mw",
+            marginal_cost_timing="equivalent_annual",
+            marginal_cost_value=425_000.0,
+        )
+        kernel_request = tea_api.build_technoeconomic_kernel_request(
+            payload,
+            self.snapshot,
+        )
+
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            payload,
+            self.envelope,
+            kernel_request,
+        )
+
+        self.assertEqual(3, provenance["schema_version"])
+        self.assertEqual("technoeconomic-submission-v3", provenance["request_schema"])
+        self.assertEqual("tea-calculation-v3", provenance["calculation_contract_version"])
+        receipt = provenance["commercial_scaling_receipt"]
+        self.assertEqual(
+            {"value": 87.25, "unit": "mw"},
+            receipt["submitted_target_capacity"],
+        )
+        self.assertEqual(87_250_000.0, receipt["target_capacity_w"])
+        self.assertEqual("ac_operating_limit", receipt["target_rating_basis"])
+        self.assertEqual("equivalent_annual", receipt["marginal_cost_timing"])
+        self.assertEqual("constant_usd_per_year", receipt["marginal_cost_unit"])
+        self.assertEqual(425_000.0, receipt["marginal_cost_difference"]["value"])
+        self.assertEqual(
+            tea_api.canonical_json_sha256(receipt),
+            provenance["commercial_scaling_receipt_sha256"],
+        )
+        self.assertIn(
+            "commercial-scaling:marginal-cost-difference",
+            {
+                item["subject"]
+                for item in provenance["evidence_receipt"]["preservation"]
+            },
+        )
+
+    def test_v3_commercial_scaling_enqueues_immutable_request_and_receipt(self) -> None:
+        payload = _commercial_scaling_request_payload(
+            target_capacity=50_000.0,
+            target_capacity_unit="kw",
+            marginal_cost_value=800_000.0,
+        )
+
+        response = self._create_via_api(payload)
+
+        self.assertEqual(202, response.status_code, response.text)
+        stored = self.store.get_technoeconomic_job(response.json()["job"]["job_id"])
+        self.assertEqual(
+            50_000.0,
+            stored["request"]["commercial_scaling"]["target_capacity"],
+        )
+        self.assertEqual(
+            "kw",
+            stored["request"]["commercial_scaling"]["target_capacity_unit"],
+        )
+        receipt = stored["submission_provenance"]["commercial_scaling_receipt"]
+        self.assertEqual(50_000_000.0, receipt["target_capacity_w"])
+        self.assertEqual(
+            "commercial.marginal-cost-difference",
+            receipt["marginal_cost_difference_input_id"],
+        )
+        state._WORKER_WAKE.set.assert_called_once_with()
 
     def test_v2_site_request_falls_back_to_installed_dc_without_clipping(self) -> None:
         cases = (
@@ -680,6 +910,21 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
                 TechnoeconomicSubmissionRequest.model_validate(payload)
             response = self._create_via_api(payload)
             self.assertEqual(422, response.status_code, response.text)
+
+        v3_fixed_output_overhead = _commercial_scaling_request_payload()
+        v3_fixed_output_overhead["n"] = 100_000
+        while len(v3_fixed_output_overhead["cost_lines"]) < 22:
+            index = len(v3_fixed_output_overhead["cost_lines"])
+            line = deepcopy(v3_fixed_output_overhead["cost_lines"][0])
+            line["input_id"] = f"cost.sol.v3-extra-{index:03d}"
+            line["label"] = f"Additional V3 Solectria cost {index}"
+            line["coverage_include_ids"] = [f"equipment.sol.v3-extra-{index:03d}"]
+            v3_fixed_output_overhead["cost_lines"].append(line)
+        with self.assertRaisesRegex(
+            ValidationError,
+            "realization export cell budget exceeded",
+        ):
+            TechnoeconomicSubmissionRequest.model_validate(v3_fixed_output_overhead)
 
         self.assertEqual([], self.store.list_technoeconomic_jobs())
         state._WORKER_WAKE.set.assert_not_called()
@@ -970,6 +1215,7 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         self.assertEqual("queued", stored["state"])
         self.assertNotIn("paired_energy_rows", stored["request"])
         self.assertNotIn("capacities", stored["request"])
+        self.assertNotIn("commercial_scaling", stored["request"])
         self.assertNotIn(job_id, state.JOBS)
         state._WORKER_WAKE.set.assert_called_once_with()
 

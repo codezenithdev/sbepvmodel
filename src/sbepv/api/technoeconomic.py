@@ -2928,6 +2928,26 @@ def build_technoeconomic_kernel_request(
             mechanism_status=request.commercial_transfer.status,
         )
 
+    commercial_scaling: technoeconomic_kernel.CommercialScalingSpec | None = None
+    if request.commercial_scaling is not None:
+        capacity_multiplier = (
+            1_000.0
+            if request.commercial_scaling.target_capacity_unit == "kw"
+            else 1_000_000.0
+        )
+        commercial_scaling = technoeconomic_kernel.CommercialScalingSpec(
+            target_capacity_w=(
+                request.commercial_scaling.target_capacity * capacity_multiplier
+            ),
+            target_rating_basis=request.commercial_scaling.target_rating_basis,
+            marginal_cost_difference=_kernel_distribution(
+                technoeconomic_kernel.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID,
+                request.commercial_scaling.marginal_cost_difference,
+            ),
+            marginal_cost_timing=request.commercial_scaling.marginal_cost_timing,
+            transfer_method=request.commercial_scaling.transfer_method,
+        )
+
     kernel_request = technoeconomic_kernel.TechnoeconomicRequest(
         basis=request.basis,
         n=request.n,
@@ -2946,6 +2966,7 @@ def build_technoeconomic_kernel_request(
         ),
         applied_capacities=applied_capacities,
         transfer=transfer,
+        commercial_scaling=commercial_scaling,
         commercial_reference_wdc=(
             request.commercial_reference_design.reference_wdc
             if request.commercial_reference_design is not None
@@ -2953,8 +2974,11 @@ def build_technoeconomic_kernel_request(
         ),
         cost_stack_completeness=request.cost_stack_completeness,
         calculation_contract_version=(
-            technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
-            if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+            technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
+            if request.commercial_scaling is not None
+            else technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
+            if request.capacity_normalization
+            == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
             else technoeconomic_kernel.LEGACY_CALCULATION_CONTRACT_VERSION
         ),
         sampling_version=technoeconomic_kernel.SAMPLING_VERSION,
@@ -3004,6 +3028,13 @@ def _evidence_receipt(
                 mechanism.evidence,
             )
             for mechanism in request.commercial_transfer.mechanisms
+        )
+    if request.commercial_scaling is not None:
+        subjects.append(
+            (
+                "commercial-scaling:marginal-cost-difference",
+                request.commercial_scaling.evidence,
+            )
         )
 
     subjects.extend(
@@ -3337,6 +3368,43 @@ def _commercial_reference_receipt(
     }
 
 
+def _commercial_scaling_receipt(
+    request: TechnoeconomicSubmissionRequest,
+    kernel_request: technoeconomic_kernel.TechnoeconomicRequest,
+) -> dict[str, Any] | None:
+    scaling = request.commercial_scaling
+    if scaling is None:
+        return None
+    kernel_scaling = kernel_request.commercial_scaling
+    if kernel_scaling is None:  # guarded by strict kernel/request equivalence
+        _fail(
+            "commercial_scaling_missing",
+            "Validated kernel request has no commercial scaling specification.",
+        )
+    return {
+        "status": "validated",
+        "submitted_target_capacity": {
+            "value": scaling.target_capacity,
+            "unit": scaling.target_capacity_unit,
+        },
+        "target_capacity_w": kernel_scaling.target_capacity_w,
+        "target_rating_basis": scaling.target_rating_basis,
+        "marginal_cost_difference_input_id": (
+            technoeconomic_kernel.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID
+        ),
+        "marginal_cost_difference": scaling.marginal_cost_difference.model_dump(
+            mode="json",
+            exclude_none=True,
+        ),
+        "marginal_cost_timing": scaling.marginal_cost_timing,
+        "marginal_cost_unit": scaling.marginal_cost_unit,
+        "constant_dollar_cost_year": request.finance.constant_dollar_cost_year,
+        "transfer_method": scaling.transfer_method,
+        "transfer_rationale": scaling.transfer_rationale,
+        "evidence_subject": "commercial-scaling:marginal-cost-difference",
+    }
+
+
 def _transfer_receipt(request: TechnoeconomicSubmissionRequest) -> dict[str, Any]:
     if request.basis == "solartac_site":
         return {
@@ -3437,20 +3505,29 @@ def build_technoeconomic_submission_provenance(
         # This field did not exist on v1 durable requests.  Omitting its default
         # preserves their exact immutable request/provenance hashes on retry.
         canonical_request.pop("capacity_normalization", None)
+    if request.commercial_scaling is None:
+        # Preserve v1/v2 durable request hashes from before this optional v3
+        # workflow existed.
+        canonical_request.pop("commercial_scaling", None)
     normalization = _normalization_receipt(request, supplied_kernel)
     overlap = _overlap_receipt(request, supplied_kernel)
     evidence = _evidence_receipt(request)
     transfer = _transfer_receipt(request)
     commercial_reference = _commercial_reference_receipt(request)
+    commercial_scaling = _commercial_scaling_receipt(request, supplied_kernel)
     receipts = {
         "normalization": normalization,
         "overlap": overlap,
         "evidence": evidence,
         "commercial_transfer": transfer,
     }
+    if commercial_scaling is not None:
+        receipts["commercial_scaling"] = commercial_scaling
     provenance = {
         "schema_version": (
-            2
+            3
+            if commercial_scaling is not None
+            else 2
             if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
             else TECHNOECONOMIC_SUBMISSION_PROVENANCE_SCHEMA_VERSION
         ),
@@ -3471,7 +3548,9 @@ def build_technoeconomic_submission_provenance(
         "calculation_contract_version": supplied_kernel.calculation_contract_version,
         "sampling_version": supplied_kernel.sampling_version,
         "request_schema": (
-            "technoeconomic-submission-v2"
+            "technoeconomic-submission-v3"
+            if commercial_scaling is not None
+            else "technoeconomic-submission-v2"
             if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
             else "technoeconomic-submission-v1"
         ),
@@ -3491,6 +3570,11 @@ def build_technoeconomic_submission_provenance(
     }
     if request.capacity_normalization is not None:
         provenance["capacity_normalization"] = request.capacity_normalization
+    if commercial_scaling is not None:
+        provenance["commercial_scaling_receipt"] = commercial_scaling
+        provenance["commercial_scaling_receipt_sha256"] = canonical_json_sha256(
+            commercial_scaling
+        )
     return provenance
 
 

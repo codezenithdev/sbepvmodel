@@ -487,6 +487,66 @@ function commercialDraft(transferEnabled = true) {
         self.assertIn("9,007,199,254,740,991", self.markup)
         self.assertIn("browser never rounds the reproducibility seed", self.markup)
 
+    def test_guided_commercial_scaling_is_optional_explicit_and_accessible(self) -> None:
+        commercial_ids = (
+            "technoeconomicGuidedCommercial",
+            "technoeconomicGuidedCommercialHeading",
+            "technoeconomicGuidedCommercialEnabled",
+            "technoeconomicGuidedCommercialFields",
+            "technoeconomicGuidedCommercialTargetCapacity",
+            "technoeconomicGuidedCommercialTargetUnit",
+            "technoeconomicGuidedCommercialRatingBasis",
+            "technoeconomicGuidedCommercialSourceBasis",
+            "technoeconomicGuidedCommercialCostTiming",
+            "technoeconomicGuidedCommercialCost",
+            "technoeconomicGuidedCommercialCostLow",
+            "technoeconomicGuidedCommercialCostHigh",
+            "technoeconomicGuidedCommercialRationale",
+            "technoeconomicGuidedCommercialAccept",
+            "technoeconomicCommercialResults",
+            "technoeconomicCommercialResultsHeading",
+            "technoeconomicCommercialResultStatus",
+            "technoeconomicCommercialResultMetrics",
+        )
+        for element_id in commercial_ids:
+            self.assertEqual(self.markup.count(f'id="{element_id}"'), 1, element_id)
+
+        self.assertRegex(
+            self.markup,
+            r'<input[^>]*id="technoeconomicGuidedCommercialEnabled"[^>]*'
+            r'type="checkbox"[^>]*aria-controls="technoeconomicGuidedCommercialFields"',
+        )
+        self.assertRegex(
+            self.markup,
+            r'id="technoeconomicGuidedCommercialFields"[^>]*\bhidden\b',
+        )
+        self.assertRegex(
+            self.markup,
+            r'id="technoeconomicCommercialResults"[^>]*'
+            r'aria-labelledby="technoeconomicCommercialResultsHeading"[^>]*\bhidden\b',
+        )
+        self.assertIn('value="ac_operating_limit">AC operating limit', self.markup)
+        self.assertIn('value="dc_installed_nameplate">DC installed nameplate', self.markup)
+        self.assertIn('value="lifecycle_present_value">Lifecycle present value', self.markup)
+        self.assertIn('value="equivalent_annual">Equivalent annual', self.markup)
+        self.assertIn("Negative, zero, and positive values are supported", self.markup)
+        self.assertIn("never inferred from an example", self.markup)
+        self.assertIn("direct applied-capacity scaling", self.markup)
+        self.assertIn('role="status" aria-live="polite"', self.markup)
+        for cost_id in (
+            "technoeconomicGuidedCommercialCost",
+            "technoeconomicGuidedCommercialCostLow",
+            "technoeconomicGuidedCommercialCostHigh",
+        ):
+            tag = re.search(rf'<input[^>]*id="{cost_id}"[^>]*>', self.markup)
+            self.assertIsNotNone(tag)
+            assert tag is not None
+            self.assertNotRegex(tag.group(0), r'\bmin=')
+
+        self.assertIn(".tea-guided-commercial-fields[hidden]", self.styles)
+        self.assertIn(".tea-guided-commercial-grid", self.styles)
+        self.assertIn(".tea-commercial-result-status[data-state=\"unavailable\"]", self.styles)
+
     def test_personal_attribution_is_absent_from_tea_code(self) -> None:
         prohibited = "cli" + "ff"
         for label, content in (
@@ -1440,6 +1500,111 @@ console.log(JSON.stringify({
         self.assertGreaterEqual(payload["rejectionCount"], 7)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_guided_commercial_scaling_serializes_dynamic_signed_inputs(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const base = technoeconomicDefaultDraft();
+base.source_annual_job_id = 'annual-commercial-scaling';
+const guided = {
+  cost_year: '2026', project_life_years: '30',
+  discount: '4.5', discount_low: '', discount_high: '',
+  degradation: '0.4', degradation_low: '', degradation_high: '',
+  solectria_capex: '90000', solectria_capex_low: '', solectria_capex_high: '',
+  solectria_om: '4000', solectria_om_low: '', solectria_om_high: '',
+  solaredge_capex: '110000', solaredge_capex_low: '', solaredge_capex_high: '',
+  solaredge_om: '4500', solaredge_om_low: '', solaredge_om_high: '',
+  assumption_note: 'Documented independent lifecycle inputs.', accepted: true,
+  commercial_enabled: true,
+  commercial_target_capacity: '87.5', commercial_target_unit: 'mw',
+  commercial_rating_basis: 'ac_operating_limit',
+  commercial_cost: '-2500000', commercial_cost_low: '-3000000',
+  commercial_cost_high: '-2000000', commercial_cost_timing: 'equivalent_annual',
+  commercial_rationale: 'The target uses the same AC operating-limit rating basis; direct scaling is accepted for this scenario.',
+  commercial_accepted: true,
+};
+const draft = technoeconomicBuildGuidedDraft(base, guided, {
+  seed: '314159', date: '2026-08-26',
+});
+assert.equal(draft.commercial_scaling.target_capacity, '87.5');
+assert.equal(draft.commercial_scaling.target_capacity_unit, 'mw');
+assert.equal(draft.commercial_scaling.target_rating_basis, 'ac_operating_limit');
+assert.equal(draft.commercial_scaling.marginal_cost_timing, 'equivalent_annual');
+assert.equal(draft.commercial_scaling.marginal_cost_unit, 'constant_usd_per_year');
+assert.deepEqual(draft.commercial_scaling.marginal_cost_difference, {
+  family: 'triangular', value: '', low: '-3000000', mode: '-2500000',
+  high: '-2000000', mean: '', sd: '',
+});
+assert.equal(draft.commercial_scaling.evidence.explicit_acceptance, true);
+
+const source = {
+  source_annual_job_id: 'annual-commercial-scaling', eligible: true,
+  applied_capacity: {
+    solectria: {applied_capacity_w: 94000, rating_basis: 'ac_operating_limit'},
+    solaredge: {applied_capacity_w: 94000, rating_basis: 'ac_operating_limit'},
+  },
+};
+const serialized = serializeTechnoeconomicRequest(draft, {sources: [source]});
+assert.equal(serialized.valid, true, JSON.stringify(serialized.errors));
+assert.deepEqual(serialized.payload.commercial_scaling, {
+  target_capacity: 87.5,
+  target_capacity_unit: 'mw',
+  target_rating_basis: 'ac_operating_limit',
+  marginal_cost_difference: {
+    family: 'triangular', low: -3000000, mode: -2500000, high: -2000000,
+  },
+  marginal_cost_timing: 'equivalent_annual',
+  marginal_cost_unit: 'constant_usd_per_year',
+  transfer_method: 'direct_capacity_scaling',
+  transfer_rationale: guided.commercial_rationale,
+  evidence: serialized.payload.commercial_scaling.evidence,
+});
+assert.equal(serialized.payload.commercial_scaling.evidence.evidence_class,
+  'engineering_judgment');
+assert.equal(serialized.payload.commercial_reference_design, null);
+assert.equal(serialized.payload.commercial_transfer, null);
+
+const mismatch = structuredClone(draft);
+mismatch.commercial_scaling.target_rating_basis = 'dc_installed_nameplate';
+const rejectedBasis = serializeTechnoeconomicRequest(mismatch, {sources: [source]});
+assert.equal(rejectedBasis.valid, false);
+assert.ok(rejectedBasis.errors.some((item) =>
+  item.path === 'commercial_scaling.target_rating_basis'));
+
+const invalidRange = structuredClone(draft);
+invalidRange.commercial_scaling.marginal_cost_difference = {
+  family: 'triangular', low: '4', mode: '3', high: '2',
+};
+const rejectedRange = serializeTechnoeconomicRequest(invalidRange, {sources: [source]});
+assert.equal(rejectedRange.valid, false);
+assert.ok(rejectedRange.errors.some((item) =>
+  item.path === 'commercial_scaling.marginal_cost_difference'));
+
+const disabled = technoeconomicBuildGuidedDraft(base, {
+  ...guided, commercial_enabled: false,
+}, {seed: '2718', date: '2026-08-26'});
+const withoutScaling = serializeTechnoeconomicRequest(disabled, {sources: [source]});
+assert.equal(withoutScaling.valid, true, JSON.stringify(withoutScaling.errors));
+assert.equal(withoutScaling.payload.commercial_scaling, null);
+
+console.log(JSON.stringify({
+  scaling: serialized.payload.commercial_scaling,
+  basisErrorCount: rejectedBasis.errors.length,
+  rangeErrorCount: rejectedRange.errors.length,
+  disabled: withoutScaling.payload.commercial_scaling,
+}));
+"""
+        )
+        self.assertEqual(87.5, payload["scaling"]["target_capacity"])
+        self.assertEqual("mw", payload["scaling"]["target_capacity_unit"])
+        self.assertEqual(
+            "constant_usd_per_year", payload["scaling"]["marginal_cost_unit"]
+        )
+        self.assertGreater(payload["basisErrorCount"], 0)
+        self.assertGreater(payload["rangeErrorCount"], 0)
+        self.assertIsNone(payload["disabled"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_site_request_serialization_matches_the_strict_api_contract(self) -> None:
         payload = self.run_node(
             self.tea_fixture_helpers()
@@ -1749,6 +1914,82 @@ console.log(JSON.stringify({
             payload["terminal"],
         )
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_completed_commercial_scaling_results_render_all_metrics_and_reason(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const elements = {
+  technoeconomicCommercialResults: {hidden: true},
+  technoeconomicCommercialResultMetrics: {
+    children: [], replaceChildren() { this.children = []; },
+    appendChild(child) { this.children.push(child); },
+  },
+  technoeconomicCommercialResultStatus: {textContent: '', dataset: {}},
+};
+globalThis.document = {getElementById(id) { return elements[id] || null; }};
+technoeconomicMetricCard = (metricName, summary) => ({metricName, summary});
+const available = (p5, p50, p95) => ({
+  status: 'available', count: 500, percentiles: {p5, p50, p95},
+});
+const result = {
+  realization_count: 500,
+  commercial_scaling: {
+    target_capacity_w: 87500000,
+    target_rating_basis: 'ac_operating_limit',
+    marginal_cost_timing: 'equivalent_annual',
+    transfer_method: 'direct_capacity_scaling',
+  },
+  summaries: {
+    CommercialTargetCapacity_W: available(87500000, 87500000, 87500000),
+    CommercialYear1DeltaEnergy_se_minus_sol_kWh_AC: available(900000, 1100000, 1300000),
+    CommercialLifecycleDeltaEnergy_se_minus_sol_kWh_AC: available(12000000, 14000000, 16000000),
+    CommercialEquivalentAnnualDeltaEnergy_se_minus_sol_kWh_AC_per_year: available(800000, 1000000, 1200000),
+    CommercialLifecycleMarginalCostDelta_se_minus_sol_USD: available(-5000000, -4000000, -3000000),
+    CommercialEquivalentAnnualMarginalCostDelta_se_minus_sol_USD_per_year: available(-350000, -300000, -250000),
+    CommercialMarginalLCOO_se_minus_sol_USD_per_kWh_AC: available(-0.4, -0.3, -0.2),
+  },
+};
+technoeconomicRenderCommercialScaling(result);
+assert.equal(elements.technoeconomicCommercialResults.hidden, false);
+assert.equal(elements.technoeconomicCommercialResultMetrics.children.length, 7);
+assert.deepEqual(
+  elements.technoeconomicCommercialResultMetrics.children.map((item) => item.metricName),
+  TECHNOECONOMIC_COMMERCIAL_METRICS.map(([name]) => name),
+);
+assert.equal(elements.technoeconomicCommercialResultStatus.dataset.state, 'available');
+assert.ok(elements.technoeconomicCommercialResultStatus.textContent.includes(
+  'equivalent annual'));
+assert.ok(elements.technoeconomicCommercialResultStatus.textContent.includes(
+  'AC operating limit'));
+
+result.summaries.CommercialMarginalLCOO_se_minus_sol_USD_per_kWh_AC = {
+  status: 'unavailable', reason: 'zero_commercial_lifecycle_delta_energy',
+  count: 0, percentiles: {p5: null, p50: null, p95: null},
+};
+technoeconomicRenderCommercialScaling(result);
+assert.equal(elements.technoeconomicCommercialResultStatus.dataset.state, 'unavailable');
+assert.ok(elements.technoeconomicCommercialResultStatus.textContent.includes(
+  'zero commercial lifecycle delta energy'));
+assert.equal(
+  elements.technoeconomicCommercialResultMetrics.children.at(-1).summary.reason,
+  'zero_commercial_lifecycle_delta_energy',
+);
+
+technoeconomicRenderCommercialScaling({summaries: {}});
+assert.equal(elements.technoeconomicCommercialResults.hidden, true);
+assert.equal(elements.technoeconomicCommercialResultMetrics.children.length, 0);
+console.log(JSON.stringify({
+  metricCount: TECHNOECONOMIC_COMMERCIAL_METRICS.length,
+  unavailableStatus: 'zero commercial lifecycle delta energy',
+}));
+"""
+        )
+        self.assertEqual(7, payload["metricCount"])
+        self.assertEqual(
+            "zero commercial lifecycle delta energy", payload["unavailableStatus"]
+        )
+
     def test_server_authoritative_result_surface_covers_every_diagnostic(self) -> None:
         for metric_key, label in (
             (
@@ -1794,6 +2035,7 @@ console.log(JSON.stringify({
         self.assertNotIn("annualLatestResult", result_renderer)
         for render_call in (
             "technoeconomicRenderResultSummary(job, result)",
+            "technoeconomicRenderCommercialScaling(result)",
             "technoeconomicRenderMetrics(result)",
             "technoeconomicRenderTradeoffs(result)",
             "technoeconomicRenderPerYear(result)",

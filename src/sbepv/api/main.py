@@ -1060,6 +1060,8 @@ def create_technoeconomic_job(
     request_payload = req.model_dump(mode="json", exclude_none=False)
     if req.capacity_normalization is None:
         request_payload.pop("capacity_normalization", None)
+    if req.commercial_scaling is None:
+        request_payload.pop("commercial_scaling", None)
     try:
         with state._ORCHESTRATION_LOCK:
             if state.AGENT_STORE.get_job(req.source_annual_job_id) is None:

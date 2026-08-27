@@ -494,6 +494,50 @@
             gap: 10px;
         }
 
+        .tea-guided-commercial {
+            display: grid;
+            gap: 14px;
+            margin-top: 16px;
+            padding: 16px;
+            border: 1px solid #9fcac4;
+            border-radius: 9px;
+            background: linear-gradient(135deg, var(--accent-soft), var(--surface) 72%);
+        }
+
+        .tea-guided-commercial-fields {
+            display: grid;
+            gap: 14px;
+            padding-top: 14px;
+            border-top: 1px solid #b8d7d3;
+        }
+
+        .tea-guided-commercial-fields[hidden],
+        .tea-commercial-result-section[hidden] {
+            display: none;
+        }
+
+        .tea-guided-commercial-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .tea-capacity-input-group {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(76px, auto);
+            gap: 8px;
+        }
+
+        .tea-guided-commercial-rationale textarea {
+            min-height: 82px;
+            resize: vertical;
+        }
+
+        .tea-guided-commercial-acceptance {
+            border-color: #9fcac4;
+            background: var(--accent-soft);
+        }
+
         .tea-guided-acceptance {
             display: block;
             margin-top: 16px;
@@ -1217,6 +1261,28 @@
             background: var(--surface-muted);
         }
 
+        .tea-commercial-result-section {
+            border-color: #9fcac4;
+            background: linear-gradient(180deg, rgba(226, 245, 242, 0.44), var(--surface) 180px);
+        }
+
+        .tea-commercial-result-status {
+            margin: 0;
+            padding: 10px 20px 0;
+            color: var(--muted-strong);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .tea-commercial-result-status[data-state="unavailable"] {
+            color: #8a5a00;
+        }
+
+        .tea-commercial-metric-grid .tea-metric-card:last-child {
+            border-color: #9fcac4;
+            background: var(--accent-soft);
+        }
+
         .tea-summary-card-label,
         .tea-metric-label,
         .tea-tradeoff-label {
@@ -1694,6 +1760,7 @@
             .tea-design-grid,
             .tea-transfer-grid,
             .tea-guided-grid,
+            .tea-guided-commercial-grid,
             .tea-guided-range-grid,
             .tea-submit-panel {
                 grid-template-columns: 1fr;
@@ -1808,6 +1875,7 @@
             }
 
             .tea-guided-grid,
+            .tea-guided-commercial-grid,
             .tea-system-financial-fields,
             .tea-system-estimate dl,
             .tea-source-system-card {
@@ -1904,11 +1972,14 @@
             .tea-guided-basis,
             .tea-guided-common,
             .tea-guided-assumption-note,
+            .tea-guided-commercial,
             .tea-system-cost-card,
             .tea-system-estimate,
             .tea-guided-ranges,
             .tea-guided-range-group,
             .tea-guided-acceptance,
+            .tea-guided-commercial-acceptance,
+            .tea-commercial-result-section,
             .tea-advanced-workspace,
             .tea-status-pill,
             .tea-button,
