@@ -148,7 +148,6 @@
                 annualLatestJobId = job_id;
                 annualLatestResult = null;
                 annualRunState = { state: 'queued', progress: 0, stage: 'Queued...' };
-                renderTechnoeconomicAnalysis(null);
                 renderAnnualResultCalibration(null);
                 clearAnnualImages();
                 setAnnualExcelLink(null);
@@ -315,6 +314,10 @@
             }
         }
 
+        initializeTechnoeconomicWorkspace();
+        void refreshTechnoeconomicSources();
+        void restoreTechnoeconomicActiveJob();
+
         runBtn.addEventListener('click', runAnalysis);
         calibrationReviewToggle.addEventListener('click', () => {
             setCalibrationReviewCollapsed(!calibrationReviewCollapsed);
@@ -361,23 +364,6 @@
             void loadCurrentCalibration();
         });
         technoeconomicTab.addEventListener('click', () => switchMode('technoeconomic'));
-        openAnnualSimulationBtn.addEventListener('click', () => {
-            switchMode('annual');
-            void loadCurrentCalibration();
-            const annualControls = document.getElementById('annualControls');
-            annualControls.focus({ preventScroll: true });
-            annualControls.scrollIntoView({ block: 'start' });
-        });
-        [baselineAnnualizedCost, optimizedAnnualizedCost].forEach((input) => {
-            input.addEventListener('input', () => {
-                renderTechnoeconomicAnalysis();
-                saveDashboardState();
-            });
-            input.addEventListener('change', () => {
-                renderTechnoeconomicAnalysis();
-                saveDashboardState();
-            });
-        });
         operationsNavLink.addEventListener('click', () => setActiveNav(operationsNavLink));
         pvModelNavLink.addEventListener('click', () => setActiveNav(pvModelNavLink));
         annualCurtailmentEnabled.addEventListener('change', syncAnnualCurtailmentLimit);

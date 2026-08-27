@@ -873,6 +873,38 @@ class AnnualApiTests(unittest.TestCase):
             ]
         )
 
+        def fake_hardened_source(source_path, expected_sha256, *, annual_job_id):
+            return {
+                "schema_version": 1,
+                "owner_workflow": "annual_simulation",
+                "owner_annual_job_id": annual_job_id,
+                "content_address_algorithm": "sha256",
+                "storage_key": f"sha256/{expected_sha256[:2]}/{expected_sha256}.csv",
+                "sha256": expected_sha256,
+                "byte_count": Path(source_path).stat().st_size,
+                "media_type": "text/csv",
+                "immutable": True,
+            }
+
+        harden_source = patch.object(
+            run_annual.technoeconomic_api,
+            "harden_annual_source_artifact",
+            side_effect=fake_hardened_source,
+        )
+        harden_source.start()
+        self.addCleanup(harden_source.stop)
+
+    def _claim_annual_worker_job(self, job_id, request):
+        state.AGENT_STORE.create_job(
+            job_id=job_id,
+            kind="baseline",
+            mode="annual",
+            request=request.model_dump(mode="json"),
+        )
+        claimed = state.AGENT_STORE.claim_next_queued_job()
+        self.assertEqual(job_id, claimed["id"])
+        state.JOBS[job_id] = dict(claimed)
+
     def test_annual_endpoint_starts_independent_job(self):
         response = TestClient(app.app).post(
             "/api/annual-run",
@@ -1188,7 +1220,7 @@ class AnnualApiTests(unittest.TestCase):
             self.assertEqual(kwargs["expected_interval_seconds"], 15 * 60)
             return stats
 
-        state.JOBS[job_id] = {"mode": "annual", "state": "running"}
+        self._claim_annual_worker_job(job_id, req)
         try:
             with (
                 patch.object(app.midc, "fetch_hourly_data", return_value=source),
@@ -1216,6 +1248,24 @@ class AnnualApiTests(unittest.TestCase):
                 result["window"]["iam_model"], model.IAM_MODEL_MARTIN_RUIZ
             )
             self.assertEqual(result["window"]["iam_a_r"], 0.18)
+            self.assertTrue(result["annual_source_artifact"]["immutable"])
+            self.assertEqual(
+                job_id,
+                result["annual_source_artifact"]["owner_annual_job_id"],
+            )
+            self.assertEqual(model.capacity_manifest(), result["capacity_manifest"])
+            self.assertEqual(
+                result["capacity_manifest"],
+                result["stats"]["capacity_manifest"],
+            )
+            self.assertEqual(
+                result["capacity_manifest"],
+                state.JOBS[job_id]["provenance"]["capacity_manifest"],
+            )
+            self.assertEqual(
+                result["annual_source_artifact"],
+                state.JOBS[job_id]["provenance"]["annual_source_artifact"],
+            )
         finally:
             source_path.unlink(missing_ok=True)
 
@@ -1261,7 +1311,7 @@ class AnnualApiTests(unittest.TestCase):
             )
             return stats
 
-        state.JOBS[job_id] = {"mode": "annual", "state": "running"}
+        self._claim_annual_worker_job(job_id, req)
         try:
             with (
                 patch.object(midc, "fetch_hourly_data", side_effect=source_for),

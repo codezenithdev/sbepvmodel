@@ -290,8 +290,9 @@
 
             if (serverSessionId && saved.serverSessionId !== serverSessionId) {
                 clearSavedState();
-                resetClientState();
+                resetClientState({ preserveTechnoeconomic: true });
                 await loadCurrentCalibration({ forceSettings: true });
+                await reconnectTechnoeconomicWorkspace();
                 saveDashboardState({ allowDuringHydration: true });
                 releaseChatHydration();
                 await refreshAgentState(false);
@@ -308,6 +309,18 @@
             annualLatestJobId = saved.annualLatestJobId || null;
             annualLatestResult = saved.annualLatestResult || null;
             annualRunState = saved.annualRunState || null;
+            const dedicatedTechnoeconomicJobId = technoeconomicLoadActiveJobId();
+            if (dedicatedTechnoeconomicJobId) {
+                technoeconomicPersistActiveJobId(dedicatedTechnoeconomicJobId);
+            } else if (Object.prototype.hasOwnProperty.call(saved, 'technoeconomicActiveJobId')) {
+                const savedTechnoeconomicJobId = (
+                    typeof saved.technoeconomicActiveJobId === 'string'
+                    && saved.technoeconomicActiveJobId.length <= 200
+                    && saved.technoeconomicActiveJobId.startsWith('tea_')
+                ) ? saved.technoeconomicActiveJobId : null;
+                technoeconomicPersistActiveJobId(savedTechnoeconomicJobId);
+            }
+            technoeconomicJob = null;
             if (annualRunState?.state === 'confirmation_required') annualRunState = null;
             annualCalibrationBaselineJobId = saved.annualCalibrationBaselineJobId || null;
             annualCalibrationProfileSha256 = saved.annualCalibrationProfileSha256 || null;
@@ -334,8 +347,18 @@
                 applyValidationDateDefaults();
             }
             applyAnnualFormState(saved.annualForm);
-            applyTechnoeconomicFormState(saved.technoeconomicForm);
+            const savedTechnoeconomicForm = (
+                saved.technoeconomicForm?.schema_version === TECHNOECONOMIC_DRAFT_SCHEMA_VERSION
+            ) ? saved.technoeconomicForm : null;
+            const dedicatedTechnoeconomicForm = technoeconomicLoadLocalDraft();
+            if (!dedicatedTechnoeconomicForm && savedTechnoeconomicForm) {
+                applyTechnoeconomicFormState(savedTechnoeconomicForm);
+            }
             await loadCurrentCalibration();
+            await Promise.all([
+                refreshTechnoeconomicSources(),
+                restoreTechnoeconomicActiveJob(),
+            ]);
             switchMode(saved.activeView || saved.activeMode || 'validation', false);
             if (latestInputPlots) {
                 applyInputPlots(latestInputPlots, false);

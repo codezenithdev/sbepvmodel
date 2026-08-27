@@ -455,6 +455,22 @@
 
         function updateAgentContext() {
             if (!agentContextText || !agentContextBadge) return;
+            if (activeView === 'technoeconomic') {
+                const context = getTechnoeconomicChatContext();
+                const jobState = context.job_state || 'draft';
+                const basis = context.analysis_basis === 'commercial_representative'
+                    ? 'Commercial representative'
+                    : context.analysis_basis === 'solartac_site'
+                        ? 'SolarTAC site'
+                        : 'Basis not selected';
+                const source = context.source_annual_job_id
+                    ? 'Source ' + shortAgentId(context.source_annual_job_id)
+                    : 'No source selected';
+                agentContextBadge.classList.toggle('ready', jobState === 'done');
+                agentContextText.textContent = 'Technoeconomic read-only context · ' + basis + ' · ' + source + ' · ' + humanizeAgentField(jobState);
+                agentContextBadge.title = 'Solar Agent can explain this TEA context, but its actions remain Annual or Calibration model workflows.';
+                return;
+            }
             const modeLabel = activeView === 'technoeconomic'
                 ? 'Technoeconomic · Annual production'
                 : (activeMode === 'annual' ? 'Annual' : 'Calibration');

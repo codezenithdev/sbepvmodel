@@ -38,6 +38,7 @@ from sbepv.api.validation import (
 )
 from sbepv import model, reporting
 from sbepv.reporting import SourceFingerprintMismatch
+from sbepv.store import TECHNOECONOMIC_ID_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,11 @@ def _active_model_jobs() -> list[dict[str, Any]]:
     durable = state.AGENT_STORE.list_jobs(states=["queued", "running"], limit=100)
     durable_ids = {str(item["id"]) for item in durable}
     for job_id, cached in state.JOBS.items():
-        if job_id not in durable_ids and cached.get("state") in {"queued", "running"}:
+        if (
+            not str(job_id).startswith(TECHNOECONOMIC_ID_PREFIX)
+            and job_id not in durable_ids
+            and cached.get("state") in {"queued", "running"}
+        ):
             durable.append({"id": job_id, **cached})
     return durable
 
@@ -72,7 +77,11 @@ def _selected_baseline(mode: str) -> dict[str, Any] | None:
         return promoted["job"]
     # Compatibility for a completed run created before durable orchestration.
     for job_id, cached in reversed(state.JOBS.items()):
-        if cached.get("state") == "done" and cached.get("mode", "validation") == mode:
+        if (
+            not str(job_id).startswith(TECHNOECONOMIC_ID_PREFIX)
+            and cached.get("state") == "done"
+            and cached.get("mode", "validation") == mode
+        ):
             return {"id": job_id, **cached}
     return None
 

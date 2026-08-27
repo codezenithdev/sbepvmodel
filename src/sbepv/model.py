@@ -560,6 +560,70 @@ def calibration_physics_fingerprint() -> str:
 CALIBRATION_PHYSICS_FINGERPRINT = calibration_physics_fingerprint()
 
 
+CAPACITY_MANIFEST_SCHEMA_VERSION = 1
+CAPACITY_RATING_BASIS = "module_dc_nameplate_at_stc"
+
+
+def capacity_manifest() -> dict[str, object]:
+    """Return the explicit per-system module DC-STC capacity contract.
+
+    This manifest is deliberately separate from ``calibration_physics_manifest``.
+    The existing calibration fingerprint already commits to the shared module STC
+    rating and both system topologies; exposing those committed values here must
+    not silently retire otherwise compatible reviewed calibration profiles.
+    """
+
+    module_stc_wdc = _module_parameter_float("STC")
+
+    def system_capacity(
+        system: str,
+        strings: int,
+        bays_per_string: int,
+    ) -> dict[str, object]:
+        module_count = int(strings) * int(bays_per_string) * int(MODULES_PER_BAY)
+        return {
+            "system": system,
+            "rating_basis": CAPACITY_RATING_BASIS,
+            "module_model": MODULE_NAME,
+            "module_stc_wdc": module_stc_wdc,
+            "strings": int(strings),
+            "bays_per_string": int(bays_per_string),
+            "modules_per_bay": int(MODULES_PER_BAY),
+            "module_count": module_count,
+            "installed_wdc": module_count * module_stc_wdc,
+            "calibration_physics_version": CALIBRATION_PHYSICS_VERSION,
+            "calibration_physics_fingerprint": CALIBRATION_PHYSICS_FINGERPRINT,
+        }
+
+    payload: dict[str, object] = {
+        "schema_version": CAPACITY_MANIFEST_SCHEMA_VERSION,
+        "rating_basis": CAPACITY_RATING_BASIS,
+        "systems": {
+            "solectria": system_capacity(
+                "solectria",
+                SOLECTRIA_STRINGS,
+                SOLECTRIA_BAYS_PER_STRING,
+            ),
+            "solaredge": system_capacity(
+                "solaredge",
+                SOLAREDGE_STRINGS,
+                SOLAREDGE_BAYS_PER_STRING,
+            ),
+        },
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return {
+        **payload,
+        "capacity_manifest_sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
 def validate_calibration_profile_physics(
     profile: Mapping[str, object],
 ) -> None:

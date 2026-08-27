@@ -39,7 +39,7 @@
             }
         }
 
-        function resetClientState() {
+        function resetClientState(options = {}) {
             calibrationWorkflowRevision += 1;
             invalidateValidationStatusPoll();
             invalidateAnnualStatusPoll();
@@ -100,7 +100,11 @@
             renderValidationRunContext(null);
             clearRunImages();
             clearAnnualImages();
-            applyTechnoeconomicFormState(null);
+            if (options.preserveTechnoeconomic === true) {
+                invalidateTechnoeconomicWorkspace({ preserveDraft: true, preserveActiveJob: true });
+            } else {
+                resetTechnoeconomicWorkspace({ preserveDraft: false, refreshSources: false });
+            }
             setExcelLink(null);
             setAnnualExcelLink(null);
             renderAnnualQuality([]);
@@ -140,6 +144,7 @@
                     annualSeasonalFallbackDisplay,
                     annualForm: getAnnualFormState(),
                     technoeconomicForm: getTechnoeconomicFormState(),
+                    technoeconomicActiveJobId,
                     activeChatConversationId,
                     chatMessages,
                     chatDraft,

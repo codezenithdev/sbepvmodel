@@ -6,6 +6,7 @@ outputs/
 !app/outputs/
 !app/outputs/**
 *.log
+.venv/
 
 analysis/
 

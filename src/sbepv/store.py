@@ -7,8 +7,10 @@ returns ordinary dictionaries so the store is easy to integrate with FastAPI.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import secrets
 import sqlite3
 import threading
 import uuid
@@ -18,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SAVED_RESULTS_LIMIT = 10
 PROPOSAL_STATES = frozenset(
     {"pending", "confirmed", "superseded", "dismissed", "expired"}
@@ -28,6 +30,8 @@ JOB_STATES = frozenset(
 )
 MODES = frozenset({"validation", "annual"})
 COMPARISON_KINDS = frozenset({"same_input", "cross_run"})
+TECHNOECONOMIC_ID_PREFIX = "tea_"
+TERMINAL_JOB_STATES = frozenset({"done", "error", "cancelled", "interrupted"})
 
 
 class AgentStoreError(RuntimeError):
@@ -99,6 +103,10 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 class AgentStore:
     """Thread-safe durable storage for proposals, jobs, and promoted baselines.
 
@@ -168,6 +176,9 @@ class AgentStore:
                     version = 3
                 if version < 4:
                     self._migrate_v4(connection)
+                    version = 4
+                if version < 5:
+                    self._migrate_v5(connection)
             finally:
                 connection.close()
 
@@ -366,6 +377,378 @@ class AgentStore:
             connection.rollback()
             raise
 
+    def _migrate_v5(self, connection: sqlite3.Connection) -> None:
+        """Add structurally isolated, immutable technoeconomic jobs."""
+
+        applied_at = _timestamp(self._current_time())
+        connection.executescript(
+            """
+            BEGIN IMMEDIATE;
+
+            CREATE TABLE IF NOT EXISTS technoeconomic_jobs (
+                tea_job_id TEXT PRIMARY KEY CHECK (
+                    tea_job_id GLOB 'tea_*' AND length(tea_job_id) > 4
+                ),
+                state TEXT NOT NULL CHECK (
+                    state IN ('queued','running','done','error','cancelled','interrupted')
+                ),
+                request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+                source_annual_job_id TEXT NOT NULL
+                    REFERENCES jobs(job_id) ON DELETE RESTRICT,
+                source_artifact_storage_key TEXT NOT NULL CHECK (
+                    source_artifact_storage_key =
+                        'sha256/' || substr(source_artifact_sha256, 1, 2) || '/'
+                        || source_artifact_sha256 || '.csv'
+                ),
+                source_artifact_sha256 TEXT NOT NULL CHECK (
+                    length(source_artifact_sha256) = 64
+                    AND source_artifact_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                source_artifact_bytes INTEGER NOT NULL CHECK (
+                    source_artifact_bytes > 0
+                ),
+                source_snapshot_json TEXT NOT NULL CHECK (
+                    json_valid(source_snapshot_json)
+                    AND json_extract(
+                        source_snapshot_json, '$.source_annual_job_id'
+                    ) = source_annual_job_id
+                    AND json_extract(
+                        source_snapshot_json,
+                        '$.midc_source_artifact.owner_annual_job_id'
+                    ) = source_annual_job_id
+                    AND json_extract(
+                        source_snapshot_json,
+                        '$.midc_source_artifact.storage_key'
+                    ) = source_artifact_storage_key
+                    AND json_extract(
+                        source_snapshot_json, '$.midc_source_artifact.sha256'
+                    ) = source_artifact_sha256
+                    AND json_extract(
+                        source_snapshot_json, '$.midc_source_artifact.byte_count'
+                    ) = source_artifact_bytes
+                ),
+                source_snapshot_sha256 TEXT NOT NULL CHECK (
+                    length(source_snapshot_sha256) = 64
+                    AND source_snapshot_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                submission_provenance_json TEXT NOT NULL CHECK (
+                    json_valid(submission_provenance_json)
+                ),
+                submission_provenance_sha256 TEXT NOT NULL CHECK (
+                    length(submission_provenance_sha256) = 64
+                    AND submission_provenance_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                retry_of_job_id TEXT
+                    REFERENCES technoeconomic_jobs(tea_job_id) ON DELETE RESTRICT,
+                result_json TEXT CHECK (
+                    result_json IS NULL OR json_valid(result_json)
+                ),
+                result_provenance_json TEXT CHECK (
+                    result_provenance_json IS NULL
+                    OR json_valid(result_provenance_json)
+                ),
+                artifacts_json TEXT CHECK (
+                    artifacts_json IS NULL OR json_valid(artifacts_json)
+                ),
+                progress REAL NOT NULL DEFAULT 0 CHECK (
+                    progress >= 0 AND progress <= 100
+                ),
+                stage TEXT NOT NULL DEFAULT 'Queued',
+                cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (
+                    cancel_requested IN (0,1)
+                ),
+                error TEXT,
+                worker_id TEXT,
+                lease_token TEXT,
+                created_at TEXT NOT NULL,
+                queued_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                heartbeat_at TEXT,
+                cancel_requested_at TEXT,
+                interrupted_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS technoeconomic_jobs_state_queued_idx
+                ON technoeconomic_jobs(state, queued_at);
+            CREATE INDEX IF NOT EXISTS technoeconomic_jobs_source_idx
+                ON technoeconomic_jobs(source_annual_job_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS technoeconomic_jobs_created_idx
+                ON technoeconomic_jobs(created_at DESC, tea_job_id DESC);
+
+            CREATE TRIGGER IF NOT EXISTS model_job_tea_namespace_insert_guard
+            BEFORE INSERT ON jobs
+            WHEN NEW.job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'tea_ ids are reserved for technoeconomic jobs');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS model_job_tea_namespace_update_guard
+            BEFORE UPDATE OF job_id ON jobs
+            WHEN NEW.job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'tea_ ids are reserved for technoeconomic jobs');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS model_job_technoeconomic_kind_insert_guard
+            BEFORE INSERT ON jobs
+            WHEN lower(trim(NEW.kind)) = 'technoeconomic'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic work requires its isolated table');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS model_job_technoeconomic_kind_update_guard
+            BEFORE UPDATE OF kind ON jobs
+            WHEN lower(trim(NEW.kind)) = 'technoeconomic'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic work requires its isolated table');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS model_job_tea_baseline_insert_guard
+            BEFORE INSERT ON jobs
+            WHEN NEW.baseline_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot be model baselines');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS model_job_tea_baseline_update_guard
+            BEFORE UPDATE OF baseline_id ON jobs
+            WHEN NEW.baseline_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot be model baselines');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS proposal_tea_reference_insert_guard
+            BEFORE INSERT ON proposals
+            WHEN NEW.baseline_id GLOB 'tea_*'
+                 OR NEW.confirmed_job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot enter model proposals');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS proposal_tea_reference_update_guard
+            BEFORE UPDATE OF baseline_id, confirmed_job_id ON proposals
+            WHEN NEW.baseline_id GLOB 'tea_*'
+                 OR NEW.confirmed_job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot enter model proposals');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS current_baseline_tea_reference_insert_guard
+            BEFORE INSERT ON current_baselines
+            WHEN NEW.job_id GLOB 'tea_*' OR NEW.previous_job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot be promoted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS current_baseline_tea_reference_update_guard
+            BEFORE UPDATE OF job_id, previous_job_id ON current_baselines
+            WHEN NEW.job_id GLOB 'tea_*' OR NEW.previous_job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot be promoted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS baseline_promotion_tea_reference_insert_guard
+            BEFORE INSERT ON baseline_promotions
+            WHEN NEW.job_id GLOB 'tea_*' OR NEW.previous_job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot enter promotion history');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS baseline_promotion_tea_reference_update_guard
+            BEFORE UPDATE OF job_id, previous_job_id ON baseline_promotions
+            WHEN NEW.job_id GLOB 'tea_*' OR NEW.previous_job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot enter promotion history');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS saved_result_tea_reference_insert_guard
+            BEFORE INSERT ON saved_results
+            WHEN NEW.job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot be saved model results');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS saved_result_tea_reference_update_guard
+            BEFORE UPDATE OF job_id ON saved_results
+            WHEN NEW.job_id GLOB 'tea_*'
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic jobs cannot be saved model results');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS technoeconomic_source_insert_guard
+            BEFORE INSERT ON technoeconomic_jobs
+            WHEN NOT EXISTS (
+                SELECT 1 FROM jobs
+                 WHERE job_id = NEW.source_annual_job_id
+                   AND mode = 'annual' AND state = 'done'
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic source must be a completed annual job');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS retained_annual_source_state_guard
+            BEFORE UPDATE OF
+                request_json, result_json, provenance_json, artifacts_json,
+                source_path, source_hash, kind, mode, state
+            ON jobs
+            WHEN EXISTS (
+                SELECT 1 FROM technoeconomic_jobs
+                 WHERE source_annual_job_id = OLD.job_id
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'referenced annual source payload is retained');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS model_job_global_running_guard
+            BEFORE UPDATE OF state ON jobs
+            WHEN NEW.state = 'running' AND OLD.state <> 'running'
+            BEGIN
+                SELECT RAISE(ABORT, 'only queued model jobs can start')
+                 WHERE OLD.state <> 'queued' OR OLD.cancel_requested <> 0;
+                SELECT RAISE(ABORT, 'another model or technoeconomic job is running')
+                 WHERE EXISTS (SELECT 1 FROM jobs WHERE state = 'running')
+                    OR EXISTS (
+                        SELECT 1 FROM technoeconomic_jobs WHERE state = 'running'
+                    );
+                SELECT RAISE(ABORT, 'model job is not globally oldest queued work')
+                 WHERE EXISTS (
+                        SELECT 1 FROM jobs
+                         WHERE state = 'queued' AND cancel_requested = 0
+                           AND (
+                                queued_at < OLD.queued_at
+                                OR (queued_at = OLD.queued_at AND job_id < OLD.job_id)
+                           )
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM technoeconomic_jobs
+                         WHERE state = 'queued' AND cancel_requested = 0
+                           AND queued_at < OLD.queued_at
+                    );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS technoeconomic_job_global_running_guard
+            BEFORE UPDATE OF state ON technoeconomic_jobs
+            WHEN NEW.state = 'running' AND OLD.state <> 'running'
+            BEGIN
+                SELECT RAISE(ABORT, 'only queued technoeconomic jobs can start')
+                 WHERE OLD.state <> 'queued' OR OLD.cancel_requested <> 0;
+                SELECT RAISE(ABORT, 'technoeconomic running work requires a lease')
+                 WHERE NEW.worker_id IS NULL OR length(trim(NEW.worker_id)) = 0
+                    OR NEW.lease_token IS NULL OR length(trim(NEW.lease_token)) = 0
+                    OR NEW.started_at IS NULL OR NEW.heartbeat_at IS NULL;
+                SELECT RAISE(ABORT, 'another model or technoeconomic job is running')
+                 WHERE EXISTS (SELECT 1 FROM jobs WHERE state = 'running')
+                    OR EXISTS (
+                        SELECT 1 FROM technoeconomic_jobs WHERE state = 'running'
+                    );
+                SELECT RAISE(ABORT, 'technoeconomic job is not globally oldest queued work')
+                 WHERE EXISTS (
+                        SELECT 1 FROM jobs
+                         WHERE state = 'queued' AND cancel_requested = 0
+                           AND queued_at <= OLD.queued_at
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM technoeconomic_jobs
+                         WHERE state = 'queued' AND cancel_requested = 0
+                           AND (
+                                queued_at < OLD.queued_at
+                                OR (
+                                    queued_at = OLD.queued_at
+                                    AND tea_job_id < OLD.tea_job_id
+                                )
+                           )
+                    );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS technoeconomic_job_inputs_are_immutable
+            BEFORE UPDATE OF
+                tea_job_id,
+                request_json,
+                source_annual_job_id,
+                source_artifact_storage_key,
+                source_artifact_sha256,
+                source_artifact_bytes,
+                source_snapshot_json,
+                source_snapshot_sha256,
+                submission_provenance_json,
+                submission_provenance_sha256,
+                retry_of_job_id
+            ON technoeconomic_jobs
+            BEGIN
+                SELECT RAISE(ABORT, 'technoeconomic request and source snapshot are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS technoeconomic_job_terminal_payload_is_immutable
+            BEFORE UPDATE OF result_json, result_provenance_json, artifacts_json
+            ON technoeconomic_jobs
+            WHEN OLD.state IN ('done','error','cancelled','interrupted')
+            BEGIN
+                SELECT RAISE(ABORT, 'terminal technoeconomic payload is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS technoeconomic_job_terminal_state_is_immutable
+            BEFORE UPDATE OF state ON technoeconomic_jobs
+            WHEN OLD.state IN ('done','error','cancelled','interrupted')
+                 AND NEW.state <> OLD.state
+            BEGIN
+                SELECT RAISE(ABORT, 'terminal technoeconomic state is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS technoeconomic_job_terminal_row_is_immutable
+            BEFORE UPDATE ON technoeconomic_jobs
+            WHEN OLD.state IN ('done','error','cancelled','interrupted')
+            BEGIN
+                SELECT RAISE(ABORT, 'terminal technoeconomic job is immutable');
+            END;
+            """
+        )
+        collision = connection.execute(
+            """
+            SELECT field_name, field_value FROM (
+                SELECT 'jobs.job_id' AS field_name, job_id AS field_value
+                  FROM jobs WHERE job_id GLOB 'tea_*'
+                UNION ALL
+                SELECT 'jobs.baseline_id', baseline_id
+                  FROM jobs WHERE baseline_id GLOB 'tea_*'
+                UNION ALL
+                SELECT 'proposals.baseline_id', baseline_id
+                  FROM proposals WHERE baseline_id GLOB 'tea_*'
+                UNION ALL
+                SELECT 'proposals.confirmed_job_id', confirmed_job_id
+                  FROM proposals WHERE confirmed_job_id GLOB 'tea_*'
+                UNION ALL
+                SELECT 'current_baselines.job_id', job_id
+                  FROM current_baselines WHERE job_id GLOB 'tea_*'
+                UNION ALL
+                SELECT 'current_baselines.previous_job_id', previous_job_id
+                  FROM current_baselines WHERE previous_job_id GLOB 'tea_*'
+                UNION ALL
+                SELECT 'baseline_promotions.job_id', job_id
+                  FROM baseline_promotions WHERE job_id GLOB 'tea_*'
+                UNION ALL
+                SELECT 'baseline_promotions.previous_job_id', previous_job_id
+                  FROM baseline_promotions WHERE previous_job_id GLOB 'tea_*'
+                UNION ALL
+                SELECT 'saved_results.job_id', job_id
+                  FROM saved_results WHERE job_id GLOB 'tea_*'
+            ) LIMIT 1
+            """
+        ).fetchone()
+        if collision is not None:
+            connection.rollback()
+            raise SchemaVersionError(
+                "schema v5 reserves the 'tea_' namespace, but existing "
+                f"{collision['field_name']} uses {collision['field_value']!r}"
+            )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (5, applied_at),
+        )
+        connection.execute("PRAGMA user_version = 5")
+        connection.commit()
+
     def _current_time(self) -> datetime:
         return _as_utc(self._now())
 
@@ -417,6 +800,28 @@ class AgentStore:
         return result
 
     @staticmethod
+    def _technoeconomic_job_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = result.pop("tea_job_id")
+        for field in (
+            "request",
+            "source_snapshot",
+            "submission_provenance",
+            "result",
+            "result_provenance",
+            "artifacts",
+        ):
+            result[field] = _json_load(result.pop(f"{field}_json"))
+        result["cancel_requested"] = bool(result["cancel_requested"])
+        if result["state"] == "interrupted" and not result.get("completed_at"):
+            result["completed_at"] = result.get("interrupted_at")
+        return result
+
+    @staticmethod
     def _expire_due(
         connection: sqlite3.Connection, now_text: str
     ) -> int:
@@ -458,6 +863,13 @@ class AgentStore:
 
         self._validate_mode(mode)
         self._validate_comparison_kind(comparison_kind)
+        if baseline_id is not None and str(baseline_id).startswith(
+            TECHNOECONOMIC_ID_PREFIX
+        ):
+            raise ValueError(
+                "model proposal baseline ids must not use the reserved "
+                f"{TECHNOECONOMIC_ID_PREFIX!r} prefix"
+            )
         now = self._current_time()
         expiry = _as_utc(expires_at) if expires_at else now + timedelta(hours=24)
         if expiry <= now:
@@ -660,6 +1072,22 @@ class AgentStore:
         artifacts_json: str | None,
         now_text: str,
     ) -> None:
+        if job_id.startswith(TECHNOECONOMIC_ID_PREFIX):
+            raise ValueError(
+                f"model job ids must not use the reserved "
+                f"{TECHNOECONOMIC_ID_PREFIX!r} prefix"
+            )
+        if kind.strip().casefold() == "technoeconomic":
+            raise ValueError(
+                "technoeconomic work must use the isolated technoeconomic job table"
+            )
+        if baseline_id is not None and str(baseline_id).startswith(
+            TECHNOECONOMIC_ID_PREFIX
+        ):
+            raise ValueError(
+                "model job baseline ids must not use the reserved "
+                f"{TECHNOECONOMIC_ID_PREFIX!r} prefix"
+            )
         connection.execute(
             """
             INSERT INTO jobs (
@@ -702,12 +1130,17 @@ class AgentStore:
             raise ValueError("required must be at least 1")
         active = int(
             connection.execute(
-                "SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running')"
+                "SELECT ("
+                "  SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running')"
+                ") + ("
+                "  SELECT COUNT(*) FROM technoeconomic_jobs "
+                "  WHERE state IN ('queued','running')"
+                ")"
             ).fetchone()[0]
         )
         if active + required_slots > limit:
             raise QueueCapacityExceeded(
-                f"model queue is full ({active}/{limit} active jobs)"
+                f"job queue is full ({active}/{limit} active jobs)"
             )
 
     def ensure_job_capacity(self, *, max_active_jobs: int, required: int = 1) -> None:
@@ -952,6 +1385,251 @@ class AgentStore:
             ).fetchone()
         return self._job_from_row(row)
 
+    @staticmethod
+    def _validate_technoeconomic_job_id(job_id: str) -> str:
+        normalized = str(job_id).strip()
+        if not normalized.startswith(TECHNOECONOMIC_ID_PREFIX) or len(normalized) <= len(
+            TECHNOECONOMIC_ID_PREFIX
+        ):
+            raise ValueError(
+                "technoeconomic job ids must use the reserved "
+                f"{TECHNOECONOMIC_ID_PREFIX!r} prefix"
+            )
+        return normalized
+
+    @staticmethod
+    def _validate_sha256(value: str, *, field: str) -> str:
+        normalized = str(value).strip()
+        if len(normalized) != 64 or any(
+            character not in "0123456789abcdef" for character in normalized
+        ):
+            raise ValueError(f"{field} must be a lowercase hexadecimal SHA-256")
+        return normalized
+
+    @staticmethod
+    def _insert_technoeconomic_job(
+        connection: sqlite3.Connection,
+        *,
+        job_id: str,
+        request_json: str,
+        source_annual_job_id: str,
+        source_artifact_storage_key: str,
+        source_artifact_sha256: str,
+        source_artifact_bytes: int,
+        source_snapshot_json: str,
+        source_snapshot_sha256: str,
+        submission_provenance_json: str,
+        submission_provenance_sha256: str,
+        retry_of_job_id: str | None,
+        now_text: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO technoeconomic_jobs (
+                tea_job_id, state, request_json, source_annual_job_id,
+                source_artifact_storage_key, source_artifact_sha256,
+                source_artifact_bytes, source_snapshot_json,
+                source_snapshot_sha256, submission_provenance_json,
+                submission_provenance_sha256, retry_of_job_id,
+                progress, stage, cancel_requested, created_at, queued_at, updated_at
+            ) VALUES (
+                ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                0, 'Queued', 0, ?, ?, ?
+            )
+            """,
+            (
+                job_id,
+                request_json,
+                source_annual_job_id,
+                source_artifact_storage_key,
+                source_artifact_sha256,
+                source_artifact_bytes,
+                source_snapshot_json,
+                source_snapshot_sha256,
+                submission_provenance_json,
+                submission_provenance_sha256,
+                retry_of_job_id,
+                now_text,
+                now_text,
+                now_text,
+            ),
+        )
+
+    def create_technoeconomic_job(
+        self,
+        *,
+        request: Mapping[str, Any],
+        source_annual_job_id: str,
+        source_artifact_storage_key: str,
+        source_artifact_sha256: str,
+        source_artifact_bytes: int,
+        source_snapshot: Mapping[str, Any],
+        submission_provenance: Mapping[str, Any],
+        job_id: str | None = None,
+        max_active_jobs: int | None = None,
+        atomic_source_check: Callable[[sqlite3.Connection], str | None] | None = None,
+    ) -> dict[str, Any]:
+        """Atomically freeze and enqueue a structurally isolated TEA job.
+
+        ``atomic_source_check`` is required for an original enqueue and runs inside
+        the same ``BEGIN IMMEDIATE`` transaction immediately before insertion.  It
+        must re-read all Annual/calibration/review/promotion dependencies and return
+        the SHA-256 of the exact candidate snapshot it verified.  A missing or
+        different digest rejects the insert, binding the recheck to the bytes that
+        will be persisted.  The callback must not commit, roll back, or mutate
+        through the supplied connection.
+        """
+
+        job_id = self._validate_technoeconomic_job_id(job_id or _new_id("tea"))
+        source_annual_job_id = str(source_annual_job_id).strip()
+        if not source_annual_job_id:
+            raise ValueError("source_annual_job_id must not be blank")
+        artifact_hash = self._validate_sha256(
+            source_artifact_sha256, field="source_artifact_sha256"
+        )
+        storage_key = str(source_artifact_storage_key).strip()
+        expected_storage_key = (
+            f"sha256/{artifact_hash[:2]}/{artifact_hash}.csv"
+        )
+        if storage_key != expected_storage_key:
+            raise ValueError(
+                "source_artifact_storage_key must be the canonical content address "
+                f"{expected_storage_key!r}"
+            )
+        if isinstance(source_artifact_bytes, bool) or not isinstance(
+            source_artifact_bytes, int
+        ) or source_artifact_bytes <= 0:
+            raise ValueError("source_artifact_bytes must be a positive integer")
+        artifact_bytes = source_artifact_bytes
+
+        request_json = _json_dump(dict(request))
+        snapshot_payload = dict(source_snapshot)
+        snapshot_source_id = snapshot_payload.get("source_annual_job_id")
+        if snapshot_source_id != source_annual_job_id:
+            raise ValueError(
+                "source_annual_job_id must match the frozen source snapshot"
+            )
+        snapshot_artifact = snapshot_payload.get("midc_source_artifact")
+        if not isinstance(snapshot_artifact, Mapping):
+            raise ValueError(
+                "source_snapshot must contain a midc_source_artifact identity"
+            )
+        expected_artifact_identity = {
+            "owner_annual_job_id": source_annual_job_id,
+            "storage_key": storage_key,
+            "sha256": artifact_hash,
+            "byte_count": artifact_bytes,
+        }
+        for field, expected in expected_artifact_identity.items():
+            if snapshot_artifact.get(field) != expected:
+                raise ValueError(
+                    f"source snapshot artifact {field} must match the frozen "
+                    "top-level identity"
+                )
+        snapshot_json = _json_dump(snapshot_payload)
+        provenance_json = _json_dump(dict(submission_provenance))
+        snapshot_hash = _sha256_text(snapshot_json)
+        provenance_hash = _sha256_text(provenance_json)
+        now_text = _timestamp(self._current_time())
+        if atomic_source_check is None:
+            raise ValueError(
+                "atomic_source_check is required for a new technoeconomic job"
+            )
+
+        with self._transaction(write=True) as connection:
+            source = connection.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (source_annual_job_id,)
+            ).fetchone()
+            if source is None:
+                raise RecordNotFound(
+                    f"unknown Annual Simulation source: {source_annual_job_id}"
+                )
+            if source["mode"] != "annual" or source["state"] != "done":
+                raise InvalidStateTransition(
+                    "technoeconomic source must be a completed Annual Simulation"
+                )
+            if connection.execute(
+                "SELECT 1 FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            ).fetchone() is not None or connection.execute(
+                "SELECT 1 FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone() is not None:
+                raise StoreConflict(f"technoeconomic job id already exists: {job_id}")
+            self._ensure_queue_capacity(
+                connection, max_active_jobs=max_active_jobs
+            )
+            verified_snapshot_hash = atomic_source_check(connection)
+            if not isinstance(verified_snapshot_hash, str) or not secrets.compare_digest(
+                verified_snapshot_hash, snapshot_hash
+            ):
+                raise StoreConflict(
+                    "Annual Simulation source changed or the verified snapshot "
+                    "does not match the technoeconomic payload"
+                )
+            try:
+                self._insert_technoeconomic_job(
+                    connection,
+                    job_id=job_id,
+                    request_json=request_json,
+                    source_annual_job_id=source_annual_job_id,
+                    source_artifact_storage_key=storage_key,
+                    source_artifact_sha256=artifact_hash,
+                    source_artifact_bytes=artifact_bytes,
+                    source_snapshot_json=snapshot_json,
+                    source_snapshot_sha256=snapshot_hash,
+                    submission_provenance_json=provenance_json,
+                    submission_provenance_sha256=provenance_hash,
+                    retry_of_job_id=None,
+                    now_text=now_text,
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict(
+                    f"could not create technoeconomic job: {job_id}"
+                ) from exc
+            row = connection.execute(
+                "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            ).fetchone()
+        return self._technoeconomic_job_from_row(row)  # type: ignore[return-value]
+
+    def get_technoeconomic_job(self, job_id: str) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            ).fetchone()
+        return self._technoeconomic_job_from_row(row)
+
+    def list_technoeconomic_jobs(
+        self,
+        *,
+        states: Sequence[str] | None = None,
+        source_annual_job_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if states is not None:
+            unknown = set(states) - JOB_STATES
+            if unknown:
+                raise ValueError(f"unknown technoeconomic job states: {sorted(unknown)}")
+        if limit <= 0:
+            return []
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        if states:
+            clauses.append(f"state IN ({','.join('?' for _ in states)})")
+            parameters.extend(states)
+        if source_annual_job_id is not None:
+            clauses.append("source_annual_job_id = ?")
+            parameters.append(str(source_annual_job_id))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(int(limit))
+        with self._transaction() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM technoeconomic_jobs {where} "
+                "ORDER BY created_at DESC, tea_job_id DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+        return [
+            self._technoeconomic_job_from_row(row) for row in rows
+        ]  # type: ignore[misc]
+
     def list_jobs(
         self,
         *,
@@ -959,7 +1637,7 @@ class AgentStore:
         mode: str | None = None,
         kind: str | None = None,
         baseline_id: str | None | object = _UNSET,
-        limit: int = 100,
+        limit: int | None = 100,
     ) -> list[dict[str, Any]]:
         if mode is not None:
             self._validate_mode(mode)
@@ -967,7 +1645,7 @@ class AgentStore:
             unknown = set(states) - JOB_STATES
             if unknown:
                 raise ValueError(f"unknown job states: {sorted(unknown)}")
-        if limit <= 0:
+        if limit is not None and limit <= 0:
             return []
         clauses: list[str] = []
         parameters: list[Any] = []
@@ -987,11 +1665,14 @@ class AgentStore:
                 clauses.append("baseline_id = ?")
                 parameters.append(baseline_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        parameters.append(int(limit))
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = " LIMIT ?"
+            parameters.append(int(limit))
         with self._transaction() as connection:
             rows = connection.execute(
                 f"SELECT * FROM jobs {where} "
-                "ORDER BY created_at DESC, job_id DESC LIMIT ?",
+                f"ORDER BY created_at DESC, job_id DESC{limit_clause}",
                 parameters,
             ).fetchall()
         return [self._job_from_row(row) for row in rows]  # type: ignore[misc]
@@ -1039,7 +1720,8 @@ class AgentStore:
         if requested == current:
             return
         allowed = {
-            "queued": {"running", "cancelled", "error"},
+            # Running work is entered only by the atomic cross-workflow claimer.
+            "queued": {"cancelled", "error"},
             "running": {"done", "error", "cancelled", "interrupted"},
             "done": set(),
             "error": set(),
@@ -1090,6 +1772,19 @@ class AgentStore:
             ).fetchone()
             if row is None:
                 raise RecordNotFound(f"unknown job: {job_id}")
+            retained_source = connection.execute(
+                "SELECT 1 FROM technoeconomic_jobs "
+                "WHERE source_annual_job_id = ? LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            retained_payload_update = any(
+                value is not _UNSET
+                for value in (result, provenance, artifacts, source_path, source_hash)
+            ) or (state is not None and state != row["state"])
+            if retained_source is not None and retained_payload_update:
+                raise InvalidStateTransition(
+                    "referenced Annual Simulation source payload is retained"
+                )
             lease_is_owned = bool(row["worker_id"] or row["lease_token"])
             expected_lease = expected_worker_id is not None
             if expected_lease and (
@@ -1163,52 +1858,131 @@ class AgentStore:
             ).fetchone()
         return self._job_from_row(updated)  # type: ignore[return-value]
 
+    @staticmethod
+    def _running_work_exists(connection: sqlite3.Connection) -> bool:
+        return (
+            connection.execute(
+                """
+                SELECT 1 FROM jobs WHERE state = 'running'
+                UNION ALL
+                SELECT 1 FROM technoeconomic_jobs WHERE state = 'running'
+                LIMIT 1
+                """
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def _oldest_queued_work(
+        connection: sqlite3.Connection,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT workflow, work_id, queued_at
+              FROM (
+                    SELECT 'model' AS workflow, job_id AS work_id, queued_at
+                      FROM jobs
+                     WHERE state = 'queued' AND cancel_requested = 0
+                    UNION ALL
+                    SELECT 'technoeconomic' AS workflow,
+                           tea_job_id AS work_id, queued_at
+                      FROM technoeconomic_jobs
+                     WHERE state = 'queued' AND cancel_requested = 0
+                   )
+             ORDER BY queued_at ASC, workflow ASC, work_id ASC
+             LIMIT 1
+            """
+        ).fetchone()
+
+    def _claim_oldest_queued_work(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        worker_id: str | None,
+        now_text: str,
+        model_only: bool,
+    ) -> tuple[str, sqlite3.Row] | None:
+        if self._running_work_exists(connection):
+            return None
+        queued = self._oldest_queued_work(connection)
+        if queued is None or (model_only and queued["workflow"] != "model"):
+            return None
+        workflow = str(queued["workflow"])
+        work_id = str(queued["work_id"])
+        lease_token = uuid.uuid4().hex if worker_id is not None else None
+        if workflow == "model":
+            table = "jobs"
+            id_column = "job_id"
+        else:
+            table = "technoeconomic_jobs"
+            id_column = "tea_job_id"
+        cursor = connection.execute(
+            f"""
+            UPDATE {table}
+               SET state = 'running', stage = 'Running', started_at = ?,
+                   updated_at = ?, worker_id = ?, lease_token = ?, heartbeat_at = ?
+             WHERE {id_column} = ? AND state = 'queued' AND cancel_requested = 0
+            """,
+            (now_text, now_text, worker_id, lease_token, now_text, work_id),
+        )
+        if cursor.rowcount != 1:
+            return None
+        row = connection.execute(
+            f"SELECT * FROM {table} WHERE {id_column} = ?", (work_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return workflow, row
+
+    def claim_next_queued_work(
+        self, *, worker_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """Atomically claim the globally oldest model or TEA job."""
+
+        if worker_id is None or not worker_id.strip():
+            raise ValueError("worker_id is required to lease queued work")
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            claimed = self._claim_oldest_queued_work(
+                connection,
+                worker_id=worker_id,
+                now_text=now_text,
+                model_only=False,
+            )
+        if claimed is None:
+            return None
+        workflow, row = claimed
+        if workflow == "model":
+            result = self._job_from_row(row)
+        else:
+            result = self._technoeconomic_job_from_row(row)
+        assert result is not None
+        result["workflow"] = workflow
+        return result
+
     def claim_next_queued_job(
         self, *, worker_id: str | None = None
     ) -> dict[str, Any] | None:
-        """Atomically claim the oldest job, unless another job is running."""
+        """Claim a model job only when it is globally oldest.
+
+        This compatibility entry point keeps the current model worker safe until it
+        dispatches :meth:`claim_next_queued_work`: a queued TEA job cannot be
+        leapfrogged, and a running job in either workflow blocks all other claims.
+        """
 
         if worker_id is not None and not worker_id.strip():
             raise ValueError("worker_id must not be blank")
         now_text = _timestamp(self._current_time())
-        lease_token = uuid.uuid4().hex if worker_id is not None else None
         with self._transaction(write=True) as connection:
-            active = connection.execute(
-                "SELECT job_id FROM jobs WHERE state = 'running' LIMIT 1"
-            ).fetchone()
-            if active is not None:
-                return None
-            queued = connection.execute(
-                """
-                SELECT job_id FROM jobs
-                 WHERE state = 'queued' AND cancel_requested = 0
-                 ORDER BY queued_at ASC, job_id ASC
-                 LIMIT 1
-                """
-            ).fetchone()
-            if queued is None:
-                return None
-            cursor = connection.execute(
-                """
-                UPDATE jobs
-                   SET state = 'running', stage = 'Running', started_at = ?,
-                       updated_at = ?, worker_id = ?, lease_token = ?, heartbeat_at = ?
-                 WHERE job_id = ? AND state = 'queued' AND cancel_requested = 0
-                """,
-                (
-                    now_text,
-                    now_text,
-                    worker_id,
-                    lease_token,
-                    now_text,
-                    queued["job_id"],
-                ),
+            claimed = self._claim_oldest_queued_work(
+                connection,
+                worker_id=worker_id,
+                now_text=now_text,
+                model_only=True,
             )
-            if cursor.rowcount != 1:
-                return None
-            row = connection.execute(
-                "SELECT * FROM jobs WHERE job_id = ?", (queued["job_id"],)
-            ).fetchone()
+        if claimed is None:
+            return None
+        _, row = claimed
         return self._job_from_row(row)
 
     def heartbeat_job(
@@ -1363,6 +2137,354 @@ class AgentStore:
             ).fetchone()
         return self._job_from_row(updated)  # type: ignore[return-value]
 
+    def update_technoeconomic_job(
+        self,
+        job_id: str,
+        *,
+        expected_worker_id: str | None = None,
+        expected_lease_token: str | None = None,
+        state: str | None = None,
+        progress: float | None = None,
+        stage: str | None = None,
+        result: Mapping[str, Any] | None | object = _UNSET,
+        result_provenance: Mapping[str, Any] | None | object = _UNSET,
+        artifacts: Mapping[str, Any] | None | object = _UNSET,
+        error: str | None | object = _UNSET,
+    ) -> dict[str, Any]:
+        """Update TEA execution fields with lease fencing and terminal sealing."""
+
+        if (expected_worker_id is None) != (expected_lease_token is None):
+            raise ValueError(
+                "expected_worker_id and expected_lease_token must be supplied together"
+            )
+        if expected_worker_id is not None and (
+            not expected_worker_id.strip()
+            or not expected_lease_token
+            or not expected_lease_token.strip()
+        ):
+            raise ValueError("job lease owner and token must not be blank")
+        if state is not None and state not in JOB_STATES:
+            raise ValueError(f"unknown technoeconomic job state: {state}")
+        if progress is not None and (
+            not math.isfinite(float(progress)) or not 0 <= float(progress) <= 100
+        ):
+            raise ValueError("progress must be a finite percentage in [0, 100]")
+
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                if expected_worker_id is not None:
+                    raise LeaseOwnershipLost(
+                        "runner no longer owns the active lease for missing "
+                        f"technoeconomic job {job_id}"
+                    )
+                raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
+            if row["state"] in TERMINAL_JOB_STATES:
+                raise InvalidStateTransition(
+                    f"terminal technoeconomic job {job_id} is immutable"
+                )
+            if state == "done" and bool(row["cancel_requested"]):
+                raise InvalidStateTransition(
+                    "cannot complete a technoeconomic job after cancellation "
+                    "was requested"
+                )
+
+            lease_is_owned = bool(row["worker_id"] or row["lease_token"])
+            expected_lease = expected_worker_id is not None
+            if expected_lease and (
+                row["state"] != "running"
+                or row["worker_id"] != expected_worker_id
+                or row["lease_token"] != expected_lease_token
+            ):
+                raise LeaseOwnershipLost(
+                    f"runner no longer owns the active lease for "
+                    f"technoeconomic job {job_id}"
+                )
+            if row["state"] == "running" and lease_is_owned and not expected_lease:
+                raise LeaseOwnershipLost(
+                    f"running technoeconomic job {job_id} requires its active "
+                    "lease token"
+                )
+            if state is not None:
+                self._check_job_transition(str(row["state"]), state)
+
+            assignments = ["updated_at = ?"]
+            values: list[Any] = [now_text]
+            if state is not None and state != row["state"]:
+                assignments.append("state = ?")
+                values.append(state)
+                if state == "running":
+                    assignments.extend(["started_at = ?", "stage = ?"])
+                    values.extend([now_text, stage or "Running"])
+                elif state in {"done", "error", "cancelled"}:
+                    assignments.append("completed_at = ?")
+                    values.append(now_text)
+                elif state == "interrupted":
+                    assignments.extend(
+                        ["interrupted_at = ?", "completed_at = ?", "stage = ?"]
+                    )
+                    values.extend([now_text, now_text, stage or "Interrupted"])
+                if state == "done" and progress is None:
+                    assignments.append("progress = 100")
+                if state in TERMINAL_JOB_STATES:
+                    assignments.extend(
+                        ["worker_id = NULL", "lease_token = NULL", "heartbeat_at = NULL"]
+                    )
+            if progress is not None:
+                assignments.append("progress = ?")
+                values.append(float(progress))
+            if stage is not None and not (state in {"running", "interrupted"}):
+                assignments.append("stage = ?")
+                values.append(str(stage))
+            for name, value in (
+                ("result", result),
+                ("result_provenance", result_provenance),
+                ("artifacts", artifacts),
+            ):
+                if value is not _UNSET:
+                    assignments.append(f"{name}_json = ?")
+                    values.append(None if value is None else _json_dump(dict(value)))
+            if error is not _UNSET:
+                assignments.append("error = ?")
+                values.append(error)
+
+            values.append(job_id)
+            connection.execute(
+                f"UPDATE technoeconomic_jobs SET {', '.join(assignments)} "
+                "WHERE tea_job_id = ?",
+                values,
+            )
+            updated = connection.execute(
+                "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            ).fetchone()
+        return self._technoeconomic_job_from_row(updated)  # type: ignore[return-value]
+
+    def heartbeat_technoeconomic_job(
+        self, job_id: str, *, worker_id: str, lease_token: str
+    ) -> bool:
+        """Renew a running TEA lease only for its current owner."""
+
+        if not worker_id or not worker_id.strip():
+            raise ValueError("worker_id must not be blank")
+        if not lease_token or not lease_token.strip():
+            raise ValueError("lease_token must not be blank")
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE technoeconomic_jobs
+                   SET heartbeat_at = ?, updated_at = ?
+                 WHERE tea_job_id = ? AND state = 'running' AND worker_id = ?
+                   AND lease_token = ?
+                """,
+                (now_text, now_text, job_id, worker_id, lease_token),
+            )
+        return cursor.rowcount == 1
+
+    def cancel_technoeconomic_job(self, job_id: str) -> dict[str, Any]:
+        """Cancel queued TEA work or request cooperative runner cancellation."""
+
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
+            if row["state"] == "queued":
+                connection.execute(
+                    """
+                    UPDATE technoeconomic_jobs
+                       SET state = 'cancelled', cancel_requested = 1,
+                           cancel_requested_at = ?, completed_at = ?, updated_at = ?,
+                           stage = 'Cancelled'
+                     WHERE tea_job_id = ? AND state = 'queued'
+                    """,
+                    (now_text, now_text, now_text, job_id),
+                )
+            elif row["state"] == "running" and not row["cancel_requested"]:
+                connection.execute(
+                    """
+                    UPDATE technoeconomic_jobs
+                       SET cancel_requested = 1, cancel_requested_at = ?, updated_at = ?
+                     WHERE tea_job_id = ? AND state = 'running'
+                    """,
+                    (now_text, now_text, job_id),
+                )
+            updated = connection.execute(
+                "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            ).fetchone()
+        return self._technoeconomic_job_from_row(updated)  # type: ignore[return-value]
+
+    def is_technoeconomic_cancel_requested(
+        self,
+        job_id: str,
+        *,
+        expected_worker_id: str | None = None,
+        expected_lease_token: str | None = None,
+    ) -> bool:
+        if (expected_worker_id is None) != (expected_lease_token is None):
+            raise ValueError(
+                "expected_worker_id and expected_lease_token must be supplied together"
+            )
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT state, worker_id, lease_token, cancel_requested "
+                "FROM technoeconomic_jobs WHERE tea_job_id = ?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            if expected_worker_id is not None:
+                raise LeaseOwnershipLost(
+                    "runner no longer owns the active lease for missing "
+                    f"technoeconomic job {job_id}"
+                )
+            raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
+        if expected_worker_id is not None and (
+            row["state"] != "running"
+            or row["worker_id"] != expected_worker_id
+            or row["lease_token"] != expected_lease_token
+        ):
+            raise LeaseOwnershipLost(
+                f"runner no longer owns the active lease for technoeconomic job {job_id}"
+            )
+        return bool(row["cancel_requested"])
+
+    def mark_stale_running_technoeconomic_jobs_interrupted(
+        self, *, before: datetime | None = None
+    ) -> int:
+        """Interrupt TEA leases abandoned by a prior worker process."""
+
+        now_text = _timestamp(self._current_time())
+        clauses = ["state = 'running'"]
+        parameters: list[Any] = [now_text, now_text, now_text]
+        if before is not None:
+            clauses.append("COALESCE(heartbeat_at, started_at, updated_at) <= ?")
+            parameters.append(_timestamp(before))
+        with self._transaction(write=True) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE technoeconomic_jobs
+                   SET state = 'interrupted',
+                       stage = 'Interrupted after service restart',
+                       interrupted_at = ?, completed_at = ?, updated_at = ?,
+                       worker_id = NULL, lease_token = NULL, heartbeat_at = NULL
+                 WHERE """
+                + " AND ".join(clauses),
+                parameters,
+            )
+            return int(cursor.rowcount)
+
+    def retry_technoeconomic_job(
+        self,
+        job_id: str,
+        *,
+        new_job_id: str | None = None,
+        max_active_jobs: int | None = None,
+    ) -> dict[str, Any]:
+        """Create a new attempt from a retryable job's frozen evidence."""
+
+        retry_id = self._validate_technoeconomic_job_id(
+            new_job_id or _new_id("tea")
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
+            if row["state"] not in {"interrupted", "error", "cancelled"}:
+                raise InvalidStateTransition(
+                    f"cannot retry technoeconomic job in state {row['state']}"
+                )
+            if connection.execute(
+                "SELECT 1 FROM technoeconomic_jobs WHERE tea_job_id = ?", (retry_id,)
+            ).fetchone() is not None or connection.execute(
+                "SELECT 1 FROM jobs WHERE job_id = ?", (retry_id,)
+            ).fetchone() is not None:
+                raise StoreConflict(
+                    f"technoeconomic job id already exists: {retry_id}"
+                )
+            self._ensure_queue_capacity(
+                connection, max_active_jobs=max_active_jobs
+            )
+            try:
+                self._insert_technoeconomic_job(
+                    connection,
+                    job_id=retry_id,
+                    request_json=str(row["request_json"]),
+                    source_annual_job_id=str(row["source_annual_job_id"]),
+                    source_artifact_storage_key=str(
+                        row["source_artifact_storage_key"]
+                    ),
+                    source_artifact_sha256=str(row["source_artifact_sha256"]),
+                    source_artifact_bytes=int(row["source_artifact_bytes"]),
+                    source_snapshot_json=str(row["source_snapshot_json"]),
+                    source_snapshot_sha256=str(row["source_snapshot_sha256"]),
+                    submission_provenance_json=str(
+                        row["submission_provenance_json"]
+                    ),
+                    submission_provenance_sha256=str(
+                        row["submission_provenance_sha256"]
+                    ),
+                    retry_of_job_id=job_id,
+                    now_text=now_text,
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict(
+                    f"could not retry technoeconomic job as {retry_id}"
+                ) from exc
+            retried = connection.execute(
+                "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (retry_id,)
+            ).fetchone()
+        return self._technoeconomic_job_from_row(retried)  # type: ignore[return-value]
+
+    def delete_technoeconomic_job(
+        self,
+        job_id: str,
+        *,
+        before_delete: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        """Delete a terminal TEA record after optional in-transaction cleanup.
+
+        ``before_delete`` runs after all state and retry-lineage checks but before
+        the row is removed.  The API uses it for confined filesystem cleanup so a
+        cleanup failure rolls the database transaction back and leaves a durable
+        job that can be deleted again.  The callback must not access this store.
+        """
+
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
+            if row["state"] not in TERMINAL_JOB_STATES:
+                raise InvalidStateTransition(
+                    "cancel active technoeconomic work before deleting it"
+                )
+            dependent = connection.execute(
+                "SELECT tea_job_id FROM technoeconomic_jobs "
+                "WHERE retry_of_job_id = ? LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if dependent is not None:
+                raise InvalidStateTransition(
+                    "delete later technoeconomic retry attempts before their source attempt"
+                )
+            deleted = self._technoeconomic_job_from_row(row)
+            assert deleted is not None
+            if before_delete is not None:
+                before_delete(deleted)
+            connection.execute(
+                "DELETE FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
+            )
+        return deleted
+
     @staticmethod
     def _saved_result_record(
         saved_row: sqlite3.Row,
@@ -1515,6 +2637,16 @@ class AgentStore:
             ).fetchone()
             if row is None:
                 raise RecordNotFound(f"unknown job: {job_id}")
+            referenced_tea = connection.execute(
+                "SELECT tea_job_id FROM technoeconomic_jobs "
+                "WHERE source_annual_job_id = ? LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if referenced_tea is not None:
+                raise InvalidStateTransition(
+                    "Annual Simulation is retained by technoeconomic job "
+                    f"{referenced_tea['tea_job_id']}"
+                )
             is_scenario = row["kind"] == "candidate"
             is_baseline = row["kind"] in {"baseline", "manual"}
             if not (is_scenario or is_baseline) or (
@@ -1697,6 +2829,42 @@ class AgentStore:
             rows = connection.execute(query, parameters).fetchall()
         return [dict(row) for row in rows]
 
+    def get_promotion(
+        self,
+        *,
+        mode: str,
+        job_id: str,
+        promoted_at: str,
+    ) -> dict[str, Any] | None:
+        """Return one exact historical baseline-promotion receipt.
+
+        Annual Simulation provenance records the validation mode, origin job ID,
+        and promotion timestamp.  TEA source verification must resolve that exact
+        historical receipt rather than depending on the current baseline or on a
+        bounded recent-promotion listing.
+        """
+
+        self._validate_mode(mode)
+        normalized_job_id = job_id.strip() if isinstance(job_id, str) else ""
+        normalized_promoted_at = (
+            promoted_at.strip() if isinstance(promoted_at, str) else ""
+        )
+        if not normalized_job_id:
+            raise ValueError("job_id must not be blank")
+        if not normalized_promoted_at:
+            raise ValueError("promoted_at must not be blank")
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM baseline_promotions
+                 WHERE mode = ? AND job_id = ? AND promoted_at = ?
+                 ORDER BY promotion_id DESC
+                 LIMIT 1
+                """,
+                (mode, normalized_job_id, normalized_promoted_at),
+            ).fetchone()
+        return None if row is None else dict(row)
+
     def snapshot_state(
         self, *, mode: str | None = None, recent_limit: int = 10
     ) -> dict[str, Any]:
@@ -1774,4 +2942,6 @@ __all__ = [
     "SCHEMA_VERSION",
     "SchemaVersionError",
     "StoreConflict",
+    "TECHNOECONOMIC_ID_PREFIX",
+    "TERMINAL_JOB_STATES",
 ]

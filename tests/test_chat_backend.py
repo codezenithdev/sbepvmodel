@@ -226,7 +226,7 @@ class DashboardDeploymentTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "DASHBOARD_BASIC_USER": "cliff",
+                "DASHBOARD_BASIC_USER": "dashboard-user",
                 "DASHBOARD_BASIC_PASSWORD": "secret",
             },
         ):
@@ -239,13 +239,13 @@ class DashboardDeploymentTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "DASHBOARD_BASIC_USER": "cliff",
+                "DASHBOARD_BASIC_USER": "dashboard-user",
                 "DASHBOARD_BASIC_PASSWORD": "secret",
             },
         ):
             client = TestClient(app.app)
             unauthorized = client.get("/")
-            token = base64.b64encode(b"cliff:secret").decode("ascii")
+            token = base64.b64encode(b"dashboard-user:secret").decode("ascii")
             authorized = client.get("/", headers={"Authorization": f"Basic {token}"})
 
         self.assertEqual(unauthorized.status_code, 401)
@@ -299,7 +299,7 @@ class DashboardDeploymentTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "DASHBOARD_BASIC_USER": "cliff",
+                "DASHBOARD_BASIC_USER": "dashboard-user",
                 "DASHBOARD_BASIC_PASSWORD": "",
             },
         ):

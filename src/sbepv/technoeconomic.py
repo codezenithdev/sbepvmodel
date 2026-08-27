@@ -6,30 +6,43 @@ later phases can freeze an immutable request, run it durably, and export the ret
 tables without duplicating any economic or statistical arithmetic.
 
 All marginal fields use the explicit SolarEdge-minus-Solectria sign convention.
-Costs are constant-real-dollar intensities and energy is calibrated AC energy divided
-by installed module DC-STC Wdc.
+Costs are constant-real-dollar intensities.  Version 1 normalizes SolarTAC cost and
+energy by installed module DC-STC Wdc.  Version 2 can instead freeze the applied
+Annual Simulation capacity (an AC operating limit when clipping is enabled, otherwise
+the installed DC nameplate) and normalizes both systems on that explicit basis.
+Version 3 additionally scales the source-specific energy difference to an explicitly
+rated commercial target and evaluates a separately supplied, consistently timed
+commercial marginal-cost difference without changing the site-cost LCOO.
 """
 
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal, InvalidOperation, localcontext
 from hashlib import sha256
 import math
 import re
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import numpy as np
 import scipy
 from scipy.stats import truncnorm
 
 
-CALCULATION_CONTRACT_VERSION = "tea-calculation-v1"
+LEGACY_CALCULATION_CONTRACT_VERSION = "tea-calculation-v1"
+CALCULATION_CONTRACT_VERSION = "tea-calculation-v2"
+COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION = "tea-calculation-v3"
 SAMPLING_VERSION = "tea-lhs-v1"
-PINNED_NUMPY_VERSION = "2.5.0"
-PINNED_SCIPY_VERSION = "1.18.0"
+NUMERICAL_CONTRACT_VERSION = "tea-numerics-v1"
+# The versions this contract was authored and hand-verified against.  They are
+# recorded in provenance and named in diagnostics; they are not the gate.  The
+# gate is the behavioural fingerprint below, which checks the properties the
+# contract actually depends on instead of a version string that changes for
+# thousands of unrelated reasons.
+CONTRACT_NUMPY_VERSION = "2.5.0"
+CONTRACT_SCIPY_VERSION = "1.18.0"
 SUPPORTED_COST_TREATMENT = "constant-real-v1"
 
 LHS_JITTER_PURPOSE = "lhs-jitter"
@@ -37,6 +50,10 @@ LHS_PERMUTATION_PURPOSE = "lhs-permutation"
 WEATHER_EXTRA_PURPOSE = "weather-extra-permutation"
 WEATHER_ASSIGNMENT_PURPOSE = "weather-assignment-permutation"
 WEATHER_STABLE_ID = "weather.year"
+COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID = (
+    "commercial.marginal-cost-difference"
+)
+COMMERCIAL_SCALING_TRANSFER_METHOD = "direct_capacity_scaling"
 RNG_DOMAIN = b"sbepv-tea-lhs-v1\0"
 
 R2_ENTRY_THRESHOLD = 1e-6
@@ -58,6 +75,10 @@ DistributionRole = Literal[
 ]
 AnalysisBasis = Literal["solartac_site", "commercial_representative"]
 SystemName = Literal["solectria", "solaredge"]
+AppliedCapacityRatingBasis = Literal[
+    "ac_operating_limit",
+    "dc_installed_nameplate",
+]
 CostOwnership = Literal["solectria_only", "solaredge_only", "paired_shared"]
 CostType = Literal[
     "initial_capex",
@@ -66,6 +87,8 @@ CostType = Literal[
     "recurring_om",
     "recurring_maintenance",
 ]
+MarginalCostTiming = Literal["lifecycle_present_value", "equivalent_annual"]
+CommercialScalingTransferMethod = Literal["direct_capacity_scaling"]
 
 INITIAL_COST_TYPES = frozenset({"initial_capex", "initial_installation_labor"})
 RECURRING_COST_TYPES = frozenset(
@@ -114,6 +137,128 @@ FIELD_DELTA_EA_ENERGY = (
 )
 FIELD_LCOO = "AllInLCOO_se_minus_sol_USD_per_kWh_AC"
 
+APPLIED_FIELD_YEAR1_SOL = "Year1SpecificEnergy_SOL_kWh_AC_per_applied_W_year"
+APPLIED_FIELD_YEAR1_SE = "Year1SpecificEnergy_SE_kWh_AC_per_applied_W_year"
+APPLIED_FIELD_YEAR1_DELTA = (
+    "Year1DeltaSpecificEnergy_se_minus_sol_kWh_AC_per_applied_W_year"
+)
+APPLIED_FIELD_PV_COST_SOL = "PVCostIntensity_SOL_USD_per_applied_W"
+APPLIED_FIELD_PV_COST_SE = "PVCostIntensity_SE_USD_per_applied_W"
+APPLIED_FIELD_EA_COST_SOL = (
+    "EquivalentAnnualCostIntensity_SOL_USD_per_applied_W_year"
+)
+APPLIED_FIELD_EA_COST_SE = (
+    "EquivalentAnnualCostIntensity_SE_USD_per_applied_W_year"
+)
+APPLIED_FIELD_PV_ENERGY_SOL = "PVEnergyIntensity_SOL_kWh_AC_per_applied_W"
+APPLIED_FIELD_PV_ENERGY_SE = "PVEnergyIntensity_SE_kWh_AC_per_applied_W"
+APPLIED_FIELD_EA_ENERGY_SOL = (
+    "EquivalentAnnualEnergyIntensity_SOL_kWh_AC_per_applied_W_year"
+)
+APPLIED_FIELD_EA_ENERGY_SE = (
+    "EquivalentAnnualEnergyIntensity_SE_kWh_AC_per_applied_W_year"
+)
+APPLIED_FIELD_DELTA_COST = (
+    "DeltaLifecycleCostPerAppliedW_se_minus_sol_USD_per_applied_W"
+)
+APPLIED_FIELD_DELTA_ENERGY = (
+    "DeltaLifecycleEnergyPerAppliedW_se_minus_sol_kWh_AC_per_applied_W"
+)
+APPLIED_FIELD_DELTA_EA_COST = (
+    "DeltaEquivalentAnnualCostPerAppliedWYear_se_minus_sol_USD_per_applied_W_year"
+)
+APPLIED_FIELD_DELTA_EA_ENERGY = (
+    "DeltaEquivalentAnnualEnergyPerAppliedWYear_se_minus_sol_kWh_AC_per_applied_W_year"
+)
+
+COMMERCIAL_FIELD_TARGET_CAPACITY = "CommercialTargetCapacity_W"
+COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY = (
+    "CommercialYear1DeltaEnergy_se_minus_sol_kWh_AC"
+)
+COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY = (
+    "CommercialLifecycleDeltaEnergy_se_minus_sol_kWh_AC"
+)
+COMMERCIAL_FIELD_EA_DELTA_ENERGY = (
+    "CommercialEquivalentAnnualDeltaEnergy_se_minus_sol_kWh_AC_per_year"
+)
+COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST = (
+    "CommercialLifecycleMarginalCostDelta_se_minus_sol_USD"
+)
+COMMERCIAL_FIELD_EA_MARGINAL_COST = (
+    "CommercialEquivalentAnnualMarginalCostDelta_se_minus_sol_USD_per_year"
+)
+COMMERCIAL_FIELD_MARGINAL_LCOO = (
+    "CommercialMarginalLCOO_se_minus_sol_USD_per_kWh_AC"
+)
+COMMERCIAL_FIELD_MARGINAL_LCOO_REASON = (
+    "commercial_marginal_lcoo_unavailable_reason"
+)
+COMMERCIAL_ZERO_ENERGY_REASON = "zero_commercial_lifecycle_delta_energy"
+
+
+@dataclass(frozen=True)
+class _MetricFields:
+    year1_sol: str
+    year1_se: str
+    year1_delta: str
+    pv_cost_sol: str
+    pv_cost_se: str
+    ea_cost_sol: str
+    ea_cost_se: str
+    pv_energy_sol: str
+    pv_energy_se: str
+    ea_energy_sol: str
+    ea_energy_se: str
+    lcoe_sol: str
+    lcoe_se: str
+    delta_cost: str
+    delta_energy: str
+    delta_ea_cost: str
+    delta_ea_energy: str
+    lcoo: str
+
+
+LEGACY_METRIC_FIELDS = _MetricFields(
+    FIELD_YEAR1_SOL,
+    FIELD_YEAR1_SE,
+    FIELD_YEAR1_DELTA,
+    FIELD_PV_COST_SOL,
+    FIELD_PV_COST_SE,
+    FIELD_EA_COST_SOL,
+    FIELD_EA_COST_SE,
+    FIELD_PV_ENERGY_SOL,
+    FIELD_PV_ENERGY_SE,
+    FIELD_EA_ENERGY_SOL,
+    FIELD_EA_ENERGY_SE,
+    FIELD_LCOE_SOL,
+    FIELD_LCOE_SE,
+    FIELD_DELTA_COST,
+    FIELD_DELTA_ENERGY,
+    FIELD_DELTA_EA_COST,
+    FIELD_DELTA_EA_ENERGY,
+    FIELD_LCOO,
+)
+APPLIED_METRIC_FIELDS = _MetricFields(
+    APPLIED_FIELD_YEAR1_SOL,
+    APPLIED_FIELD_YEAR1_SE,
+    APPLIED_FIELD_YEAR1_DELTA,
+    APPLIED_FIELD_PV_COST_SOL,
+    APPLIED_FIELD_PV_COST_SE,
+    APPLIED_FIELD_EA_COST_SOL,
+    APPLIED_FIELD_EA_COST_SE,
+    APPLIED_FIELD_PV_ENERGY_SOL,
+    APPLIED_FIELD_PV_ENERGY_SE,
+    APPLIED_FIELD_EA_ENERGY_SOL,
+    APPLIED_FIELD_EA_ENERGY_SE,
+    FIELD_LCOE_SOL,
+    FIELD_LCOE_SE,
+    APPLIED_FIELD_DELTA_COST,
+    APPLIED_FIELD_DELTA_ENERGY,
+    APPLIED_FIELD_DELTA_EA_COST,
+    APPLIED_FIELD_DELTA_EA_ENERGY,
+    FIELD_LCOO,
+)
+
 
 class TechnoeconomicValidationError(ValueError):
     """Raised when a request violates the approved calculation contract."""
@@ -151,6 +296,20 @@ class CapacitySpec:
     installed_wdc: float
     physics_version: str
     physics_fingerprint: str
+
+
+@dataclass(frozen=True)
+class AppliedCapacitySpec:
+    """Frozen normalization capacity for one SolarTAC system.
+
+    ``applied_capacity_w`` is expressed in watts even when its rating basis is the
+    Annual Simulation's AC operating limit.  Keeping the rating basis explicit
+    prevents an AC limit from being mislabeled as module DC nameplate capacity.
+    """
+
+    system: SystemName
+    applied_capacity_w: float
+    rating_basis: AppliedCapacityRatingBasis
 
 
 @dataclass(frozen=True)
@@ -195,6 +354,24 @@ class TransferSpec:
 
 
 @dataclass(frozen=True)
+class CommercialScalingSpec:
+    """Direct source-specific scaling and separate commercial marginal cost.
+
+    The target and both frozen source capacities use the same explicit rating
+    basis.  ``marginal_cost_difference`` is signed SolarEdge minus Solectria and
+    may therefore have negative, zero, or positive support.
+    """
+
+    target_capacity_w: float
+    target_rating_basis: AppliedCapacityRatingBasis
+    marginal_cost_difference: DistributionSpec
+    marginal_cost_timing: MarginalCostTiming
+    transfer_method: CommercialScalingTransferMethod = (
+        COMMERCIAL_SCALING_TRANSFER_METHOD
+    )
+
+
+@dataclass(frozen=True)
 class TechnoeconomicRequest:
     """Canonical semantic input to the Phase-1 pure kernel."""
 
@@ -207,10 +384,12 @@ class TechnoeconomicRequest:
     cost_lines: tuple[CostLineSpec, ...]
     discount_rate: DistributionSpec
     shared_degradation: DistributionSpec
+    applied_capacities: tuple[AppliedCapacitySpec, AppliedCapacitySpec] | None = None
     transfer: TransferSpec | None = None
     commercial_reference_wdc: float | None = None
+    commercial_scaling: CommercialScalingSpec | None = None
     cost_stack_completeness: Literal["full_system"] = "full_system"
-    calculation_contract_version: str = CALCULATION_CONTRACT_VERSION
+    calculation_contract_version: str = LEGACY_CALCULATION_CONTRACT_VERSION
     sampling_version: str = SAMPLING_VERSION
 
 
@@ -227,6 +406,28 @@ class TechnoeconomicResult:
     convergence: Mapping[str, Any]
     provenance: Mapping[str, Any]
     energy_available: bool
+
+
+def canonical_request_payload(request: TechnoeconomicRequest) -> dict[str, Any]:
+    """Return the stable dataclass payload used for kernel request hashing.
+
+    ``applied_capacities`` did not exist in the version-1 dataclass, and
+    ``commercial_scaling`` did not exist before version 3.  Omitting those defaulted
+    fields from the older literal contracts preserves their exact historical hashes
+    and immutable retry comparisons.
+    """
+
+    if not isinstance(request, TechnoeconomicRequest):
+        raise TechnoeconomicValidationError("Request must be a TechnoeconomicRequest.")
+    payload = asdict(request)
+    if request.calculation_contract_version == LEGACY_CALCULATION_CONTRACT_VERSION:
+        payload.pop("applied_capacities", None)
+    if (
+        request.calculation_contract_version
+        != COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
+    ):
+        payload.pop("commercial_scaling", None)
+    return payload
 
 
 def _is_int(value: Any) -> bool:
@@ -257,18 +458,193 @@ def _validate_stable_id(value: Any, label: str = "input ID") -> str:
     return value
 
 
-def validate_runtime_versions() -> None:
-    """Fail closed if a pinned numerical dependency silently drifted."""
+def _probe_pcg64dxsm_stream() -> tuple[int | float, ...]:
+    """Draw from the exact SeedSequence/PCG64DXSM path the LHS sampler uses."""
 
-    if np.__version__ != PINNED_NUMPY_VERSION:
-        raise TechnoeconomicValidationError(
-            "tea-lhs-v1 requires NumPy "
-            f"{PINNED_NUMPY_VERSION}; runtime is {np.__version__}."
+    words: list[int] = []
+    for entropy in ([0] * 8, list(range(1, 9))):
+        generator = np.random.PCG64DXSM(np.random.SeedSequence(entropy=entropy))
+        words.extend(int(generator.random_raw()) for _ in range(4))
+    return tuple(words)
+
+
+def _probe_truncnorm_ppf() -> tuple[int | float, ...]:
+    """Exercise the far-tail inversion binary64 CDF subtraction cannot perform.
+
+    The 10-11 and 37-38 standard-deviation intervals are exactly the cases
+    Section 5.6 of the calculation contract relies on: an ordinary
+    ``Phi(b) - Phi(a)`` collapses both to zero probability, so a regression here
+    would silently turn a legitimate bounded-normal input into a degenerate or
+    nonfinite draw rather than raising.
+    """
+
+    cases = (
+        (-1.0, 1.0, 0.25),
+        (-3.0, 3.0, 0.975),
+        (-0.5, 4.0, 1e-9),
+        (10.0, 11.0, 0.5),
+        (10.0, 11.0, 1e-9),
+        (10.0, 11.0, 1.0 - 1e-9),
+        (37.0, 38.0, 0.5),
+    )
+    return tuple(
+        float(truncnorm.ppf(probability, low, high))
+        for low, high, probability in cases
+    )
+
+
+def _probe_type7_quantile() -> tuple[int | float, ...]:
+    """Pin the Hyndman-Fan type-7 interpolation behind every reported Pxx."""
+
+    population = np.asarray(
+        [0.1, 2.5, 3.7, 4.2, 9.9, 11.3, 15.0, -2.25, 0.0, 7.5],
+        dtype=np.float64,
+    )
+    return tuple(
+        float(value)
+        for value in np.quantile(population, [0.05, 0.5, 0.95], method="linear")
+    )
+
+
+def _probe_binary64_growth() -> tuple[int | float, ...]:
+    """Pin log1p/expm1, which carry the annuity and lifecycle-energy factors."""
+
+    log_growth = float(np.log1p(0.07))
+    log_ratio = float(np.log1p(-0.005) - np.log1p(0.07))
+    return (
+        log_growth,
+        float(np.expm1(-25.0 * log_growth)),
+        log_ratio,
+        float(np.expm1(25.0 * log_ratio)),
+    )
+
+
+_NUMERICAL_PROBES: dict[str, Callable[[], tuple[int | float, ...]]] = {
+    "binary64_growth": _probe_binary64_growth,
+    "pcg64dxsm_stream": _probe_pcg64dxsm_stream,
+    "truncnorm_ppf": _probe_truncnorm_ppf,
+    "type7_quantile": _probe_type7_quantile,
+}
+
+# The gate compares probe values to this many significant decimal digits.
+# Binary64 carries roughly 16, so 12 absorbs last-bit refinement between
+# releases while still catching every failure mode the contract cares about --
+# a collapsed far-tail interval, a clamped bound, a changed quantile rule, and
+# a reseeded bit generator all move far more than one part in 1e12.
+NUMERICAL_PROBE_SIGNIFICANT_DIGITS = 12
+
+
+def _serialize_probe(values: Sequence[int | float], *, exact: bool) -> str:
+    parts: list[str] = []
+    for value in values:
+        if isinstance(value, int) and not isinstance(value, bool):
+            parts.append(str(value))
+            continue
+        # ``+ 0.0`` normalizes -0.0 so a sign-only artifact cannot trip the gate.
+        number = float(value) + 0.0
+        parts.append(
+            number.hex()
+            if exact
+            else f"{number:.{NUMERICAL_PROBE_SIGNIFICANT_DIGITS - 1}e}"
         )
-    if scipy.__version__ != PINNED_SCIPY_VERSION:
+    return "|".join(parts)
+
+
+def _probe_digest(name: str, *, exact: bool) -> str:
+    return sha256(
+        _serialize_probe(_NUMERICAL_PROBES[name](), exact=exact).encode("ascii")
+    ).hexdigest()
+
+
+# Tolerance-scoped digests under the authored contract versions.  These are the
+# gate: a runtime that reproduces all four is permitted to run.  Confirmed
+# identical on CPython 3.11 / NumPy 2.4.6 / SciPy 1.17.1 and CPython 3.13 /
+# NumPy 2.5.0 / SciPy 1.18.0.
+#
+# Deliberately not probed: np.linalg.matrix_rank and np.linalg.lstsq reach
+# LAPACK, so their trailing bits track the local BLAS build rather than the
+# NumPy release.  Gating on them would fail closed on an innocent BLAS swap
+# while proving nothing about the release.  Those paths already guard
+# themselves -- stepwise_rank_regression treats a singular design as an
+# exclusion, not as a silent result.
+NUMERICAL_PROBE_DIGESTS: dict[str, str] = {
+    "binary64_growth": "14cc27d71cbbb17ac1369c382a7fd0413aa14c3542750f6e1516624bd764e16b",
+    "pcg64dxsm_stream": "6916080426e3ee51b5c81d1856ea1649e0570b0eec5bd7f614b6a74d6cdb49c9",
+    "truncnorm_ppf": "77516b8d1730543e54cb8b8449e6cb274ab5a514777b4da1a37266cacf246839",
+    "type7_quantile": "14c57ad434b4fa3c4138c8f6d933b325f5edf32fd92d7f38835292dba6979b67",
+}
+
+# Bit-exact digest over every probe under the authored contract versions.  This
+# is NOT a gate.  It answers a different and narrower question than the one
+# above -- "would this runtime reproduce the reference realization tables bit
+# for bit?" -- and is recorded in provenance so a reviewer comparing two
+# completed jobs can tell at a glance whether they are bit-comparable or merely
+# both within contract tolerance.  SciPy 1.17.1 and 1.18.0 differ here by three
+# ULP on one near-bound truncnorm case while agreeing to every digit the
+# contract depends on, which is precisely the distinction being drawn.
+NUMERICAL_EXACTNESS_DIGEST = (
+    "f8949ae833e1a7ccf484a015396084dec1fc183c8eccf3c839aec46824cd3a8d"
+)
+
+
+def numerical_fingerprint() -> dict[str, Any]:
+    """Describe this runtime's numerical behaviour for provenance and audit."""
+
+    exactness = sha256(
+        "|".join(
+            _serialize_probe(_NUMERICAL_PROBES[name](), exact=True)
+            for name in sorted(_NUMERICAL_PROBES)
+        ).encode("ascii")
+    ).hexdigest()
+    return {
+        "contract_version": NUMERICAL_CONTRACT_VERSION,
+        "significant_digits": NUMERICAL_PROBE_SIGNIFICANT_DIGITS,
+        "probe_digests": {
+            name: _probe_digest(name, exact=False)
+            for name in sorted(_NUMERICAL_PROBES)
+        },
+        "exactness_digest": exactness,
+        "reference_exactness_digest": NUMERICAL_EXACTNESS_DIGEST,
+        "bit_identical_to_reference": exactness == NUMERICAL_EXACTNESS_DIGEST,
+        "reference_numpy_version": CONTRACT_NUMPY_VERSION,
+        "reference_scipy_version": CONTRACT_SCIPY_VERSION,
+    }
+
+
+def validate_runtime_versions() -> None:
+    """Fail closed if the runtime's numerical behaviour left the contract.
+
+    Version 1 originally compared ``numpy.__version__`` and ``scipy.__version__``
+    against exact strings.  That gate was simultaneously too strict and too
+    weak: it rejected runtimes whose numbers satisfied the contract, and it
+    would equally have accepted a same-version rebuild whose behaviour had
+    changed underneath it.  This checks the behaviour the contract actually
+    depends on; the version strings remain in provenance.
+
+    The function name is retained because it is called at the top of
+    ``generate_lhs``, ``allocate_weather_years``, and ``validate_request``.
+    """
+
+    divergent: list[str] = []
+    for name in sorted(NUMERICAL_PROBE_DIGESTS):
+        try:
+            observed = _probe_digest(name, exact=False)
+        except Exception as exc:  # A probe that cannot even run is a failed gate.
+            raise TechnoeconomicValidationError(
+                f"{NUMERICAL_CONTRACT_VERSION} could not evaluate the {name!r} "
+                f"numerical probe on NumPy {np.__version__} / SciPy "
+                f"{scipy.__version__}: {exc}"
+            ) from exc
+        if observed != NUMERICAL_PROBE_DIGESTS[name]:
+            divergent.append(name)
+    if divergent:
         raise TechnoeconomicValidationError(
-            "tea-lhs-v1 bounded-normal inversion requires SciPy "
-            f"{PINNED_SCIPY_VERSION}; runtime is {scipy.__version__}."
+            f"{NUMERICAL_CONTRACT_VERSION} numerical probes diverged on NumPy "
+            f"{np.__version__} / SciPy {scipy.__version__}: "
+            f"{', '.join(divergent)}. The contract was authored against NumPy "
+            f"{CONTRACT_NUMPY_VERSION} / SciPy {CONTRACT_SCIPY_VERSION}. "
+            "Seeded reproducibility cannot be promised until the divergence is "
+            "reviewed and the contract digests are re-approved."
         )
 
 
@@ -714,6 +1090,145 @@ def validate_capacity(spec: CapacitySpec) -> CapacitySpec:
     )
 
 
+def _validate_applied_capacities(
+    specs: Sequence[AppliedCapacitySpec],
+    capacities: Mapping[SystemName, CapacitySpec],
+) -> tuple[AppliedCapacitySpec, AppliedCapacitySpec]:
+    """Validate one auditable applied-capacity record per SolarTAC system."""
+
+    normalized: list[AppliedCapacitySpec] = []
+    for spec in specs:
+        if not isinstance(spec, AppliedCapacitySpec):
+            raise TechnoeconomicValidationError(
+                "Every applied capacity must be an AppliedCapacitySpec."
+            )
+        if spec.system not in {"solectria", "solaredge"}:
+            raise TechnoeconomicValidationError(
+                f"Unsupported applied-capacity system: {spec.system!r}."
+            )
+        applied_w = _finite_float(
+            spec.applied_capacity_w,
+            f"{spec.system}.applied_capacity_w",
+        )
+        if applied_w <= 0:
+            raise TechnoeconomicValidationError(
+                "Applied capacity values must be strictly positive."
+            )
+        if spec.rating_basis not in {
+            "ac_operating_limit",
+            "dc_installed_nameplate",
+        }:
+            raise TechnoeconomicValidationError(
+                f"Unsupported applied-capacity rating basis: {spec.rating_basis!r}."
+            )
+        normalized.append(replace(spec, applied_capacity_w=applied_w))
+
+    by_system = {spec.system: spec for spec in normalized}
+    if len(normalized) != 2 or set(by_system) != {"solectria", "solaredge"}:
+        raise TechnoeconomicValidationError(
+            "Exactly one Solectria and one SolarEdge applied capacity are required."
+        )
+    sol = by_system["solectria"]
+    se = by_system["solaredge"]
+    if sol.rating_basis != se.rating_basis:
+        raise TechnoeconomicValidationError(
+            "SolarTAC applied capacities must use one shared rating basis."
+        )
+    if sol.rating_basis == "ac_operating_limit":
+        if Decimal(str(sol.applied_capacity_w)) != Decimal(str(se.applied_capacity_w)):
+            raise TechnoeconomicValidationError(
+                "A SolarTAC AC operating limit must be identical for both systems."
+            )
+    else:
+        for system, spec in (("solectria", sol), ("solaredge", se)):
+            if Decimal(str(spec.applied_capacity_w)) != Decimal(
+                str(capacities[system].installed_wdc)
+            ):
+                raise TechnoeconomicValidationError(
+                    "A dc_installed_nameplate applied capacity must exactly match "
+                    "the frozen installed_wdc manifest."
+                )
+    return sol, se
+
+
+def _validate_commercial_scaling(
+    spec: CommercialScalingSpec,
+    applied_capacities: Sequence[AppliedCapacitySpec],
+) -> CommercialScalingSpec:
+    """Validate the version-3 direct-capacity scaling contract."""
+
+    if not isinstance(spec, CommercialScalingSpec):
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v3 requires a CommercialScalingSpec."
+        )
+    target_capacity_w = _finite_float(
+        spec.target_capacity_w,
+        "commercial_scaling.target_capacity_w",
+    )
+    if target_capacity_w <= 0:
+        raise TechnoeconomicValidationError(
+            "commercial_scaling.target_capacity_w must be strictly positive."
+        )
+    if spec.target_rating_basis not in {
+        "ac_operating_limit",
+        "dc_installed_nameplate",
+    }:
+        raise TechnoeconomicValidationError(
+            "commercial_scaling.target_rating_basis is unsupported."
+        )
+    source_rating_bases = {capacity.rating_basis for capacity in applied_capacities}
+    if source_rating_bases != {spec.target_rating_basis}:
+        raise TechnoeconomicValidationError(
+            "The commercial target rating basis must match the frozen source "
+            "applied-capacity rating basis."
+        )
+    if spec.transfer_method != COMMERCIAL_SCALING_TRANSFER_METHOD:
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v3 supports only transfer_method "
+            f"{COMMERCIAL_SCALING_TRANSFER_METHOD!r}."
+        )
+    if spec.marginal_cost_timing not in {
+        "lifecycle_present_value",
+        "equivalent_annual",
+    }:
+        raise TechnoeconomicValidationError(
+            "commercial_scaling.marginal_cost_timing must be "
+            "'lifecycle_present_value' or 'equivalent_annual'."
+        )
+    marginal_cost = validate_distribution(spec.marginal_cost_difference)
+    if marginal_cost.input_id != COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID:
+        raise TechnoeconomicValidationError(
+            "The commercial marginal-cost distribution must use stable input ID "
+            f"{COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID!r}."
+        )
+    return replace(
+        spec,
+        target_capacity_w=target_capacity_w,
+        marginal_cost_difference=marginal_cost,
+    )
+
+
+def _normalization_capacity_map(
+    request: TechnoeconomicRequest,
+) -> dict[SystemName, float]:
+    if request.calculation_contract_version in {
+        CALCULATION_CONTRACT_VERSION,
+        COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+    }:
+        assert request.applied_capacities is not None
+        return {spec.system: spec.applied_capacity_w for spec in request.applied_capacities}
+    return {spec.system: spec.installed_wdc for spec in request.capacities}
+
+
+def _metric_fields(request: TechnoeconomicRequest) -> _MetricFields:
+    if request.calculation_contract_version in {
+        CALCULATION_CONTRACT_VERSION,
+        COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+    }:
+        return APPLIED_METRIC_FIELDS
+    return LEGACY_METRIC_FIELDS
+
+
 def _validate_life(project_life_years: Any) -> int:
     if not _is_int(project_life_years) or int(project_life_years) < 1:
         raise TechnoeconomicValidationError(
@@ -1049,13 +1564,14 @@ def _validate_support_wide_outputs(
     *,
     basis: AnalysisBasis,
     life: int,
-    capacities: Mapping[SystemName, CapacitySpec],
+    normalization_capacities_w: Mapping[SystemName, float],
     rows: Sequence[PairedEnergyRow],
     lines: Sequence[CostLineSpec],
     discount: DistributionSpec,
     degradation: DistributionSpec,
     transfer: TransferSpec | None,
     reference_wdc: float | None,
+    commercial_scaling: CommercialScalingSpec | None,
 ) -> None:
     """Prove closed input supports cannot overflow required realization fields.
 
@@ -1080,8 +1596,8 @@ def _validate_support_wide_outputs(
             "raw_initial_delta_abs": zero,
             "raw_recurring_delta_abs": zero,
         }
-        sol_wdc = decimal_value(capacities["solectria"].installed_wdc)
-        se_wdc = decimal_value(capacities["solaredge"].installed_wdc)
+        sol_normalization_w = decimal_value(normalization_capacities_w["solectria"])
+        se_normalization_w = decimal_value(normalization_capacities_w["solaredge"])
 
         for line in lines:
             high = decimal_value(distribution_support(line.distribution)[1])
@@ -1097,7 +1613,8 @@ def _validate_support_wide_outputs(
                     se_contribution - sol_contribution
                 )
             cost_bounds[f"raw_{prefix}_delta_abs"] += abs(
-                se_contribution * se_wdc - sol_contribution * sol_wdc
+                se_contribution * se_normalization_w
+                - sol_contribution * sol_normalization_w
             )
 
         discount_endpoints = distribution_support(discount)
@@ -1174,10 +1691,12 @@ def _validate_support_wide_outputs(
 
         if basis == "solartac_site":
             _require_supported_binary64(
-                "raw SolarTAC SOL PV cost", pv_cost_bounds["SOL"] * sol_wdc
+                "raw SolarTAC SOL PV cost",
+                pv_cost_bounds["SOL"] * sol_normalization_w,
             )
             _require_supported_binary64(
-                "raw SolarTAC SE PV cost", pv_cost_bounds["SE"] * se_wdc
+                "raw SolarTAC SE PV cost",
+                pv_cost_bounds["SE"] * se_normalization_w,
             )
             raw_delta_bound = (
                 cost_bounds["raw_initial_delta_abs"]
@@ -1205,8 +1724,8 @@ def _validate_support_wide_outputs(
             se_energy = decimal_value(row.se_predicted_kwh_ac)
             raw_source["SOL"].append(sol_energy)
             raw_source["SE"].append(se_energy)
-            source_specific["SOL"].append(sol_energy / sol_wdc)
-            source_specific["SE"].append(se_energy / se_wdc)
+            source_specific["SOL"].append(sol_energy / sol_normalization_w)
+            source_specific["SE"].append(se_energy / se_normalization_w)
         for system in ("SOL", "SE"):
             for value in source_specific[system]:
                 _require_supported_binary64(
@@ -1307,6 +1826,87 @@ def _validate_support_wide_outputs(
             "absolute SE-minus-SOL equivalent-annual specific energy",
             maximum_delta_year1 * equivalent_energy_factor_max,
         )
+
+        if commercial_scaling is not None:
+            target_capacity = decimal_value(commercial_scaling.target_capacity_w)
+            maximum_commercial_year1_delta = (
+                maximum_delta_year1 * target_capacity
+            )
+            _require_supported_binary64(
+                "absolute commercial year-one SE-minus-SOL energy",
+                maximum_commercial_year1_delta,
+                strictly_positive=maximum_delta_year1 > zero,
+            )
+            _require_supported_binary64(
+                "absolute commercial lifecycle SE-minus-SOL energy",
+                maximum_commercial_year1_delta * energy_factor_max,
+                strictly_positive=maximum_delta_year1 > zero,
+            )
+            _require_supported_binary64(
+                "absolute commercial equivalent-annual SE-minus-SOL energy",
+                maximum_commercial_year1_delta * equivalent_energy_factor_max,
+                strictly_positive=maximum_delta_year1 > zero,
+            )
+
+            marginal_cost_support = tuple(
+                decimal_value(value)
+                for value in distribution_support(
+                    commercial_scaling.marginal_cost_difference
+                )
+            )
+            maximum_marginal_cost = max(
+                abs(value) for value in marginal_cost_support
+            )
+            if commercial_scaling.marginal_cost_timing == "lifecycle_present_value":
+                maximum_marginal_pv_cost = maximum_marginal_cost
+                maximum_marginal_ea_cost = maximum_marginal_cost * crf_max
+            else:
+                minimum_crf = min(crfs)
+                maximum_marginal_ea_cost = maximum_marginal_cost
+                maximum_marginal_pv_cost = maximum_marginal_cost / minimum_crf
+            _require_supported_binary64(
+                "absolute commercial marginal lifecycle cost difference",
+                maximum_marginal_pv_cost,
+            )
+            _require_supported_binary64(
+                "absolute commercial marginal equivalent-annual cost difference",
+                maximum_marginal_ea_cost,
+            )
+
+            commercial_lcoo_bounds: list[Decimal] = []
+            for minimum_max_system, minimum_delta, maximum_delta in lcoo_support:
+                relative_tolerance_coefficient = (
+                    Decimal("1e-12") * minimum_max_system
+                )
+                if (
+                    maximum_delta <= relative_tolerance_coefficient
+                    or maximum_delta * energy_factor_max <= Decimal("1e-9")
+                ):
+                    continue
+                proportional_denominator_coefficient = max(
+                    minimum_delta,
+                    relative_tolerance_coefficient,
+                )
+                minimum_specific_denominator = max(
+                    Decimal("1e-9"),
+                    proportional_denominator_coefficient * energy_factor_min,
+                )
+                minimum_commercial_denominator = (
+                    minimum_specific_denominator * target_capacity
+                )
+                _require_supported_binary64(
+                    "minimum reportable commercial lifecycle energy difference",
+                    minimum_commercial_denominator,
+                    strictly_positive=True,
+                )
+                commercial_lcoo_bounds.append(
+                    maximum_marginal_pv_cost / minimum_commercial_denominator
+                )
+            if commercial_lcoo_bounds:
+                _require_supported_binary64(
+                    "absolute commercial marginal LCOO",
+                    max(commercial_lcoo_bounds),
+                )
         # A ratio is calculated only when |delta energy| exceeds its absolute/relative
         # classification tolerance.  Bound the smallest reportable denominator for
         # each discrete weather row from that tolerance and the row's actual support;
@@ -1391,7 +1991,11 @@ def validate_request(request: TechnoeconomicRequest) -> TechnoeconomicRequest:
     validate_runtime_versions()
     if not isinstance(request, TechnoeconomicRequest):
         raise TechnoeconomicValidationError("Request must be a TechnoeconomicRequest.")
-    if request.calculation_contract_version != CALCULATION_CONTRACT_VERSION:
+    if request.calculation_contract_version not in {
+        LEGACY_CALCULATION_CONTRACT_VERSION,
+        CALCULATION_CONTRACT_VERSION,
+        COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+    }:
         raise TechnoeconomicValidationError(
             f"Unsupported calculation contract: {request.calculation_contract_version!r}."
         )
@@ -1417,6 +2021,28 @@ def validate_request(request: TechnoeconomicRequest) -> TechnoeconomicRequest:
     capacities = (capacity_map["solectria"], capacity_map["solaredge"])
     rows = _validate_energy_rows(request.paired_energy_rows)
 
+    applied_capacities: tuple[AppliedCapacitySpec, AppliedCapacitySpec] | None = None
+    if request.calculation_contract_version == LEGACY_CALCULATION_CONTRACT_VERSION:
+        if request.applied_capacities is not None:
+            raise TechnoeconomicValidationError(
+                "tea-calculation-v1 must not define applied_capacities."
+            )
+    else:
+        if request.basis != "solartac_site":
+            raise TechnoeconomicValidationError(
+                f"{request.calculation_contract_version} applied-capacity normalization "
+                "is supported only for the SolarTAC site basis."
+            )
+        if request.applied_capacities is None:
+            raise TechnoeconomicValidationError(
+                f"{request.calculation_contract_version} SolarTAC requests require "
+                "applied_capacities."
+            )
+        applied_capacities = _validate_applied_capacities(
+            request.applied_capacities,
+            capacity_map,
+        )
+
     if not request.cost_lines:
         raise TechnoeconomicValidationError("At least one cost line is required.")
     lines = tuple(_validate_cost_line(line, request.basis) for line in request.cost_lines)
@@ -1431,6 +2057,27 @@ def validate_request(request: TechnoeconomicRequest) -> TechnoeconomicRequest:
     discount = validate_distribution(request.discount_rate, "discount_rate")
     degradation = validate_distribution(request.shared_degradation, "degradation")
     all_distributions = [line.distribution for line in lines] + [discount, degradation]
+
+    commercial_scaling: CommercialScalingSpec | None = None
+    if (
+        request.calculation_contract_version
+        == COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
+    ):
+        if request.commercial_scaling is None:
+            raise TechnoeconomicValidationError(
+                "tea-calculation-v3 requires commercial_scaling."
+            )
+        assert applied_capacities is not None
+        commercial_scaling = _validate_commercial_scaling(
+            request.commercial_scaling,
+            applied_capacities,
+        )
+        all_distributions.append(commercial_scaling.marginal_cost_difference)
+    elif request.commercial_scaling is not None:
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v1 and tea-calculation-v2 must not define "
+            "commercial_scaling."
+        )
 
     transfer: TransferSpec | None = None
     reference_wdc: float | None = None
@@ -1477,16 +2124,24 @@ def validate_request(request: TechnoeconomicRequest) -> TechnoeconomicRequest:
         for degradation_rate in degradation_support:
             lifecycle_energy_factor(rate, degradation_rate, life)
 
+    normalized_request = replace(
+        request,
+        capacities=capacities,
+        applied_capacities=applied_capacities,
+        commercial_scaling=commercial_scaling,
+    )
+    normalization_capacities_w = _normalization_capacity_map(normalized_request)
     _validate_support_wide_outputs(
         basis=request.basis,
         life=life,
-        capacities=capacity_map,
+        normalization_capacities_w=normalization_capacities_w,
         rows=rows,
         lines=lines,
         discount=discount,
         degradation=degradation,
         transfer=transfer,
         reference_wdc=reference_wdc,
+        commercial_scaling=commercial_scaling,
     )
 
     return replace(
@@ -1495,11 +2150,13 @@ def validate_request(request: TechnoeconomicRequest) -> TechnoeconomicRequest:
         seed=seed,
         project_life_years=life,
         capacities=capacities,
+        applied_capacities=applied_capacities,
         paired_energy_rows=rows,
         cost_lines=lines,
         discount_rate=discount,
         shared_degradation=degradation,
         transfer=transfer,
+        commercial_scaling=commercial_scaling,
         commercial_reference_wdc=(
             None
             if request.basis == "solartac_site"
@@ -2131,6 +2788,8 @@ def _classify_outcomes(
 def _build_common_cost_audit(
     lines: Sequence[CostLineSpec],
     samples: Mapping[str, np.ndarray],
+    *,
+    applied_capacity_normalization: bool = False,
 ) -> tuple[Mapping[str, Any], ...]:
     rows: list[Mapping[str, Any]] = []
     for line in lines:
@@ -2161,9 +2820,17 @@ def _build_common_cost_audit(
                 "solaredge_contribution_min": float(np.min(se)),
                 "solaredge_contribution_max": float(np.max(se)),
                 "contribution_units": (
-                    "USD_per_Wdc"
+                    (
+                        "USD_per_applied_W"
+                        if applied_capacity_normalization
+                        else "USD_per_Wdc"
+                    )
                     if line.cost_type in INITIAL_COST_TYPES
-                    else "USD_per_Wdc_year"
+                    else (
+                        "USD_per_applied_W_year"
+                        if applied_capacity_normalization
+                        else "USD_per_Wdc_year"
+                    )
                 ),
                 "delta_contribution_min_se_minus_sol": float(np.min(delta)),
                 "delta_contribution_max_se_minus_sol": float(np.max(delta)),
@@ -2224,14 +2891,14 @@ def _site_raw_lifecycle_cost_delta(
     request: TechnoeconomicRequest,
     samples: Mapping[str, np.ndarray],
     annuity_factor: np.ndarray,
-    capacity_map: Mapping[SystemName, CapacitySpec],
+    normalization_capacities_w: Mapping[SystemName, float],
 ) -> np.ndarray:
     """Accumulate raw SE-minus-SOL site cost without subtracting huge totals."""
 
     initial_delta = np.zeros(request.n, dtype=np.float64)
     recurring_delta = np.zeros(request.n, dtype=np.float64)
-    sol_wdc = capacity_map["solectria"].installed_wdc
-    se_wdc = capacity_map["solaredge"].installed_wdc
+    sol_applied_w = normalization_capacities_w["solectria"]
+    se_applied_w = normalization_capacities_w["solaredge"]
     with np.errstate(over="ignore", invalid="ignore"):
         for line in request.cost_lines:
             values = samples[line.input_id]
@@ -2242,11 +2909,14 @@ def _site_raw_lifecycle_cost_delta(
                 se_normalized = values * line.solaredge_multiplier_to_intensity
             if (
                 _common_treatment(line)[0] == "common_cancelled"
-                and sol_wdc == se_wdc
+                and sol_applied_w == se_applied_w
             ):
                 contribution_delta = np.zeros(request.n, dtype=np.float64)
             else:
-                contribution_delta = se_normalized * se_wdc - sol_normalized * sol_wdc
+                contribution_delta = (
+                    se_normalized * se_applied_w
+                    - sol_normalized * sol_applied_w
+                )
             if line.cost_type in INITIAL_COST_TYPES:
                 initial_delta += contribution_delta
             else:
@@ -2259,27 +2929,28 @@ def _site_raw_lifecycle_cost_delta(
 def _summaries_from_table(
     table: Mapping[str, np.ndarray],
     energy_available: bool,
+    fields: _MetricFields = LEGACY_METRIC_FIELDS,
 ) -> dict[str, Any]:
     summaries: dict[str, Any] = {
-        FIELD_DELTA_COST: _metric_summary(table[FIELD_DELTA_COST]),
-        FIELD_DELTA_EA_COST: _metric_summary(table[FIELD_DELTA_EA_COST]),
+        fields.delta_cost: _metric_summary(table[fields.delta_cost]),
+        fields.delta_ea_cost: _metric_summary(table[fields.delta_ea_cost]),
     }
     energy_fields = (
-        FIELD_LCOE_SOL,
-        FIELD_LCOE_SE,
-        FIELD_DELTA_ENERGY,
-        FIELD_DELTA_EA_ENERGY,
+        fields.lcoe_sol,
+        fields.lcoe_se,
+        fields.delta_energy,
+        fields.delta_ea_energy,
     )
     if energy_available:
         for field_name in energy_fields:
             summaries[field_name] = _metric_summary(table[field_name])
         positive = table["energy_class"] == "positive_lifecycle_gain"
         summaries["headline_positive_gain_lcoo"] = _metric_summary(
-            table[FIELD_LCOO][positive],
+            table[fields.lcoo][positive],
             empty_reason="no_positive_lifecycle_gain",
         )
         summaries["signed_nonzero_lcoo"] = _metric_summary(
-            table[FIELD_LCOO][np.isfinite(table[FIELD_LCOO])],
+            table[fields.lcoo][np.isfinite(table[fields.lcoo])],
             empty_reason="no_nonzero_lifecycle_energy",
         )
         energy_counts = Counter(str(value) for value in table["energy_class"])
@@ -2314,6 +2985,23 @@ def _summaries_from_table(
             "status": "unavailable",
             "reason": "commercial_energy_transfer_unavailable",
         }
+    if COMMERCIAL_FIELD_TARGET_CAPACITY in table:
+        commercial_metric_fields = (
+            COMMERCIAL_FIELD_TARGET_CAPACITY,
+            COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY,
+            COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY,
+            COMMERCIAL_FIELD_EA_DELTA_ENERGY,
+            COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST,
+            COMMERCIAL_FIELD_EA_MARGINAL_COST,
+        )
+        for field_name in commercial_metric_fields:
+            summaries[field_name] = _metric_summary(table[field_name])
+        summaries[COMMERCIAL_FIELD_MARGINAL_LCOO] = _metric_summary(
+            table[COMMERCIAL_FIELD_MARGINAL_LCOO][
+                np.isfinite(table[COMMERCIAL_FIELD_MARGINAL_LCOO])
+            ],
+            empty_reason=COMMERCIAL_ZERO_ENERGY_REASON,
+        )
     return summaries
 
 
@@ -2321,44 +3009,110 @@ def _per_weather_year_summaries(
     request: TechnoeconomicRequest,
     table: Mapping[str, np.ndarray],
     capacity_map: Mapping[SystemName, CapacitySpec],
+    normalization_capacities_w: Mapping[SystemName, float],
     energy_available: bool,
+    fields: _MetricFields = LEGACY_METRIC_FIELDS,
 ) -> tuple[Mapping[str, Any], ...]:
     metric_names = (
-        FIELD_LCOE_SOL,
-        FIELD_LCOE_SE,
-        FIELD_DELTA_COST,
-        FIELD_DELTA_ENERGY,
-        FIELD_DELTA_EA_COST,
-        FIELD_DELTA_EA_ENERGY,
+        fields.lcoe_sol,
+        fields.lcoe_se,
+        fields.delta_cost,
+        fields.delta_energy,
+        fields.delta_ea_cost,
+        fields.delta_ea_energy,
     )
+    if request.commercial_scaling is not None:
+        metric_names += (
+            COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY,
+            COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY,
+            COMMERCIAL_FIELD_EA_DELTA_ENERGY,
+            COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST,
+            COMMERCIAL_FIELD_EA_MARGINAL_COST,
+        )
     results: list[Mapping[str, Any]] = []
     for source_row in request.paired_energy_rows:
         mask = table["weather_year"] == source_row.year
         count = int(np.count_nonzero(mask))
         no_rows = count == 0
+        applied = fields is APPLIED_METRIC_FIELDS
+        sol_normalization_w = normalization_capacities_w["solectria"]
+        se_normalization_w = normalization_capacities_w["solaredge"]
         row: dict[str, Any] = {
             "year": source_row.year,
             "source_sol_predicted_kwh_ac": source_row.sol_predicted_kwh_ac,
             "source_se_predicted_kwh_ac": source_row.se_predicted_kwh_ac,
             "solectria_installed_wdc": capacity_map["solectria"].installed_wdc,
             "solaredge_installed_wdc": capacity_map["solaredge"].installed_wdc,
-            "source_sol_specific_kwh_ac_per_wdc_year": (
-                source_row.sol_predicted_kwh_ac / capacity_map["solectria"].installed_wdc
-            ),
-            "source_se_specific_kwh_ac_per_wdc_year": (
-                source_row.se_predicted_kwh_ac / capacity_map["solaredge"].installed_wdc
-            ),
-            "source_delta_specific_se_minus_sol_kwh_ac_per_wdc_year": (
-                source_row.se_predicted_kwh_ac / capacity_map["solaredge"].installed_wdc
-                - source_row.sol_predicted_kwh_ac / capacity_map["solectria"].installed_wdc
-            ),
             "realization_count": count,
             "realization_share": count / request.n,
             "reason": "no_realizations_assigned" if no_rows else None,
             "metrics": {},
         }
+        if applied:
+            row.update(
+                {
+                    "solectria_applied_w": sol_normalization_w,
+                    "solaredge_applied_w": se_normalization_w,
+                    "source_sol_specific_kwh_ac_per_applied_w_year": (
+                        source_row.sol_predicted_kwh_ac / sol_normalization_w
+                    ),
+                    "source_se_specific_kwh_ac_per_applied_w_year": (
+                        source_row.se_predicted_kwh_ac / se_normalization_w
+                    ),
+                    "source_delta_specific_se_minus_sol_kwh_ac_per_applied_w_year": (
+                        source_row.se_predicted_kwh_ac / se_normalization_w
+                        - source_row.sol_predicted_kwh_ac / sol_normalization_w
+                    ),
+                }
+            )
+            if request.commercial_scaling is not None:
+                row.update(
+                    {
+                        "commercial_target_capacity_w": (
+                            request.commercial_scaling.target_capacity_w
+                        ),
+                        "commercial_target_rating_basis": (
+                            request.commercial_scaling.target_rating_basis
+                        ),
+                        "commercial_transfer_method": (
+                            request.commercial_scaling.transfer_method
+                        ),
+                        "commercial_source_year1_delta_energy_se_minus_sol_kwh_ac": (
+                            (
+                                (source_row.se_predicted_kwh_ac - source_row.sol_predicted_kwh_ac)
+                                / se_normalization_w
+                                if sol_normalization_w == se_normalization_w
+                                else (
+                                    source_row.se_predicted_kwh_ac / se_normalization_w
+                                    - source_row.sol_predicted_kwh_ac / sol_normalization_w
+                                )
+                            )
+                            * request.commercial_scaling.target_capacity_w
+                        ),
+                    }
+                )
+        else:
+            row.update(
+                {
+                    "source_sol_specific_kwh_ac_per_wdc_year": (
+                        source_row.sol_predicted_kwh_ac / sol_normalization_w
+                    ),
+                    "source_se_specific_kwh_ac_per_wdc_year": (
+                        source_row.se_predicted_kwh_ac / se_normalization_w
+                    ),
+                    "source_delta_specific_se_minus_sol_kwh_ac_per_wdc_year": (
+                        source_row.se_predicted_kwh_ac / se_normalization_w
+                        - source_row.sol_predicted_kwh_ac / sol_normalization_w
+                    ),
+                }
+            )
         for field_name in metric_names:
-            if field_name in {FIELD_LCOE_SOL, FIELD_LCOE_SE, FIELD_DELTA_ENERGY, FIELD_DELTA_EA_ENERGY} and not energy_available:
+            if field_name in {
+                fields.lcoe_sol,
+                fields.lcoe_se,
+                fields.delta_energy,
+                fields.delta_ea_energy,
+            } and not energy_available:
                 row["metrics"][field_name] = {
                     "status": "unavailable",
                     "reason": "commercial_energy_transfer_unavailable",
@@ -2374,16 +3128,16 @@ def _per_weather_year_summaries(
                 )
         if energy_available:
             positive = mask & (table["energy_class"] == "positive_lifecycle_gain")
-            nonzero = mask & np.isfinite(table[FIELD_LCOO])
+            nonzero = mask & np.isfinite(table[fields.lcoo])
             row["metrics"]["headline_positive_gain_lcoo"] = _metric_summary(
-                table[FIELD_LCOO][positive],
+                table[fields.lcoo][positive],
                 empty_reason=(
                     "no_realizations_assigned" if no_rows else "no_positive_lifecycle_gain"
                 ),
                 include_cdf=False,
             )
             row["metrics"]["signed_nonzero_lcoo"] = _metric_summary(
-                table[FIELD_LCOO][nonzero],
+                table[fields.lcoo][nonzero],
                 empty_reason=(
                     "no_realizations_assigned" if no_rows else "no_nonzero_lifecycle_energy"
                 ),
@@ -2396,6 +3150,19 @@ def _per_weather_year_summaries(
             row["energy_class_probabilities"] = (
                 None if no_rows else _category_probabilities(class_values, ENERGY_CLASSES)
             )
+            if request.commercial_scaling is not None:
+                commercial_nonzero = mask & np.isfinite(
+                    table[COMMERCIAL_FIELD_MARGINAL_LCOO]
+                )
+                row["metrics"][COMMERCIAL_FIELD_MARGINAL_LCOO] = _metric_summary(
+                    table[COMMERCIAL_FIELD_MARGINAL_LCOO][commercial_nonzero],
+                    empty_reason=(
+                        "no_realizations_assigned"
+                        if no_rows
+                        else COMMERCIAL_ZERO_ENERGY_REASON
+                    ),
+                    include_cdf=False,
+                )
         else:
             row["metrics"]["headline_positive_gain_lcoo"] = {
                 "status": "unavailable",
@@ -2419,6 +3186,7 @@ def _sensitivity_models(
     samples: Mapping[str, np.ndarray],
     common_treatments: Mapping[str, str],
     energy_available: bool,
+    fields: _MetricFields = LEGACY_METRIC_FIELDS,
 ) -> dict[str, Any]:
     all_specs: dict[str, DistributionSpec] = {
         line.input_id: line.distribution for line in request.cost_lines
@@ -2428,6 +3196,13 @@ def _sensitivity_models(
     if request.transfer is not None:
         all_specs[request.transfer.baseline.input_id] = request.transfer.baseline
         all_specs[request.transfer.incremental.input_id] = request.transfer.incremental
+    if request.commercial_scaling is not None:
+        commercial_cost_id = (
+            request.commercial_scaling.marginal_cost_difference.input_id
+        )
+        all_specs[commercial_cost_id] = (
+            request.commercial_scaling.marginal_cost_difference
+        )
 
     source_sol_id = "energy.source.solectria_specific"
     source_se_id = "energy.source.solaredge_specific"
@@ -2435,11 +3210,12 @@ def _sensitivity_models(
     predictors: dict[str, np.ndarray] = {
         identifier: samples[identifier] for identifier in all_specs
     }
+    source_unit = "applied_W" if fields is APPLIED_METRIC_FIELDS else "Wdc"
     predictors[source_sol_id] = table[
-        "SourceYear1SpecificEnergy_SOL_kWh_AC_per_Wdc_year"
+        f"SourceYear1SpecificEnergy_SOL_kWh_AC_per_{source_unit}_year"
     ]
     predictors[source_se_id] = table[
-        "SourceYear1SpecificEnergy_SE_kWh_AC_per_Wdc_year"
+        f"SourceYear1SpecificEnergy_SE_kWh_AC_per_{source_unit}_year"
     ]
 
     cost_sol = {
@@ -2522,16 +3298,23 @@ def _sensitivity_models(
     lcoo_set = delta_cost_set | delta_energy_set
 
     response_definitions = {
-        "lifecycle_lcoe_solectria": (FIELD_LCOE_SOL, lcoe_sol_set, None),
-        "lifecycle_lcoe_solaredge": (FIELD_LCOE_SE, lcoe_se_set, None),
-        "lifecycle_cost_delta_se_minus_sol": (FIELD_DELTA_COST, delta_cost_set, None),
-        "lifecycle_energy_delta_se_minus_sol": (FIELD_DELTA_ENERGY, delta_energy_set, None),
+        "lifecycle_lcoe_solectria": (fields.lcoe_sol, lcoe_sol_set, None),
+        "lifecycle_lcoe_solaredge": (fields.lcoe_se, lcoe_se_set, None),
+        "lifecycle_cost_delta_se_minus_sol": (fields.delta_cost, delta_cost_set, None),
+        "lifecycle_energy_delta_se_minus_sol": (fields.delta_energy, delta_energy_set, None),
         "headline_positive_gain_lcoo_se_minus_sol": (
-            FIELD_LCOO,
+            fields.lcoo,
             lcoo_set,
             table["energy_class"] == "positive_lifecycle_gain" if energy_available else None,
         ),
     }
+    if request.commercial_scaling is not None:
+        response_definitions["commercial_marginal_lcoo_se_minus_sol"] = (
+            COMMERCIAL_FIELD_MARGINAL_LCOO,
+            delta_energy_set
+            | {request.commercial_scaling.marginal_cost_difference.input_id},
+            np.isfinite(table[COMMERCIAL_FIELD_MARGINAL_LCOO]),
+        )
     results: dict[str, Any] = {}
     for response_name, (field_name, applicable, selection) in response_definitions.items():
         if not energy_available and response_name != "lifecycle_cost_delta_se_minus_sol":
@@ -2564,21 +3347,46 @@ def _sensitivity_models(
     return results
 
 
-def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
-    """Run one complete in-memory probabilistic technoeconomic calculation."""
+def run_technoeconomic(
+    request: TechnoeconomicRequest,
+    *,
+    progress_cb: Callable[[float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> TechnoeconomicResult:
+    """Run one complete in-memory probabilistic technoeconomic calculation.
 
+    The optional callbacks keep the pure kernel independent of persistence while
+    allowing a durable worker to report coarse progress and cooperatively stop at
+    deterministic stage boundaries.  Omitting them preserves the Phase-1 calling
+    contract and calculation behavior.
+    """
+
+    def checkpoint(fraction: float, stage: str) -> None:
+        if cancel_check is not None:
+            cancel_check()
+        if progress_cb is not None:
+            progress_cb(fraction, stage)
+
+    checkpoint(0.0, "Validating technoeconomic inputs")
     request = validate_request(request)
+    checkpoint(0.05, "Generating probabilistic samples")
     capacity_map = {spec.system: spec for spec in request.capacities}
+    normalization_capacities_w = _normalization_capacity_map(request)
+    fields = _metric_fields(request)
+    applied_capacity_normalization = fields is APPLIED_METRIC_FIELDS
     distributions = [line.distribution for line in request.cost_lines]
     distributions.extend([request.discount_rate, request.shared_degradation])
     if request.transfer is not None:
         distributions.extend([request.transfer.baseline, request.transfer.incremental])
+    if request.commercial_scaling is not None:
+        distributions.append(request.commercial_scaling.marginal_cost_difference)
     samples = generate_lhs(request.n, request.seed, distributions)
     weather_years = allocate_weather_years(
         request.n,
         request.seed,
         [row.year for row in request.paired_energy_rows],
     )
+    checkpoint(0.18, "Allocating paired weather years")
     energy_by_year = {row.year: row for row in request.paired_energy_rows}
     source_sol_kwh = np.asarray(
         [energy_by_year[int(year)].sol_predicted_kwh_ac for year in weather_years],
@@ -2588,8 +3396,12 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
         [energy_by_year[int(year)].se_predicted_kwh_ac for year in weather_years],
         dtype=np.float64,
     )
-    source_sol_specific = source_sol_kwh / capacity_map["solectria"].installed_wdc
-    source_se_specific = source_se_kwh / capacity_map["solaredge"].installed_wdc
+    source_sol_specific = (
+        source_sol_kwh / normalization_capacities_w["solectria"]
+    )
+    source_se_specific = (
+        source_se_kwh / normalization_capacities_w["solaredge"]
+    )
 
     discount_rates = samples[request.discount_rate.input_id]
     degradation = samples[request.shared_degradation.input_id]
@@ -2617,6 +3429,7 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
             "delta_ea_cost": delta_ea_cost,
         },
     )
+    checkpoint(0.38, "Calculating lifecycle cost and energy")
 
     energy_available = request.basis == "solartac_site" or request.transfer is not None
     if request.basis == "solartac_site":
@@ -2717,13 +3530,93 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
             ),
         }
 
+    commercial_fields: dict[str, np.ndarray] = {}
+    if request.commercial_scaling is not None:
+        commercial_spec = request.commercial_scaling
+        marginal_cost_input = samples[
+            commercial_spec.marginal_cost_difference.input_id
+        ]
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            if commercial_spec.marginal_cost_timing == "lifecycle_present_value":
+                commercial_lifecycle_cost = marginal_cost_input
+                commercial_ea_cost = crf * marginal_cost_input
+            else:
+                commercial_ea_cost = marginal_cost_input
+                commercial_lifecycle_cost = marginal_cost_input / crf
+            if (
+                normalization_capacities_w["solectria"]
+                == normalization_capacities_w["solaredge"]
+            ):
+                commercial_year1_delta_energy = (
+                    (source_se_kwh - source_sol_kwh)
+                    / normalization_capacities_w["solaredge"]
+                    * commercial_spec.target_capacity_w
+                )
+            else:
+                commercial_year1_delta_energy = (
+                    year1_delta * commercial_spec.target_capacity_w
+                )
+            commercial_lifecycle_delta_energy = (
+                commercial_year1_delta_energy * energy_factor
+            )
+            commercial_ea_delta_energy = (
+                commercial_lifecycle_delta_energy * crf
+            )
+            commercial_lcoo = np.full(request.n, np.nan, dtype=np.float64)
+            commercial_nonzero = (
+                outcomes["energy_class"] != "zero_lifecycle_gain"
+            )
+            commercial_lcoo[commercial_nonzero] = (
+                commercial_lifecycle_cost[commercial_nonzero]
+                / commercial_lifecycle_delta_energy[commercial_nonzero]
+            )
+        _require_finite_arrays(
+            "Commercial scaling calculation",
+            {
+                "commercial_lifecycle_cost": commercial_lifecycle_cost,
+                "commercial_ea_cost": commercial_ea_cost,
+                "commercial_year1_delta_energy": commercial_year1_delta_energy,
+                "commercial_lifecycle_delta_energy": commercial_lifecycle_delta_energy,
+                "commercial_ea_delta_energy": commercial_ea_delta_energy,
+                "commercial_nonzero_lcoo": commercial_lcoo[commercial_nonzero],
+            },
+        )
+        commercial_fields = {
+            COMMERCIAL_FIELD_TARGET_CAPACITY: np.full(
+                request.n,
+                commercial_spec.target_capacity_w,
+                dtype=np.float64,
+            ),
+            COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY: commercial_year1_delta_energy,
+            COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY: (
+                commercial_lifecycle_delta_energy
+            ),
+            COMMERCIAL_FIELD_EA_DELTA_ENERGY: commercial_ea_delta_energy,
+            COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST: commercial_lifecycle_cost,
+            COMMERCIAL_FIELD_EA_MARGINAL_COST: commercial_ea_cost,
+            COMMERCIAL_FIELD_MARGINAL_LCOO: commercial_lcoo,
+            COMMERCIAL_FIELD_MARGINAL_LCOO_REASON: np.where(
+                commercial_nonzero,
+                None,
+                COMMERCIAL_ZERO_ENERGY_REASON,
+            ).astype(object),
+        }
+
     table: dict[str, np.ndarray] = {
         "realization_index": np.arange(1, request.n + 1, dtype=np.int64),
         "weather_year": weather_years,
         "SourceYear1Energy_SOL_kWh_AC": source_sol_kwh,
         "SourceYear1Energy_SE_kWh_AC": source_se_kwh,
-        "SourceYear1SpecificEnergy_SOL_kWh_AC_per_Wdc_year": source_sol_specific,
-        "SourceYear1SpecificEnergy_SE_kWh_AC_per_Wdc_year": source_se_specific,
+        (
+            "SourceYear1SpecificEnergy_SOL_kWh_AC_per_applied_W_year"
+            if applied_capacity_normalization
+            else "SourceYear1SpecificEnergy_SOL_kWh_AC_per_Wdc_year"
+        ): source_sol_specific,
+        (
+            "SourceYear1SpecificEnergy_SE_kWh_AC_per_applied_W_year"
+            if applied_capacity_normalization
+            else "SourceYear1SpecificEnergy_SE_kWh_AC_per_Wdc_year"
+        ): source_se_specific,
     }
     for identifier in sorted(samples, key=lambda value: value.encode("ascii")):
         table[f"SampledInput::{identifier}"] = samples[identifier]
@@ -2732,52 +3625,77 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
             "AnnuityFactor_years": annuity_factor,
             "CapitalRecoveryFactor_per_year": crf,
             "LifecycleEnergyFactor_years": energy_factor,
-            "InitialCostIntensity_SOL_USD_per_Wdc": costs["initial_sol"],
-            "InitialCostIntensity_SE_USD_per_Wdc": costs["initial_se"],
-            "RecurringCostIntensity_SOL_USD_per_Wdc_year": costs["recurring_sol"],
-            "RecurringCostIntensity_SE_USD_per_Wdc_year": costs["recurring_se"],
-            FIELD_PV_COST_SOL: pv_cost_sol,
-            FIELD_PV_COST_SE: pv_cost_se,
-            FIELD_EA_COST_SOL: ea_cost_sol,
-            FIELD_EA_COST_SE: ea_cost_se,
-            FIELD_DELTA_COST: delta_cost,
-            FIELD_DELTA_EA_COST: delta_ea_cost,
-            FIELD_YEAR1_SOL: year1_sol,
-            FIELD_YEAR1_SE: year1_se,
-            FIELD_YEAR1_DELTA: year1_delta,
-            FIELD_PV_ENERGY_SOL: pv_energy_sol,
-            FIELD_PV_ENERGY_SE: pv_energy_se,
-            FIELD_EA_ENERGY_SOL: ea_energy_sol,
-            FIELD_EA_ENERGY_SE: ea_energy_se,
-            FIELD_LCOE_SOL: lcoe_sol,
-            FIELD_LCOE_SE: lcoe_se,
-            FIELD_DELTA_ENERGY: delta_energy,
-            FIELD_DELTA_EA_ENERGY: delta_ea_energy,
-            FIELD_LCOO: outcomes["lcoo"],
-            "energy_zero_tolerance_kWh_AC_per_Wdc": outcomes["energy_tolerance"],
-            "cost_zero_tolerance_USD_per_Wdc": outcomes["cost_tolerance"],
+            (
+                "InitialCostIntensity_SOL_USD_per_applied_W"
+                if applied_capacity_normalization
+                else "InitialCostIntensity_SOL_USD_per_Wdc"
+            ): costs["initial_sol"],
+            (
+                "InitialCostIntensity_SE_USD_per_applied_W"
+                if applied_capacity_normalization
+                else "InitialCostIntensity_SE_USD_per_Wdc"
+            ): costs["initial_se"],
+            (
+                "RecurringCostIntensity_SOL_USD_per_applied_W_year"
+                if applied_capacity_normalization
+                else "RecurringCostIntensity_SOL_USD_per_Wdc_year"
+            ): costs["recurring_sol"],
+            (
+                "RecurringCostIntensity_SE_USD_per_applied_W_year"
+                if applied_capacity_normalization
+                else "RecurringCostIntensity_SE_USD_per_Wdc_year"
+            ): costs["recurring_se"],
+            fields.pv_cost_sol: pv_cost_sol,
+            fields.pv_cost_se: pv_cost_se,
+            fields.ea_cost_sol: ea_cost_sol,
+            fields.ea_cost_se: ea_cost_se,
+            fields.delta_cost: delta_cost,
+            fields.delta_ea_cost: delta_ea_cost,
+            fields.year1_sol: year1_sol,
+            fields.year1_se: year1_se,
+            fields.year1_delta: year1_delta,
+            fields.pv_energy_sol: pv_energy_sol,
+            fields.pv_energy_se: pv_energy_se,
+            fields.ea_energy_sol: ea_energy_sol,
+            fields.ea_energy_se: ea_energy_se,
+            fields.lcoe_sol: lcoe_sol,
+            fields.lcoe_se: lcoe_se,
+            fields.delta_energy: delta_energy,
+            fields.delta_ea_energy: delta_ea_energy,
+            fields.lcoo: outcomes["lcoo"],
+            (
+                "energy_zero_tolerance_kWh_AC_per_applied_W"
+                if applied_capacity_normalization
+                else "energy_zero_tolerance_kWh_AC_per_Wdc"
+            ): outcomes["energy_tolerance"],
+            (
+                "cost_zero_tolerance_USD_per_applied_W"
+                if applied_capacity_normalization
+                else "cost_zero_tolerance_USD_per_Wdc"
+            ): outcomes["cost_tolerance"],
             "energy_class": outcomes["energy_class"],
             "cost_class": outcomes["cost_class"],
             "tradeoff_class": outcomes["tradeoff_class"],
             "lcoo_unavailable_reason": outcomes["lcoo_reason"],
         }
     )
+    table.update(commercial_fields)
 
     if request.basis == "solartac_site":
-        sol_wdc = capacity_map["solectria"].installed_wdc
-        se_wdc = capacity_map["solaredge"].installed_wdc
+        sol_applied_w = normalization_capacities_w["solectria"]
+        se_applied_w = normalization_capacities_w["solaredge"]
         with np.errstate(over="ignore", invalid="ignore"):
             raw_fields = {
-                "PVCost_SOL_USD": pv_cost_sol * sol_wdc,
-                "PVCost_SE_USD": pv_cost_se * se_wdc,
+                "PVCost_SOL_USD": pv_cost_sol * sol_applied_w,
+                "PVCost_SE_USD": pv_cost_se * se_applied_w,
                 "DeltaPVCostUSD_se_minus_sol": _site_raw_lifecycle_cost_delta(
                     request,
                     samples,
                     annuity_factor,
-                    capacity_map,
+                    normalization_capacities_w,
                 ),
-                "PVEnergy_SOL_kWh_AC": pv_energy_sol * sol_wdc,
-                "PVEnergy_SE_kWh_AC": pv_energy_se * se_wdc,
+                "PVEnergy_SOL_kWh_AC": pv_energy_sol * sol_applied_w,
+                "PVEnergy_SE_kWh_AC": pv_energy_se * se_applied_w,
                 "DeltaPVEnergyKWhAC_se_minus_sol": (
                     (source_se_kwh - source_sol_kwh) * energy_factor
                 ),
@@ -2805,48 +3723,75 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
         _require_finite_arrays("Commercial reference diagnostics", reference_fields)
         table.update(reference_fields)
 
-    common_audit = _build_common_cost_audit(request.cost_lines, samples)
+    checkpoint(0.62, "Summarizing realization outcomes")
+    common_audit = _build_common_cost_audit(
+        request.cost_lines,
+        samples,
+        applied_capacity_normalization=applied_capacity_normalization,
+    )
     common_treatments = {
         row["input_id"]: row["comparison_treatment"] for row in common_audit
     }
-    summaries = _summaries_from_table(table, energy_available)
+    summaries = _summaries_from_table(table, energy_available, fields)
     per_year = _per_weather_year_summaries(
         request,
         table,
         capacity_map,
+        normalization_capacities_w,
         energy_available,
+        fields,
     )
+    checkpoint(0.74, "Calculating sensitivity diagnostics")
     sensitivity = _sensitivity_models(
         request,
         table,
         samples,
         common_treatments,
         energy_available,
+        fields,
     )
 
+    checkpoint(0.88, "Calculating convergence diagnostics")
     convergence_metrics: dict[str, np.ndarray] = {
-        FIELD_DELTA_COST: table[FIELD_DELTA_COST],
+        fields.delta_cost: table[fields.delta_cost],
     }
-    convergence_tolerances = {FIELD_DELTA_COST: 0.0001}
+    convergence_tolerances = {fields.delta_cost: 0.0001}
     if energy_available:
         convergence_metrics.update(
             {
-                FIELD_LCOE_SOL: table[FIELD_LCOE_SOL],
-                FIELD_LCOE_SE: table[FIELD_LCOE_SE],
-                FIELD_DELTA_ENERGY: table[FIELD_DELTA_ENERGY],
+                fields.lcoe_sol: table[fields.lcoe_sol],
+                fields.lcoe_se: table[fields.lcoe_se],
+                fields.delta_energy: table[fields.delta_energy],
                 "headline_positive_gain_lcoo": np.where(
                     table["energy_class"] == "positive_lifecycle_gain",
-                    table[FIELD_LCOO],
+                    table[fields.lcoo],
                     np.nan,
                 ),
             }
         )
         convergence_tolerances.update(
             {
-                FIELD_LCOE_SOL: 0.0001,
-                FIELD_LCOE_SE: 0.0001,
-                FIELD_DELTA_ENERGY: 0.0001,
+                fields.lcoe_sol: 0.0001,
+                fields.lcoe_se: 0.0001,
+                fields.delta_energy: 0.0001,
                 "headline_positive_gain_lcoo": 0.0001,
+            }
+        )
+    if request.commercial_scaling is not None:
+        convergence_metrics.update(
+            {
+                COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY: table[
+                    COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY
+                ],
+                COMMERCIAL_FIELD_MARGINAL_LCOO: table[
+                    COMMERCIAL_FIELD_MARGINAL_LCOO
+                ],
+            }
+        )
+        convergence_tolerances.update(
+            {
+                COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY: 0.001,
+                COMMERCIAL_FIELD_MARGINAL_LCOO: 0.0001,
             }
         )
     convergence = convergence_diagnostics(
@@ -2859,10 +3804,11 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
     )
 
     provenance = {
-        "calculation_contract_version": CALCULATION_CONTRACT_VERSION,
+        "calculation_contract_version": request.calculation_contract_version,
         "sampling_version": SAMPLING_VERSION,
         "numpy_version": np.__version__,
         "scipy_version": scipy.__version__,
+        "numerics": numerical_fingerprint(),
         "analysis_basis": request.basis,
         "realization_count": request.n,
         "seed": request.seed,
@@ -2902,12 +3848,92 @@ def run_technoeconomic(request: TechnoeconomicRequest) -> TechnoeconomicResult:
             "relative_scale_floor_multiplier": 100.0,
             "absolute_quantile_tolerances": {
                 "lcoe_and_lcoo_USD_per_kWh_AC": 0.0001,
-                "lifecycle_cost_USD_per_Wdc": 0.0001,
-                "lifecycle_energy_kWh_AC_per_Wdc": 0.0001,
+                (
+                    "lifecycle_cost_USD_per_applied_W"
+                    if applied_capacity_normalization
+                    else "lifecycle_cost_USD_per_Wdc"
+                ): 0.0001,
+                (
+                    "lifecycle_energy_kWh_AC_per_applied_W"
+                    if applied_capacity_normalization
+                    else "lifecycle_energy_kWh_AC_per_Wdc"
+                ): 0.0001,
             },
             "class_probability_change_threshold": 0.001,
         },
     }
+    if applied_capacity_normalization:
+        applied_map = {spec.system: spec for spec in request.applied_capacities or ()}
+        provenance["capacity_normalization"] = {
+            "method": "annual_applied_capacity_v1",
+            "systems": {
+                system: {
+                    "applied_capacity_w": applied_map[system].applied_capacity_w,
+                    "rating_basis": applied_map[system].rating_basis,
+                    "installed_wdc": capacity_map[system].installed_wdc,
+                }
+                for system in ("solectria", "solaredge")
+            },
+        }
+    if request.commercial_scaling is not None:
+        commercial_spec = request.commercial_scaling
+        provenance["commercial_scaling"] = {
+            "method": commercial_spec.transfer_method,
+            "source_specific_energy_formula": (
+                "(SE_kWh_AC / SE_applied_W) - "
+                "(SOL_kWh_AC / SOL_applied_W)"
+            ),
+            "target_energy_formula": (
+                "source_specific_energy_delta_kWh_AC_per_applied_W "
+                "* target_capacity_W"
+            ),
+            "target_capacity_w": commercial_spec.target_capacity_w,
+            "target_rating_basis": commercial_spec.target_rating_basis,
+            "source_applied_capacities_w": {
+                system: applied_map[system].applied_capacity_w
+                for system in ("solectria", "solaredge")
+            },
+            "source_rating_basis": applied_map["solectria"].rating_basis,
+            "marginal_cost_difference_input_id": (
+                commercial_spec.marginal_cost_difference.input_id
+            ),
+            "marginal_cost_difference_distribution": asdict(
+                commercial_spec.marginal_cost_difference
+            ),
+            "marginal_cost_timing": commercial_spec.marginal_cost_timing,
+            "timing_conversion": (
+                "EA=CRF*PV"
+                if commercial_spec.marginal_cost_timing
+                == "lifecycle_present_value"
+                else "PV=EA/CRF"
+            ),
+            "marginal_lcoo_formula": (
+                "commercial_lifecycle_marginal_cost_delta_USD / "
+                "commercial_lifecycle_energy_delta_kWh_AC"
+            ),
+            "sign_convention": "SolarEdge minus Solectria",
+            "zero_energy_rule": {
+                "comparison": (
+                    "source_normalized_lifecycle_energy_class != "
+                    "zero_lifecycle_gain"
+                ),
+                "absolute_tolerance_kWh_AC_per_applied_W": 1e-9,
+                "relative_tolerance": 1e-12,
+                "lcoo": None,
+                "reason": COMMERCIAL_ZERO_ENERGY_REASON,
+            },
+            "units": {
+                "source_specific_energy_delta": "kWh_AC/applied_W-year",
+                "target_capacity": "W",
+                "year1_energy_delta": "kWh_AC",
+                "lifecycle_energy_delta": "kWh_AC",
+                "equivalent_annual_energy_delta": "kWh_AC/year",
+                "lifecycle_marginal_cost_delta": "USD",
+                "equivalent_annual_marginal_cost_delta": "USD/year",
+                "marginal_lcoo": "USD/kWh_AC",
+            },
+        }
+    checkpoint(1.0, "Technoeconomic calculation complete")
     return TechnoeconomicResult(
         realization_table=table,
         sampled_inputs={identifier: values.copy() for identifier, values in samples.items()},

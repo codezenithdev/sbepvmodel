@@ -493,13 +493,32 @@ X = mean + sd * Phi^-1(Phi(a) + U * (Phi(b) - Phi(a)))
 Requirements: `sd > 0`, `low < high`, all parameters finite, and a nonempty
 truncated probability interval. The mean need not be centered in the bounds.
 
-Version 1 evaluates this inverse CDF with directly pinned SciPy 1.18.0
-`scipy.stats.truncnorm.ppf`. This is deliberate: ordinary binary64 normal-CDF
+Version 1 evaluates this inverse CDF with `scipy.stats.truncnorm.ppf`, authored
+against SciPy 1.18.0. This is deliberate: ordinary binary64 normal-CDF
 subtraction collapses legitimate far-tail intervals (for example, 10 to 11 standard
 deviations) to zero probability. A result that rounds onto a bound is moved one
 binary64 value toward the interior; an interval with no representable interior
 binary64 value is rejected. The SciPy version is stored with the sampling
 provenance.
+
+The dependency is on this *behavior*, not on a version string, and the runtime
+gate says so directly. `technoeconomic.validate_runtime_versions` evaluates four
+probe groups at every entry point — the `PCG64DXSM`/`SeedSequence` bit stream,
+`truncnorm.ppf` across ordinary, 10-to-11 and 37-to-38 standard-deviation
+intervals, the type-7 quantile rule, and the `log1p`/`expm1` pair behind the
+annuity and lifecycle-energy factors — and refuses to run unless each digest
+matches `NUMERICAL_PROBE_DIGESTS` to twelve significant decimal digits.
+`matrix_rank` and `lstsq` are excluded on purpose: they reach LAPACK, so their
+trailing bits track the local BLAS build rather than the NumPy release.
+
+Twelve digits absorbs last-bit refinement between releases — SciPy 1.17.1 and
+1.18.0 differ by three ULP on one near-bound case while agreeing everywhere the
+contract depends on them — and still rejects every failure mode that matters,
+each of which moves far more than one part in `1e12`. Bit-level identity is
+reported rather than enforced: provenance carries an `exactness_digest` and a
+`bit_identical_to_reference` flag, so a reviewer comparing two completed jobs
+can tell whether they are bit-comparable or merely both within contract
+tolerance. Re-approving `NUMERICAL_PROBE_DIGESTS` is a contract decision.
 
 ### 5.7 Finance and degradation inputs
 
@@ -526,7 +545,8 @@ generator and LHS algorithm.
 
 The proposed `tea-lhs-v1` sampling version pins:
 
-- NumPy 2.5.0 `PCG64DXSM` as the bit generator;
+- NumPy `PCG64DXSM` as the bit generator, authored against NumPy 2.5.0 and
+  verified at runtime by the Section 5.6 `pcg64dxsm_stream` probe;
 - a user seed integer in `0..2^64-1`;
 - canonical uncertain-dimension order by server-assigned stable ASCII input ID
   matching `[a-z0-9._:-]+`, followed by reserved IDs for approved dependence groups
@@ -891,7 +911,7 @@ Proposed deterministic algorithm:
 
 Preprocessing retains the lexicographically first exact rank-duplicate predictor and
 records later duplicates as `duplicate_rank`. Before each candidate fit, the design
-matrix must gain one numerical rank under NumPy 2.5.0's matrix-rank rule; otherwise
+matrix must gain one numerical rank under NumPy's matrix-rank rule; otherwise
 the candidate is recorded as `rank_singular`. Ordinary R-squared is clamped only for
 roundoff to `[0, 1]`. These policies prevent an arbitrary least-squares solution from
 changing entry order when predictors are algebraically redundant.
@@ -1586,54 +1606,234 @@ truth and both Python/Vite assemblers must remain equivalent.
 
 ### Phase 2 — durable persistence and immutable source snapshot
 
-- [ ] Add schema-v5 sibling TEA job table and migration tests.
-- [ ] Add source eligibility verification and canonical snapshot/hash construction.
-- [ ] Freeze per-system Wdc manifests, cost/design basis, evidence, degradation, and
+- [X] Add schema-v5 sibling TEA job table and migration tests.
+- [X] Add source eligibility verification and canonical snapshot/hash construction.
+- [X] Freeze per-system Wdc manifests, cost/design basis, evidence, degradation, and
   any commercial-transfer declaration atomically with the source snapshot.
-- [ ] Add immutability triggers and terminal write protection.
-- [ ] Add create/read/claim/heartbeat/cancel/interruption/retry/delete methods.
-- [ ] Make global capacity and oldest-first claiming atomic across model and TEA
+- [X] Add immutability triggers and terminal write protection.
+- [X] Add create/read/claim/heartbeat/cancel/interruption/retry/delete methods.
+- [X] Make global capacity and oldest-first claiming atomic across model and TEA
   tables; reserve the `tea_` identifier namespace.
-- [ ] Prove TEA IDs cannot enter current baselines, promotions, proposals,
+- [X] Prove TEA IDs cannot enter current baselines, promotions, proposals,
   comparisons, saved model results, or Solar Agent model history.
-- [ ] Run persistence/source tests and report results for approval.
+- [X] Run persistence/source tests and report results for approval.
 
 ### Phase 3 — API and worker
 
-- [ ] Add strict request schemas and eligible-source endpoint.
-- [ ] Add create/status/cancel/retry/delete endpoints and safe serialization.
-- [ ] Add explicitly dispatched TEA worker with progress and cancellation checks.
-- [ ] Consume only the frozen source snapshot.
-- [ ] Add lease-loss, cancellation, restart/interruption, tamper, queue-capacity, and
+- [X] Add strict request schemas and eligible-source endpoint.
+- [X] Add create/status/cancel/retry/delete endpoints and safe serialization.
+- [X] Add explicitly dispatched TEA worker with progress and cancellation checks.
+- [X] Consume only the frozen source snapshot.
+- [X] Add lease-loss, cancellation, restart/interruption, tamper, queue-capacity, and
   API error tests.
-- [ ] Run focused API/worker tests and report results for approval.
+- [X] Run focused API/worker tests and report results for approval.
 
 ### Phase 4 — artifacts, CDF plots, and exports
 
-- [ ] Generate result CDF and sensitivity/convergence plots with the non-GUI backend.
-- [ ] Generate complete CSV set and XLSX workbook.
-- [ ] Hash and publish artifacts only after lease ownership verification.
-- [ ] Add export tie-outs, safe filenames, cleanup, cancellation and tamper tests.
-- [ ] Visually inspect plots/workbook and report results for approval.
+- [X] Generate result CDF and sensitivity/convergence plots with the non-GUI backend.
+- [X] Generate complete CSV set and XLSX workbook.
+- [X] Hash and publish artifacts only after lease ownership verification.
+- [X] Add export tie-outs, safe filenames, cleanup, cancellation and tamper tests.
+- [X] Visually inspect plots/workbook and report results for approval.
 
 ### Phase 5 — canonical frontend replacement
 
-- [ ] Replace only canonical `frontend/` TEA sources and necessary shared partials.
-- [ ] Build accessible source selection, distribution/citation editing, n/seed
+- [X] Replace only canonical `frontend/` TEA sources and necessary shared partials.
+- [X] Build accessible source selection, distribution/citation editing, n/seed
   controls, basis/Wdc/design and transfer disclosures, lifecycle assumptions,
   submission/confirmation, durable progress/cancel/retry, summaries, CDFs, per-year
   table, sensitivity, convergence, tradeoff classifications and downloads.
-- [ ] Keep draft form state local but all job results server-authoritative.
-- [ ] Keep Solar Agent action modes and model promotion/comparison separate.
-- [ ] Add Node/assembled-dashboard frontend tests and responsive/accessibility checks.
-- [ ] Run focused frontend tests and `npm run build`; visually inspect the dashboard;
+- [X] Keep draft form state local but all job results server-authoritative.
+- [X] Keep Solar Agent action modes and model promotion/comparison separate.
+- [X] Add Node/assembled-dashboard frontend tests and responsive/accessibility checks.
+- [X] Run focused frontend tests and `npm run build`; visually inspect the dashboard;
   report results for approval.
 
 ### Phase 6 — integration and full verification
 
-- [ ] Run all focused TEA suites together.
-- [ ] Run `python -m unittest discover -v` from repository root.
-- [ ] Run `npm run build`.
-- [ ] Recheck project-layout invariants, clean source/output boundaries, immutable
+- [X] Run all focused TEA suites together.
+- [X] Run `python -m unittest discover -v` from repository root.
+- [X] Run `npm run build`.
+- [X] Recheck project-layout invariants, clean source/output boundaries, immutable
   provenance, API safety, and unrelated workspace changes.
-- [ ] Report exact test/build counts and any remaining caveats.
+- [X] Report exact test/build counts and any remaining caveats.
+
+## 15. Version 2 addendum — SolarTAC applied-capacity normalization
+
+Contract `tea-calculation-v2` changes only the `solartac_site` normalization
+denominator. It does not add commercial target scaling or a marginal-cost workflow.
+Commercial-representative requests remain on `tea-calculation-v1`.
+
+For each frozen Annual source, the applied capacity is selected deterministically:
+
+```text
+if curtailment_enabled is true and curtailment_limit_kw is finite and positive:
+    P_applied_SOL = P_applied_SE = 1,000 * curtailment_limit_kw
+    rating_basis = ac_operating_limit
+else:
+    P_applied_system = installed_wdc_system
+    rating_basis = dc_installed_nameplate
+```
+
+Version 2 divides each SolarTAC system's source energy and entered project-total
+cost by its own `P_applied_system` before differencing. Authoritative intensity
+units are therefore `kWh_AC/applied_W-year`, `USD/applied_W`, and
+`USD/applied_W-year`. Lifecycle LCOE and LCOO remain `USD/kWh_AC`; their formulas,
+discounting, degradation, sign convention, sampling, and classification semantics
+are otherwise unchanged.
+
+The immutable receipt records `applied_capacity_w`, `rating_basis`, selection
+method, and source field for both systems. Installed module DC-STC capacities remain
+separately preserved as physics/nameplate evidence and are never relabeled as AC
+operating limits.
+
+Literal version-1 requests, results, exports, and kernel-request hashes retain their
+historical field shapes and Wdc semantics. Version-2 routine results, manifests,
+tabular bundles, and workbook exports use distinct schema versions and explicit
+`per_applied_W` field names so the two authorities cannot be silently mixed. The
+unchanged PNG rendering contract and XLSX logical-row hash algorithm retain their
+algorithm-version identifiers.
+
+## 16. Version 3 addendum — direct commercial marginal scaling
+
+Contract `tea-calculation-v3` adds a commercial marginal-energy and marginal-LCOO
+view to the version-2 SolarTAC calculation. The illustrative SolarTAC and commercial
+capacity numbers used in examples are not constants in the calculation. Every
+source energy, source applied capacity, target capacity, finance assumption, and
+marginal-cost value comes from the frozen request and its selected Annual Simulation.
+
+Version 3 is valid only for `basis = solartac_site`. It requires the same complete,
+two-system `applied_capacities` evidence as version 2 and one
+`CommercialScalingSpec`. Version-1 and version-2 requests must not contain that
+specification. Commercial-representative transfer calculations remain on their
+existing contract and do not silently enter this direct-scaling path.
+
+### 16.1 Frozen commercial-scaling inputs
+
+The immutable version-3 specification contains:
+
+- `target_capacity_w`, a finite, strictly positive commercial rated capacity in W;
+- `target_rating_basis`, either `ac_operating_limit` or
+  `dc_installed_nameplate`, exactly matching the shared rating basis of the two
+  frozen source applied capacities;
+- `marginal_cost_difference`, a `DistributionSpec` whose required stable input ID
+  is `commercial.marginal-cost-difference`;
+- `marginal_cost_timing`, either `lifecycle_present_value` or
+  `equivalent_annual`; and
+- `transfer_method = direct_capacity_scaling`, the only approved method.
+
+The marginal cost is signed SolarEdge minus Solectria. Negative, zero, and positive
+support are valid; unlike a system cost line, it is not constrained to nonnegative
+support. Its unit is USD for `lifecycle_present_value` and USD/year for
+`equivalent_annual`. The currency basis remains the request's constant-real-dollar
+basis.
+
+The request fails closed if the target/source rating bases differ, either source
+capacity is absent, the transfer method or timing is unknown, the stable input ID is
+wrong, or any closed-support endpoint can overflow a required binary64 result.
+
+### 16.2 Energy normalization and direct scaling
+
+For each sampled paired weather year `y`, each source system is normalized before
+the two systems are differenced:
+
+```text
+q_SOL,y = E_SOL,y / P_applied,SOL
+q_SE,y  = E_SE,y  / P_applied,SE
+
+Delta_q_y = q_SE,y - q_SOL,y
+
+Delta_E_commercial,year1,y = Delta_q_y * P_target
+```
+
+Here `E` is Annual Simulation AC energy in kWh_AC, `P_applied` and `P_target`
+are in W on the same explicit rating basis, and `Delta_q` is in
+kWh_AC/applied_W-year. Separate denominators are mandatory, so unequal DC-nameplate
+source capacities are normalized independently before differencing. When the two
+source denominators are identical, the implementation may use the algebraically
+equivalent `(E_SE - E_SOL) / P_applied * P_target` form to avoid cancellation.
+
+Using the existing lifecycle factor `F_E(r,g,L)` and capital recovery factor
+`CRF(r,L)`:
+
+```text
+Delta_E_commercial,lifecycle = Delta_E_commercial,year1 * F_E
+Delta_E_commercial,EA        = CRF * Delta_E_commercial,lifecycle
+```
+
+The direct-capacity method assumes the source specific-energy difference transfers
+linearly to the target capacity. It does not assert that the commercial system has
+the SolarTAC physical design, nor does it apply the separate
+commercial-representative baseline/incremental transfer model.
+
+The regression example is therefore an instance of the general formula, not a
+hardcoded case:
+
+```text
+(174,227 - 172,263) kWh / 125,000 W * 100,000,000 W
+    = 1,571,200 kWh
+```
+
+### 16.3 Cost timing and commercial marginal LCOO
+
+The sampled marginal cost is converted to both lifecycle-present-value and
+equivalent-annual forms with the realization's finance factor:
+
+```text
+if input timing is lifecycle_present_value:
+    Delta_C_PV = sampled marginal cost
+    Delta_C_EA = CRF * Delta_C_PV
+
+if input timing is equivalent_annual:
+    Delta_C_EA = sampled marginal cost
+    Delta_C_PV = Delta_C_EA / CRF
+```
+
+The separate commercial marginal LCOO is:
+
+```text
+CommercialMarginalLCOO = Delta_C_PV / Delta_E_commercial,lifecycle
+                       = Delta_C_EA / Delta_E_commercial,EA
+```
+
+It is signed SolarEdge minus Solectria in USD/kWh_AC. This numerator is never
+substituted into the existing site all-in LCOO: version 3 retains all version-2 site
+cost, LCOE, LCOO, outcome-classification, and common-cost calculations unchanged.
+
+The commercial ratio uses the existing normalized lifecycle-energy zero class:
+absolute tolerance `1e-9 kWh_AC/applied_W` and relative tolerance `1e-12` against
+the larger absolute system lifecycle energy. A realization classified
+`zero_lifecycle_gain` has a null commercial marginal LCOO and reason
+`zero_commercial_lifecycle_delta_energy`, even if a sub-tolerance floating-point
+delta remains visible in the scaled diagnostic field. Zero and negative energy
+deltas remain in the realization population; negative denominators produce the
+corresponding signed ratio.
+
+### 16.4 Required outputs and audit evidence
+
+Version 3 adds the following explicit realization fields, all SolarEdge minus
+Solectria where a delta is named:
+
+- `CommercialTargetCapacity_W`;
+- `CommercialYear1DeltaEnergy_se_minus_sol_kWh_AC`;
+- `CommercialLifecycleDeltaEnergy_se_minus_sol_kWh_AC`;
+- `CommercialEquivalentAnnualDeltaEnergy_se_minus_sol_kWh_AC_per_year`;
+- `CommercialLifecycleMarginalCostDelta_se_minus_sol_USD`;
+- `CommercialEquivalentAnnualMarginalCostDelta_se_minus_sol_USD_per_year`;
+- `CommercialMarginalLCOO_se_minus_sol_USD_per_kWh_AC`; and
+- `commercial_marginal_lcoo_unavailable_reason`.
+
+The marginal-cost draw also appears under its ordinary
+`SampledInput::commercial.marginal-cost-difference` realization column. Summaries
+cover target capacity, all three scaled energy forms, both cost timings, and finite
+commercial marginal-LCOO realizations. Per-weather-year output records the source
+energies, both source applied capacities, source-specific delta, target capacity and
+basis, directly scaled year-1 delta, realization share, and conditional metric
+summaries.
+
+Provenance freezes the transfer method and formulas, target capacity and rating
+basis, both source applied capacities and rating basis, signed cost distribution and
+stable ID, input timing and PV/EA conversion, units, sign convention, and null-ratio
+rule. Request hashing includes the complete commercial specification only for
+version 3; literal version-1 and version-2 canonical payloads omit the new defaulted
+field so their historical hashes and retry comparisons remain unchanged.

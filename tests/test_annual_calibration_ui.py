@@ -597,7 +597,7 @@ console.log(JSON.stringify({{
         technoeconomic_panel = self.html.split(
             '<div class="technoeconomic-only" id="technoeconomicPanel">', 1
         )[1].split(
-            "<!-- Functional contract: every original form id", 1
+            "<!-- Technoeconomic controls are canonical source markup", 1
         )[0]
 
         self.assertNotIn("—", technoeconomic_panel)
@@ -605,19 +605,6 @@ console.log(JSON.stringify({{
             "financing assumptions are intentionally left to the user for this placeholder.",
             technoeconomic_panel,
         )
-
-    def test_technoeconomic_requires_complete_source_coverage(self) -> None:
-        for marker in (
-            "function technoeconomicIsFullYear(result)",
-            "result?.annual_energy_by_year || result?.stats?.annual_energy_by_year",
-            "annualRows.length !== 1",
-            "annualRow.source_complete === true",
-            "annualRow.cdf_eligible === true",
-            "function technoeconomicSourceCoverageIssue(result)",
-            "'Incomplete MIDC source coverage'",
-            "'Source coverage verification required'",
-        ):
-            self.assertIn(marker, self.html)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_annual_source_coverage_helpers_fail_closed_in_node(self) -> None:
@@ -677,52 +664,6 @@ console.log(JSON.stringify({{
             },
             json.loads(completed.stdout),
         )
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_technoeconomic_source_coverage_helpers_in_node(self) -> None:
-        helpers = self.html.split("function technoeconomicIsFullYear(result)", 1)[
-            1
-        ].split("\n        function formatTechnoeconomicEnergy", 1)[0]
-        script = f"""
-function technoeconomicIsFullYear(result){helpers}
-const base = {{
-    complete_calendar_year: true,
-    cdf_eligible: true,
-    source_complete: true,
-}};
-const wrap = (row) => ({{annual_energy_by_year: [row]}});
-const legacy = {{complete_calendar_year: true, cdf_eligible: true}};
-console.log(JSON.stringify({{
-    complete: technoeconomicIsFullYear(wrap(base)),
-    partial: technoeconomicIsFullYear(wrap({{...base, source_complete: false, cdf_eligible: false}})),
-    legacy: technoeconomicIsFullYear(wrap(legacy)),
-    partialIssue: technoeconomicSourceCoverageIssue(wrap({{
-        ...base,
-        source_complete: false,
-        source_coverage_pct: 98.059,
-        cdf_eligible: false,
-    }})),
-    legacyIssue: technoeconomicSourceCoverageIssue(wrap(legacy)),
-}}));
-"""
-        completed = subprocess.run(
-            [shutil.which("node"), "-e", script],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        payload = json.loads(completed.stdout)
-        self.assertTrue(payload["complete"])
-        self.assertFalse(payload["partial"])
-        self.assertFalse(payload["legacy"])
-        self.assertEqual(
-            "Incomplete MIDC source coverage", payload["partialIssue"]["title"]
-        )
-        self.assertIn("98.1% source coverage", payload["partialIssue"]["detail"])
-        self.assertEqual(
-            "Source coverage verification required", payload["legacyIssue"]["title"]
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

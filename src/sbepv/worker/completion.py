@@ -12,7 +12,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from sbepv.api import config, state
+from sbepv.api import config, job_store, state
 from sbepv.api.artifacts import _delete_job_attempt_artifacts, _job_attempt_prefix
 from sbepv.api.job_store import (
     _JobCancelled,
@@ -45,7 +45,9 @@ def _finish_model_job(
     worker_id: str | None = None,
     lease_token: str | None = None,
 ) -> None:
-    record = _get_job_record(job_id) or {"id": job_id, **state.JOBS.get(job_id, {})}
+    record = job_store._get_durable_model_job_record(job_id)
+    if record is None:
+        raise ValueError("The model job is not available as a durable model job")
     artifacts = dict(record.get("artifacts") or {})
     if state.JOBS.get(job_id, {}).get("input_plots"):
         artifacts["input_plots"] = state.JOBS[job_id]["input_plots"]
@@ -72,7 +74,7 @@ def _finish_model_job(
         _check_job_cancelled(
             job_id, worker_id=worker_id, lease_token=lease_token
         )
-        baseline = _get_job_record(str(baseline_id))
+        baseline = job_store._get_durable_model_job_record(str(baseline_id))
         if baseline is None or baseline.get("state") != "done":
             raise ValueError("The bound baseline is not available as a completed job")
         baseline_result = baseline.get("result") or {}
@@ -118,7 +120,7 @@ def _finish_model_job(
         artifacts=artifacts,
         error=None,
     )
-    completed = _get_job_record(job_id)
+    completed = job_store._get_durable_model_job_record(job_id)
     if (
         completed
         and completed.get("kind") in {"baseline", "manual"}

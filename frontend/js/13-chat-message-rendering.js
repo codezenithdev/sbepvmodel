@@ -83,10 +83,10 @@
         function activeChatPrompts() {
             if (activeView === 'technoeconomic') {
                 return [
-                    ['Explain LCOO and LCOE', 'Explain the LCOO and LCOE shown in the active technoeconomic analysis'],
-                    ['Review cost assumptions', 'Review the visible annualized cost assumptions and identify any consistency checks'],
-                    ['Compare system economics', 'Compare the baseline Solectria and optimized SolarEdge economics'],
-                    ['Summarize the energy basis', 'Summarize the Annual Simulation energy values used by the technoeconomic analysis'],
+                    ['Explain the headline LCOO', 'Explain the positive-energy-gain LCOO distribution in the active technoeconomic job'],
+                    ['Review evidence status', 'Review the visible evidence classes and provisional-input status without changing the job'],
+                    ['Compare lifecycle economics', 'Compare the server-authoritative Solectria and SolarEdge lifecycle results'],
+                    ['Explain uncertainty', 'Summarize the visible percentiles, sensitivity, and convergence diagnostics'],
                 ];
             }
             if (activeMode === 'annual') {
@@ -142,8 +142,8 @@
             followups.setAttribute('aria-label', 'Suggested follow-up questions');
             const prompts = activeView === 'technoeconomic'
                 ? [
-                    ['Explain the cost delta', 'Explain the marginal annualized cost used in LCOO'],
-                    ['Check assumptions', 'Check whether the visible technoeconomic assumptions are internally consistent'],
+                    ['Explain the cost delta', 'Explain the SolarEdge minus Solectria lifecycle cost delta'],
+                    ['Check caveats', 'Explain the visible provisional, transfer, and convergence caveats'],
                 ]
                 : activeMode === 'annual'
                 ? [

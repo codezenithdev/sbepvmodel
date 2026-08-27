@@ -1,9 +1,12 @@
+import hashlib
+import json
 import math
 import unittest
 from collections import Counter
 from dataclasses import replace
 
 import numpy as np
+import scipy
 
 from sbepv import technoeconomic as tea
 
@@ -162,6 +165,71 @@ def golden_request(*, n=1, seed=7, se_energy=215_000.0, rows=None, cost_lines=No
         cost_lines=tuple(cost_lines or golden_cost_lines()),
         discount_rate=fixed("finance.discount-rate", 0.05),
         shared_degradation=fixed("energy.shared-degradation", 0.005),
+    )
+
+
+def applied_capacity_request(*, applied_w=125_000.0, rating_basis="ac_operating_limit"):
+    costs = (
+        cost_line(
+            "cost.sol.total",
+            100_000,
+            "solectria_only",
+            "initial_capex",
+            1 / applied_w,
+            0,
+        ),
+        cost_line(
+            "cost.se.total",
+            120_000,
+            "solaredge_only",
+            "initial_capex",
+            0,
+            1 / applied_w,
+        ),
+    )
+    return tea.TechnoeconomicRequest(
+        basis="solartac_site",
+        n=1,
+        seed=7,
+        project_life_years=1,
+        capacities=(capacity("solectria"), capacity("solaredge")),
+        applied_capacities=(
+            tea.AppliedCapacitySpec("solectria", applied_w, rating_basis),
+            tea.AppliedCapacitySpec("solaredge", applied_w, rating_basis),
+        ),
+        paired_energy_rows=(tea.PairedEnergyRow(2021, 172_263.0, 174_227.0),),
+        cost_lines=costs,
+        discount_rate=fixed("finance.discount-rate", 0),
+        shared_degradation=fixed("energy.shared-degradation", 0),
+        calculation_contract_version=tea.CALCULATION_CONTRACT_VERSION,
+    )
+
+
+def commercial_scaling_request(
+    *,
+    target_capacity_w=100_000_000.0,
+    marginal_cost=314_240.0,
+    marginal_cost_timing="lifecycle_present_value",
+):
+    request = applied_capacity_request()
+    return replace(
+        request,
+        calculation_contract_version=(
+            tea.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
+        ),
+        commercial_scaling=tea.CommercialScalingSpec(
+            target_capacity_w=target_capacity_w,
+            target_rating_basis="ac_operating_limit",
+            marginal_cost_difference=(
+                marginal_cost
+                if isinstance(marginal_cost, tea.DistributionSpec)
+                else fixed(
+                    tea.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID,
+                    marginal_cost,
+                )
+            ),
+            marginal_cost_timing=marginal_cost_timing,
+        ),
     )
 
 
@@ -350,6 +418,63 @@ class DistributionContractTests(unittest.TestCase):
             )
 
 
+class NumericalContractGateTests(unittest.TestCase):
+    """The gate must accept a conforming runtime and reject a drifted one."""
+
+    def test_current_runtime_satisfies_every_probe(self):
+        tea.validate_runtime_versions()
+        fingerprint = tea.numerical_fingerprint()
+        self.assertEqual(fingerprint["probe_digests"], tea.NUMERICAL_PROBE_DIGESTS)
+        self.assertEqual(
+            sorted(tea.NUMERICAL_PROBE_DIGESTS),
+            ["binary64_growth", "pcg64dxsm_stream", "truncnorm_ppf", "type7_quantile"],
+        )
+
+    def test_a_drifted_probe_fails_closed_and_names_itself(self):
+        original = dict(tea.NUMERICAL_PROBE_DIGESTS)
+        tea.NUMERICAL_PROBE_DIGESTS["truncnorm_ppf"] = "00" * 32
+        try:
+            with self.assertRaises(tea.TechnoeconomicValidationError) as caught:
+                tea.validate_runtime_versions()
+        finally:
+            tea.NUMERICAL_PROBE_DIGESTS.clear()
+            tea.NUMERICAL_PROBE_DIGESTS.update(original)
+        self.assertIn("truncnorm_ppf", str(caught.exception))
+        self.assertNotIn("type7_quantile", str(caught.exception))
+
+    def test_an_unevaluatable_probe_fails_closed(self):
+        def exploding_probe():
+            raise RuntimeError("scipy signature changed")
+
+        original = tea._NUMERICAL_PROBES["truncnorm_ppf"]
+        tea._NUMERICAL_PROBES["truncnorm_ppf"] = exploding_probe
+        try:
+            with self.assertRaises(tea.TechnoeconomicValidationError) as caught:
+                tea.validate_runtime_versions()
+        finally:
+            tea._NUMERICAL_PROBES["truncnorm_ppf"] = original
+        self.assertIn("scipy signature changed", str(caught.exception))
+
+    def test_tolerance_absorbs_last_bit_drift_but_not_a_collapsed_tail(self):
+        # SciPy 1.17.1 and 1.18.0 differ by three ULP on one near-bound case.
+        # That must not trip the gate; a collapsed far-tail interval must.
+        values = tea._NUMERICAL_PROBES["truncnorm_ppf"]()
+        nudged = tuple(math.nextafter(v, math.inf) for v in values)
+        self.assertEqual(
+            tea._serialize_probe(values, exact=False),
+            tea._serialize_probe(nudged, exact=False),
+        )
+        self.assertNotEqual(
+            tea._serialize_probe(values, exact=True),
+            tea._serialize_probe(nudged, exact=True),
+        )
+        collapsed = tuple(10.0 for _ in values)
+        self.assertNotEqual(
+            tea._serialize_probe(values, exact=False),
+            tea._serialize_probe(collapsed, exact=False),
+        )
+
+
 class SamplingContractTests(unittest.TestCase):
     class FakeRaw:
         def __init__(self, words):
@@ -516,6 +641,203 @@ class CapacityAndRequestValidationTests(unittest.TestCase):
                 tea.TechnoeconomicValidationError, message
             ):
                 tea.validate_capacity(spec)
+
+    def test_v2_requires_complete_consistent_applied_capacity_evidence(self):
+        good = applied_capacity_request()
+        invalid = (
+            (replace(good, applied_capacities=None), "require applied_capacities"),
+            (
+                replace(
+                    good,
+                    applied_capacities=(
+                        tea.AppliedCapacitySpec(
+                            "solectria", 125_000, "ac_operating_limit"
+                        ),
+                        tea.AppliedCapacitySpec(
+                            "solaredge", 124_999, "ac_operating_limit"
+                        ),
+                    ),
+                ),
+                "identical for both systems",
+            ),
+            (
+                replace(
+                    good,
+                    applied_capacities=(
+                        tea.AppliedCapacitySpec(
+                            "solectria", 125_000, "ac_operating_limit"
+                        ),
+                        tea.AppliedCapacitySpec(
+                            "solaredge", GOLDEN_WDC, "dc_installed_nameplate"
+                        ),
+                    ),
+                ),
+                "one shared rating basis",
+            ),
+        )
+        for request, message in invalid:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                tea.TechnoeconomicValidationError, message
+            ):
+                tea.validate_request(request)
+
+    def test_contract_versions_fail_closed_around_applied_capacity(self):
+        v2 = applied_capacity_request()
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError, "v1 must not define"
+        ):
+            tea.validate_request(
+                replace(
+                    v2,
+                    calculation_contract_version=(
+                        tea.LEGACY_CALCULATION_CONTRACT_VERSION
+                    ),
+                )
+            )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError, "only for the SolarTAC"
+        ):
+            tea.validate_request(
+                replace(
+                    commercial_request(),
+                    calculation_contract_version=tea.CALCULATION_CONTRACT_VERSION,
+                    applied_capacities=v2.applied_capacities,
+                )
+            )
+
+    def test_v3_requires_scaling_and_v1_v2_forbid_it(self):
+        v3 = commercial_scaling_request()
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError, "v3 requires commercial_scaling"
+        ):
+            tea.validate_request(replace(v3, commercial_scaling=None))
+
+        for older in (
+            replace(golden_request(), commercial_scaling=v3.commercial_scaling),
+            replace(
+                applied_capacity_request(),
+                commercial_scaling=v3.commercial_scaling,
+            ),
+        ):
+            with self.subTest(version=older.calculation_contract_version), self.assertRaisesRegex(
+                tea.TechnoeconomicValidationError, "v1 and tea-calculation-v2"
+            ):
+                tea.validate_request(older)
+
+    def test_v3_validates_target_basis_method_timing_and_stable_cost_id(self):
+        good = commercial_scaling_request()
+        invalid_specs = (
+            (
+                replace(good.commercial_scaling, target_capacity_w=0),
+                "target_capacity_w must be strictly positive",
+            ),
+            (
+                replace(
+                    good.commercial_scaling,
+                    target_rating_basis="dc_installed_nameplate",
+                ),
+                "target rating basis must match",
+            ),
+            (
+                replace(good.commercial_scaling, transfer_method="proportional_guess"),
+                "direct_capacity_scaling",
+            ),
+            (
+                replace(good.commercial_scaling, marginal_cost_timing="year_one"),
+                "lifecycle_present_value.*equivalent_annual",
+            ),
+            (
+                replace(
+                    good.commercial_scaling,
+                    marginal_cost_difference=fixed("commercial.wrong-id", 1),
+                ),
+                tea.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID,
+            ),
+        )
+        for spec, message in invalid_specs:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                tea.TechnoeconomicValidationError, message
+            ):
+                tea.validate_request(replace(good, commercial_scaling=spec))
+
+    def test_v3_accepts_signed_marginal_cost_support_and_rejects_overflow(self):
+        signed = tea.DistributionSpec(
+            tea.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID,
+            "uniform",
+            low=-100,
+            high=200,
+        )
+        validated = tea.validate_request(
+            commercial_scaling_request(marginal_cost=signed)
+        )
+        self.assertEqual(
+            tea.distribution_support(
+                validated.commercial_scaling.marginal_cost_difference
+            ),
+            (-100.0, 200.0),
+        )
+
+        overflowing = commercial_scaling_request(
+            target_capacity_w=1,
+            marginal_cost=1e308,
+        )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError, "commercial marginal LCOO"
+        ):
+            tea.validate_request(overflowing)
+
+    def test_v2_dc_fallback_must_match_installed_manifests(self):
+        request = applied_capacity_request(
+            applied_w=GOLDEN_WDC,
+            rating_basis="dc_installed_nameplate",
+        )
+        validated = tea.validate_request(request)
+        self.assertEqual(validated.applied_capacities, request.applied_capacities)
+
+        mismatched = replace(
+            request,
+            applied_capacities=(
+                request.applied_capacities[0],
+                replace(request.applied_capacities[1], applied_capacity_w=GOLDEN_WDC - 1),
+            ),
+        )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError, "must exactly match"
+        ):
+            tea.validate_request(mismatched)
+
+    def test_canonical_payload_preserves_literal_v1_shape(self):
+        legacy_payload = tea.canonical_request_payload(golden_request())
+        applied_payload = tea.canonical_request_payload(applied_capacity_request())
+
+        self.assertNotIn("applied_capacities", legacy_payload)
+        self.assertNotIn("commercial_scaling", legacy_payload)
+        self.assertNotIn("commercial_scaling", applied_payload)
+        self.assertIn("applied_capacities", applied_payload)
+        self.assertEqual(
+            applied_payload["calculation_contract_version"],
+            tea.CALCULATION_CONTRACT_VERSION,
+        )
+        legacy_bytes = json.dumps(
+            legacy_payload,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        self.assertEqual(
+            "b7fce66548f1d9b2504f8d7b0b9c6ff242259899cc5b10c82527b3e42a2c432c",
+            hashlib.sha256(legacy_bytes).hexdigest(),
+        )
+
+        commercial_payload = tea.canonical_request_payload(
+            commercial_scaling_request()
+        )
+        self.assertIn("commercial_scaling", commercial_payload)
+        self.assertEqual(
+            commercial_payload["commercial_scaling"]["transfer_method"],
+            tea.COMMERCIAL_SCALING_TRANSFER_METHOD,
+        )
 
     def test_request_canonicalizes_energy_and_cost_order(self):
         rows = (
@@ -880,6 +1202,305 @@ class LifecycleCalculationTests(unittest.TestCase):
         self.assertEqual(row["energy_class"][0], "positive_lifecycle_gain")
         self.assertEqual(row["tradeoff_class"][0], "cost_increase_energy_gain")
 
+    def test_v2_normalizes_site_energy_and_cost_by_applied_capacity(self):
+        result = tea.run_technoeconomic(applied_capacity_request())
+        row = result.realization_table
+
+        self.assertNotIn(tea.FIELD_DELTA_ENERGY, row)
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_YEAR1_SOL][0],
+            172_263 / 125_000,
+        )
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_YEAR1_SE][0],
+            174_227 / 125_000,
+        )
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_YEAR1_DELTA][0],
+            1_964 / 125_000,
+        )
+        self.assertAlmostEqual(row[tea.APPLIED_FIELD_DELTA_COST][0], 0.16)
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_DELTA_ENERGY][0],
+            1_964 / 125_000,
+        )
+        self.assertAlmostEqual(row[tea.FIELD_LCOE_SOL][0], 100_000 / 172_263)
+        self.assertAlmostEqual(row[tea.FIELD_LCOE_SE][0], 120_000 / 174_227)
+        self.assertAlmostEqual(row[tea.FIELD_LCOO][0], 20_000 / 1_964)
+        self.assertAlmostEqual(row["PVCost_SOL_USD"][0], 100_000)
+        self.assertAlmostEqual(row["PVCost_SE_USD"][0], 120_000)
+        self.assertEqual(row["PVEnergy_SOL_kWh_AC"][0], 172_263)
+        self.assertEqual(row["PVEnergy_SE_kWh_AC"][0], 174_227)
+        self.assertAlmostEqual(
+            result.summaries[tea.APPLIED_FIELD_DELTA_ENERGY]["percentiles"]["p50"],
+            1_964 / 125_000,
+        )
+
+        normalization = result.provenance["capacity_normalization"]
+        self.assertEqual(normalization["method"], "annual_applied_capacity_v1")
+        self.assertEqual(
+            normalization["systems"]["solectria"],
+            {
+                "applied_capacity_w": 125_000.0,
+                "rating_basis": "ac_operating_limit",
+                "installed_wdc": GOLDEN_WDC,
+            },
+        )
+        per_year = result.per_weather_year[0]
+        self.assertEqual(per_year["solectria_applied_w"], 125_000)
+        self.assertAlmostEqual(
+            per_year["source_delta_specific_se_minus_sol_kwh_ac_per_applied_w_year"],
+            1_964 / 125_000,
+        )
+
+    def test_v3_scales_the_illustrative_125_kw_source_to_100_mw(self):
+        request = commercial_scaling_request()
+        result = tea.run_technoeconomic(request)
+        row = result.realization_table
+
+        expected_energy = (174_227 - 172_263) / 125_000 * 100_000_000
+        self.assertEqual(expected_energy, 1_571_200)
+        self.assertEqual(
+            row[tea.COMMERCIAL_FIELD_TARGET_CAPACITY][0],
+            100_000_000,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY][0],
+            expected_energy,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY][0],
+            expected_energy,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_FIELD_EA_DELTA_ENERGY][0],
+            expected_energy,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST][0],
+            314_240,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_FIELD_EA_MARGINAL_COST][0],
+            314_240,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_FIELD_MARGINAL_LCOO][0],
+            0.2,
+        )
+        self.assertIsNone(
+            row[tea.COMMERCIAL_FIELD_MARGINAL_LCOO_REASON][0]
+        )
+
+        v2_site_lcoo = tea.run_technoeconomic(
+            applied_capacity_request()
+        ).realization_table[tea.FIELD_LCOO][0]
+        self.assertEqual(row[tea.FIELD_LCOO][0], v2_site_lcoo)
+        self.assertEqual(
+            result.summaries[tea.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY][
+                "percentiles"
+            ]["p50"],
+            expected_energy,
+        )
+        per_year = result.per_weather_year[0]
+        self.assertEqual(
+            per_year[
+                "commercial_source_year1_delta_energy_se_minus_sol_kwh_ac"
+            ],
+            expected_energy,
+        )
+        self.assertEqual(
+            per_year["metrics"][tea.COMMERCIAL_FIELD_MARGINAL_LCOO][
+                "percentiles"
+            ]["p50"],
+            0.2,
+        )
+        provenance = result.provenance["commercial_scaling"]
+        self.assertEqual(provenance["method"], "direct_capacity_scaling")
+        self.assertEqual(provenance["target_rating_basis"], "ac_operating_limit")
+        self.assertEqual(
+            provenance["source_applied_capacities_w"],
+            {"solectria": 125_000.0, "solaredge": 125_000.0},
+        )
+
+    def test_v3_cost_timing_conversions_produce_the_same_marginal_lcoo(self):
+        discount_rate = 0.05
+        lifecycle_cost = 1_000_000.0
+        _, crf = tea.annuity_factor_and_crf(discount_rate, 20)
+        common = {
+            "project_life_years": 20,
+            "discount_rate": fixed("finance.discount-rate", discount_rate),
+            "shared_degradation": fixed("energy.shared-degradation", 0.005),
+        }
+        lifecycle_request = replace(
+            commercial_scaling_request(marginal_cost=lifecycle_cost),
+            **common,
+        )
+        annual_request = replace(
+            commercial_scaling_request(
+                marginal_cost=crf * lifecycle_cost,
+                marginal_cost_timing="equivalent_annual",
+            ),
+            **common,
+        )
+
+        lifecycle = tea.run_technoeconomic(lifecycle_request).realization_table
+        annual = tea.run_technoeconomic(annual_request).realization_table
+
+        for table in (lifecycle, annual):
+            self.assertAlmostEqual(
+                table[tea.COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST][0],
+                lifecycle_cost,
+            )
+            self.assertAlmostEqual(
+                table[tea.COMMERCIAL_FIELD_EA_MARGINAL_COST][0],
+                crf * lifecycle_cost,
+            )
+        self.assertAlmostEqual(
+            lifecycle[tea.COMMERCIAL_FIELD_MARGINAL_LCOO][0],
+            annual[tea.COMMERCIAL_FIELD_MARGINAL_LCOO][0],
+        )
+        self.assertAlmostEqual(
+            annual[tea.COMMERCIAL_FIELD_EA_MARGINAL_COST][0]
+            / annual[tea.COMMERCIAL_FIELD_EA_DELTA_ENERGY][0],
+            annual[tea.COMMERCIAL_FIELD_MARGINAL_LCOO][0],
+        )
+
+    def test_v3_normalizes_unequal_source_capacities_before_target_scaling(self):
+        sol_capacity = capacity("solectria", installed_wdc=100_000)
+        se_capacity = capacity("solaredge", installed_wdc=200_000)
+        request = tea.TechnoeconomicRequest(
+            basis="solartac_site",
+            n=1,
+            seed=1,
+            project_life_years=1,
+            capacities=(sol_capacity, se_capacity),
+            applied_capacities=(
+                tea.AppliedCapacitySpec(
+                    "solectria", 100_000, "dc_installed_nameplate"
+                ),
+                tea.AppliedCapacitySpec(
+                    "solaredge", 200_000, "dc_installed_nameplate"
+                ),
+            ),
+            paired_energy_rows=(
+                tea.PairedEnergyRow(2020, 1_000_000, 1_800_000),
+            ),
+            cost_lines=(
+                cost_line(
+                    "cost.sol.total", 100_000, "solectria_only", "initial_capex", 1 / 100_000, 0
+                ),
+                cost_line(
+                    "cost.se.total", 180_000, "solaredge_only", "initial_capex", 0, 1 / 200_000
+                ),
+            ),
+            discount_rate=fixed("finance.discount-rate", 0),
+            shared_degradation=fixed("energy.shared-degradation", 0),
+            commercial_scaling=tea.CommercialScalingSpec(
+                target_capacity_w=3_000_000,
+                target_rating_basis="dc_installed_nameplate",
+                marginal_cost_difference=fixed(
+                    tea.COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID,
+                    150_000,
+                ),
+                marginal_cost_timing="lifecycle_present_value",
+            ),
+            calculation_contract_version=(
+                tea.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
+            ),
+        )
+
+        row = tea.run_technoeconomic(request).realization_table
+
+        self.assertEqual(row[tea.APPLIED_FIELD_YEAR1_SOL][0], 10)
+        self.assertEqual(row[tea.APPLIED_FIELD_YEAR1_SE][0], 9)
+        self.assertEqual(
+            row[tea.COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY][0],
+            -3_000_000,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY][0],
+            -3_000_000,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_FIELD_MARGINAL_LCOO][0],
+            -0.05,
+        )
+
+    def test_v3_signed_cost_and_tolerance_zero_have_explicit_results(self):
+        negative_cost = tea.run_technoeconomic(
+            commercial_scaling_request(marginal_cost=-314_240)
+        ).realization_table
+        self.assertAlmostEqual(
+            negative_cost[tea.COMMERCIAL_FIELD_MARGINAL_LCOO][0],
+            -0.2,
+        )
+
+        exact_zero = replace(
+            commercial_scaling_request(),
+            paired_energy_rows=(
+                tea.PairedEnergyRow(2021, 172_263.0, 172_263.0),
+            ),
+        )
+        exact_result = tea.run_technoeconomic(exact_zero)
+        exact_table = exact_result.realization_table
+        self.assertEqual(
+            exact_table[tea.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY][0],
+            0,
+        )
+        self.assertTrue(
+            math.isnan(exact_table[tea.COMMERCIAL_FIELD_MARGINAL_LCOO][0])
+        )
+        self.assertEqual(
+            exact_table[tea.COMMERCIAL_FIELD_MARGINAL_LCOO_REASON][0],
+            tea.COMMERCIAL_ZERO_ENERGY_REASON,
+        )
+        self.assertEqual(
+            exact_result.summaries[tea.COMMERCIAL_FIELD_MARGINAL_LCOO]["reason"],
+            tea.COMMERCIAL_ZERO_ENERGY_REASON,
+        )
+
+        within_tolerance = replace(
+            commercial_scaling_request(),
+            paired_energy_rows=(
+                tea.PairedEnergyRow(2021, 172_263.0, 172_263.0 + 1e-8),
+            ),
+        )
+        tolerance_table = tea.run_technoeconomic(
+            within_tolerance
+        ).realization_table
+        self.assertNotEqual(
+            tolerance_table[tea.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY][0],
+            0,
+        )
+        self.assertEqual(tolerance_table["energy_class"][0], "zero_lifecycle_gain")
+        self.assertTrue(
+            math.isnan(tolerance_table[tea.COMMERCIAL_FIELD_MARGINAL_LCOO][0])
+        )
+        self.assertEqual(
+            tolerance_table[tea.COMMERCIAL_FIELD_MARGINAL_LCOO_REASON][0],
+            tea.COMMERCIAL_ZERO_ENERGY_REASON,
+        )
+
+    def test_v2_dc_nameplate_fallback_uses_installed_capacity(self):
+        request = applied_capacity_request(
+            applied_w=GOLDEN_WDC,
+            rating_basis="dc_installed_nameplate",
+        )
+        result = tea.run_technoeconomic(request)
+        row = result.realization_table
+
+        self.assertAlmostEqual(
+            row[tea.APPLIED_FIELD_YEAR1_DELTA][0],
+            1_964 / GOLDEN_WDC,
+        )
+        self.assertEqual(
+            result.provenance["capacity_normalization"]["systems"]["solaredge"][
+                "rating_basis"
+            ],
+            "dc_installed_nameplate",
+        )
+
     def test_public_signed_field_names_pin_order_and_units(self):
         self.assertEqual(
             tea.FIELD_YEAR1_DELTA,
@@ -904,6 +1525,26 @@ class LifecycleCalculationTests(unittest.TestCase):
         self.assertEqual(
             tea.FIELD_LCOO,
             "AllInLCOO_se_minus_sol_USD_per_kWh_AC",
+        )
+        self.assertEqual(
+            (
+                tea.COMMERCIAL_FIELD_TARGET_CAPACITY,
+                tea.COMMERCIAL_FIELD_YEAR1_DELTA_ENERGY,
+                tea.COMMERCIAL_FIELD_LIFECYCLE_DELTA_ENERGY,
+                tea.COMMERCIAL_FIELD_EA_DELTA_ENERGY,
+                tea.COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST,
+                tea.COMMERCIAL_FIELD_EA_MARGINAL_COST,
+                tea.COMMERCIAL_FIELD_MARGINAL_LCOO,
+            ),
+            (
+                "CommercialTargetCapacity_W",
+                "CommercialYear1DeltaEnergy_se_minus_sol_kWh_AC",
+                "CommercialLifecycleDeltaEnergy_se_minus_sol_kWh_AC",
+                "CommercialEquivalentAnnualDeltaEnergy_se_minus_sol_kWh_AC_per_year",
+                "CommercialLifecycleMarginalCostDelta_se_minus_sol_USD",
+                "CommercialEquivalentAnnualMarginalCostDelta_se_minus_sol_USD_per_year",
+                "CommercialMarginalLCOO_se_minus_sol_USD_per_kWh_AC",
+            ),
         )
 
     def test_shared_streams_remain_in_lcoes_and_cancel_exactly_from_delta(self):
@@ -1198,8 +1839,17 @@ class LifecycleCalculationTests(unittest.TestCase):
         self.assertEqual(len(result.realization_table["realization_index"]), 64)
         for identifier in replacements:
             self.assertGreater(np.ptp(result.sampled_inputs[identifier]), 0)
-        self.assertEqual(result.provenance["numpy_version"], "2.5.0")
-        self.assertEqual(result.provenance["scipy_version"], "1.18.0")
+        # Provenance records the runtime that actually ran, not a literal: the
+        # gate is the numerical fingerprint below, not a version string.
+        self.assertEqual(result.provenance["numpy_version"], np.__version__)
+        self.assertEqual(result.provenance["scipy_version"], scipy.__version__)
+        numerics = result.provenance["numerics"]
+        self.assertEqual(numerics["contract_version"], tea.NUMERICAL_CONTRACT_VERSION)
+        self.assertEqual(numerics["probe_digests"], tea.NUMERICAL_PROBE_DIGESTS)
+        self.assertEqual(
+            numerics["bit_identical_to_reference"],
+            numerics["exactness_digest"] == tea.NUMERICAL_EXACTNESS_DIGEST,
+        )
 
     def test_headline_lcoo_population_is_positive_gain_only(self):
         rows = (

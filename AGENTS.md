@@ -10,13 +10,19 @@ Human-facing setup lives in [README.md](README.md); dashboard build details in
 ## What this is
 
 A physics-based PV performance model for the SBE Innovation Center site (SolarEdge
-and Solectria arrays). Three workflows share one FastAPI backend and one dashboard:
+and Solectria arrays). Four workflows share one FastAPI backend and one dashboard:
 
 - **Calibration / validation** — pull measured data from the Bazefield historian,
   make the user review every flagged data-quality issue, fit per-season correction
   factors, compare modelled vs measured.
 - **Annual simulation** — run a full year against MIDC weather data, inheriting a
   promoted calibration baseline.
+- **Technoeconomic analysis (TEA)** — a seeded Monte Carlo lifecycle cost/energy
+  comparison (SolarEdge minus Solectria) built on a frozen snapshot of a completed
+  calibrated Annual Simulation. Structurally isolated: its own tables, worker entry
+  point, routes, and exports, and no coupling to the Solar Agent. The approved
+  calculation contract is `docs/TECHNOECONOMIC_CALCULATION_CONTRACT.md`; the kernel
+  implements it exactly and rejects anything it cannot prove.
 - **Solar Agent** — an OpenAI-backed chat assistant that can propose and run model
   scenarios and parameter sweeps, gated by an explicit confirmation policy.
 
@@ -25,9 +31,21 @@ detectable and a lost lease cannot overwrite a newer attempt.
 
 ## Commands
 
+**Python 3.12 or newer is required.** `requirements.txt` pins `numpy==2.5.0`,
+which publishes no wheel for 3.11; on 3.11 the resolver silently settles for an
+older NumPy instead of failing at install time. `pyproject.toml` declares the
+floor. Use 3.13 to match `docs/RENDER_DEPLOYMENT.md`.
+
 ```bash
-python -m unittest discover -v          # 272 tests; run from the repo root
+uv venv --python 3.13 && uv pip install -r requirements.txt
 ```
+
+```bash
+python -m unittest discover -v          # 628 tests; run from the repo root
+```
+
+The suite writes into a repo-root `analysis/` directory that it does not create;
+`mkdir analysis` once, or one bazefield test errors on a fresh checkout.
 
 ```bash
 uvicorn sbepv.api.main:app --app-dir src --reload --port 8000
@@ -40,13 +58,17 @@ uvicorn sbepv.api.main:app --app-dir src --reload --port 8000
 ```
 src/sbepv/
   model.py  calibration.py  store.py  reporting.py  paths.py  dashboard.py
+  technoeconomic.py             pure TEA calculation kernel, no I/O of any kind
+  technoeconomic_reporting.py   TEA CSV/XLSX bundles and integrity tie-outs
   ingest/   bazefield.py  midc.py
   api/      main.py config.py state.py schemas.py validation.py timewindows.py
             artifacts.py plots.py job_store.py review_store.py baselines.py
             proposals.py serializers.py security.py static_files.py
+            technoeconomic.py   Annual-source verification and kernel request build
   agent/    prompts.py tool_schemas.py scenario_math.py message_guards.py
             tools.py chat.py
-  worker/   loop.py run_validation.py run_annual.py completion.py
+  worker/   loop.py run_validation.py run_annual.py run_technoeconomic.py
+            completion.py
 frontend/   dashboard.ts  css/ html/ js/   canonical dashboard sources
 app/ lib/ worker/ build/      TypeScript frontend (vinext on Cloudflare Workers)
 ```
@@ -140,6 +162,27 @@ not ES modules.
 
 ## Other things that will surprise you
 
+- **The TEA kernel gates on numerical behaviour, not on version strings.**
+  `technoeconomic.validate_runtime_versions()` runs at the top of `generate_lhs`,
+  `allocate_weather_years`, and `validate_request`, and fails closed unless four
+  probe groups — the `PCG64DXSM`/`SeedSequence` bit stream, `truncnorm.ppf` across
+  ordinary and far-tail intervals, the type-7 quantile rule, and `log1p`/`expm1` —
+  each digest to `NUMERICAL_PROBE_DIGESTS` at twelve significant decimal digits.
+  It replaced an exact `numpy == 2.5.0 and scipy == 1.18.0` check on 2026-08-15;
+  that check had disabled the whole feature on any other runtime, including ones
+  whose numbers were identical. Two consequences worth knowing:
+  - **Changing a probe changes the contract.** Editing `_NUMERICAL_PROBES` or the
+    digests is a calculation-contract decision (§5.6), not a refactor. Regenerate
+    with `technoeconomic.numerical_fingerprint()` and get the change approved.
+  - **Bit-exactness is reported, not enforced.** Provenance carries
+    `numerics.exactness_digest` and `numerics.bit_identical_to_reference` so two
+    completed jobs can be compared. SciPy 1.17.1 and 1.18.0 pass the same gate but
+    differ by three ULP on one near-bound `truncnorm.ppf` case, so they are within
+    contract tolerance without being bit-comparable. Do not "fix" that by
+    tightening the gate to the exactness digest; it would re-break the feature on
+    every runtime but one.
+  - Deliberately unprobed: `matrix_rank` and `lstsq` reach LAPACK, so their
+    trailing bits follow the local BLAS build, not the NumPy release.
 - **Import side effects, in order.** Importing `sbepv.api.config` finds the repo
   root, loads `.env`, and creates the output directories. `sbepv.api.state` then
   opens and migrates the agent SQLite database. Every API module imports `config`,
@@ -202,5 +245,11 @@ Pre-existing, deliberately not fixed because each changes behaviour:
 - Run metadata still records `"script": "sbe_pv_model.py"`; it is provenance data
   compared across runs.
 - `src/run_pipeline.py` has no importers and no test coverage.
-- `docs/RENDER_DEPLOYMENT.md` pins Python 3.13.14; local dev here runs 3.11 and
-  nothing enforces either.
+- `docs/RENDER_DEPLOYMENT.md` pins Python 3.13.14; nothing enforces that locally
+  beyond the `requires-python = ">=3.12"` floor in `pyproject.toml`.
+- `tests/test_bazefield_quality_factor_comparison.py:115` writes into a repo-root
+  `analysis/` directory that it does not create and that `.gitignore` excludes, so
+  `test_analysis_directory_supports_the_temporary_csv_workflow` errors with
+  `FileNotFoundError` on any fresh checkout. `mkdir analysis` clears it; with the
+  directory present the suite is 628 tests green. Unrelated to Python version — it
+  reproduces identically on 3.11 and 3.13.

@@ -39,7 +39,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from sbepv import dashboard, model, reporting
+from sbepv import technoeconomic as technoeconomic_kernel
 from sbepv.api import config, job_store, plots, review_store, state
+from sbepv.api import technoeconomic as technoeconomic_api
 from sbepv.api import baselines as baselines_module
 from sbepv.api import proposals as proposals_module
 from sbepv.agent import chat as agent_chat
@@ -57,7 +59,13 @@ from sbepv.api.proposals import (
     _confirm_durable_proposals,
     _create_candidate_proposal,
 )
-from sbepv.api.serializers import _public_job, _public_proposal, _public_saved_result
+from sbepv.api.serializers import (
+    _public_job,
+    _public_proposal,
+    _public_saved_result,
+    _public_technoeconomic_job,
+    _public_value,
+)
 from sbepv.worker import loop as worker_loop
 from sbepv.api.security import (
     _auth_required_response,
@@ -87,11 +95,15 @@ from sbepv.agent.scenario_math import (
     _scenario_changes,
 )
 from sbepv.api.artifacts import (
+    ArtifactCleanupError,
+    ArtifactIntegrityError,
     _delete_job_artifacts,
     _delete_job_attempt_artifacts,
+    _delete_technoeconomic_job_artifacts,
     _job_attempt_prefix,
     _output_url,
     _public_source_url,
+    _verified_technoeconomic_artifact,
     _workbook_download_name,
 )
 from sbepv.api.job_store import (
@@ -134,6 +146,7 @@ from sbepv.agent.tool_schemas import (
     SWEEPABLE_PARAMETER_CONFIG,
 )
 from sbepv.api.schemas import (
+    ANNUAL_APPLIED_CAPACITY_NORMALIZATION,
     AnnualRunRequest,
     AnnualRunSubmission,
     CalibrationDecisionRequest,
@@ -146,6 +159,7 @@ from sbepv.api.schemas import (
     SavedResultRenameRequest,
     SeasonalFallbackAcknowledgement,
     StrictRequest,
+    TechnoeconomicSubmissionRequest,
 )
 from sbepv.ingest import bazefield as historian
 from sbepv.ingest import midc
@@ -199,12 +213,10 @@ def __getattr__(name: str) -> Any:
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
     _dashboard_basic_credentials()
-    interrupted = state.AGENT_STORE.mark_stale_running_jobs_interrupted(
+    worker_loop._mark_stale_running_work_interrupted(
         before=datetime.now(timezone.utc)
         - timedelta(seconds=config.JOB_STALE_SECONDS)
     )
-    if interrupted:
-        logger.warning("Marked %s stale model job(s) interrupted", interrupted)
     worker_loop._start_model_worker()
     state._APP_STARTED = True
     try:
@@ -904,6 +916,403 @@ def start_annual_run(req: AnnualRunSubmission) -> JSONResponse:
     return JSONResponse({"job_id": job["id"]})
 
 
+def _completed_calibrated_annual_source(job: dict[str, Any]) -> bool:
+    """Return whether a durable row is worth running through the TEA verifier."""
+
+    if job.get("mode") != "annual" or job.get("state") != "done":
+        return False
+    result = job.get("result")
+    if not isinstance(result, dict):
+        return False
+    stats = result.get("stats")
+    application = result.get("calibration_application")
+    return (
+        isinstance(stats, dict)
+        and stats.get("calibration_enabled") is True
+        and isinstance(application, dict)
+        and application.get("applied") is True
+    )
+
+
+def _public_annual_source_context(job: dict[str, Any]) -> dict[str, Any]:
+    """Project only non-sensitive Annual identity and calibration lineage."""
+
+    request = job.get("request") if isinstance(job.get("request"), dict) else {}
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    curtailment_enabled = request.get("curtailment_enabled") is True
+    application = (
+        result.get("calibration_application")
+        if isinstance(result.get("calibration_application"), dict)
+        else {}
+    )
+    return {
+        "kind": job.get("kind"),
+        "created_at": job.get("created_at"),
+        "completed_at": job.get("completed_at"),
+        "annual_window": {
+            key: deepcopy(request.get(key))
+            for key in (
+                "from_date",
+                "to_date",
+                "years",
+                "interval_value",
+                "interval_unit",
+            )
+            if key in request
+        },
+        "operating_limit": {
+            "curtailment_enabled": curtailment_enabled,
+            "curtailment_limit_kw": (
+                deepcopy(request.get("curtailment_limit_kw"))
+                if curtailment_enabled
+                else None
+            ),
+            "unit": "kWac",
+        },
+        "calibration": {
+            key: deepcopy(application.get(key))
+            for key in (
+                "baseline_job_id",
+                "baseline_review_id",
+                "baseline_promoted_at",
+                "origin_profile_sha256",
+                "resolved_profile_sha256",
+                "seasonal_substitution",
+            )
+            if key in application
+        },
+    }
+
+
+@app.get("/api/technoeconomic/sources")
+def eligible_technoeconomic_sources() -> JSONResponse:
+    """List completed calibrated Annual jobs with fail-closed TEA eligibility."""
+
+    candidates = state.AGENT_STORE.list_jobs(
+        states=("done",),
+        mode="annual",
+        limit=None,
+    )
+    sources: list[dict[str, Any]] = []
+    for annual_job in candidates:
+        if not _completed_calibrated_annual_source(annual_job):
+            continue
+        try:
+            dependencies = technoeconomic_api.resolve_annual_source_dependencies(
+                state.AGENT_STORE,
+                str(annual_job["id"]),
+            )
+            eligibility = technoeconomic_api.inspect_annual_source_eligibility(
+                dependencies["annual_job"],
+                origin_validation_job=dependencies["origin_validation_job"],
+                promotion_record=dependencies["promotion_record"],
+            )
+        except technoeconomic_api.AnnualSourceValidationError as exc:
+            eligibility = {
+                "eligible": False,
+                "reason_code": exc.code,
+                "detail": exc.detail,
+                "source_annual_job_id": annual_job.get("id"),
+            }
+        except (AgentStoreError, KeyError, OSError, TypeError, ValueError):
+            logger.warning(
+                "Could not inspect Annual source %s for technoeconomic eligibility",
+                annual_job.get("id"),
+                exc_info=True,
+            )
+            eligibility = {
+                "eligible": False,
+                "reason_code": "annual_source_unverifiable",
+                "detail": "The Annual source provenance could not be verified.",
+                "source_annual_job_id": annual_job.get("id"),
+            }
+        eligibility["provenance"] = _public_annual_source_context(annual_job)
+        sources.append(_public_value(eligibility))
+    return JSONResponse(
+        {
+            "eligibility_version": (
+                technoeconomic_api.ANNUAL_SOURCE_ELIGIBILITY_VERSION
+            ),
+            "sources": sources,
+        }
+    )
+
+
+@app.post("/api/technoeconomic/jobs", status_code=202)
+def create_technoeconomic_job(
+    req: TechnoeconomicSubmissionRequest,
+) -> JSONResponse:
+    """Verify, freeze, validate, and enqueue one probabilistic TEA job."""
+
+    if (
+        req.basis == "solartac_site"
+        and req.capacity_normalization
+        != ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "New SolarTAC jobs must declare "
+                "capacity_normalization='annual_applied_capacity_v1'."
+            ),
+        )
+
+    request_payload = req.model_dump(mode="json", exclude_none=False)
+    if req.capacity_normalization is None:
+        request_payload.pop("capacity_normalization", None)
+    if req.commercial_scaling is None:
+        request_payload.pop("commercial_scaling", None)
+    try:
+        with state._ORCHESTRATION_LOCK:
+            if state.AGENT_STORE.get_job(req.source_annual_job_id) is None:
+                raise HTTPException(status_code=404, detail="Unknown Annual source id")
+            dependencies = technoeconomic_api.resolve_annual_source_dependencies(
+                state.AGENT_STORE,
+                req.source_annual_job_id,
+            )
+            snapshot_envelope = technoeconomic_api.build_annual_source_snapshot(
+                dependencies["annual_job"],
+                origin_validation_job=dependencies["origin_validation_job"],
+                promotion_record=dependencies["promotion_record"],
+            )
+            kernel_request = (
+                technoeconomic_api.build_technoeconomic_kernel_request(
+                    request_payload,
+                    snapshot_envelope["source_snapshot"],
+                )
+            )
+            submission_provenance = (
+                technoeconomic_api.build_technoeconomic_submission_provenance(
+                    request_payload,
+                    snapshot_envelope,
+                    kernel_request,
+                )
+            )
+            source_fields = technoeconomic_api.technoeconomic_source_store_fields(
+                snapshot_envelope
+            )
+            job = state.AGENT_STORE.create_technoeconomic_job(
+                request=request_payload,
+                submission_provenance=submission_provenance,
+                max_active_jobs=config.MAX_ACTIVE_MODEL_JOBS,
+                **source_fields,
+            )
+    except HTTPException:
+        raise
+    except technoeconomic_api.AnnualSourceValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.detail},
+        ) from exc
+    except technoeconomic_kernel.TechnoeconomicValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RecordNotFound as exc:
+        raise HTTPException(status_code=404, detail="Unknown Annual source id") from exc
+    except QueueCapacityExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="The shared work queue is full. Wait for active work to finish.",
+        ) from exc
+    except (InvalidStateTransition, StoreConflict) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    state._WORKER_WAKE.set()
+    return JSONResponse(
+        {"job": _public_technoeconomic_job(job)},
+        status_code=202,
+    )
+
+
+@app.get("/api/technoeconomic/jobs/{job_id}")
+def technoeconomic_status(job_id: str) -> JSONResponse:
+    job = state.AGENT_STORE.get_technoeconomic_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
+    return JSONResponse(_public_technoeconomic_job(job))
+
+
+def _technoeconomic_export_response(job_id: str, export_format: str) -> FileResponse:
+    job = state.AGENT_STORE.get_technoeconomic_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
+    if job.get("state") != "done":
+        raise HTTPException(
+            status_code=409,
+            detail="Technoeconomic exports are available only after completion.",
+        )
+    try:
+        artifact_path, artifact = _verified_technoeconomic_artifact(
+            job,
+            export_format,
+        )
+    except (ArtifactIntegrityError, ValueError) as exc:
+        logger.warning(
+            "Rejected unverifiable %s export for technoeconomic job %s",
+            export_format,
+            job_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The requested technoeconomic export could not be verified. "
+                "Re-run the analysis to create a new immutable export."
+            ),
+        ) from exc
+    return FileResponse(
+        artifact_path,
+        media_type=str(artifact["media_type"]),
+        filename=str(artifact["filename"]),
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"sha256-{artifact["sha256"]}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/api/technoeconomic/jobs/{job_id}/exports/csv")
+def download_technoeconomic_csv(job_id: str) -> FileResponse:
+    """Download the verified UTF-8 CSV table bundle for one completed TEA."""
+
+    return _technoeconomic_export_response(job_id, "csv")
+
+
+@app.get("/api/technoeconomic/jobs/{job_id}/exports/xlsx")
+def download_technoeconomic_xlsx(job_id: str) -> FileResponse:
+    """Download the verified workbook for one completed TEA."""
+
+    return _technoeconomic_export_response(job_id, "xlsx")
+
+
+@app.get(
+    "/api/technoeconomic/jobs/{job_id}/artifacts/{artifact_id}",
+    response_class=FileResponse,
+)
+def download_technoeconomic_plot(job_id: str, artifact_id: str) -> FileResponse:
+    """Serve one literal allowlisted public plot from a completed TEA manifest."""
+
+    if artifact_id not in {
+        "cdf_plot",
+        "sensitivity_plot",
+        "convergence_plot",
+    }:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic artifact")
+    job = state.AGENT_STORE.get_technoeconomic_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
+    if job.get("state") != "done":
+        raise HTTPException(
+            status_code=409,
+            detail="Technoeconomic artifacts are available only after completion.",
+        )
+    try:
+        artifact_path, artifact = _verified_technoeconomic_artifact(
+            job,
+            artifact_id,
+        )
+    except (ArtifactIntegrityError, ValueError) as exc:
+        logger.warning(
+            "Rejected unverifiable %s for technoeconomic job %s",
+            artifact_id,
+            job_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The requested technoeconomic artifact could not be verified. "
+                "Re-run the analysis to create a new immutable artifact."
+            ),
+        ) from exc
+    return FileResponse(
+        artifact_path,
+        media_type="image/png",
+        filename=str(artifact["filename"]),
+        content_disposition_type="inline",
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"sha256-{artifact["sha256"]}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.post("/api/technoeconomic/jobs/{job_id}/cancel")
+def cancel_technoeconomic_job(job_id: str) -> JSONResponse:
+    try:
+        job = state.AGENT_STORE.cancel_technoeconomic_job(job_id)
+    except RecordNotFound as exc:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic job id") from exc
+    state._WORKER_WAKE.set()
+    return JSONResponse({"job": _public_technoeconomic_job(job)})
+
+
+@app.post("/api/technoeconomic/jobs/{job_id}/retry", status_code=202)
+def retry_technoeconomic_job(job_id: str) -> JSONResponse:
+    try:
+        job = state.AGENT_STORE.retry_technoeconomic_job(
+            job_id,
+            max_active_jobs=config.MAX_ACTIVE_MODEL_JOBS,
+        )
+    except RecordNotFound as exc:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic job id") from exc
+    except InvalidStateTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except QueueCapacityExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="The shared work queue is full. Wait for active work to finish.",
+        ) from exc
+    state._WORKER_WAKE.set()
+    return JSONResponse(
+        {"job": _public_technoeconomic_job(job)},
+        status_code=202,
+    )
+
+
+@app.delete("/api/technoeconomic/jobs/{job_id}")
+def delete_technoeconomic_job(job_id: str) -> JSONResponse:
+    with state._ORCHESTRATION_LOCK:
+        artifacts_deleted = 0
+
+        def cleanup_before_delete(job: dict[str, Any]) -> None:
+            nonlocal artifacts_deleted
+            artifacts_deleted = _delete_technoeconomic_job_artifacts(
+                job,
+                require_complete=True,
+            )
+
+        try:
+            state.AGENT_STORE.delete_technoeconomic_job(
+                job_id,
+                before_delete=cleanup_before_delete,
+            )
+        except RecordNotFound as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="Unknown technoeconomic job id",
+            ) from exc
+        except InvalidStateTransition as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ArtifactCleanupError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The technoeconomic job was retained because its confined "
+                    "artifacts could not be completely removed. Retry deletion."
+                ),
+            ) from exc
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "deleted": True,
+            "artifacts_deleted": artifacts_deleted,
+        }
+    )
+
+
 @app.get("/api/status/{job_id}")
 def status(job_id: str) -> JSONResponse:
     job = _get_job_record(job_id)
@@ -1269,6 +1678,8 @@ def list_saved_results() -> JSONResponse:
 def save_result(
     job_id: str, req: SavedResultCreateRequest | None = None
 ) -> JSONResponse:
+    if job_store._get_durable_model_job_record(job_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown job id")
     try:
         saved_result = state.AGENT_STORE.save_result(
             job_id, name=req.name if req is not None else None
@@ -1357,7 +1768,7 @@ def delete_model_job(job_id: str) -> JSONResponse:
 
 @app.post("/api/jobs/{job_id}/promote")
 def promote_model_job(job_id: str) -> JSONResponse:
-    candidate = _get_job_record(job_id)
+    candidate = job_store._get_durable_model_job_record(job_id)
     if candidate is None:
         raise HTTPException(status_code=404, detail="Unknown job id")
     if candidate.get("mode") == "validation":

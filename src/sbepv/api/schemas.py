@@ -6,9 +6,23 @@ payload is a 422 rather than a silently ignored setting.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from collections.abc import Mapping
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+import math
+import re
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from sbepv import model
 from sbepv.agent.tool_schemas import MAX_PARAMETER_SWEEP_VALUES
@@ -120,3 +134,758 @@ class ProposalSweepConfirmRequest(StrictRequest):
     proposal_ids: list[str] = Field(
         min_length=1, max_length=MAX_PARAMETER_SWEEP_VALUES
     )
+
+
+# Technoeconomic requests deliberately use a stricter model family than the
+# historical dashboard bodies above.  Changing ``StrictRequest`` itself to
+# ``strict=True`` would be a compatibility change for the existing API.
+def _reject_xml_10_illegal_text(value: Any) -> None:
+    if isinstance(value, str):
+        for character in value:
+            codepoint = ord(character)
+            if (
+                (codepoint < 0x20 and codepoint not in {0x09, 0x0A, 0x0D})
+                or 0xD800 <= codepoint <= 0xDFFF
+                or codepoint in {0xFFFE, 0xFFFF}
+            ):
+                raise ValueError(
+                    "technoeconomic text contains a character that is not valid "
+                    "in XML 1.0"
+                )
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _reject_xml_10_illegal_text(key)
+            _reject_xml_10_illegal_text(item)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_xml_10_illegal_text(item)
+
+
+ANNUAL_APPLIED_CAPACITY_NORMALIZATION = "annual_applied_capacity_v1"
+
+
+class StrictTechnoeconomicRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_xml_10_illegal_text(cls, value: Any) -> Any:
+        """Reject text that cannot be represented in the required XLSX export."""
+
+        _reject_xml_10_illegal_text(value)
+        return value
+
+
+StableTechnoeconomicId = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=160,
+        pattern=r"^[a-z0-9._:-]+$",
+    ),
+]
+NonemptyTechnoeconomicText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=4000),
+]
+Sha256Text = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+FiniteNonnegativeFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+FinitePositiveFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
+
+# The realization table has 43 fixed identity/result columns today.  Budget 48
+# so a version-1 request remains safe if a few audit columns are added without
+# weakening the pre-enqueue resource gate.  Every declared distribution is also
+# exported as a realization column, including fixed inputs.
+TECHNOECONOMIC_REALIZATION_COLUMN_OVERHEAD = 48
+# V3 emits eight additional fixed commercial-scaling result/audit columns.  Keep
+# this incremental so v1/v2 admission behavior remains byte-for-byte compatible.
+TECHNOECONOMIC_COMMERCIAL_SCALING_REALIZATION_COLUMN_OVERHEAD = 8
+TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS = 8_000_000
+# Forward stepwise rank regression repeatedly fits expanding predictor sets.  The
+# deterministic n*p^2 gate is a conservative lower-bound proxy for that work.
+TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS = 25_000_000
+
+
+class FixedDistributionRequest(StrictTechnoeconomicRequest):
+    family: Literal["fixed"]
+    value: Annotated[float, Field(allow_inf_nan=False)]
+
+
+class UniformDistributionRequest(StrictTechnoeconomicRequest):
+    family: Literal["uniform"]
+    low: Annotated[float, Field(allow_inf_nan=False)]
+    high: Annotated[float, Field(allow_inf_nan=False)]
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "UniformDistributionRequest":
+        if self.low > self.high:
+            raise ValueError("uniform distributions require low <= high")
+        return self
+
+
+class TriangularDistributionRequest(StrictTechnoeconomicRequest):
+    family: Literal["triangular"]
+    low: Annotated[float, Field(allow_inf_nan=False)]
+    mode: Annotated[float, Field(allow_inf_nan=False)]
+    high: Annotated[float, Field(allow_inf_nan=False)]
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "TriangularDistributionRequest":
+        if not self.low <= self.mode <= self.high:
+            raise ValueError("triangular distributions require low <= mode <= high")
+        return self
+
+
+class BoundedNormalDistributionRequest(StrictTechnoeconomicRequest):
+    family: Literal["bounded_normal"]
+    low: Annotated[float, Field(allow_inf_nan=False)]
+    high: Annotated[float, Field(allow_inf_nan=False)]
+    mean: Annotated[float, Field(allow_inf_nan=False)]
+    sd: FinitePositiveFloat
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "BoundedNormalDistributionRequest":
+        if self.low >= self.high:
+            raise ValueError("bounded-normal distributions require low < high")
+        return self
+
+
+TechnoeconomicDistributionRequest = Annotated[
+    FixedDistributionRequest
+    | UniformDistributionRequest
+    | TriangularDistributionRequest
+    | BoundedNormalDistributionRequest,
+    Field(discriminator="family"),
+]
+
+
+class EvidenceCitationRequest(StrictTechnoeconomicRequest):
+    title: NonemptyTechnoeconomicText
+    organization: NonemptyTechnoeconomicText
+    url: AnyHttpUrl | None = None
+    stable_reference: NonemptyTechnoeconomicText | None = None
+    publication_or_as_of_date: str
+    accessed_date: str
+    excerpt_or_derivation_note: NonemptyTechnoeconomicText
+    # Phase 3 has no server-owned evidence-blob resolver.  A client therefore
+    # cannot claim that arbitrary hashes identify bytes preserved by this service.
+    preservation_mode: Literal["metadata_excerpt_only"]
+    user_supplied_content_sha256: Sha256Text | None = None
+    metadata_only_rationale: NonemptyTechnoeconomicText
+
+    @field_validator("publication_or_as_of_date", "accessed_date")
+    @classmethod
+    def validate_iso_date(cls, value: str) -> str:
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("evidence dates must use YYYY-MM-DD")
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("evidence dates must be valid calendar dates") from exc
+        return value
+
+    @model_validator(mode="after")
+    def validate_source_locator(self) -> "EvidenceCitationRequest":
+        if self.url is None and self.stable_reference is None:
+            raise ValueError("a citation requires a URL or stable reference")
+        return self
+
+
+class TechnoeconomicEvidenceRequest(StrictTechnoeconomicRequest):
+    evidence_class: Literal[
+        "project_actual",
+        "direct_quote_or_primary_document",
+        "public_market_proxy_or_benchmark",
+        "engineering_judgment",
+        "secondary_synthesis",
+    ]
+    citation: EvidenceCitationRequest
+    explicit_acceptance: StrictBool | None = None
+    acceptance_rationale: NonemptyTechnoeconomicText | None = None
+
+    @model_validator(mode="after")
+    def validate_provisional_acceptance(self) -> "TechnoeconomicEvidenceRequest":
+        provisional = self.evidence_class in {
+            "engineering_judgment",
+            "secondary_synthesis",
+        }
+        if provisional and (
+            self.explicit_acceptance is not True
+            or self.acceptance_rationale is None
+        ):
+            raise ValueError(
+                "engineering_judgment and secondary_synthesis require explicit "
+                "acceptance and a nonempty rationale"
+            )
+        if self.explicit_acceptance is False:
+            raise ValueError("an explicitly rejected evidence value is not runnable")
+        if self.explicit_acceptance is None and self.acceptance_rationale is not None:
+            raise ValueError("an acceptance rationale requires explicit_acceptance=true")
+        return self
+
+
+class DocumentedDistributionRequest(StrictTechnoeconomicRequest):
+    unit: Literal[
+        "real_fraction_per_year",
+        "dimensionless_multiplier",
+    ]
+    distribution: TechnoeconomicDistributionRequest
+    evidence: TechnoeconomicEvidenceRequest
+
+
+class SameYearCurrencyNormalizationRequest(StrictTechnoeconomicRequest):
+    method: Literal["same_year_no_adjustment"]
+    source_cost_year: Annotated[int, Field(ge=1900, le=3000)]
+    target_constant_dollar_cost_year: Annotated[int, Field(ge=1900, le=3000)]
+    submitted_distribution_basis: Literal["target_constant_dollar_year"]
+    index_identity: Literal["not_applicable_same_year"]
+    index_factor: FinitePositiveFloat
+    derivation: NonemptyTechnoeconomicText
+
+    @model_validator(mode="after")
+    def validate_same_year(self) -> "SameYearCurrencyNormalizationRequest":
+        if self.source_cost_year != self.target_constant_dollar_cost_year:
+            raise ValueError("same-year normalization requires identical source and target years")
+        if self.index_factor != 1.0:
+            raise ValueError("same-year normalization requires index_factor=1")
+        return self
+
+
+class PriceIndexCurrencyNormalizationRequest(StrictTechnoeconomicRequest):
+    method: Literal["price_index_adjustment"]
+    source_cost_year: Annotated[int, Field(ge=1900, le=3000)]
+    target_constant_dollar_cost_year: Annotated[int, Field(ge=1900, le=3000)]
+    submitted_distribution_basis: Literal["target_constant_dollar_year"]
+    index_identity: NonemptyTechnoeconomicText
+    index_factor: FinitePositiveFloat
+    derivation: NonemptyTechnoeconomicText
+    index_source_evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_indexed_years(self) -> "PriceIndexCurrencyNormalizationRequest":
+        if self.source_cost_year == self.target_constant_dollar_cost_year:
+            raise ValueError(
+                "price-index normalization requires different source and target years"
+            )
+        return self
+
+
+CurrencyYearNormalizationRequest = Annotated[
+    SameYearCurrencyNormalizationRequest | PriceIndexCurrencyNormalizationRequest,
+    Field(discriminator="method"),
+]
+
+
+class TechnoeconomicCostLineRequest(StrictTechnoeconomicRequest):
+    input_id: StableTechnoeconomicId
+    label: NonemptyTechnoeconomicText
+    ownership: Literal["solectria_only", "solaredge_only", "paired_shared"]
+    cost_type: Literal[
+        "initial_capex",
+        "initial_installation_labor",
+        "recurring_labor",
+        "recurring_om",
+        "recurring_maintenance",
+    ]
+    distribution: TechnoeconomicDistributionRequest
+    coverage_include_ids: list[StableTechnoeconomicId] = Field(min_length=1, max_length=256)
+    coverage_exclude_ids: list[StableTechnoeconomicId] = Field(default_factory=list, max_length=256)
+    original_unit: Literal[
+        "usd_total",
+        "usd_total_per_year",
+        "usd_per_unit",
+        "usd_per_unit_year",
+        "usd_per_wdc",
+        "usd_per_wdc_year",
+    ]
+    normalized_unit: Literal[
+        "usd_per_wdc",
+        "usd_per_wdc_year",
+        "usd_per_applied_w",
+        "usd_per_applied_w_year",
+    ]
+    normalization_method: Literal[
+        "divide_by_frozen_source_wdc",
+        "multiply_quantity_then_divide_by_frozen_source_wdc",
+        "divide_by_frozen_applied_capacity_w",
+        "multiply_quantity_then_divide_by_frozen_applied_capacity_w",
+        "already_normalized_per_wdc",
+    ]
+    solectria_quantity: FiniteNonnegativeFloat
+    solaredge_quantity: FiniteNonnegativeFloat
+    quantity_unit: NonemptyTechnoeconomicText | None = None
+    normalization_derivation: NonemptyTechnoeconomicText
+    constant_dollar_cost_year: Annotated[int, Field(ge=1900, le=3000)]
+    currency_year_normalization: CurrencyYearNormalizationRequest
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_cost_line_contract(self) -> "TechnoeconomicCostLineRequest":
+        includes = self.coverage_include_ids
+        excludes = self.coverage_exclude_ids
+        if len(set(includes)) != len(includes):
+            raise ValueError("coverage_include_ids must be unique")
+        if len(set(excludes)) != len(excludes):
+            raise ValueError("coverage_exclude_ids must be unique")
+        if set(includes) & set(excludes):
+            raise ValueError("included and excluded coverage IDs must be disjoint")
+
+        recurring = self.cost_type.startswith("recurring_")
+        expected_normalized = (
+            {"usd_per_wdc_year", "usd_per_applied_w_year"}
+            if recurring
+            else {"usd_per_wdc", "usd_per_applied_w"}
+        )
+        if self.normalized_unit not in expected_normalized:
+            raise ValueError(
+                f"{self.cost_type} requires one of normalized_unit="
+                f"{sorted(expected_normalized)!r}"
+            )
+        annual_originals = {
+            "usd_total_per_year",
+            "usd_per_unit_year",
+            "usd_per_wdc_year",
+        }
+        if (self.original_unit in annual_originals) != recurring:
+            raise ValueError("original-unit timing must match the cost type")
+
+        if self.normalization_method in {
+            "divide_by_frozen_source_wdc",
+            "divide_by_frozen_applied_capacity_w",
+        }:
+            if self.original_unit not in {"usd_total", "usd_total_per_year"}:
+                raise ValueError("total-Wdc normalization requires a total-USD unit")
+            if self.quantity_unit is not None:
+                raise ValueError("total-Wdc normalization must not declare quantity_unit")
+        elif self.normalization_method in {
+            "multiply_quantity_then_divide_by_frozen_source_wdc",
+            "multiply_quantity_then_divide_by_frozen_applied_capacity_w",
+        }:
+            if self.original_unit not in {"usd_per_unit", "usd_per_unit_year"}:
+                raise ValueError("quantity normalization requires a per-unit USD unit")
+            if self.quantity_unit is None:
+                raise ValueError("quantity normalization requires quantity_unit")
+        else:
+            if self.original_unit not in {"usd_per_wdc", "usd_per_wdc_year"}:
+                raise ValueError("already-normalized costs require a per-Wdc unit")
+            if self.quantity_unit is not None:
+                raise ValueError("already-normalized costs must not declare quantity_unit")
+
+        sol = self.solectria_quantity
+        se = self.solaredge_quantity
+        if self.ownership == "solectria_only" and not (sol > 0 and se == 0):
+            raise ValueError("solectria_only requires positive SOL and zero SE quantity")
+        if self.ownership == "solaredge_only" and not (se > 0 and sol == 0):
+            raise ValueError("solaredge_only requires zero SOL and positive SE quantity")
+        if self.ownership == "paired_shared" and not (sol > 0 and se > 0):
+            raise ValueError("paired_shared requires positive quantities for both systems")
+        if self.normalization_method in {
+            "divide_by_frozen_source_wdc",
+            "divide_by_frozen_applied_capacity_w",
+            "already_normalized_per_wdc",
+        }:
+            for value in (sol, se):
+                if value not in {0.0, 1.0}:
+                    raise ValueError(
+                        "total or already-normalized lines use quantity 1 for each "
+                        "applicable system and 0 otherwise"
+                    )
+        if (
+            self.currency_year_normalization.target_constant_dollar_cost_year
+            != self.constant_dollar_cost_year
+        ):
+            raise ValueError(
+                "currency normalization target must equal the line constant-dollar cost year"
+            )
+        return self
+
+
+class TechnoeconomicFinanceRequest(StrictTechnoeconomicRequest):
+    treatment_key: Literal["constant-real-v1"]
+    constant_dollar_cost_year: Annotated[int, Field(ge=1900, le=3000)]
+    project_life_years: Annotated[int, Field(ge=1)]
+    project_life_evidence: TechnoeconomicEvidenceRequest
+    real_discount_rate: DocumentedDistributionRequest
+
+
+class SharedDegradationRequest(StrictTechnoeconomicRequest):
+    degradation_model: Literal["shared_module_v1"]
+    annual_rate: DocumentedDistributionRequest
+
+
+class CommercialTechnologyDesignRequest(StrictTechnoeconomicRequest):
+    optimizer_count: Annotated[int, Field(ge=0)]
+    inverter_count: Annotated[int, Field(ge=1)]
+    transformer_count: Annotated[int, Field(ge=0)]
+    dc_ac_ratio: FinitePositiveFloat
+    inverter_loading_ratio: FinitePositiveFloat
+    inverter_topology: NonemptyTechnoeconomicText
+    transformer_topology: NonemptyTechnoeconomicText
+    bos_scope: NonemptyTechnoeconomicText
+    labor_productivity_and_rates: NonemptyTechnoeconomicText
+    commissioning_scope: NonemptyTechnoeconomicText
+
+
+class CommercialReferenceDesignRequest(StrictTechnoeconomicRequest):
+    design_id: StableTechnoeconomicId
+    reference_wdc: FinitePositiveFloat
+    module_model: NonemptyTechnoeconomicText
+    module_stc_wdc: FinitePositiveFloat
+    module_count: Annotated[int, Field(ge=1)]
+    constant_dollar_cost_year: Annotated[int, Field(ge=1900, le=3000)]
+    solectria: CommercialTechnologyDesignRequest
+    solaredge: CommercialTechnologyDesignRequest
+    normalization_derivation: NonemptyTechnoeconomicText
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_reference_wdc(self) -> "CommercialReferenceDesignRequest":
+        try:
+            derived = Decimal(self.module_count) * Decimal(str(self.module_stc_wdc))
+            recorded = Decimal(str(self.reference_wdc))
+        except InvalidOperation as exc:
+            raise ValueError("commercial reference Wdc is not a canonical decimal") from exc
+        if derived != recorded:
+            raise ValueError(
+                "commercial module_count * module_stc_wdc must equal reference_wdc"
+            )
+        return self
+
+
+CommercialTransferMechanism = Literal[
+    "climate_and_irradiance",
+    "module_string_optimizer_topology",
+    "mismatch_mechanism",
+    "shading",
+    "row_and_tracker_geometry",
+    "conversion_and_temperature",
+    "dc_ac_ratio_and_clipping",
+    "availability_and_outages",
+    "curtailment",
+    "soiling",
+    "weather_representativeness",
+    "degradation",
+    "size_independence",
+]
+
+COMMERCIAL_TRANSFER_MECHANISMS = frozenset(
+    {
+        "climate_and_irradiance",
+        "module_string_optimizer_topology",
+        "mismatch_mechanism",
+        "shading",
+        "row_and_tracker_geometry",
+        "conversion_and_temperature",
+        "dc_ac_ratio_and_clipping",
+        "availability_and_outages",
+        "curtailment",
+        "soiling",
+        "weather_representativeness",
+        "degradation",
+        "size_independence",
+    }
+)
+
+
+class CommercialTransferMechanismRequest(StrictTechnoeconomicRequest):
+    mechanism: CommercialTransferMechanism
+    status: Literal["supported", "not_applicable", "not_transferred"]
+    rationale: NonemptyTechnoeconomicText
+    evidence: TechnoeconomicEvidenceRequest
+
+
+class CommercialEnergyTransferRequest(StrictTechnoeconomicRequest):
+    status: Literal["approved"]
+    explicit_attestation: Literal[True]
+    attested_by: NonemptyTechnoeconomicText
+    attested_at: str
+    attestation_rationale: NonemptyTechnoeconomicText
+    baseline_factor: DocumentedDistributionRequest
+    incremental_factor: DocumentedDistributionRequest
+    mechanisms: list[CommercialTransferMechanismRequest] = Field(
+        min_length=len(COMMERCIAL_TRANSFER_MECHANISMS),
+        max_length=len(COMMERCIAL_TRANSFER_MECHANISMS),
+    )
+
+    @model_validator(mode="after")
+    def validate_complete_attestation(self) -> "CommercialEnergyTransferRequest":
+        mechanisms = [item.mechanism for item in self.mechanisms]
+        if len(set(mechanisms)) != len(mechanisms):
+            raise ValueError("commercial transfer mechanisms must be unique")
+        if set(mechanisms) != COMMERCIAL_TRANSFER_MECHANISMS:
+            raise ValueError("commercial transfer requires the complete mechanism checklist")
+        not_transferred = sorted(
+            item.mechanism for item in self.mechanisms if item.status == "not_transferred"
+        )
+        if not_transferred:
+            raise ValueError(
+                "an approved commercial transfer cannot contain not_transferred "
+                f"mechanisms: {not_transferred}; omit commercial_transfer for a cost-only request"
+            )
+        if not any(item.status == "supported" for item in self.mechanisms):
+            raise ValueError(
+                "an approved commercial transfer requires at least one supported mechanism"
+            )
+        try:
+            attested = datetime.fromisoformat(self.attested_at.replace("Z", "+00:00"))
+        except (AttributeError, ValueError) as exc:
+            raise ValueError("attested_at must be an ISO-8601 timestamp") from exc
+        if attested.tzinfo is None or attested.utcoffset() is None:
+            raise ValueError("attested_at must include an explicit UTC offset")
+        if self.baseline_factor.unit != "dimensionless_multiplier":
+            raise ValueError("baseline transfer factor must be dimensionless")
+        if self.incremental_factor.unit != "dimensionless_multiplier":
+            raise ValueError("incremental transfer factor must be dimensionless")
+        return self
+
+
+class CommercialScalingRequest(StrictTechnoeconomicRequest):
+    """Directly scale the frozen SolarTAC marginal energy to a target size."""
+
+    target_capacity: FinitePositiveFloat
+    target_capacity_unit: Literal["kw", "mw"]
+    target_rating_basis: Literal[
+        "ac_operating_limit",
+        "dc_installed_nameplate",
+    ]
+    marginal_cost_difference: TechnoeconomicDistributionRequest
+    marginal_cost_timing: Literal[
+        "lifecycle_present_value",
+        "equivalent_annual",
+    ]
+    marginal_cost_unit: Literal[
+        "constant_usd",
+        "constant_usd_per_year",
+    ]
+    transfer_method: Literal["direct_capacity_scaling"]
+    transfer_rationale: NonemptyTechnoeconomicText
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_commercial_scaling_contract(self) -> "CommercialScalingRequest":
+        expected_unit = (
+            "constant_usd"
+            if self.marginal_cost_timing == "lifecycle_present_value"
+            else "constant_usd_per_year"
+        )
+        if self.marginal_cost_unit != expected_unit:
+            raise ValueError(
+                f"{self.marginal_cost_timing} marginal cost requires "
+                f"marginal_cost_unit={expected_unit!r}"
+            )
+        multiplier = 1_000.0 if self.target_capacity_unit == "kw" else 1_000_000.0
+        if not math.isfinite(self.target_capacity * multiplier):
+            raise ValueError("commercial target capacity is not representable in watts")
+        return self
+
+
+class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
+    source_annual_job_id: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
+    ]
+    basis: Literal["solartac_site", "commercial_representative"]
+    capacity_normalization: Literal["annual_applied_capacity_v1"] | None = None
+    n: Annotated[int, Field(ge=1, le=100_000)]
+    seed: Annotated[int, Field(ge=0, le=(1 << 64) - 1)]
+    cost_stack_completeness: Literal["full_system"]
+    cost_lines: list[TechnoeconomicCostLineRequest] = Field(min_length=1, max_length=1000)
+    finance: TechnoeconomicFinanceRequest
+    shared_degradation: SharedDegradationRequest
+    commercial_reference_design: CommercialReferenceDesignRequest | None = None
+    commercial_transfer: CommercialEnergyTransferRequest | None = None
+    commercial_scaling: CommercialScalingRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_submission_contract(self) -> "TechnoeconomicSubmissionRequest":
+        input_ids = [line.input_id for line in self.cost_lines]
+        if len(set(input_ids)) != len(input_ids):
+            raise ValueError("cost input IDs must be unique")
+        reserved = {
+            "finance.discount-rate",
+            "energy.shared-degradation",
+            "transfer.baseline",
+            "transfer.incremental",
+            "commercial.marginal-cost-difference",
+            "weather.year",
+        }
+        collision = reserved & set(input_ids)
+        if collision:
+            raise ValueError(f"cost input IDs use reserved identifiers: {sorted(collision)}")
+        if any(
+            line.constant_dollar_cost_year != self.finance.constant_dollar_cost_year
+            for line in self.cost_lines
+        ):
+            raise ValueError(
+                "every cost line must use the finance constant-dollar cost year"
+            )
+        if self.finance.real_discount_rate.unit != "real_fraction_per_year":
+            raise ValueError("real discount rate must use real_fraction_per_year")
+        if self.shared_degradation.annual_rate.unit != "real_fraction_per_year":
+            raise ValueError("shared degradation must use real_fraction_per_year")
+
+        if self.basis == "solartac_site":
+            if self.commercial_reference_design is not None or self.commercial_transfer is not None:
+                raise ValueError(
+                    "SolarTAC site requests must not include commercial design or transfer"
+                )
+            if self.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION:
+                expected_units = {
+                    "usd_per_applied_w",
+                    "usd_per_applied_w_year",
+                }
+                expected_methods = {
+                    "divide_by_frozen_applied_capacity_w",
+                    "multiply_quantity_then_divide_by_frozen_applied_capacity_w",
+                }
+                if any(
+                    line.normalized_unit not in expected_units
+                    or line.normalization_method not in expected_methods
+                    for line in self.cost_lines
+                ):
+                    raise ValueError(
+                        "annual_applied_capacity_v1 SolarTAC costs must be source "
+                        "totals normalized by frozen applied-capacity watts"
+                    )
+            elif any(
+                line.normalized_unit not in {"usd_per_wdc", "usd_per_wdc_year"}
+                or line.normalization_method == "already_normalized_per_wdc"
+                or "applied_capacity" in line.normalization_method
+                for line in self.cost_lines
+            ):
+                raise ValueError(
+                    "legacy SolarTAC site costs must be source totals normalized "
+                    "by frozen Wdc"
+                )
+            if self.commercial_scaling is not None and (
+                self.capacity_normalization
+                != ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+            ):
+                raise ValueError(
+                    "commercial_scaling requires SolarTAC "
+                    "capacity_normalization='annual_applied_capacity_v1'"
+                )
+        else:
+            if self.commercial_scaling is not None:
+                raise ValueError(
+                    "commercial_scaling is only valid for the SolarTAC site basis"
+                )
+            if self.capacity_normalization is not None:
+                raise ValueError(
+                    "commercial_representative must not declare SolarTAC capacity normalization"
+                )
+            if self.commercial_reference_design is None:
+                raise ValueError(
+                    "commercial_representative requires a commercial reference design"
+                )
+            if (
+                self.commercial_reference_design.constant_dollar_cost_year
+                != self.finance.constant_dollar_cost_year
+            ):
+                raise ValueError(
+                    "commercial design and finance must use the same constant-dollar cost year"
+                )
+            if any(
+                line.normalization_method != "already_normalized_per_wdc"
+                or line.normalized_unit
+                not in {"usd_per_wdc", "usd_per_wdc_year"}
+                for line in self.cost_lines
+            ):
+                raise ValueError(
+                    "commercial representative costs must declare a sourced per-Wdc basis"
+                )
+
+        declared_input_count = len(self.cost_lines) + 2
+        if self.commercial_transfer is not None:
+            declared_input_count += 2
+        if self.commercial_scaling is not None:
+            declared_input_count += 1
+        estimated_realization_columns = (
+            TECHNOECONOMIC_REALIZATION_COLUMN_OVERHEAD + declared_input_count
+        )
+        if self.commercial_scaling is not None:
+            estimated_realization_columns += (
+                TECHNOECONOMIC_COMMERCIAL_SCALING_REALIZATION_COLUMN_OVERHEAD
+            )
+        realization_export_cells = self.n * estimated_realization_columns
+        if realization_export_cells > TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS:
+            raise ValueError(
+                "technoeconomic realization export cell budget exceeded: "
+                f"{realization_export_cells} > "
+                f"{TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS}"
+            )
+
+        distributions = [line.distribution for line in self.cost_lines]
+        distributions.extend(
+            (
+                self.finance.real_discount_rate.distribution,
+                self.shared_degradation.annual_rate.distribution,
+            )
+        )
+        if self.commercial_transfer is not None:
+            distributions.extend(
+                (
+                    self.commercial_transfer.baseline_factor.distribution,
+                    self.commercial_transfer.incremental_factor.distribution,
+                )
+            )
+        if self.commercial_scaling is not None:
+            distributions.append(self.commercial_scaling.marginal_cost_difference)
+        nonfixed_predictor_count = sum(
+            distribution.family != "fixed"
+            and not (
+                distribution.family in {"uniform", "triangular"}
+                and distribution.low == distribution.high
+            )
+            for distribution in distributions
+        )
+        sensitivity_work_units = self.n * nonfixed_predictor_count**2
+        if sensitivity_work_units > TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS:
+            raise ValueError(
+                "technoeconomic sensitivity work budget exceeded: "
+                f"{sensitivity_work_units} > "
+                f"{TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS}"
+            )
+        return self
+
+
+__all__ = [
+    "ANNUAL_APPLIED_CAPACITY_NORMALIZATION",
+    "AnnualRunRequest",
+    "AnnualRunSubmission",
+    "BoundedNormalDistributionRequest",
+    "CalibrationDecisionRequest",
+    "ChatMessage",
+    "ChatRequest",
+    "COMMERCIAL_TRANSFER_MECHANISMS",
+    "CommercialEnergyTransferRequest",
+    "CommercialReferenceDesignRequest",
+    "CommercialScalingRequest",
+    "CommercialTechnologyDesignRequest",
+    "CommercialTransferMechanismRequest",
+    "CurrencyYearNormalizationRequest",
+    "DocumentedDistributionRequest",
+    "EvidenceCitationRequest",
+    "FixedDistributionRequest",
+    "PriceIndexCurrencyNormalizationRequest",
+    "ProposalEditRequest",
+    "ProposalSweepConfirmRequest",
+    "RunRequest",
+    "SavedResultCreateRequest",
+    "SavedResultRenameRequest",
+    "SeasonalFallbackAcknowledgement",
+    "SharedDegradationRequest",
+    "SameYearCurrencyNormalizationRequest",
+    "StrictRequest",
+    "StrictTechnoeconomicRequest",
+    "TechnoeconomicCostLineRequest",
+    "TechnoeconomicDistributionRequest",
+    "TechnoeconomicEvidenceRequest",
+    "TechnoeconomicFinanceRequest",
+    "TechnoeconomicSubmissionRequest",
+    "TriangularDistributionRequest",
+    "UniformDistributionRequest",
+]

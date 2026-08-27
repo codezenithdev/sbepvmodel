@@ -15,6 +15,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from sbepv.agent.tool_schemas import SCENARIO_FIELD_LABELS, SCENARIO_OVERRIDE_FIELDS
+from sbepv.api import artifacts as artifacts_module
 from sbepv.api import config
 from sbepv.api.job_store import _get_job_record
 
@@ -24,13 +25,48 @@ _PRIVATE_PATH_KEYS = {
     "source_path",
     "cleaned_source_path",
     "input_csv",
+    "storage_key",
+    "source_artifact_storage_key",
 }
 _PRIVATE_METADATA_KEYS = {
     "annual_source_audit",
+    "heartbeat_at",
+    "lease_token",
+    "source_snapshot",
+    "worker_id",
 }
 _PRIVATE_PATH_FRAGMENT = re.compile(
     r"(?i)(?:\\\\[^\\/\s]+[\\/][^\s]+|\b[a-z]:[\\/]|file:(?:/{0,3})|"
     r"(?<![:/\w])/(?!/?(?:outputs|api)(?:/|$)))"
+)
+_PUBLIC_TECHNOECONOMIC_ARTIFACT_URL_SUFFIXES = {
+    "csv_bundle": "exports/csv",
+    "xlsx_workbook": "exports/xlsx",
+    "cdf_plot": "artifacts/cdf_plot",
+    "sensitivity_plot": "artifacts/sensitivity_plot",
+    "convergence_plot": "artifacts/convergence_plot",
+}
+_PUBLIC_TECHNOECONOMIC_ARTIFACT_FIELDS = (
+    "artifact_id",
+    "schema_version",
+    "artifact_kind",
+    "filename",
+    "media_type",
+    "sha256",
+    "byte_count",
+    "row_count",
+    "table_count",
+    "tables",
+    "sheet_count",
+    "sheets",
+    "write_only_streaming",
+    "width_px",
+    "height_px",
+    "chart_contract_id",
+    "source_point_count",
+    "display_point_count",
+    "source_step_count",
+    "display_step_count",
 )
 
 
@@ -59,7 +95,11 @@ def _public_value(value: Any) -> Any:
             normalized_key = key.strip().lower()
             if normalized_key in _PRIVATE_METADATA_KEYS:
                 continue
-            if normalized_key in _PRIVATE_PATH_KEYS or normalized_key.endswith("_path"):
+            if (
+                normalized_key in _PRIVATE_PATH_KEYS
+                or normalized_key.endswith("_path")
+                or normalized_key.endswith("_storage_key")
+            ):
                 continue
             if isinstance(item, str) and _contains_private_path(item):
                 continue
@@ -175,6 +215,146 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
     }
     if input_plots:
         payload["input_plots"] = _public_value(input_plots)
+    if job.get("error"):
+        payload["error"] = _public_error(job["error"])
+    return payload
+
+
+def _public_technoeconomic_artifacts(job: dict[str, Any]) -> dict[str, Any]:
+    """Project immutable TEA artifact identities without storage locations."""
+
+    internal = job.get("artifacts")
+    if not isinstance(internal, dict):
+        return {}
+    public: dict[str, Any] = {}
+    sealed = internal.get("sealed_calculation")
+    if isinstance(sealed, dict):
+        public["sealed_calculation"] = {
+            key: _public_value(sealed[key])
+            for key in (
+                "schema_version",
+                "artifact_kind",
+                "media_type",
+                "sha256",
+                "byte_count",
+                "row_count",
+                "column_count",
+                "array_count",
+                "pickle_allowed",
+                "public",
+            )
+            if key in sealed
+        }
+
+    manifest = internal.get("exports")
+    entries = manifest.get("artifacts") if isinstance(manifest, dict) else None
+    if not isinstance(manifest, dict) or not isinstance(entries, dict):
+        return public
+    job_id = str(job.get("id") or "")
+    projected_entries: dict[str, Any] = {}
+    for _selector, contract in (
+        artifacts_module.TECHNOECONOMIC_PUBLIC_ARTIFACT_CONTRACT.items()
+    ):
+        artifact_id = str(contract["artifact_id"])
+        entry = entries.get(artifact_id)
+        if (
+            not isinstance(entry, dict)
+            or entry.get("artifact_id") != artifact_id
+            or entry.get("public") is not True
+            or entry.get("artifact_kind") != contract["artifact_kind"]
+            or entry.get("filename") != contract["filename"]
+            or entry.get("media_type") != contract["media_type"]
+        ):
+            continue
+        projected = {
+            key: _public_value(entry[key])
+            for key in _PUBLIC_TECHNOECONOMIC_ARTIFACT_FIELDS
+            if key in entry
+        }
+        projected["url"] = (
+            f"/api/technoeconomic/jobs/{job_id}/"
+            f"{_PUBLIC_TECHNOECONOMIC_ARTIFACT_URL_SUFFIXES[artifact_id]}"
+        )
+        projected_entries[artifact_id] = projected
+    public_manifest = {
+        key: _public_value(manifest[key])
+        for key in (
+            "schema_version",
+            "csv_format_version",
+            "owner_workflow",
+            "owner_job_id",
+            "source_snapshot_sha256",
+            "request_sha256",
+            "submission_provenance_sha256",
+            "sealed_calculation_sha256",
+            "calculation_contract_version",
+            "sampling_version",
+            "artifact_count",
+            "tie_outs",
+            "chart_contracts",
+            "manifest_sha256",
+        )
+        if key in manifest
+    }
+    public_manifest["artifacts"] = projected_entries
+    public["exports"] = public_manifest
+    return public
+
+
+def _public_technoeconomic_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Return the strict public projection of one durable TEA job.
+
+    The durable row intentionally contains a complete source snapshot, private
+    content-addressed storage identity, and active lease fields.  Status callers
+    need none of those.  Keep this as an explicit allowlist and apply the recursive
+    path scrubber only to the user/result values that are intentionally public.
+    """
+
+    elapsed_seconds: float | None = None
+    started_at = job.get("started_at") or job.get("created_at")
+    if started_at:
+        try:
+            started = datetime.fromisoformat(str(started_at))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            ended_raw = job.get("completed_at")
+            ended = (
+                datetime.fromisoformat(str(ended_raw))
+                if ended_raw
+                else datetime.now(timezone.utc)
+            )
+            if ended.tzinfo is None:
+                ended = ended.replace(tzinfo=timezone.utc)
+            elapsed_seconds = max((ended - started).total_seconds(), 0.0)
+        except (TypeError, ValueError):
+            pass
+
+    payload = {
+        "job_id": job["id"],
+        "workflow": "technoeconomic",
+        "state": job.get("state", "queued"),
+        "progress": job.get("progress", 0),
+        "stage": job.get("stage", ""),
+        "cancel_requested": bool(job.get("cancel_requested")),
+        "retry_of_job_id": job.get("retry_of_job_id"),
+        "source_annual_job_id": job.get("source_annual_job_id"),
+        "source_artifact_sha256": job.get("source_artifact_sha256"),
+        "source_artifact_bytes": job.get("source_artifact_bytes"),
+        "source_snapshot_sha256": job.get("source_snapshot_sha256"),
+        "submission_provenance_sha256": job.get(
+            "submission_provenance_sha256"
+        ),
+        "created_at": job.get("created_at"),
+        "queued_at": job.get("queued_at"),
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+        "updated_at": job.get("updated_at"),
+        "elapsed_seconds": elapsed_seconds,
+        "request": _public_value(job.get("request")),
+        "result": _public_value(job.get("result")),
+        "result_provenance": _public_value(job.get("result_provenance")),
+        "artifacts": _public_technoeconomic_artifacts(job),
+    }
     if job.get("error"):
         payload["error"] = _public_error(job["error"])
     return payload
