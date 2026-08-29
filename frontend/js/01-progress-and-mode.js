@@ -84,7 +84,7 @@
                 : (annual ? '#annualChartGrid' : '#chartGrid');
             setActiveNav(operationsNavLink);
             if (technoeconomic) renderTechnoeconomicAnalysis();
-            if (autonomy) autonomyRenderWorkspace();
+            if (autonomy) autonomyOpenWorkspace();
             updateAgentContext();
             if (isInitialChatState()) renderChatWelcome();
             else renderChatFollowups();

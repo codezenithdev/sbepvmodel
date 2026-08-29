@@ -1,14 +1,16 @@
 const DEFAULT_RENDER_ORIGIN = "https://sbepvmodel.onrender.com";
 
-const REQUEST_HEADERS = ["accept", "content-type", "range"] as const;
+const REQUEST_HEADERS = ["accept", "content-type", "last-event-id", "range"] as const;
 const RESPONSE_HEADERS = [
   "accept-ranges",
   "cache-control",
   "content-disposition",
+  "content-length",
   "content-range",
   "content-type",
   "etag",
   "last-modified",
+  "retry-after",
 ] as const;
 
 type RouteContext = {
@@ -51,6 +53,9 @@ export function isAllowedApiPath(path: string[]): boolean {
   }
 
   const isSafeId = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
+  const isCaseId = (value: string) => /^case_[a-zA-Z0-9_-]+$/.test(value);
+  const isEvidenceId = (value: string) => /^evi_[a-zA-Z0-9_-]+$/.test(value);
+  const isTurnId = (value: string) => /^(?:turn_|dturn_)[a-zA-Z0-9_-]+$/.test(value);
   if (path.length === 2) {
     return (
       (path[0] === "status" && isSafeId(path[1])) ||
@@ -59,7 +64,8 @@ export function isAllowedApiPath(path: string[]): boolean {
       (
         path[0] === "technoeconomic" &&
         ["sources", "jobs"].includes(path[1])
-      )
+      ) ||
+      (path[0] === "autonomy" && ["cases", "sources"].includes(path[1]))
     );
   }
 
@@ -79,6 +85,11 @@ export function isAllowedApiPath(path: string[]): boolean {
         path[0] === "technoeconomic" &&
         path[1] === "jobs" &&
         isSafeId(path[2])
+      ) ||
+      (
+        path[0] === "autonomy" &&
+        path[1] === "cases" &&
+        isCaseId(path[2])
       )
     );
   }
@@ -101,6 +112,12 @@ export function isAllowedApiPath(path: string[]): boolean {
         path[1] === "jobs" &&
         isSafeId(path[2]) &&
         ["cancel", "retry"].includes(path[3])
+      ) ||
+      (
+        path[0] === "autonomy" &&
+        path[1] === "cases" &&
+        isCaseId(path[2]) &&
+        ["events", "messages", "evidence"].includes(path[3])
       )
     );
   }
@@ -124,6 +141,39 @@ export function isAllowedApiPath(path: string[]): boolean {
           ].includes(path[4])
         )
       )
+    ) || (
+      path[0] === "autonomy" &&
+      path[1] === "cases" &&
+      isCaseId(path[2]) &&
+      (
+        (path[3] === "readiness" && path[4] === "evaluate") ||
+        (path[3] === "message-stream" && isTurnId(path[4])) ||
+        (path[3] === "evidence" && isEvidenceId(path[4]))
+      )
+    );
+  }
+
+  if (path.length === 6) {
+    return (
+      path[0] === "autonomy" &&
+      path[1] === "cases" &&
+      isCaseId(path[2]) &&
+      path[3] === "evidence" &&
+      isEvidenceId(path[4]) &&
+      path[5] === "download"
+    );
+  }
+
+  if (path.length === 8) {
+    return (
+      path[0] === "autonomy" &&
+      path[1] === "cases" &&
+      isCaseId(path[2]) &&
+      path[3] === "evidence" &&
+      isEvidenceId(path[4]) &&
+      path[5] === "candidates" &&
+      isSafeId(path[6]) &&
+      path[7] === "review"
     );
   }
 

@@ -8,6 +8,7 @@ and accessibility/responsive contracts that must survive visual iteration.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -104,6 +105,7 @@ class AutonomyFrontendSources(unittest.TestCase):
         )
         cls.combined = "\n".join((cls.markup, cls.styles, cls.script))
         cls.assembled = dashboard.assemble_dashboard_html(PROJECT_ROOT)
+        cls.proxy = _read(PROJECT_ROOT / "lib" / "render-proxy.ts")
 
     def test_canonical_autonomy_source_groups_exist(self):
         self.assertTrue(self.markup_paths, "missing canonical Autonomy HTML partial")
@@ -208,11 +210,17 @@ class AutonomyFrontendSources(unittest.TestCase):
         stage_navigation = self.script.split("function autonomySelectStage", 1)[1].split(
             "\n        function ", 1
         )[0]
-        for block in (view_navigation, stage_navigation):
+        for block in (view_navigation,):
             self.assertNotIn("autonomySelectFixture", block)
             self.assertNotIn("dataset.autonomyCaseId", block)
             self.assertNotIn("dataset.autonomyCaseRevision", block)
             self.assertNotRegex(block, r"fixture\.(?:caseState|stage)\s*=")
+        self.assertIn("autonomyContentMode === 'live'", stage_navigation)
+        self.assertIn("!AUTONOMY_LIVE_STAGES.includes(stage)", stage_navigation)
+        self.assertIn("autonomySelectFixture(previewFixture", stage_navigation)
+        self.assertNotIn("dataset.autonomyCaseId", stage_navigation)
+        self.assertNotIn("dataset.autonomyCaseRevision", stage_navigation)
+        self.assertNotRegex(stage_navigation, r"fixture\.(?:caseState|stage)\s*=")
         self.assertIn("autonomyCurrentFixture()", view_navigation)
         self.assertIn("autonomySelectedView = 'investigation'", stage_navigation)
 
@@ -296,6 +304,9 @@ class AutonomyFrontendSources(unittest.TestCase):
                 self.assertIn(style_hook, compact_styles)
 
     def test_fixture_actions_are_local_and_do_not_cross_backend_authority(self):
+        fixture_catalog = self.script.split("const AUTONOMY_FIXTURE_CATALOG", 1)[1].split(
+            "const autonomyPanel", 1
+        )[0]
         forbidden = {
             "network fetch": r"\bfetch\s*\(",
             "XHR": r"\bXMLHttpRequest\b",
@@ -309,7 +320,15 @@ class AutonomyFrontendSources(unittest.TestCase):
         }
         for authority, pattern in forbidden.items():
             with self.subTest(authority=authority):
-                self.assertNotRegex(self.script, pattern)
+                self.assertNotRegex(fixture_catalog, pattern)
+
+        for forbidden_live_surface in (
+            r"/api/autonomy/[^'\"]*/scenarios",
+            r"/api/autonomy/[^'\"]*/confirm",
+            r"/api/autonomy/[^'\"]*/signoff",
+            r"/api/autonomy/[^'\"]*/reports",
+        ):
+            self.assertNotRegex(self.script, forbidden_live_surface)
 
         for boundary_copy in (
             "Fixture preview",
@@ -319,11 +338,226 @@ class AutonomyFrontendSources(unittest.TestCase):
         ):
             self.assertIn(boundary_copy.lower(), self.combined.lower())
 
+    def test_live_ask_and_verify_use_only_the_narrow_durable_api(self):
+        for endpoint in (
+            "/api/autonomy/cases",
+            "/api/autonomy/sources",
+            "/readiness/evaluate",
+            "/events",
+            "/messages",
+            "/message-stream/",
+            "/evidence",
+            "/candidates/",
+            "/review",
+            "/download",
+        ):
+            with self.subTest(endpoint=endpoint):
+                self.assertIn(endpoint, self.script)
+        self.assertIn("function autonomyOpenWorkspace", self.script)
+        self.assertIn("if (autonomy) autonomyOpenWorkspace()", self.all_scripts)
+        self.assertIn('data-content-mode="live"', self.markup)
+        self.assertIn("Later-phase fixture preview — not live case data", self.markup)
+        self.assertIn("autonomySetContentMode('fixture')", self.script)
+
+    def test_live_source_and_basis_lock_is_separate_immutable_operator_action(self):
+        for element_id in (
+            "autonomy-source-selection",
+            "autonomySourceLockForm",
+            "autonomyAnnualSourceSelect",
+            "autonomyAnalysisBasisSelect",
+            "autonomySourceLockBtn",
+            "autonomySourceLockStatus",
+        ):
+            self.assertEqual(self.markup.count(f'id="{element_id}"'), 1)
+        self.assertIn("/api/autonomy/sources", self.script)
+        self.assertIn("function autonomyNormalizeAnalysisBases", self.script)
+        self.assertIn("record?.id", self.script)
+        self.assertIn("record?.label", self.script)
+        self.assertIn("'#autonomy-source-selection': {stage: 'verify', targetId: 'autonomy-source-selection'}", self.script)
+        self.assertIn("select_annual_source: '#autonomy-source-selection'", self.script)
+        self.assertIn("lock_case_basis: '#autonomy-source-selection'", self.script)
+
+        lock = self.script.split("async function autonomyLockCaseBasis", 1)[1].split(
+            "\n        function autonomyParseSseFrame", 1
+        )[0]
+        for field in (
+            "source_annual_job_id: sourceId",
+            "source_snapshot_sha256: sourceSha256",
+            "analysis_basis: analysisBasis",
+            "expected_revision: autonomyLiveCase?.revision",
+            "operator_name: operatorName",
+        ):
+            self.assertIn(field, lock)
+        self.assertNotIn("title:", lock)
+        self.assertNotIn("question:", lock)
+        self.assertIn("caseRecord: true", lock)
+        self.assertIn("readiness: true", lock)
+        self.assertIn("events: true", lock)
+        self.assertIn("autonomyOperatorName?.value.trim()", lock)
+        operator = self.script.split("function autonomyOperator()", 1)[1].split(
+            "\n        function autonomySafeId", 1
+        )[0]
+        self.assertNotIn("updated_by", operator)
+        self.assertNotIn("owner", operator)
+        self.assertIn('placeholder="Enter your name"', self.markup)
+
+        render = self.script.split("function autonomyRenderSourceSelection", 1)[1].split(
+            "\n        function autonomyRenderLiveCase", 1
+        )[0]
+        self.assertIn("autonomyAnnualSourceSelect.disabled = locked", render)
+        self.assertIn("autonomyAnalysisBasisSelect.disabled = locked", render)
+        self.assertIn("Source and analysis basis locked", render)
+        self.assertIn("cannot be changed", render)
+
+    def test_structured_agent_recovery_can_continue_without_agent(self):
+        stream_handler = self.script.split("function autonomyHandleStreamEvent", 1)[1].split(
+            "\n        async function autonomyConnectTurn", 1
+        )[0]
+        self.assertIn("typeof payload.recovery_action === 'object'", stream_handler)
+        self.assertIn("payload.recovery_action?.id", stream_handler)
+        self.assertIn("recoveryAction === 'continue_without_agent'", stream_handler)
+        self.assertIn("'#autonomy-readiness'", stream_handler)
+        self.assertIn("Continue with deterministic readiness", stream_handler)
+        self.assertIn("continue_without_agent: 'readiness'", self.script)
+
+    def test_structured_evidence_source_locations_are_bounded_and_text_only(self):
+        formatter = self.script.split("function autonomyFormatSourceLocation", 1)[1].split(
+            "\n        async function autonomyReadResponse", 1
+        )[0]
+        for kind in ("pdf_text", "xlsx_cell", "csv_cell", "document_metadata", "file_level"):
+            self.assertIn(kind, formatter)
+        self.assertIn("slice(0, 500)", formatter)
+        self.assertIn("autonomyFormatSourceLocation(candidate.source_location)", self.script)
+        self.assertNotIn("candidate.source_location || 'Source location not reported'", self.script)
+        self.assertNotIn("innerHTML", self.script)
+
+    def test_live_permissions_are_structured_and_agent_prose_is_display_only(self):
+        self.assertIn("const AUTONOMY_SUPPORTED_ACTIONS = Object.freeze", self.script)
+        self.assertIn("const AUTONOMY_ALLOWED_DEEP_LINKS = Object.freeze", self.script)
+        self.assertIn("autonomyExecuteSupportedAction(action", self.script)
+        self.assertIn("autonomyLiveReadiness?.allowed_case_actions", self.script)
+        self.assertNotIn("caseRecord.allowed_actions", self.script)
+        self.assertIn("check?.key || check?.id", self.script)
+        self.assertIn("blocker?.closest_supported_action", self.script)
+        self.assertNotRegex(
+            self.script,
+            r"agent(?:Answer|NextAction|Limits|Basis)[\s\S]{0,160}(?:switchMode|fetch\s*\()",
+        )
+        self.assertIn("content.suggestion.runnable === false", self.script)
+        self.assertIn("Non-runnable explanatory suggestion", self.script)
+        for structured_field in (
+            "basis_labels",
+            "exact_blockers",
+            "exact_rules",
+            "next_actions",
+            "non_runnable_scenario_suggestion",
+        ):
+            self.assertIn(structured_field, self.script)
+
+    def test_live_evidence_review_stays_in_verify_and_refreshes_readiness(self):
+        review = self.script.split("async function autonomyReviewCandidate", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        self.assertIn("['accepted', 'rejected'].includes(decision)", review)
+        self.assertIn("expected_revision: autonomyLiveCase?.revision", review)
+        self.assertIn("readiness: true", review)
+        self.assertIn("evidence: true", review)
+        self.assertIn("autonomySelectStage('verify'", review)
+        self.assertNotIn("ready-to-confirm", review)
+        self.assertNotIn("autonomySelectFixture", review)
+
+        deletion = self.script.split("async function autonomyDeleteEvidence", 1)[1].split(
+            "\n        async function ", 1
+        )[0]
+        self.assertIn("operator_name: operatorName", deletion)
+        self.assertIn("expected_revision: autonomyLiveCase?.revision", deletion)
+        self.assertIn("method: 'DELETE'", deletion)
+
+    def test_upload_and_rendering_keep_untrusted_content_out_of_html(self):
+        upload = self.script.split("async function autonomyUploadEvidence", 1)[1].split(
+            "\n        async function ", 1
+        )[0]
+        self.assertIn("new FormData()", upload)
+        self.assertIn("formData.append('file'", upload)
+        self.assertNotIn("'Content-Type'", upload)
+        self.assertNotIn("innerHTML", self.script)
+        self.assertNotIn("insertAdjacentHTML", self.script)
+        for extension in (".pdf", ".xlsx", ".csv", ".png", ".jpg", ".jpeg", ".webp"):
+            self.assertIn(extension, self.markup)
+
+    def test_stream_reconnect_uses_cursor_and_never_reposts_the_message(self):
+        reconnect = self.script.split("function autonomyReconnectStream", 1)[1].split(
+            "\n        async function autonomySendLiveMessage", 1
+        )[0]
+        connect = self.script.split("async function autonomyConnectTurn", 1)[1].split(
+            "\n        function autonomyReconnectStream", 1
+        )[0]
+        self.assertIn("after_event_id=", connect)
+        self.assertIn("lastEventId", connect)
+        self.assertIn("autonomyConnectTurn(autonomyPendingTurn.turnId", reconnect)
+        self.assertNotIn("method: 'POST'", reconnect)
+        self.assertIn("function autonomyParseSseFrame", self.script)
+        self.assertIn("function autonomyConsumeSseChunk", self.script)
+        self.assertIn("payload.error?.code", self.script)
+        self.assertIn("payload.message?.content || payload.error?.detail", self.script)
+        self.assertIn("autonomyPendingTurn = null", self.script)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_proxy_allows_only_agent_and_evidence_phase_autonomy_routes(self):
+        cases = [
+            (["autonomy", "cases"], True),
+            (["autonomy", "sources"], True),
+            (["autonomy", "cases", "case_abc123"], True),
+            (["autonomy", "cases", "case_abc123", "events"], True),
+            (["autonomy", "cases", "case_abc123", "messages"], True),
+            (["autonomy", "cases", "case_abc123", "readiness", "evaluate"], True),
+            (["autonomy", "cases", "case_abc123", "message-stream", "turn_abc123"], True),
+            (["autonomy", "cases", "case_abc123", "evidence"], True),
+            (["autonomy", "cases", "case_abc123", "evidence", "evi_abc123"], True),
+            (["autonomy", "cases", "case_abc123", "evidence", "evi_abc123", "download"], True),
+            (["autonomy", "cases", "case_abc123", "evidence", "evi_abc123", "candidates", "cand_1", "review"], True),
+            (["autonomy", "sources", "extra"], False),
+            (["autonomy", ".."], False),
+            (["autonomy", "cases", ".."], False),
+            (["autonomy", "cases", "case_abc123", "scenarios"], False),
+            (["autonomy", "cases", "case_abc123", "confirm"], False),
+            (["autonomy", "cases", "case_abc123", "signoff"], False),
+            (["autonomy", "cases", "case_abc123", "reports"], False),
+            (["autonomy", "cases", "case_abc123", "evidence", "..", "download"], False),
+        ]
+        script = f"""
+import {{ isAllowedApiPath }} from './lib/render-proxy.ts';
+const cases = {json.dumps(cases)};
+for (const [path, expected] of cases) {{
+  const actual = isAllowedApiPath(path);
+  if (actual !== expected) {{
+    console.error(JSON.stringify({{ path, expected, actual }}));
+    process.exitCode = 1;
+  }}
+}}
+"""
+        completed = subprocess.run(
+            [
+                shutil.which("node"),
+                "--no-warnings",
+                "--experimental-strip-types",
+                "--input-type=module",
+                "-e",
+                script,
+            ],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+
     def test_solar_agent_is_visually_isolated_without_state_mutation(self):
         mode_source = _read(FRONTEND_ROOT / "js" / "01-progress-and-mode.js")
         self.assertIn("dashboard-mode-autonomy", mode_source)
         self.assertIn("autonomyTab", mode_source)
-        self.assertIn("autonomyRenderWorkspace", mode_source)
+        self.assertIn("autonomyOpenWorkspace", mode_source)
         self.assertNotIn("renderAutonomyWorkspace()", mode_source)
         self.assertIn("agentSurface.setAttribute('aria-hidden', 'true')", mode_source)
         self.assertIn("agentSurface.setAttribute('inert', '')", mode_source)

@@ -21,6 +21,9 @@ from sbepv.store import AgentStore
 # integrations. SQLite is the authoritative registry and survives restarts.
 JOBS: dict[str, dict] = {}
 AGENT_STORE = AgentStore(config.OUTPUT_DIR / ".agent_state" / "solar_agent.sqlite3")
+# Turn tasks outlive individual SSE connections so a browser reconnect never
+# duplicates an agent run. Durable turn/event rows remain authoritative.
+DECISION_AGENT_TASKS: dict[str, object] = {}
 _WORKER_STOP = threading.Event()
 _WORKER_WAKE = threading.Event()
 _WORKER_LOCK = threading.Lock()
