@@ -115,6 +115,69 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertEqual(len(redesign), 1, names)
         self.assertLess(names.index(base[0]), names.index(redesign[0]))
 
+    def test_autonomy_sources_assemble_exactly_once_and_preserve_existing_tabs(self):
+        """The fourth mode is additive and every canonical partial has one copy."""
+
+        assembled = dashboard.assemble_dashboard_html(PROJECT_ROOT)
+        frontend = PROJECT_ROOT / "frontend"
+        autonomy_sources = sorted(
+            path
+            for directory, pattern in (
+                (frontend / "css", "*autonomy*.css"),
+                (frontend / "html", "*autonomy*.html"),
+                (frontend / "js", "*autonomy*.js"),
+            )
+            for path in directory.glob(pattern)
+        )
+
+        self.assertGreaterEqual(len(autonomy_sources), 3)
+        for path in autonomy_sources:
+            source = (
+                path.read_text(encoding="utf-8")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+                .removesuffix("\n")
+            )
+            with self.subTest(source=path.relative_to(PROJECT_ROOT)):
+                self.assertTrue(source.strip())
+                self.assertEqual(assembled.count(source), 1)
+
+        tab_ids = (
+            "validationTab",
+            "annualTab",
+            "technoeconomicTab",
+            "autonomyTab",
+        )
+        positions = []
+        for tab_id in tab_ids:
+            marker = f'id="{tab_id}"'
+            self.assertEqual(assembled.count(marker), 1)
+            positions.append(assembled.index(marker))
+        self.assertEqual(positions, sorted(positions))
+
+        for label in (
+            "Model Calibration",
+            "Annual Simulation",
+            "Technoeconomic Analysis",
+            "Autonomy",
+        ):
+            self.assertIn(label, assembled)
+        self.assertEqual(assembled.count('id="autonomyPanel"'), 1)
+
+        script_names = sorted(
+            path.name for path in (frontend / "js").glob("*.js")
+        )
+        autonomy_scripts = [name for name in script_names if "autonomy" in name]
+        self.assertEqual(len(autonomy_scripts), 1, script_names)
+        self.assertLess(
+            script_names.index("01-progress-and-mode.js"),
+            script_names.index(autonomy_scripts[0]),
+        )
+        self.assertLess(
+            script_names.index(autonomy_scripts[0]),
+            script_names.index("08-dashboard-state.js"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
