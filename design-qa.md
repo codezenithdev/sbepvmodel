@@ -60,3 +60,86 @@
 - P3: replace the textual More label with the product's icon-library vertical-ellipsis icon if that icon becomes part of the shared dashboard asset set.
 
 final result: passed
+
+---
+
+# Hybrid Autonomy Workspace Phase 0/1 — design QA
+
+**Evidence**
+
+- Source visual truth: `analysis/autonomy-qa/existing-dashboard-calibration-1440x1000.jpg`, a fresh browser capture of the existing dashboard visual language and shared components.
+- Controlling interaction truth: `docs/HYBRID_AUTONOMY_WORKSPACE_PRODUCT_CONTRACT_V1.md`; `docs/UNIFIED_AUTONOMY_TEA_PRODUCT_CONTRACT_V1.md` supplies the end-state boundary and the hybrid contract wins on conflict.
+- Implementation, desktop Investigation: `analysis/autonomy-qa/autonomy-desktop-evidence-needed-final-1440x1000.jpg`.
+- Implementation, desktop Decision Brief: `analysis/autonomy-qa/autonomy-desktop-signed-recommendation-1440x1000.jpg`.
+- Implementation, tablet: `analysis/autonomy-qa/autonomy-tablet-running-1024x900.jpg` and `analysis/autonomy-qa/autonomy-tablet-evidence-drawer-1024x900.jpg`.
+- Implementation, mobile: `analysis/autonomy-qa/autonomy-mobile-no-case-390x844.jpg`, `analysis/autonomy-qa/autonomy-mobile-calibration-blocked-390x844.jpg`, `analysis/autonomy-qa/autonomy-mobile-partial-390x844.jpg`, and `analysis/autonomy-qa/autonomy-mobile-signed-recommendation-390x844.jpg`.
+- Full visual-language comparison input: `analysis/autonomy-qa/autonomy-style-comparison-1440x1000-pair.jpg`.
+- Focused header, navigation, and primary-card comparison input: `analysis/autonomy-qa/autonomy-style-focused-comparison.jpg`.
+- Requested CSS viewports: desktop 1440 × 1000, tablet 1024 × 900, and mobile 390 × 844 at DPR 1. The in-app browser captures its page surface at 1425 × 970, 1009 × 887, and 375 × 812 pixels respectively.
+- States visually inspected: no case, blocked, evidence needed, ready to confirm, running, partial results, completed results, decision ready, and signed.
+
+No selected Option 2 or Option 3 raster mockup exists in the approved-plan folder. The older Option 1 forecast artifact is a rejected direction and was not treated as a pixel target. Accordingly, this pass compares visual language and component fidelity against the live existing dashboard while checking layout, content, authority, and transitions against the controlling written hybrid contract; it makes no false pixel-equivalence claim to the rejected mockup.
+
+**Findings**
+
+- No actionable P0, P1, or P2 findings remain.
+- Fonts and typography: the implementation retains the dashboard's existing Inter/system stack, uppercase teal eyebrows, compact metadata, dense table labels, and heading weights. Long decision text wraps without clipping at all three breakpoints.
+- Spacing and layout rhythm: desktop uses the approved 320 px / flexible / 320 px Investigation grid and full analysis grid; tablet uses a two-column workspace plus modal evidence drawer; mobile uses single-column cards, 44 px navigation targets, and a 16 px fixture selector. No page-level horizontal overflow remains.
+- Colors and visual tokens: teal remains navigation and primary action, green indicates accepted or complete, amber indicates provisional or partial, red indicates hard blocks or retained conflict, and blue-gray carries informational provenance. Existing borders, radii, surfaces, shadows, and focus rings are reused.
+- Image quality and asset fidelity: this workflow requires no photography, illustrations, logos beyond existing product branding, or novel raster assets. No placeholder imagery or invented decorative asset was introduced.
+- Copy and content: every quantitative value is labeled as fixture data; the interface explicitly says no jobs, evidence, reports, agent requests, or server changes occur. Partial results withhold completed-only recommendation and reversal content, failed values display as unavailable, and signed copy records disposition, owner, rationale, source lock, and basis lock.
+- Responsive behavior: desktop Investigation and Decision Brief, tablet running state and evidence drawer, and mobile empty, blocked, partial, and signed states were inspected at their specified sizes. Tables remain within scroll containers, the mobile reversal panel is 347 px wide inside a 375 px page surface, and persistent controls do not cover content.
+- Accessibility and behavior: semantic headings, landmarks, tablists, tabs, tabpanels, tables, column scopes, status messages, labels, and native dialogs are present. Stage tabs support Arrow keys, Home, and End; native dialogs contain focus, close on Escape, and restore the trigger; the tablet drawer moves focus to Close, traps Shift+Tab, closes on Escape, and restores its opener. The existing Solar Agent is explicitly `aria-hidden` and inert only in Autonomy, then returns unchanged in other modes. Reduced-motion and forced-colors rules remain present.
+- Browser health: final desktop, tablet, and mobile warning/error console logs were empty.
+
+**Comparison history**
+
+1. Initial functional render — blocked.
+   - P1: the Autonomy mode called a nonexistent renderer and the job monitor referenced an undefined fixture variable, preventing reliable state rendering.
+   - Fix: connected the mode to `autonomyRenderWorkspace` and used the authoritative local fixture identifier throughout job rendering.
+   - Post-fix evidence: desktop Investigation and tablet running captures render the expected shared case and job state.
+2. Authority and state audit — blocked.
+   - P1: grouped confirmation was not fully gated, sign-off input was discarded, provenance labels conflicted, and no-case/partial states exposed contradictory content.
+   - Fix: gated confirmation on the exact ready fixture, operator, acknowledgement, and selected scenarios; retained local disposition/owner/rationale; corrected provenance; hid all case surfaces for no-case; and added an explicit partial-only table with failed values withheld.
+   - Post-fix evidence: the mobile empty and partial captures show distinct, non-contradictory states; browser interaction checks preserve ready state on invalid confirmation and transition to queued only after a valid review.
+3. Responsive Decision Brief pass — blocked.
+   - P2: mobile signed view expanded to 562 px because a reversal-table minimum width dictated a nested grid track; the sign-off and lower-grid content inherited that overflow.
+   - Fix: constrained nested grid tracks and panels with `minmax(0, 1fr)`, `min-width: 0`, and a bounded table scroll container.
+   - Post-fix evidence: the final mobile signed capture has a 375 px page surface, a 347 px reversal panel, and no horizontal overflow.
+4. Partial-results visual pass — blocked.
+   - P1: the partial preview still displayed the completed recommendation and reversal sections below its warning.
+   - Fix: classified the recommendation and lower Decision Brief grid as complete-results-only content while keeping the human authority bar visibly disabled.
+   - Post-fix evidence: `autonomy-mobile-partial-390x844.jpg` shows only completed scenario rows, the failed value as unavailable, no aggregate recommendation, and disabled sign-off.
+5. Tablet accessibility pass — blocked.
+   - P2: the evidence drawer opened visually but initial focus could remain on its launcher.
+   - Fix: focus Close immediately and reinforce it after the opening frame; retain the existing trap and focus restoration.
+   - Post-fix evidence: browser checks report entry focus on `autonomyCloseRailBtn`, Shift+Tab contained on the final drawer tab, Escape closure, `aria-hidden=true`, and focus restored to `autonomyOpenRailBtn`.
+6. Final comparison — passed.
+   - The full and focused comparison inputs show the same brand typography, header composition, navigation treatment, surface hierarchy, card density, teal emphasis, borders, and spacing cadence as the existing dashboard. Final desktop, tablet, and mobile captures show no clipping, unintended overlap, or page-level horizontal overflow.
+
+**Primary interactions tested**
+
+- Switch among Calibration, Annual Simulation, existing TEA, Autonomy, and back; existing titles, panels, Solar Agent availability, and calibration input value remain unchanged.
+- Traverse Investigation stages with keyboard controls and hear the live stage announcement.
+- Open grouped confirmation, reject an empty scenario selection, then accept a valid selected scenario and reach the queued fixture.
+- Open and dismiss confirmation and sign-off dialogs with Escape; verify focus restoration.
+- Open the tablet evidence drawer; verify modal semantics, focus entry, Shift+Tab containment, Escape closure, and opener restoration.
+- Open partial results explicitly; verify no completed recommendation, no completed analysis panels, failed value withholding, and disabled sign-off.
+- Record a local Reject sign-off with a named owner and rationale; verify the signed fixture and disabled mutable fields.
+- Verify all required lifecycle fixtures, mobile section synchronization, 44 px targets, 16 px mobile controls, and zero horizontal overflow.
+
+**Implementation Checklist**
+
+- [x] Approved plans preserved as versioned repository contracts.
+- [x] Shared case, five-stage Investigation Workspace, and deterministic Decision Brief transition.
+- [x] Evidence/readiness rail and all 22 fixture states.
+- [x] Empty, blocked, running, partial, completed, and signed acceptance states.
+- [x] Desktop, tablet, mobile, keyboard, focus, screen-reader, reduced-motion, and forced-colors behavior.
+- [x] Existing dashboard modes and Solar Agent behavior preserved.
+- [x] Canonical frontend assembly, classic-script ordering, and newline-equivalent Python/Vite builds verified.
+
+**Follow-up Polish**
+
+- P3: when the product adopts a shared icon library, the text-only `More` disclosure can use its established overflow icon without changing behavior.
+
+final result: passed

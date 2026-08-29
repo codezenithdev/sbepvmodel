@@ -95,6 +95,7 @@
         const validationTab = document.getElementById('validationTab');
         const annualTab = document.getElementById('annualTab');
         const technoeconomicTab = document.getElementById('technoeconomicTab');
+        const autonomyTab = document.getElementById('autonomyTab');
         const dashboardTitle = document.getElementById('dashboardTitle');
         const dashboardSubtitle = document.getElementById('dashboardSubtitle');
         const technoeconomicPanel = document.getElementById('technoeconomicPanel');

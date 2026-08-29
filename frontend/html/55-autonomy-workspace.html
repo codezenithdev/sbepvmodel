@@ -1,0 +1,723 @@
+            <div class="autonomy-only" id="autonomyPanel" data-autonomy-case-id="case_sbe_hybrid_001" data-autonomy-case-revision="revision_003" data-autonomy-fixture="new-case" data-mobile-section="ask">
+                <section class="autonomy-shell" aria-labelledby="autonomyWorkspaceHeading">
+                    <div class="autonomy-fixture-toolbar" role="region" aria-labelledby="autonomyFixtureHeading">
+                        <div class="autonomy-fixture-copy">
+                            <p class="autonomy-eyebrow" id="autonomyFixtureHeading">Phase 1 preview</p>
+                            <p><strong>Fixture-only workspace.</strong> Local preview data never creates jobs, saves evidence, calls an agent, or changes an existing dashboard workflow.</p>
+                        </div>
+                        <label class="autonomy-field autonomy-fixture-field" for="autonomyFixtureSelect">
+                            <span>Fixture state</span>
+                            <select id="autonomyFixtureSelect" aria-describedby="autonomyFixtureHelp">
+                                <option value="no-case">No decision cases</option>
+                                <option value="new-case" selected>New case</option>
+                                <option value="calibration-blocked">Calibration blocked</option>
+                                <option value="annual-unavailable">Annual source unavailable</option>
+                                <option value="annual-incomplete">Annual source incomplete</option>
+                                <option value="annual-stale">Annual source stale</option>
+                                <option value="evidence-needed">Evidence needed</option>
+                                <option value="evidence-conflict">Evidence conflict</option>
+                                <option value="agent-unavailable">Decision Agent unavailable</option>
+                                <option value="scenario-invalid">Scenario invalid</option>
+                                <option value="ready-to-confirm">Ready to confirm</option>
+                                <option value="queued">Jobs queued</option>
+                                <option value="running">Jobs running</option>
+                                <option value="failed">One job failed</option>
+                                <option value="partial-results">Partial results</option>
+                                <option value="results-ready">All results ready</option>
+                                <option value="recommendation-provisional">Recommendation provisional</option>
+                                <option value="decision-ready">Ready for sign-off</option>
+                                <option value="signed">Signed case</option>
+                                <option value="signed-superseded">Signed case superseded</option>
+                                <option value="network-reconnecting">Message stream reconnecting</option>
+                                <option value="shared-case-stale">Shared case changed</option>
+                            </select>
+                            <small id="autonomyFixtureHelp">Changes only deterministic local presentation state.</small>
+                        </label>
+                    </div>
+
+                    <header class="autonomy-case-header" id="autonomyCaseHeader">
+                        <section class="autonomy-empty-case" id="autonomyCaseEmpty" aria-labelledby="autonomyEmptyHeading" hidden>
+                            <div>
+                                <p class="autonomy-eyebrow">Decision cases</p>
+                                <h2 id="autonomyEmptyHeading">Start the first decision</h2>
+                                <p>Frame a PV or technoeconomic question, then review readiness before comparing controlled scenarios.</p>
+                            </div>
+                            <button class="autonomy-button autonomy-button-primary" type="button" data-autonomy-fixture-action="start">Start a decision</button>
+                        </section>
+
+                        <div id="autonomyCaseContent">
+                            <div class="autonomy-case-topline">
+                                <div class="autonomy-case-picker">
+                                    <label class="autonomy-field" for="autonomyCaseSearch">
+                                        <span>Find a decision case</span>
+                                        <input id="autonomyCaseSearch" type="search" value="SBE architecture" autocomplete="off">
+                                    </label>
+                                    <label class="autonomy-field" for="autonomyCaseSelect">
+                                        <span>Active case</span>
+                                        <select id="autonomyCaseSelect">
+                                            <option value="case_sbe_hybrid_001">case_sbe_hybrid_001 · SBE architecture decision</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <div class="autonomy-case-actions">
+                                    <button class="autonomy-button autonomy-button-secondary" id="autonomyNewDecisionBtn" type="button">New Decision</button>
+                                    <details class="autonomy-overflow">
+                                        <summary aria-label="More case actions">More</summary>
+                                        <div class="autonomy-overflow-menu">
+                                            <button type="button" data-autonomy-case-action="rename">Rename fixture case</button>
+                                            <button type="button" data-autonomy-case-action="archive">Preview archive details</button>
+                                            <button type="button" data-autonomy-case-action="export">Preview export details</button>
+                                            <button type="button" data-autonomy-case-action="details">Case details</button>
+                                        </div>
+                                    </details>
+                                </div>
+                            </div>
+
+                            <div class="autonomy-case-heading-row">
+                                <div class="autonomy-title-field">
+                                    <label for="autonomyCaseTitle">Case title</label>
+                                    <input id="autonomyCaseTitle" type="text" value="SolarEdge vs Solectria lifecycle decision" autocomplete="off">
+                                </div>
+                                <div class="autonomy-view-switch" role="tablist" aria-label="Decision case view">
+                                    <button class="is-selected" id="autonomyInvestigationViewBtn" type="button" role="tab" aria-selected="true" aria-controls="autonomyInvestigationView" tabindex="0">Investigation</button>
+                                    <button id="autonomyBriefViewBtn" type="button" role="tab" aria-selected="false" aria-controls="autonomyDecisionBrief" aria-disabled="true" tabindex="-1">Decision Brief</button>
+                                </div>
+                            </div>
+
+                            <label class="autonomy-field autonomy-question-field" for="autonomyQuestion">
+                                <span>Decision question</span>
+                                <textarea id="autonomyQuestion" rows="2">Which inverter architecture is economically preferable for the SBE Innovation Site, how certain is that conclusion, and what could reverse it?</textarea>
+                            </label>
+
+                            <dl class="autonomy-case-meta">
+                                <div>
+                                    <dt>Status</dt>
+                                    <dd><span class="autonomy-status-badge" id="autonomyCaseStatus" data-status="draft">Draft · Ask</span></dd>
+                                </div>
+                                <div>
+                                    <dt>Decision owner</dt>
+                                    <dd id="autonomyDecisionOwner">Morgan Lee</dd>
+                                </div>
+                                <div>
+                                    <dt>Annual source lock</dt>
+                                    <dd id="autonomySourceLock">ann_2024_verified_017 · SHA 82d9…91c4</dd>
+                                </div>
+                                <div>
+                                    <dt>TEA basis lock</dt>
+                                    <dd id="autonomyBasisLock">SolarTAC site · tea-calculation-v3</dd>
+                                </div>
+                                <div>
+                                    <dt>Case revision</dt>
+                                    <dd id="autonomyCaseRevision">Revision 3 · shared fixture identity</dd>
+                                </div>
+                                <div>
+                                    <dt>Last updated</dt>
+                                    <dd id="autonomyUpdatedAt">August 27, 2026 at 9:30 AM MDT</dd>
+                                </div>
+                            </dl>
+                        </div>
+                    </header>
+
+                    <p class="autonomy-live-status sr-only" id="autonomyLiveStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+
+                    <nav class="autonomy-stage-stepper" aria-label="Decision stages" data-autonomy-case-workspace>
+                        <div class="autonomy-stage-track" role="tablist" aria-label="Investigation stage">
+                            <button class="is-current" id="autonomyStageAskBtn" type="button" role="tab" aria-selected="true" aria-current="step" aria-controls="autonomyStageAskPanel" tabindex="0" data-autonomy-stage="ask" data-autonomy-stage-status="current">
+                                <span class="autonomy-stage-number" aria-hidden="true">1</span>
+                                <span><strong>Ask</strong><small>Current</small></span>
+                            </button>
+                            <button id="autonomyStageVerifyBtn" type="button" role="tab" aria-selected="false" aria-controls="autonomyStageVerifyPanel" tabindex="-1" data-autonomy-stage="verify" data-autonomy-stage-status="not-started">
+                                <span class="autonomy-stage-number" aria-hidden="true">2</span>
+                                <span><strong>Verify evidence</strong><small>Not started</small></span>
+                            </button>
+                            <button id="autonomyStageCompareBtn" type="button" role="tab" aria-selected="false" aria-controls="autonomyStageComparePanel" tabindex="-1" data-autonomy-stage="compare" data-autonomy-stage-status="not-started">
+                                <span class="autonomy-stage-number" aria-hidden="true">3</span>
+                                <span><strong>Compare scenarios</strong><small>Not started</small></span>
+                            </button>
+                            <button id="autonomyStageRunBtn" type="button" role="tab" aria-selected="false" aria-controls="autonomyStageRunPanel" tabindex="-1" data-autonomy-stage="run" data-autonomy-stage-status="not-started">
+                                <span class="autonomy-stage-number" aria-hidden="true">4</span>
+                                <span><strong>Run TEA</strong><small>Not started</small></span>
+                            </button>
+                            <button id="autonomyStageDecideBtn" type="button" role="tab" aria-selected="false" aria-controls="autonomyStageDecidePanel" tabindex="-1" data-autonomy-stage="decide" data-autonomy-stage-status="not-started">
+                                <span class="autonomy-stage-number" aria-hidden="true">5</span>
+                                <span><strong>Decide</strong><small>Not started</small></span>
+                            </button>
+                        </div>
+                        <label class="autonomy-stage-select-label" for="autonomyStageSelect">
+                            <span>Current stage</span>
+                            <select id="autonomyStageSelect">
+                                <option value="ask">1 · Ask</option>
+                                <option value="verify">2 · Verify evidence</option>
+                                <option value="compare">3 · Compare scenarios</option>
+                                <option value="run">4 · Run TEA</option>
+                                <option value="decide">5 · Decide</option>
+                            </select>
+                        </label>
+                    </nav>
+
+                    <section class="autonomy-readiness-strip" id="autonomyReadinessStrip" aria-labelledby="autonomyReadinessHeading" data-autonomy-case-workspace>
+                        <div class="autonomy-readiness-heading">
+                            <span class="autonomy-eyebrow" id="autonomyReadinessHeading">Readiness</span>
+                            <span class="autonomy-brief-provenance">Calibration passed · Annual source ann_2024_verified_017 · SolarTAC site basis · 1 provisional evidence item</span>
+                            <button class="autonomy-link-button" id="autonomyOpenRailBtn" type="button" aria-controls="autonomyEvidenceRail" aria-expanded="false">Open evidence and readiness</button>
+                        </div>
+                        <div class="autonomy-readiness-items">
+                            <button type="button" data-autonomy-readiness="calibration" data-status="passed"><span>Calibration</span><strong data-autonomy-readiness-status>Passed</strong></button>
+                            <button type="button" data-autonomy-readiness="annual" data-status="passed"><span>Annual source</span><strong data-autonomy-readiness-status>Passed</strong></button>
+                            <button type="button" data-autonomy-readiness="weather" data-status="passed"><span>Weather coverage</span><strong data-autonomy-readiness-status>Passed</strong></button>
+                            <button type="button" data-autonomy-readiness="evidence" data-status="needs-attention"><span>TEA evidence</span><strong data-autonomy-readiness-status>Needs attention</strong></button>
+                            <button type="button" data-autonomy-readiness="agent" data-status="available"><span>Decision Agent</span><strong data-autonomy-readiness-status>Available · fixture</strong></button>
+                        </div>
+                    </section>
+
+                    <div class="autonomy-mobile-tabs" role="tablist" aria-label="Autonomy workspace area" data-autonomy-case-workspace>
+                        <button class="is-selected" type="button" role="tab" aria-selected="true" aria-controls="autonomyAgentPanel" data-autonomy-mobile-tab="ask">Ask</button>
+                        <button type="button" role="tab" aria-selected="false" aria-controls="autonomyStageCanvas" data-autonomy-mobile-tab="scenarios" tabindex="-1">Scenarios</button>
+                        <button type="button" role="tab" aria-selected="false" aria-controls="autonomyEvidenceRail" data-autonomy-mobile-tab="evidence" tabindex="-1">Evidence</button>
+                        <button type="button" role="tab" aria-selected="false" aria-controls="autonomyDecisionBrief" data-autonomy-mobile-tab="decision" tabindex="-1">Decision</button>
+                    </div>
+
+                    <section class="autonomy-investigation-view" id="autonomyInvestigationView" role="tabpanel" aria-labelledby="autonomyInvestigationViewBtn" tabindex="-1" data-autonomy-case-workspace>
+                        <h2 class="sr-only" id="autonomyWorkspaceHeading">Investigation Workspace</h2>
+                        <div class="autonomy-investigation-grid">
+                            <aside class="autonomy-agent-panel" id="autonomyAgentPanel" aria-labelledby="autonomyAgentHeading">
+                                <header class="autonomy-panel-header">
+                                    <div>
+                                        <p class="autonomy-eyebrow">Fixture Decision Agent</p>
+                                        <h3 id="autonomyAgentHeading">Investigate the decision</h3>
+                                    </div>
+                                    <span class="autonomy-status-badge" id="autonomyAgentStatus" data-status="available">Available · local fixture</span>
+                                </header>
+
+                                <div class="autonomy-agent-thread" aria-label="Decision Agent fixture conversation">
+                                    <article class="autonomy-user-message">
+                                        <p class="autonomy-message-author">You</p>
+                                        <p>What is driving the performance and cost difference between the two systems?</p>
+                                    </article>
+                                    <article class="autonomy-agent-message">
+                                        <div>
+                                            <p class="autonomy-message-label">Answer</p>
+                                            <p id="autonomyAgentAnswer">The current evidence suggests an energy gain for SolarEdge, but the lifecycle cost premium and one provisional maintenance input keep the decision open.</p>
+                                        </div>
+                                        <div>
+                                            <p class="autonomy-message-label">Basis</p>
+                                            <p id="autonomyAgentBasis"><span class="autonomy-basis-chip" data-basis="model">Model result</span> Paired annual energy rows and fixture TEA comparison values use SolarEdge minus Solectria.</p>
+                                        </div>
+                                        <div>
+                                            <p class="autonomy-message-label">Limits</p>
+                                            <p id="autonomyAgentLimits">This is a Phase 1 fixture. It does not retrieve sources or calculate lifecycle results.</p>
+                                        </div>
+                                        <div>
+                                            <p class="autonomy-message-label">Next action</p>
+                                            <p id="autonomyAgentNextAction">Review the provisional maintenance evidence before validating the alternatives.</p>
+                                        </div>
+                                        <div class="autonomy-source-chips" aria-label="Supporting fixture sources">
+                                            <button type="button" data-autonomy-source="annual-energy">Annual energy lineage · verified</button>
+                                            <button type="button" data-autonomy-source="maintenance-evidence">Maintenance quote · provisional</button>
+                                        </div>
+                                    </article>
+
+                                    <section class="autonomy-agent-proposal" aria-labelledby="autonomyProposalHeading">
+                                        <p class="autonomy-message-label">Draft scenario proposal</p>
+                                        <h4 id="autonomyProposalHeading">Test higher optimizer maintenance</h4>
+                                        <p>Change one recurring-cost assumption while preserving the source, basis, realization count, and seed.</p>
+                                        <p><span class="autonomy-basis-chip" data-basis="agent">Agent interpretation</span> Draft only · deterministic validation has authority.</p>
+                                        <button class="autonomy-button autonomy-button-secondary" type="button" data-autonomy-proposal-action="review">Review draft differences</button>
+                                    </section>
+                                </div>
+
+                                <div class="autonomy-starter-prompts" aria-label="Suggested fixture questions">
+                                    <button type="button" data-autonomy-prompt="why">Why is the energy gain uncertain?</button>
+                                    <button type="button" data-autonomy-prompt="what">What does all-in LCOO mean?</button>
+                                    <button type="button" data-autonomy-prompt="why-not">Why can’t we change the source?</button>
+                                </div>
+
+                                <form class="autonomy-agent-composer" id="autonomyAgentForm">
+                                    <label for="autonomyAgentComposer">Ask a fixture question</label>
+                                    <textarea id="autonomyAgentComposer" rows="3" placeholder="Ask why, what, or what could reverse the decision"></textarea>
+                                    <div>
+                                        <button class="autonomy-button autonomy-button-secondary" type="button" data-autonomy-attach-evidence>Attach evidence</button>
+                                        <button class="autonomy-button autonomy-button-primary" id="autonomyAgentSendBtn" type="button">Preview response</button>
+                                    </div>
+                                    <small>No network request is made.</small>
+                                </form>
+                            </aside>
+
+                            <section class="autonomy-stage-canvas" id="autonomyStageCanvas" aria-label="Current investigation stage">
+                                <section class="autonomy-state-banner" id="autonomyStateBanner" data-status="info" aria-labelledby="autonomyStateBannerTitle">
+                                    <div>
+                                        <p class="autonomy-eyebrow">Current fixture state</p>
+                                        <h3 id="autonomyStateBannerTitle">Frame the decision question</h3>
+                                        <p id="autonomyStateBannerText">The case is safe and editable. No evidence, scenario, or job has been created.</p>
+                                    </div>
+                                    <button class="autonomy-button autonomy-button-secondary" id="autonomyStateAction" type="button">Frame the question</button>
+                                </section>
+
+                                <section class="autonomy-stage-panel" id="autonomyStageAskPanel" role="tabpanel" aria-labelledby="autonomyStageAskBtn" data-autonomy-stage-panel="ask" tabindex="-1">
+                                    <header class="autonomy-section-heading">
+                                        <div>
+                                            <p class="autonomy-eyebrow">Stage 1 · Ask</p>
+                                            <h3>Turn the question into a decision frame</h3>
+                                            <p>Keep the business choice, baseline, outcome, constraints, and next check visible.</p>
+                                        </div>
+                                    </header>
+                                    <div class="autonomy-decision-frame">
+                                        <article>
+                                            <h4>Decision to make</h4>
+                                            <p>Choose the inverter architecture for the next SBE design review.</p>
+                                        </article>
+                                        <article>
+                                            <h4>Baseline</h4>
+                                            <p>Solectria system under the same verified Annual source and TEA basis.</p>
+                                        </article>
+                                        <article>
+                                            <h4>Outcome that matters</h4>
+                                            <p>Lifecycle cost and energy, with uncertainty and reversal conditions.</p>
+                                        </article>
+                                        <article>
+                                            <h4>Known constraints</h4>
+                                            <p>One source lock, one basis lock, baseline plus at most three alternatives.</p>
+                                        </article>
+                                        <article>
+                                            <h4>Information still needed</h4>
+                                            <p>Accepted maintenance evidence and confirmation of operating assumptions.</p>
+                                        </article>
+                                        <article>
+                                            <h4>Suggested path</h4>
+                                            <p>Verify evidence, compare controlled differences, preview confirmation, then inspect the brief.</p>
+                                        </article>
+                                    </div>
+                                    <aside class="autonomy-trust-note">
+                                        <strong>Authority boundary</strong>
+                                        <p>The fixture agent may explain or propose. Deterministic services will own readiness and validation in later phases, and a named human must authorize any future run.</p>
+                                    </aside>
+                                </section>
+
+                                <section class="autonomy-stage-panel" id="autonomyStageVerifyPanel" role="tabpanel" aria-labelledby="autonomyStageVerifyBtn" data-autonomy-stage-panel="verify" tabindex="-1" hidden>
+                                    <header class="autonomy-section-heading">
+                                        <div>
+                                            <p class="autonomy-eyebrow">Stage 2 · Verify evidence</p>
+                                            <h3>Resolve prerequisites and preserve lineage</h3>
+                                            <p>Blocked and provisional items explain what remains safe and offer one supported recovery.</p>
+                                        </div>
+                                    </header>
+                                    <div class="autonomy-checklist" role="list" aria-label="Readiness checks">
+                                        <article role="listitem" data-status="passed"><span>Passed</span><div><h4>Promoted calibration lineage</h4><p>Review and source hash agree with the selected Annual source.</p></div></article>
+                                        <article role="listitem" data-status="passed"><span>Passed</span><div><h4>Annual source integrity</h4><p><span class="autonomy-basis-chip" data-basis="measured">Measured fact</span> Eleven complete paired weather years remain source verified.</p></div></article>
+                                        <article role="listitem" data-status="needs-attention"><span>Needs attention</span><div><h4>Maintenance evidence</h4><p>One secondary synthesis value needs named rationale before a runnable request.</p></div></article>
+                                    </div>
+                                    <section class="autonomy-source-timeline" aria-labelledby="autonomySourceTimelineHeading">
+                                        <h4 id="autonomySourceTimelineHeading">Source lineage</h4>
+                                        <ol>
+                                            <li><strong>Calibration promoted</strong><span>Reviewed validation · cal_2026_spring</span></li>
+                                            <li><strong>Annual source completed</strong><span>ann_2024_verified_017 · 11 eligible years</span></li>
+                                            <li><strong>TEA basis locked</strong><span>SolarTAC site · applied-capacity normalization</span></li>
+                                        </ol>
+                                    </section>
+                                    <section class="autonomy-evidence-candidate" aria-labelledby="autonomyCandidateHeading">
+                                        <div>
+                                            <p class="autonomy-eyebrow">Candidate evidence · provisional</p>
+                                            <h4 id="autonomyCandidateHeading">Annual optimizer maintenance allowance</h4>
+                                            <p><span class="autonomy-basis-chip" data-basis="public">Public evidence</span> Fixture excerpt, page 14, cell D22 · $3,400/year in constant 2026 USD.</p>
+                                            <p class="autonomy-candidate-meta">SHA-256 6d82…ad90 · consumed by Alternative 2 recurring maintenance</p>
+                                        </div>
+                                        <fieldset>
+                                            <legend>Fixture review decision</legend>
+                                            <label><input type="radio" name="autonomyEvidenceDecision" value="accept"> Accept candidate</label>
+                                            <label><input type="radio" name="autonomyEvidenceDecision" value="reject"> Reject candidate</label>
+                                        </fieldset>
+                                        <label class="autonomy-field" for="autonomyEvidenceRationale"><span>Named rationale required for provisional evidence</span><textarea id="autonomyEvidenceRationale" rows="2"></textarea></label>
+                                        <p class="autonomy-acknowledgement">I reviewed this evidence candidate and understand that provisional evidence requires a named rationale before it can support a runnable request.</p>
+                                        <button class="autonomy-button autonomy-button-primary" id="autonomyEvidenceReviewBtn" type="button">Preview evidence decision</button>
+                                        <p class="autonomy-dialog-error" id="autonomyEvidenceReviewError" role="alert" tabindex="-1" hidden></p>
+                                    </section>
+                                </section>
+
+                                <section class="autonomy-stage-panel" id="autonomyStageComparePanel" role="tabpanel" aria-labelledby="autonomyStageCompareBtn" data-autonomy-stage-panel="compare" tabindex="-1" hidden>
+                                    <header class="autonomy-section-heading">
+                                        <div>
+                                            <p class="autonomy-eyebrow">Stage 3 · Compare scenarios</p>
+                                            <h3>Review one baseline and three controlled alternatives</h3>
+                                            <p>All fixtures preserve the Annual source, TEA basis, 10,000 realizations, and seed 481516.</p>
+                                        </div>
+                                    </header>
+                                    <div class="autonomy-scenario-grid">
+                                        <article class="autonomy-scenario-card" data-autonomy-scenario="baseline" data-status="valid">
+                                            <div><span class="autonomy-scenario-label">Baseline</span><strong data-autonomy-scenario-status>Validated</strong></div>
+                                            <h4>Current reviewed assumptions</h4>
+                                            <p>No differences. Accepted source and cost evidence.</p>
+                                            <small>Request fixture hash 48a7…1bd2</small>
+                                        </article>
+                                        <article class="autonomy-scenario-card" data-autonomy-scenario="alternative-1" data-status="valid">
+                                            <div><span class="autonomy-scenario-label">Alternative 1</span><strong data-autonomy-scenario-status>Validated</strong></div>
+                                            <h4>Lower SolarEdge installed cost</h4>
+                                            <p><span class="autonomy-basis-chip" data-basis="assumption">Accepted assumption</span> SE initial installed cost: −8% relative to baseline.</p>
+                                            <small>Accepted assumption · hash a291…c871</small>
+                                        </article>
+                                        <article class="autonomy-scenario-card" data-autonomy-scenario="alternative-2" data-status="provisional">
+                                            <div><span class="autonomy-scenario-label">Alternative 2</span><strong data-autonomy-scenario-status>Provisional evidence</strong></div>
+                                            <h4>Higher optimizer maintenance</h4>
+                                            <p>SE recurring maintenance: +$3,400/year.</p>
+                                            <small>Public evidence candidate · hash 7f03…e521</small>
+                                        </article>
+                                        <article class="autonomy-scenario-card" data-autonomy-scenario="alternative-3" data-status="warning">
+                                            <div><span class="autonomy-scenario-label">Alternative 3</span><strong data-autonomy-scenario-status>Structural warning</strong></div>
+                                            <h4>Commercial topology comparison</h4>
+                                            <p>Transformer count and BOS structure differ; causal attribution is limited.</p>
+                                            <small>Review required · hash c16e…8ad4</small>
+                                        </article>
+                                    </div>
+                                    <div class="autonomy-table-wrap autonomy-scenario-matrix" tabindex="0" role="region" aria-label="Scenario difference matrix">
+                                        <table>
+                                            <caption>Differences from the baseline fixture</caption>
+                                            <thead><tr><th scope="col">Field</th><th scope="col">Baseline</th><th scope="col">Alternative 1</th><th scope="col">Alternative 2</th><th scope="col">Alternative 3</th></tr></thead>
+                                            <tbody>
+                                                <tr><th scope="row">SE installed cost</th><td>Reviewed value</td><td>−8%</td><td>No change</td><td>Topology-specific stack</td></tr>
+                                                <tr><th scope="row">SE maintenance</th><td>Reviewed value</td><td>No change</td><td>+$3,400/year</td><td>Separate component model</td></tr>
+                                                <tr><th scope="row">Comparison type</th><td>Controlled baseline</td><td>Controlled</td><td>Controlled</td><td>Structural</td></tr>
+                                                <tr><th scope="row">Evidence</th><td>Accepted</td><td>Accepted assumption</td><td>Provisional</td><td>Needs review</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div class="autonomy-scenario-mobile-list" aria-label="Baseline-relative scenario differences">
+                                        <article><h4>Alternative 1</h4><dl><div><dt>Installed cost</dt><dd>−8%</dd></div><div><dt>Evidence</dt><dd>Accepted assumption</dd></div></dl></article>
+                                        <article><h4>Alternative 2</h4><dl><div><dt>Maintenance</dt><dd>+$3,400/year</dd></div><div><dt>Evidence</dt><dd>Provisional</dd></div></dl></article>
+                                        <article><h4>Alternative 3</h4><dl><div><dt>Cost stack</dt><dd>Structural change</dd></div><div><dt>Evidence</dt><dd>Needs review</dd></div></dl></article>
+                                    </div>
+                                    <aside class="autonomy-validation-note" data-status="valid">
+                                        <strong>Deterministic validation fixture</strong>
+                                        <p>Three requests are structurally supported. Alternative 2 remains provisional; Alternative 3 cannot support a single-driver causal claim.</p>
+                                    </aside>
+                                </section>
+
+                                <section class="autonomy-stage-panel" id="autonomyStageRunPanel" role="tabpanel" aria-labelledby="autonomyStageRunBtn" data-autonomy-stage-panel="run" tabindex="-1" hidden>
+                                    <header class="autonomy-section-heading">
+                                        <div>
+                                            <p class="autonomy-eyebrow">Stage 4 · Run TEA</p>
+                                            <h3>Review the human execution boundary</h3>
+                                            <p>The Phase 1 control previews queue state. It never creates or changes a TEA job.</p>
+                                        </div>
+                                        <button class="autonomy-button autonomy-button-primary" id="autonomyOpenConfirmationBtn" type="button" aria-describedby="autonomyRunGateHelp" aria-disabled="true" disabled>Open grouped confirmation</button>
+                                    </header>
+                                    <p class="autonomy-fixture-notice" id="autonomyRunGateHelp" role="note"><strong>Fixture preview — no jobs will be created.</strong> Production execution remains outside this frontend foundation. Confirmation unlocks only in the Ready to confirm fixture.</p>
+
+                                    <section class="autonomy-job-monitor" aria-labelledby="autonomyJobMonitorHeading">
+                                        <div class="autonomy-panel-header">
+                                            <div><p class="autonomy-eyebrow">Existing worker · simulated</p><h4 id="autonomyJobMonitorHeading">Scenario queue</h4></div>
+                                            <span>Sequential execution</span>
+                                        </div>
+                                        <div class="autonomy-job-list" id="autonomyJobList">
+                                            <article class="autonomy-job-card" data-autonomy-job="baseline" data-status="complete">
+                                                <div><strong>Baseline</strong><span data-autonomy-job-status>Completed</span></div>
+                                                <progress data-autonomy-job-progress value="100" max="100">100%</progress>
+                                                <p>Fixture result bundle verified · tea_fixture_baseline</p>
+                                            </article>
+                                            <article class="autonomy-job-card" data-autonomy-job="alternative-1" data-status="running">
+                                                <div><strong>Alternative 1</strong><span data-autonomy-job-status>Running · 64%</span></div>
+                                                <progress data-autonomy-job-progress value="64" max="100">64%</progress>
+                                                <p>Lease held by the existing sequential worker fixture.</p>
+                                            </article>
+                                            <article class="autonomy-job-card" data-autonomy-job="alternative-2" data-status="queued">
+                                                <div><strong>Alternative 2</strong><span data-autonomy-job-status>Queued · position 1</span></div>
+                                                <progress data-autonomy-job-progress value="0" max="100">0%</progress>
+                                                <p>Frozen request fixture waits without changing existing worker state.</p>
+                                            </article>
+                                        </div>
+                                    </section>
+
+                                    <section class="autonomy-transition-banner" id="autonomyPartialResultsBanner" data-status="partial" hidden>
+                                        <div><strong>Partial results preview</strong><p>At least one fixture result is complete and another failed or remains active. No final recommendation or sign-off is available.</p></div>
+                                        <button class="autonomy-button autonomy-button-secondary" id="autonomyOpenPartialBriefBtn" type="button">Preview partial results</button>
+                                    </section>
+                                    <section class="autonomy-transition-banner" id="autonomyDecisionReadyBanner" data-status="complete" hidden>
+                                        <div><strong>Decision brief ready</strong><p>The comparison bundle is complete. Opening it is an explicit action and will not interrupt active typing.</p></div>
+                                        <button class="autonomy-button autonomy-button-primary" id="autonomyOpenBriefBtn" type="button">Open Decision Brief</button>
+                                    </section>
+                                </section>
+
+                                <section class="autonomy-stage-panel" id="autonomyStageDecidePanel" role="tabpanel" aria-labelledby="autonomyStageDecideBtn" data-autonomy-stage-panel="decide" tabindex="-1" hidden>
+                                    <header class="autonomy-section-heading">
+                                        <div>
+                                            <p class="autonomy-eyebrow">Stage 5 · Decide</p>
+                                            <h3>Move from traceable analysis to a conditional decision</h3>
+                                            <p>The same case, revision, source lock, basis lock, evidence, and fixture results continue into the brief.</p>
+                                        </div>
+                                    </header>
+                                    <div class="autonomy-decision-bridge">
+                                        <div><span>Fixture result state</span><strong>Comparison bundle complete</strong></div>
+                                        <div><span>Recommendation state</span><strong>Mixed confidence · review required</strong></div>
+                                        <div><span>Largest uncertainty</span><strong>Optimizer maintenance evidence</strong></div>
+                                    </div>
+                                    <button class="autonomy-button autonomy-button-primary" type="button" data-autonomy-open-brief>Open the shared-case Decision Brief</button>
+                                </section>
+                            </section>
+
+                            <button class="autonomy-rail-backdrop" id="autonomyRailBackdrop" type="button" aria-label="Close evidence and readiness" hidden></button>
+                            <aside class="autonomy-evidence-rail" id="autonomyEvidenceRail" aria-labelledby="autonomyEvidenceRailHeading" tabindex="-1">
+                                <header class="autonomy-panel-header">
+                                    <div><p class="autonomy-eyebrow">Evidence and readiness</p><h3 id="autonomyEvidenceRailHeading">Trace the basis</h3></div>
+                                    <button class="autonomy-close-button" id="autonomyCloseRailBtn" type="button" aria-label="Close evidence and readiness">Close</button>
+                                </header>
+                                <div class="autonomy-rail-tabs" role="tablist" aria-label="Evidence rail section">
+                                    <button class="is-selected" id="autonomyRailEvidenceTab" type="button" role="tab" aria-selected="true" aria-controls="autonomyRailEvidencePanel" tabindex="0" data-autonomy-rail-tab="evidence">Evidence</button>
+                                    <button id="autonomyRailAssumptionsTab" type="button" role="tab" aria-selected="false" aria-controls="autonomyRailAssumptionsPanel" tabindex="-1" data-autonomy-rail-tab="assumptions">Assumptions</button>
+                                    <button id="autonomyRailReadinessTab" type="button" role="tab" aria-selected="false" aria-controls="autonomyRailReadinessPanel" tabindex="-1" data-autonomy-rail-tab="readiness">Readiness</button>
+                                    <button id="autonomyRailProvenanceTab" type="button" role="tab" aria-selected="false" aria-controls="autonomyRailProvenancePanel" tabindex="-1" data-autonomy-rail-tab="provenance">Provenance</button>
+                                </div>
+                                <div class="autonomy-rail-body">
+                                    <section id="autonomyRailEvidencePanel" role="tabpanel" aria-labelledby="autonomyRailEvidenceTab" data-autonomy-rail-panel="evidence">
+                                        <article class="autonomy-evidence-record" data-status="accepted">
+                                            <div><span>Project actual</span><strong>Accepted</strong></div>
+                                            <h4>Annual energy lineage</h4>
+                                            <dl><div><dt>Source</dt><dd>Verified Annual Simulation</dd></div><div><dt>Date</dt><dd>Aug 24, 2026</dd></div><div><dt>Location</dt><dd>Eligible paired-year rows</dd></div><div><dt>Hash</dt><dd>82d9…91c4</dd></div><div><dt>Used by</dt><dd>All scenarios · energy</dd></div></dl>
+                                        </article>
+                                        <article class="autonomy-evidence-record" data-status="provisional">
+                                            <div><span>Secondary synthesis</span><strong>Provisional</strong></div>
+                                            <h4>Optimizer maintenance allowance</h4>
+                                            <dl><div><dt>Source</dt><dd>Fixture maintenance study</dd></div><div><dt>Date</dt><dd>Jul 10, 2026</dd></div><div><dt>Location</dt><dd>Page 14 · cell D22</dd></div><div><dt>Hash</dt><dd>6d82…ad90</dd></div><div><dt>Used by</dt><dd>Alternative 2</dd></div></dl>
+                                        </article>
+                                        <article class="autonomy-evidence-record" data-status="conflict">
+                                            <div><span>Public benchmark</span><strong>Conflict retained</strong></div>
+                                            <h4>Installation labor productivity</h4>
+                                            <p>Two fixture sources remain side by side until a human chooses the applicable scope.</p>
+                                        </article>
+                                    </section>
+                                    <section id="autonomyRailAssumptionsPanel" role="tabpanel" aria-labelledby="autonomyRailAssumptionsTab" data-autonomy-rail-panel="assumptions" hidden>
+                                        <ul class="autonomy-detail-list">
+                                            <li><strong>Real discount rate</strong><span>5.0% · accepted assumption</span></li>
+                                            <li><strong>Project life</strong><span>20 years · accepted assumption</span></li>
+                                            <li><strong>Shared degradation</strong><span>0.5%/year · primary evidence</span></li>
+                                            <li><strong>Realizations and seed</strong><span>10,000 · 481516</span></li>
+                                        </ul>
+                                    </section>
+                                    <section id="autonomyRailReadinessPanel" role="tabpanel" aria-labelledby="autonomyRailReadinessTab" data-autonomy-rail-panel="readiness" hidden>
+                                        <ul class="autonomy-detail-list">
+                                            <li><strong>Calibration</strong><span>Passed · promoted lineage verified</span></li>
+                                            <li><strong>Annual source</strong><span>Passed · immutable source lock</span></li>
+                                            <li><strong>Weather coverage</strong><span>Passed · 11 complete years</span></li>
+                                            <li><strong>TEA evidence</strong><span>Needs attention · 1 provisional item</span></li>
+                                            <li><strong>Decision Agent</strong><span>Available as local fixture only</span></li>
+                                        </ul>
+                                    </section>
+                                    <section id="autonomyRailProvenancePanel" role="tabpanel" aria-labelledby="autonomyRailProvenanceTab" data-autonomy-rail-panel="provenance" hidden>
+                                        <dl class="autonomy-provenance-list">
+                                            <div><dt>Case ID</dt><dd>case_sbe_hybrid_001</dd></div>
+                                            <div><dt>Case revision</dt><dd>3</dd></div>
+                                            <div><dt>Annual source</dt><dd>ann_2024_verified_017</dd></div>
+                                            <div><dt>TEA contract</dt><dd>tea-calculation-v3</dd></div>
+                                            <div><dt>Fixture comparison</dt><dd>comparison_fixture_v1 · 1f84…e93b</dd></div>
+                                            <div><dt>Authority</dt><dd>Local read-only preview data</dd></div>
+                                        </dl>
+                                    </section>
+                                </div>
+                            </aside>
+                        </div>
+                    </section>
+
+                    <section class="autonomy-decision-brief" id="autonomyDecisionBrief" role="tabpanel" aria-labelledby="autonomyBriefViewBtn" tabindex="-1" data-autonomy-case-workspace hidden>
+                        <section class="autonomy-partial-warning" id="autonomyBriefPartialWarning" role="status" hidden>
+                            <strong>Partial results preview — not a final recommendation.</strong>
+                            <p>Some fixture scenarios are incomplete or failed. Sign-off remains unavailable.</p>
+                        </section>
+                        <section class="autonomy-analysis-panel" id="autonomyPartialOutcomeSummary" data-autonomy-partial-only hidden>
+                            <h3>Completed fixture results only</h3>
+                            <p class="autonomy-panel-meta">The failed scenario is withheld and no aggregate preference is available.</p>
+                            <div class="autonomy-table-wrap"><table><caption>Partial scenario availability</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Status</th><th scope="col">Available result</th></tr></thead><tbody><tr><td>Baseline</td><td>Complete</td><td>P50 cost Δ $0.24/W</td></tr><tr><td>Lower installed cost</td><td>Complete</td><td>P50 cost Δ $0.17/W</td></tr><tr><td>Higher maintenance</td><td>Failed safely</td><td>Unavailable — no value displayed</td></tr></tbody></table></div>
+                        </section>
+                        <section class="autonomy-immutable-banner" data-autonomy-signed-only hidden>
+                            <strong>Signed fixture revision · immutable</strong>
+                            <p id="autonomySignedSummary">Jordan Lee accepted the recommendation.</p>
+                            <p id="autonomySignedRationale">Recorded fixture rationale: the reviewed evidence supports the conditional recommendation.</p>
+                            <p>The recorded disposition, owner, rationale, source lock, basis lock, and snapshot hash are frozen for this local preview revision.</p>
+                        </section>
+                        <section class="autonomy-superseded-banner" data-autonomy-superseded-only hidden>
+                            <strong>Superseded by a new scenario revision</strong>
+                            <p>The signed fixture remains unchanged. Revision 4 must be validated as a separate comparison before it can produce a new brief.</p>
+                        </section>
+
+                        <section class="autonomy-recommendation-hero" aria-labelledby="autonomyRecommendationTitle" data-autonomy-complete-results>
+                            <div class="autonomy-recommendation-copy">
+                                <p class="autonomy-eyebrow">Conditional fixture recommendation</p>
+                                <div class="autonomy-recommendation-heading">
+                                    <h2 id="autonomyRecommendationTitle">No decisive winner yet</h2>
+                                    <span class="autonomy-confidence" id="autonomyRecommendationConfidence">Mixed confidence</span>
+                                </div>
+                                <p id="autonomyRecommendationCopy">SolarEdge’s modeled lifecycle energy gain may justify its added cost only if optimizer maintenance remains near the reviewed baseline; verify that evidence before committing.</p>
+                                <div class="autonomy-reason-grid">
+                                    <article><span>Reason 1</span><strong>Positive lifecycle energy difference</strong><p>All complete fixture scenarios retain an energy gain.</p></article>
+                                    <article><span>Reason 2</span><strong>Cost premium remains material</strong><p>The P50 lifecycle cost difference is positive.</p></article>
+                                    <article><span>Reason 3</span><strong>Maintenance changes the ranking</strong><p>One controlled alternative narrows the preference probability.</p></article>
+                                </div>
+                                <p class="autonomy-uncertainty"><strong>Largest unresolved uncertainty:</strong> optimizer maintenance scope and recurrence.</p>
+                            </div>
+                            <div class="autonomy-hero-actions">
+                                <button class="autonomy-button autonomy-button-secondary" type="button" data-autonomy-brief-action="ask-why">Ask why</button>
+                                <button class="autonomy-button autonomy-button-secondary" type="button" data-autonomy-brief-action="test-reversal">Test a reversal</button>
+                                <button class="autonomy-button autonomy-button-secondary" id="autonomyReturnInvestigationBtn" type="button">Return to investigation</button>
+                                <button class="autonomy-button autonomy-button-primary" id="autonomyPrepareSignoffBtn" type="button" disabled>Prepare sign-off</button>
+                            </div>
+                        </section>
+
+                        <section class="autonomy-outcomes" aria-labelledby="autonomyOutcomeHeading" data-autonomy-complete-results>
+                            <header class="autonomy-section-heading"><div><p class="autonomy-eyebrow">Fixture outcomes · SolarEdge minus Solectria</p><h3 id="autonomyOutcomeHeading">Decision-relevant distributions</h3><p>Named fixture values preview a future deterministic comparison payload; they are not calculated in the browser.</p></div></header>
+                            <div class="autonomy-outcome-grid">
+                                <a href="#autonomyCostDistribution"><span>Lifecycle cost difference</span><strong>$0.24/applied W</strong><small>P5 $0.18 · P50 $0.24 · P95 $0.31</small></a>
+                                <a href="#autonomyEnergyDistribution"><span>Lifecycle energy difference</span><strong>+1.29 kWh/applied W</strong><small>P5 +1.04 · P50 +1.29 · P95 +1.52</small></a>
+                                <a href="#autonomyEconomicDistribution"><span>All-in LCOO</span><strong>$0.181/kWh AC</strong><small>P5 $0.142 · P50 $0.181 · P95 $0.239</small></a>
+                                <a href="#autonomyJointOutcome"><span>Preferability probability</span><strong>SolarEdge 54%</strong><small>Solectria 39% · no clear preference 7%</small></a>
+                                <a href="#autonomyEvidenceCaveats"><span>Evidence completeness</span><strong>88%</strong><small>14 accepted · 1 provisional · 1 conflict</small></a>
+                            </div>
+                        </section>
+
+                        <section class="autonomy-analysis-grid" aria-label="Decision Brief analysis with table fallbacks" data-autonomy-complete-results>
+                            <article class="autonomy-analysis-panel" id="autonomyCostDistribution">
+                                <h3>Lifecycle cost distribution</h3>
+                                <p class="autonomy-panel-meta">USD per applied W · source fixture comparison</p>
+                                <div class="autonomy-table-wrap"><table><caption>Lifecycle cost difference percentiles</caption><thead><tr><th scope="col">P5</th><th scope="col">P50</th><th scope="col">P95</th></tr></thead><tbody><tr><td>$0.18</td><td>$0.24</td><td>$0.31</td></tr></tbody></table></div>
+                                <p><strong>Interpretation:</strong> SolarEdge has a positive lifecycle cost premium across this fixture interval.</p>
+                            </article>
+                            <article class="autonomy-analysis-panel" id="autonomyEnergyDistribution">
+                                <h3>Lifecycle energy distribution</h3>
+                                <p class="autonomy-panel-meta">kWh AC per applied W · paired weather years</p>
+                                <div class="autonomy-table-wrap"><table><caption>Lifecycle energy difference percentiles</caption><thead><tr><th scope="col">P5</th><th scope="col">P50</th><th scope="col">P95</th></tr></thead><tbody><tr><td>+1.04</td><td>+1.29</td><td>+1.52</td></tr></tbody></table></div>
+                                <p><strong>Interpretation:</strong> The positive energy difference persists across the named fixture distribution.</p>
+                            </article>
+                            <article class="autonomy-analysis-panel" id="autonomyJointOutcome">
+                                <h3>Joint outcome probability</h3>
+                                <p class="autonomy-panel-meta">Preference requires cost and energy context</p>
+                                <div class="autonomy-table-wrap"><table><caption>Fixture outcome preference probabilities</caption><thead><tr><th scope="col">Outcome</th><th scope="col">Probability</th></tr></thead><tbody><tr><td>SolarEdge preferable</td><td>54%</td></tr><tr><td>Solectria preferable</td><td>39%</td></tr><tr><td>No clear preference</td><td>7%</td></tr></tbody></table></div>
+                                <p><strong>Interpretation:</strong> The comparison is mixed rather than a high-confidence winner.</p>
+                            </article>
+                            <article class="autonomy-analysis-panel" id="autonomySensitivityDrivers">
+                                <h3>Sensitivity drivers</h3>
+                                <p class="autonomy-panel-meta">Ranked fixture drivers · signed direction retained</p>
+                                <div class="autonomy-table-wrap"><table><caption>Top fixture sensitivity drivers</caption><thead><tr><th scope="col">Driver</th><th scope="col">Direction</th><th scope="col">Impact rank</th></tr></thead><tbody><tr><td>SE installed cost</td><td>Higher weakens SolarEdge</td><td>1</td></tr><tr><td>Optimizer maintenance</td><td>Higher weakens SolarEdge</td><td>2</td></tr><tr><td>Specific-energy difference</td><td>Higher strengthens SolarEdge</td><td>3</td></tr></tbody></table></div>
+                                <p><strong>Interpretation:</strong> Cost evidence and energy transfer dominate the fixture decision.</p>
+                            </article>
+                            <article class="autonomy-analysis-panel" id="autonomyScenarioComparison">
+                                <h3>Scenario comparison</h3>
+                                <p class="autonomy-panel-meta">Baseline plus controlled alternatives</p>
+                                <div class="autonomy-table-wrap"><table><caption>Fixture scenario outcome comparison</caption><thead><tr><th scope="col">Scenario</th><th scope="col">P50 cost Δ</th><th scope="col">P50 energy Δ</th><th scope="col">Evidence</th></tr></thead><tbody><tr><td>Baseline</td><td>$0.24/W</td><td>+1.29 kWh/W</td><td>Complete</td></tr><tr><td>Lower installed cost</td><td>$0.17/W</td><td>+1.29 kWh/W</td><td>Complete</td></tr><tr><td>Higher maintenance</td><td>$0.32/W</td><td>+1.29 kWh/W</td><td>Provisional</td></tr></tbody></table></div>
+                                <p><strong>Interpretation:</strong> Controlled cost assumptions move preference without changing modeled energy.</p>
+                            </article>
+                            <article class="autonomy-analysis-panel" id="autonomyEconomicDistribution">
+                                <h3>All-in LCOO distribution</h3>
+                                <p class="autonomy-panel-meta">USD per kWh AC · approved economic outcome fixture</p>
+                                <div class="autonomy-table-wrap"><table><caption>All-in LCOO percentiles</caption><thead><tr><th scope="col">P5</th><th scope="col">P50</th><th scope="col">P95</th></tr></thead><tbody><tr><td>$0.142</td><td>$0.181</td><td>$0.239</td></tr></tbody></table></div>
+                                <p><strong>Interpretation:</strong> This fixture outcome remains conditional on the displayed cost and maintenance evidence.</p>
+                            </article>
+                            <article class="autonomy-analysis-panel" id="autonomyQualityPanel">
+                                <h3>Convergence and quality</h3>
+                                <p class="autonomy-panel-meta">10,000 realizations · seed 481516 · fixture only</p>
+                                <div class="autonomy-table-wrap"><table><caption>Fixture quality checks</caption><thead><tr><th scope="col">Check</th><th scope="col">Status</th></tr></thead><tbody><tr><td>Convergence</td><td>Stable at final checkpoints</td></tr><tr><td>Weather representation</td><td>11 of 11 years represented</td></tr><tr><td>Numerical provenance</td><td>Reference fixture recorded</td></tr></tbody></table></div>
+                                <p><strong>Interpretation:</strong> Quality is sufficient for this presentation fixture, not production authority.</p>
+                            </article>
+                        </section>
+
+                        <section class="autonomy-brief-lower-grid" data-autonomy-complete-results>
+                            <div>
+                                <section class="autonomy-reversal-panel" aria-labelledby="autonomyReversalHeading">
+                                    <header class="autonomy-section-heading"><div><p class="autonomy-eyebrow">Central decision test</p><h3 id="autonomyReversalHeading">Reversal conditions</h3><p>These directions are fixture observations, not invented thresholds.</p></div></header>
+                                    <div class="autonomy-table-wrap"><table><caption>Conditions that may reverse the fixture recommendation</caption><thead><tr><th scope="col">Assumption</th><th scope="col">Direction needed</th><th scope="col">Simulated?</th><th scope="col">Evidence needed</th></tr></thead><tbody><tr><td>Optimizer maintenance</td><td>Higher than reviewed baseline</td><td>Yes · Alternative 2</td><td>Project maintenance records</td></tr><tr><td>SolarEdge installed cost</td><td>Lower than current quote</td><td>Yes · Alternative 1</td><td>Current vendor quote</td></tr><tr><td>Lifecycle energy gain</td><td>Lower across representative years</td><td>No</td><td>Updated verified Annual source</td></tr></tbody></table></div>
+                                    <button class="autonomy-button autonomy-button-secondary" id="autonomyCreateRevisionBtn" type="button">Create controlled scenario revision</button>
+                                </section>
+
+                                <section class="autonomy-evidence-caveats" id="autonomyEvidenceCaveats" aria-labelledby="autonomyCaveatsHeading">
+                                    <header class="autonomy-section-heading"><div><p class="autonomy-eyebrow">Trust record</p><h3 id="autonomyCaveatsHeading">Evidence, caveats, and provenance</h3></div></header>
+                                    <ul>
+                                        <li><strong>Accepted:</strong> Annual energy lineage, cost basis, installed capacity, discount rate, and degradation.</li>
+                                        <li><strong>Provisional:</strong> One optimizer maintenance allowance requires named rationale.</li>
+                                        <li><strong>Conflict retained:</strong> Two installation-labor sources use different scopes.</li>
+                                        <li><strong>Model limit:</strong> Fixture recommendation language is not a server-generated comparison.</li>
+                                        <li><strong>Lineage:</strong> case_sbe_hybrid_001 · revision 3 · ann_2024_verified_017 · tea-calculation-v3.</li>
+                                    </ul>
+                                    <button class="autonomy-link-button" type="button" data-autonomy-brief-action="open-evidence">Inspect full records in Investigation</button>
+                                </section>
+                            </div>
+
+                            <aside class="autonomy-brief-side" aria-label="Decision timeline and follow-up">
+                                <section class="autonomy-timeline" aria-labelledby="autonomyTimelineHeading">
+                                    <h3 id="autonomyTimelineHeading">Decision timeline</h3>
+                                    <ol>
+                                        <li><span>Aug 20</span><strong>Question created</strong><small>Morgan Lee</small></li>
+                                        <li><span>Aug 22</span><strong>Evidence reviewed</strong><small>14 accepted · 1 provisional</small></li>
+                                        <li><span>Aug 24</span><strong>Scenarios confirmed</strong><small>Fixture request hashes preserved</small></li>
+                                        <li><span>Aug 26</span><strong>Results completed</strong><small>Comparison fixture ready</small></li>
+                                        <li><span>Aug 27</span><strong>Recommendation prepared</strong><small>Mixed confidence</small></li>
+                                    </ol>
+                                </section>
+                                <section class="autonomy-compact-agent" aria-labelledby="autonomyCompactAgentHeading">
+                                    <p class="autonomy-eyebrow">Fixture Decision Agent</p>
+                                    <h3 id="autonomyCompactAgentHeading">Ask a follow-up</h3>
+                                    <label class="sr-only" for="autonomyBriefQuestion">Follow-up question</label>
+                                    <textarea id="autonomyBriefQuestion" rows="3" placeholder="What evidence would reduce uncertainty?"></textarea>
+                                    <button class="autonomy-button autonomy-button-secondary" type="button" data-autonomy-brief-action="follow-up">Preview structured answer</button>
+                                    <small>No network request is made.</small>
+                                </section>
+                            </aside>
+                        </section>
+
+                        <section class="autonomy-signoff-bar" aria-labelledby="autonomySignoffBarHeading">
+                            <div><p class="autonomy-eyebrow">Human authority required</p><h3 id="autonomySignoffBarHeading">Accept, reject, or defer only after reviewing the complete fixture brief.</h3><p>Production sign-off would freeze a new immutable report revision. Phase 1 changes only local fixture state.</p></div>
+                            <div><span class="autonomy-status-badge" data-autonomy-signoff-status>Unsigned fixture</span><button class="autonomy-button autonomy-button-primary" type="button" data-autonomy-prepare-signoff disabled>Review sign-off</button></div>
+                        </section>
+                    </section>
+
+                    <dialog class="autonomy-dialog" id="autonomyConfirmDialog" aria-labelledby="autonomyConfirmHeading" aria-describedby="autonomyConfirmDescription">
+                        <div class="autonomy-dialog-content">
+                            <header>
+                                <div><p class="autonomy-eyebrow">Grouped TEA confirmation · fixture only</p><h2 id="autonomyConfirmHeading">Review the exact frozen requests</h2></div>
+                                <p id="autonomyConfirmDescription">This Phase 1 surface previews the future human authority boundary. No jobs will be created.</p>
+                            </header>
+                            <section class="autonomy-confirm-locks" aria-label="Source and analysis locks">
+                                <div><span>Annual source</span><strong>ann_2024_verified_017 · 82d9…91c4</strong></div>
+                                <div><span>Analysis basis</span><strong>SolarTAC site · tea-calculation-v3</strong></div>
+                                <div><span>Realizations</span><strong>10,000 per scenario</strong></div>
+                                <div><span>Seed</span><strong>481516</strong></div>
+                                <div><span>Queue behavior</span><strong>Sequential existing-worker execution</strong></div>
+                                <div><span>Evidence</span><strong>14 accepted · 1 provisional</strong></div>
+                            </section>
+                            <div class="autonomy-table-wrap"><table><caption>Selected fixture scenarios and immutable request hashes</caption><thead><tr><th scope="col">Include</th><th scope="col">Scenario</th><th scope="col">Exact difference</th><th scope="col">Request hash</th></tr></thead><tbody><tr><td><input type="checkbox" checked aria-label="Include baseline" data-autonomy-confirm-scenario></td><td>Baseline</td><td>No difference</td><td><code>48a7…1bd2</code></td></tr><tr><td><input type="checkbox" checked aria-label="Include Alternative 1" data-autonomy-confirm-scenario></td><td>Alternative 1</td><td>SE installed cost −8%</td><td><code>a291…c871</code></td></tr><tr><td><input type="checkbox" checked aria-label="Include Alternative 2" data-autonomy-confirm-scenario></td><td>Alternative 2</td><td>SE maintenance +$3,400/year</td><td><code>7f03…e521</code></td></tr></tbody></table></div>
+                            <label class="autonomy-field" for="autonomyConfirmOperator"><span>Named operator</span><input id="autonomyConfirmOperator" type="text" autocomplete="name" required></label>
+                            <label class="autonomy-checkbox" for="autonomyConfirmAck"><input id="autonomyConfirmAck" type="checkbox"><span>I confirm the selected scenarios, source and basis lock, evidence status, realization count, seed, and exact request hashes shown here. I understand the production action would create immutable TEA jobs for sequential worker execution.</span></label>
+                            <p class="autonomy-fixture-notice"><strong>Fixture preview — no jobs will be created.</strong></p>
+                            <p class="autonomy-dialog-error" id="autonomyConfirmError" role="alert" tabindex="-1" hidden></p>
+                            <footer>
+                                <button class="autonomy-button autonomy-button-secondary" id="autonomyConfirmCancelBtn" type="button">Cancel</button>
+                                <button class="autonomy-button autonomy-button-primary" id="autonomyConfirmSubmitBtn" type="button">Preview queued state</button>
+                            </footer>
+                        </div>
+                    </dialog>
+
+                    <dialog class="autonomy-dialog autonomy-signoff-dialog" id="autonomySignoffDialog" aria-labelledby="autonomySignoffHeading" aria-describedby="autonomySignoffDescription">
+                        <div class="autonomy-dialog-content">
+                            <header>
+                                <div><p class="autonomy-eyebrow">Decision sign-off · fixture only</p><h2 id="autonomySignoffHeading">Review the immutable decision snapshot</h2></div>
+                                <p id="autonomySignoffDescription">Signing changes only the local fixture to the signed state. It does not create a report or modify server data.</p>
+                            </header>
+                            <section class="autonomy-signoff-summary" aria-label="Decision snapshot summary">
+                                <div><span>Case</span><strong>case_sbe_hybrid_001 · revision 3</strong></div>
+                                <div><span>Recommendation</span><strong>No decisive winner · mixed confidence</strong></div>
+                                <div><span>Source and basis</span><strong>ann_2024_verified_017 · tea-calculation-v3</strong></div>
+                                <div><span>Snapshot hash</span><strong>decision_fixture_3 · c621…aa47</strong></div>
+                            </section>
+                            <fieldset class="autonomy-disposition-group">
+                                <legend>Decision</legend>
+                                <label><input type="radio" name="autonomyDisposition" value="accept"> Accept recommendation</label>
+                                <label><input type="radio" name="autonomyDisposition" value="reject"> Reject recommendation</label>
+                                <label><input type="radio" name="autonomyDisposition" value="defer"> Defer decision</label>
+                            </fieldset>
+                            <label class="autonomy-field" for="autonomySignoffOwner"><span>Decision-owner name</span><input id="autonomySignoffOwner" type="text" autocomplete="name" required></label>
+                            <label class="autonomy-field" for="autonomySignoffRationale"><span>Decision rationale</span><textarea id="autonomySignoffRationale" rows="4" required></textarea></label>
+                            <label class="autonomy-checkbox" for="autonomySignoffAck"><input id="autonomySignoffAck" type="checkbox"><span>I understand that signing freezes an immutable decision snapshot. It does not change plant controls, calibration or Annual baselines, existing TEA jobs, or the approved calculation contract.</span></label>
+                            <p class="autonomy-dialog-error" id="autonomySignoffError" role="alert" tabindex="-1" hidden></p>
+                            <footer>
+                                <button class="autonomy-button autonomy-button-secondary" id="autonomySignoffCancelBtn" type="button">Cancel</button>
+                                <button class="autonomy-button autonomy-button-primary" id="autonomySignoffSubmitBtn" type="button">Sign fixture revision</button>
+                            </footer>
+                        </div>
+                    </dialog>
+                </section>
+            </div>
+
+            <!-- Autonomy is a deterministic local Phase 1 fixture. It has no backend, agent, evidence, scenario-execution, report, or TEA-kernel authority. -->

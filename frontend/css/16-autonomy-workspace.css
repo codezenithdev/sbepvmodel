@@ -1,0 +1,2368 @@
+        .autonomy-shell {
+            min-width: 0;
+            color: var(--text);
+        }
+
+        .autonomy-shell [hidden] {
+            display: none !important;
+        }
+
+        .autonomy-shell h2,
+        .autonomy-shell h3,
+        .autonomy-shell h4,
+        .autonomy-shell p,
+        .autonomy-shell dd,
+        .autonomy-shell td,
+        .autonomy-shell th {
+            overflow-wrap: anywhere;
+        }
+
+        .autonomy-eyebrow {
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 850;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .autonomy-fixture-toolbar,
+        .autonomy-case-header,
+        .autonomy-readiness-strip,
+        .autonomy-agent-panel,
+        .autonomy-stage-canvas,
+        .autonomy-evidence-rail,
+        .autonomy-recommendation-hero,
+        .autonomy-outcomes,
+        .autonomy-analysis-panel,
+        .autonomy-reversal-panel,
+        .autonomy-evidence-caveats,
+        .autonomy-timeline,
+        .autonomy-compact-agent,
+        .autonomy-signoff-bar {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .autonomy-fixture-toolbar {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 18px;
+            margin-bottom: 14px;
+            padding: 14px 16px;
+            border-left: 4px solid var(--info);
+            background: var(--info-soft);
+        }
+
+        .autonomy-fixture-copy {
+            max-width: 720px;
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .autonomy-fixture-copy .autonomy-eyebrow {
+            margin-bottom: 3px;
+        }
+
+        .autonomy-fixture-field {
+            flex: 0 1 300px;
+        }
+
+        .autonomy-field,
+        .autonomy-title-field {
+            display: grid;
+            min-width: 0;
+            gap: 6px;
+        }
+
+        .autonomy-field > span,
+        .autonomy-title-field > label {
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 780;
+        }
+
+        .autonomy-field small,
+        .autonomy-agent-composer small,
+        .autonomy-compact-agent small {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .autonomy-field input,
+        .autonomy-field select,
+        .autonomy-field textarea,
+        .autonomy-title-field input,
+        .autonomy-agent-composer textarea,
+        .autonomy-compact-agent textarea {
+            width: 100%;
+            min-width: 0;
+            min-height: 40px;
+            padding: 9px 10px;
+            border: 1px solid var(--border-strong);
+            border-radius: 6px;
+            background: #ffffff;
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 620;
+        }
+
+        .autonomy-field textarea,
+        .autonomy-agent-composer textarea,
+        .autonomy-compact-agent textarea {
+            resize: vertical;
+            line-height: 1.45;
+        }
+
+        .autonomy-field input:focus,
+        .autonomy-field select:focus,
+        .autonomy-field textarea:focus,
+        .autonomy-title-field input:focus,
+        .autonomy-agent-composer textarea:focus,
+        .autonomy-compact-agent textarea:focus {
+            border-color: var(--accent);
+            outline: 3px solid rgba(15, 118, 110, 0.15);
+            outline-offset: 1px;
+        }
+
+        .autonomy-button,
+        .autonomy-link-button,
+        .autonomy-view-switch button,
+        .autonomy-stage-track button,
+        .autonomy-readiness-items button,
+        .autonomy-mobile-tabs button,
+        .autonomy-rail-tabs button,
+        .autonomy-source-chips button,
+        .autonomy-starter-prompts button,
+        .autonomy-overflow summary,
+        .autonomy-overflow-menu button,
+        .autonomy-close-button {
+            min-height: 40px;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 780;
+        }
+
+        .autonomy-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            padding: 9px 14px;
+            text-align: center;
+        }
+
+        .autonomy-button-primary {
+            border-color: var(--accent);
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        .autonomy-button-primary:hover {
+            border-color: var(--accent-strong);
+            background: var(--accent-strong);
+        }
+
+        .autonomy-button-secondary {
+            border-color: var(--border-strong);
+            background: var(--surface);
+            color: var(--accent-strong);
+        }
+
+        .autonomy-button-secondary:hover,
+        .autonomy-link-button:hover {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .autonomy-button:disabled,
+        .autonomy-view-switch button[aria-disabled="true"],
+        .autonomy-mobile-tabs button:disabled {
+            cursor: not-allowed;
+            opacity: 0.56;
+        }
+
+        .autonomy-button:focus-visible,
+        .autonomy-link-button:focus-visible,
+        .autonomy-view-switch button:focus-visible,
+        .autonomy-stage-track button:focus-visible,
+        .autonomy-readiness-items button:focus-visible,
+        .autonomy-mobile-tabs button:focus-visible,
+        .autonomy-rail-tabs button:focus-visible,
+        .autonomy-source-chips button:focus-visible,
+        .autonomy-starter-prompts button:focus-visible,
+        .autonomy-overflow summary:focus-visible,
+        .autonomy-overflow-menu button:focus-visible,
+        .autonomy-close-button:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.25);
+            outline-offset: 2px;
+        }
+
+        .autonomy-link-button {
+            padding: 7px 9px;
+            border-color: transparent;
+            background: transparent;
+            color: var(--accent-strong);
+            font-size: 12px;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        .autonomy-case-header {
+            margin-bottom: 14px;
+            padding: 18px;
+            box-shadow: 0 8px 22px rgba(22, 34, 29, 0.05);
+        }
+
+        .autonomy-empty-case {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            min-height: 150px;
+            padding: 20px;
+            border: 1px dashed var(--border-strong);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-empty-case h2 {
+            margin: 4px 0 5px;
+            font-size: 24px;
+        }
+
+        .autonomy-empty-case p:not(.autonomy-eyebrow) {
+            max-width: 620px;
+            color: var(--muted);
+        }
+
+        .autonomy-case-topline,
+        .autonomy-case-heading-row,
+        .autonomy-case-actions,
+        .autonomy-view-switch,
+        .autonomy-panel-header,
+        .autonomy-section-heading,
+        .autonomy-recommendation-heading,
+        .autonomy-hero-actions,
+        .autonomy-signoff-bar > div:last-child,
+        .autonomy-dialog footer {
+            display: flex;
+            align-items: center;
+        }
+
+        .autonomy-case-topline,
+        .autonomy-case-heading-row,
+        .autonomy-panel-header,
+        .autonomy-section-heading,
+        .autonomy-signoff-bar,
+        .autonomy-dialog footer {
+            justify-content: space-between;
+        }
+
+        .autonomy-case-topline,
+        .autonomy-case-heading-row {
+            gap: 16px;
+        }
+
+        .autonomy-case-picker {
+            display: grid;
+            min-width: 0;
+            flex: 1 1 auto;
+            grid-template-columns: minmax(180px, 0.75fr) minmax(260px, 1.25fr);
+            gap: 12px;
+        }
+
+        .autonomy-case-actions {
+            align-self: flex-end;
+            flex: 0 0 auto;
+            gap: 8px;
+        }
+
+        .autonomy-overflow {
+            position: relative;
+        }
+
+        .autonomy-overflow summary {
+            display: grid;
+            min-width: 70px;
+            place-items: center;
+            padding: 8px 10px;
+            border-color: var(--border-strong);
+            background: var(--surface);
+            color: var(--muted-strong);
+            list-style: none;
+        }
+
+        .autonomy-overflow summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .autonomy-overflow-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 0;
+            z-index: 20;
+            width: 210px;
+            padding: 6px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+            box-shadow: var(--shadow);
+        }
+
+        .autonomy-overflow-menu button {
+            width: 100%;
+            padding: 8px 10px;
+            background: transparent;
+            color: var(--muted-strong);
+            text-align: left;
+        }
+
+        .autonomy-overflow-menu button:hover {
+            background: var(--surface-strong);
+        }
+
+        .autonomy-case-heading-row {
+            align-items: flex-end;
+            margin-top: 16px;
+        }
+
+        .autonomy-title-field {
+            flex: 1 1 auto;
+        }
+
+        .autonomy-title-field input {
+            border-color: transparent;
+            background: var(--surface-muted);
+            font-size: clamp(19px, 2.3vw, 26px);
+            font-weight: 820;
+        }
+
+        .autonomy-view-switch {
+            flex: 0 0 auto;
+            gap: 3px;
+            padding: 3px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-view-switch button {
+            padding: 8px 12px;
+            background: transparent;
+            color: var(--muted);
+        }
+
+        .autonomy-view-switch button.is-selected,
+        .autonomy-view-switch button[aria-selected="true"] {
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        .autonomy-question-field {
+            margin-top: 14px;
+        }
+
+        .autonomy-case-meta {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .autonomy-case-meta > div,
+        .autonomy-confirm-locks > div,
+        .autonomy-signoff-summary > div {
+            min-width: 0;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-case-meta dt,
+        .autonomy-confirm-locks span,
+        .autonomy-signoff-summary span {
+            display: block;
+            margin-bottom: 3px;
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .autonomy-case-meta dd,
+        .autonomy-confirm-locks strong,
+        .autonomy-signoff-summary strong {
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 760;
+        }
+
+        .autonomy-status-badge,
+        .autonomy-confidence,
+        .autonomy-basis-chip,
+        .autonomy-scenario-label {
+            display: inline-flex;
+            align-items: center;
+            width: fit-content;
+            min-height: 26px;
+            padding: 4px 8px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 820;
+        }
+
+        .autonomy-status-badge[data-status="available"],
+        .autonomy-status-badge[data-status="complete"] {
+            border-color: #9fcfae;
+            background: var(--success-soft);
+            color: var(--success);
+        }
+
+        .autonomy-status-badge[data-status="blocked"],
+        .autonomy-status-badge[data-status="failed"] {
+            border-color: #efb3b3;
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .autonomy-status-badge[data-status="needs-attention"],
+        .autonomy-status-badge[data-status="unavailable"] {
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+            color: var(--warning);
+        }
+
+        .autonomy-stage-stepper {
+            margin-bottom: 10px;
+        }
+
+        .autonomy-stage-track {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(145px, 1fr));
+            gap: 5px;
+            overflow-x: auto;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+            scrollbar-width: thin;
+        }
+
+        .autonomy-stage-track button {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 9px;
+            min-width: 145px;
+            padding: 9px;
+            border-color: transparent;
+            background: transparent;
+            color: var(--muted-strong);
+            text-align: left;
+        }
+
+        .autonomy-stage-track button > span:last-child {
+            display: grid;
+            gap: 1px;
+        }
+
+        .autonomy-stage-track button strong {
+            font-size: 12px;
+        }
+
+        .autonomy-stage-track button small {
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .autonomy-stage-number {
+            display: grid;
+            flex: 0 0 28px;
+            width: 28px;
+            height: 28px;
+            place-items: center;
+            border: 1px solid var(--border-strong);
+            border-radius: 50%;
+            background: var(--surface);
+            font-size: 11px;
+            font-weight: 850;
+        }
+
+        .autonomy-stage-track button.is-current,
+        .autonomy-stage-track button[aria-current="step"] {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+        }
+
+        .autonomy-stage-track button[data-autonomy-stage-status="complete"] {
+            border-color: #9fcfae;
+            background: var(--success-soft);
+            color: var(--success);
+        }
+
+        .autonomy-stage-track button[data-autonomy-stage-status="blocked"] {
+            border-color: #efb3b3;
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .autonomy-stage-track button[data-autonomy-stage-status="needs-attention"] {
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+            color: var(--warning);
+        }
+
+        .autonomy-stage-select-label {
+            display: none;
+        }
+
+        .autonomy-readiness-strip {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 14px;
+            align-items: center;
+            margin-bottom: 14px;
+            padding: 10px 12px;
+        }
+
+        .autonomy-readiness-heading {
+            display: grid;
+            gap: 2px;
+        }
+
+        .autonomy-brief-provenance {
+            display: none;
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        #autonomyPanel[data-view="decision-brief"] .autonomy-readiness-strip {
+            grid-template-columns: 1fr;
+        }
+
+        #autonomyPanel[data-view="decision-brief"] .autonomy-readiness-heading {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #autonomyPanel[data-view="decision-brief"] .autonomy-brief-provenance {
+            display: inline;
+        }
+
+        #autonomyPanel[data-view="decision-brief"] .autonomy-readiness-items {
+            display: none;
+        }
+
+        #autonomyPanel[data-view="decision-brief"] .autonomy-readiness-heading .autonomy-link-button {
+            margin-left: auto;
+        }
+
+        .autonomy-readiness-items {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(120px, 1fr));
+            gap: 6px;
+            overflow-x: auto;
+            scrollbar-width: thin;
+        }
+
+        .autonomy-readiness-items button {
+            display: grid;
+            min-width: 120px;
+            gap: 2px;
+            padding: 8px 9px;
+            border-color: var(--border);
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+            text-align: left;
+        }
+
+        .autonomy-readiness-items button span {
+            font-size: 10px;
+        }
+
+        .autonomy-readiness-items button strong {
+            color: var(--text);
+            font-size: 11px;
+        }
+
+        .autonomy-readiness-items button[data-status="passed"] {
+            border-color: #9fcfae;
+            background: var(--success-soft);
+        }
+
+        .autonomy-readiness-items button[data-status="needs-attention"],
+        .autonomy-readiness-items button[data-status="stale"] {
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+        }
+
+        .autonomy-readiness-items button[data-status="blocked"] {
+            border-color: #efb3b3;
+            background: var(--danger-soft);
+        }
+
+        .autonomy-mobile-tabs {
+            display: none;
+        }
+
+        .autonomy-investigation-grid {
+            display: grid;
+            min-width: 0;
+            grid-template-columns: 320px minmax(0, 1fr) 320px;
+            gap: 14px;
+            align-items: start;
+        }
+
+        .autonomy-agent-panel,
+        .autonomy-stage-canvas,
+        .autonomy-evidence-rail {
+            min-width: 0;
+        }
+
+        .autonomy-agent-panel,
+        .autonomy-evidence-rail {
+            position: sticky;
+            top: 12px;
+            max-height: calc(100vh - 24px);
+            overflow: auto;
+            scrollbar-width: thin;
+        }
+
+        .autonomy-agent-panel {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .autonomy-panel-header,
+        .autonomy-section-heading {
+            gap: 12px;
+        }
+
+        .autonomy-panel-header {
+            padding: 14px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .autonomy-panel-header h3,
+        .autonomy-panel-header h4 {
+            margin-top: 2px;
+            font-size: 15px;
+        }
+
+        .autonomy-agent-thread {
+            display: grid;
+            gap: 10px;
+            padding: 12px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-user-message,
+        .autonomy-agent-message,
+        .autonomy-agent-proposal {
+            padding: 11px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+        }
+
+        .autonomy-user-message {
+            margin-left: 26px;
+            border-color: #b7d9d3;
+            background: var(--accent-soft);
+        }
+
+        .autonomy-agent-message {
+            display: grid;
+            gap: 11px;
+            border-left: 4px solid #6b7f91;
+        }
+
+        .autonomy-agent-message > div {
+            display: grid;
+            gap: 3px;
+        }
+
+        .autonomy-message-author,
+        .autonomy-message-label {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 850;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .autonomy-agent-message p:not(.autonomy-message-label),
+        .autonomy-agent-proposal p,
+        .autonomy-user-message p:not(.autonomy-message-author) {
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .autonomy-basis-chip {
+            min-height: 22px;
+            margin-right: 3px;
+            padding: 2px 6px;
+            border-color: #b5c5d3;
+            background: #eef3f7;
+            color: #40566a;
+            vertical-align: baseline;
+        }
+
+        .autonomy-basis-chip[data-basis="model"] {
+            border-color: #9fcfae;
+            background: var(--success-soft);
+            color: var(--success);
+        }
+
+        .autonomy-basis-chip[data-basis="public"] {
+            border-color: #b7c9ee;
+            background: var(--info-soft);
+            color: #1d4f9c;
+        }
+
+        .autonomy-basis-chip[data-basis="agent"] {
+            border-color: #c7b8db;
+            background: #f3eef8;
+            color: #65447c;
+        }
+
+        .autonomy-source-chips,
+        .autonomy-starter-prompts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .autonomy-source-chips button,
+        .autonomy-starter-prompts button {
+            min-height: 34px;
+            padding: 7px 9px;
+            border-color: var(--border);
+            background: var(--surface-muted);
+            color: var(--accent-strong);
+            font-size: 10px;
+            text-align: left;
+        }
+
+        .autonomy-agent-proposal {
+            border-color: #c7b8db;
+            background: #faf7fc;
+        }
+
+        .autonomy-agent-proposal h4 {
+            margin: 3px 0;
+            font-size: 13px;
+        }
+
+        .autonomy-agent-proposal .autonomy-button {
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .autonomy-starter-prompts {
+            padding: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .autonomy-starter-prompts button:hover,
+        .autonomy-source-chips button:hover {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .autonomy-agent-composer {
+            position: sticky;
+            bottom: 0;
+            display: grid;
+            gap: 7px;
+            padding: 12px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .autonomy-agent-composer > label {
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 780;
+        }
+
+        .autonomy-agent-composer > div {
+            display: flex;
+            justify-content: space-between;
+            gap: 7px;
+        }
+
+        .autonomy-stage-canvas {
+            padding: 14px;
+            box-shadow: 0 8px 22px rgba(22, 34, 29, 0.04);
+        }
+
+        .autonomy-state-banner,
+        .autonomy-transition-banner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px 14px;
+            border: 1px solid #b7c9ee;
+            border-left: 4px solid var(--info);
+            border-radius: 7px;
+            background: var(--info-soft);
+        }
+
+        .autonomy-state-banner h3 {
+            margin: 2px 0;
+            font-size: 16px;
+        }
+
+        .autonomy-state-banner p:not(.autonomy-eyebrow),
+        .autonomy-transition-banner p {
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .autonomy-state-banner[data-status="blocked"],
+        .autonomy-state-banner[data-status="failed"],
+        .autonomy-state-banner[data-tone="danger"] {
+            border-color: #efb3b3;
+            border-left-color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        .autonomy-state-banner[data-status="warning"],
+        .autonomy-state-banner[data-status="partial"],
+        .autonomy-state-banner[data-tone="warning"],
+        .autonomy-transition-banner[data-status="partial"] {
+            border-color: #e8c18d;
+            border-left-color: var(--warning);
+            background: var(--warning-soft);
+        }
+
+        .autonomy-state-banner[data-status="complete"],
+        .autonomy-state-banner[data-tone="success"],
+        .autonomy-transition-banner[data-status="complete"] {
+            border-color: #9fcfae;
+            border-left-color: var(--success);
+            background: var(--success-soft);
+        }
+
+        .autonomy-stage-panel {
+            display: grid;
+            gap: 14px;
+            margin-top: 16px;
+        }
+
+        .autonomy-section-heading {
+            align-items: flex-start;
+        }
+
+        .autonomy-section-heading h3 {
+            margin: 2px 0 3px;
+            font-size: 18px;
+        }
+
+        .autonomy-section-heading p:not(.autonomy-eyebrow) {
+            max-width: 700px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .autonomy-decision-frame {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 9px;
+        }
+
+        .autonomy-decision-frame article,
+        .autonomy-decision-bridge > div {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-decision-frame h4 {
+            margin-bottom: 4px;
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .autonomy-decision-frame p,
+        .autonomy-validation-note p,
+        .autonomy-trust-note p {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .autonomy-trust-note,
+        .autonomy-validation-note,
+        .autonomy-fixture-notice,
+        .autonomy-acknowledgement {
+            padding: 11px 12px;
+            border: 1px solid var(--border);
+            border-left: 4px solid #6b7f91;
+            border-radius: 6px;
+            background: #f3f6f8;
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .autonomy-validation-note[data-status="valid"] {
+            border-color: #9fcfae;
+            border-left-color: var(--success);
+            background: var(--success-soft);
+        }
+
+        .autonomy-fixture-notice {
+            border-color: #b7c9ee;
+            border-left-color: var(--info);
+            background: var(--info-soft);
+        }
+
+        .autonomy-checklist {
+            display: grid;
+            gap: 8px;
+        }
+
+        .autonomy-checklist article {
+            display: grid;
+            grid-template-columns: 110px minmax(0, 1fr);
+            gap: 12px;
+            padding: 11px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-checklist article > span {
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 820;
+        }
+
+        .autonomy-checklist article h4 {
+            font-size: 12px;
+        }
+
+        .autonomy-checklist article p {
+            margin-top: 2px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .autonomy-checklist article[data-status="passed"] {
+            border-color: #9fcfae;
+            background: var(--success-soft);
+        }
+
+        .autonomy-checklist article[data-status="needs-attention"] {
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+        }
+
+        .autonomy-source-timeline,
+        .autonomy-evidence-candidate,
+        .autonomy-job-monitor {
+            padding: 13px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+        }
+
+        .autonomy-source-timeline h4,
+        .autonomy-job-monitor h4 {
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .autonomy-source-timeline ol,
+        .autonomy-timeline ol {
+            display: grid;
+            gap: 8px;
+            list-style: none;
+        }
+
+        .autonomy-source-timeline li {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border);
+            font-size: 11px;
+        }
+
+        .autonomy-source-timeline li:last-child {
+            padding-bottom: 0;
+            border-bottom: 0;
+        }
+
+        .autonomy-source-timeline li span {
+            color: var(--muted);
+            text-align: right;
+        }
+
+        .autonomy-evidence-candidate {
+            display: grid;
+            gap: 10px;
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+        }
+
+        .autonomy-evidence-candidate h4 {
+            margin: 2px 0 4px;
+            font-size: 14px;
+        }
+
+        .autonomy-evidence-candidate p {
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .autonomy-evidence-candidate .autonomy-candidate-meta {
+            margin-top: 5px;
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .autonomy-evidence-candidate fieldset,
+        .autonomy-disposition-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px 16px;
+            padding: 10px;
+            border: 1px solid var(--border-strong);
+            border-radius: 6px;
+            background: var(--surface);
+        }
+
+        .autonomy-evidence-candidate legend,
+        .autonomy-disposition-group legend {
+            padding: 0 5px;
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 800;
+        }
+
+        .autonomy-evidence-candidate fieldset label,
+        .autonomy-disposition-group label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-height: 32px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .autonomy-scenario-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 9px;
+        }
+
+        .autonomy-scenario-card {
+            display: grid;
+            gap: 6px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-scenario-card > div,
+        .autonomy-job-card > div,
+        .autonomy-evidence-record > div {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .autonomy-scenario-card > div > strong,
+        .autonomy-job-card > div > span,
+        .autonomy-evidence-record > div > strong {
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 820;
+        }
+
+        .autonomy-scenario-card h4 {
+            font-size: 13px;
+        }
+
+        .autonomy-scenario-card p,
+        .autonomy-scenario-card small {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .autonomy-scenario-card[data-status="valid"] {
+            border-color: #9fcfae;
+        }
+
+        .autonomy-scenario-card[data-status="provisional"],
+        .autonomy-scenario-card[data-status="warning"] {
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+        }
+
+        .autonomy-scenario-card[data-status="invalid"] {
+            border-color: #efb3b3;
+            background: var(--danger-soft);
+        }
+
+        .autonomy-scenario-card[data-state="validated"],
+        .autonomy-scenario-card[data-state="confirmed"],
+        .autonomy-scenario-card[data-state="completed"],
+        .autonomy-scenario-card[data-state="baseline"],
+        .autonomy-scenario-card[data-state="signed-revision-3"] {
+            border-color: #9fcfae;
+            background: var(--success-soft);
+        }
+
+        .autonomy-scenario-card[data-state="needs-evidence"],
+        .autonomy-scenario-card[data-state="conflicting-evidence"],
+        .autonomy-scenario-card[data-state="needs-review"],
+        .autonomy-scenario-card[data-state="new-revision"] {
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+        }
+
+        .autonomy-scenario-card[data-state="blocked"] {
+            border-color: #efb3b3;
+            background: var(--danger-soft);
+        }
+
+        .autonomy-table-wrap {
+            max-width: 100%;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+            scrollbar-width: thin;
+        }
+
+        .autonomy-table-wrap:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.2);
+            outline-offset: 2px;
+        }
+
+        .autonomy-table-wrap table {
+            width: 100%;
+            min-width: 520px;
+            border-collapse: collapse;
+            font-size: 11px;
+            text-align: left;
+        }
+
+        .autonomy-table-wrap caption {
+            padding: 9px 10px;
+            color: var(--muted-strong);
+            font-weight: 780;
+            text-align: left;
+        }
+
+        .autonomy-table-wrap th,
+        .autonomy-table-wrap td {
+            padding: 9px 10px;
+            border-top: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        .autonomy-table-wrap thead th {
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+            font-size: 10px;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .autonomy-scenario-mobile-list {
+            display: none;
+        }
+
+        .autonomy-job-monitor {
+            padding: 0;
+            overflow: hidden;
+        }
+
+        .autonomy-job-monitor .autonomy-panel-header > span {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .autonomy-job-list {
+            display: grid;
+            gap: 8px;
+            padding: 12px;
+        }
+
+        .autonomy-job-card {
+            display: grid;
+            gap: 7px;
+            padding: 11px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-job-card[data-status="complete"] {
+            border-color: #9fcfae;
+            background: var(--success-soft);
+        }
+
+        .autonomy-job-card[data-status="running"] {
+            border-color: #b7c9ee;
+            background: var(--info-soft);
+        }
+
+        .autonomy-job-card[data-status="failed"] {
+            border-color: #efb3b3;
+            background: var(--danger-soft);
+        }
+
+        .autonomy-job-card[data-state="completed"] {
+            border-color: #9fcfae;
+            background: var(--success-soft);
+        }
+
+        .autonomy-job-card[data-state^="running"] {
+            border-color: #b7c9ee;
+            background: var(--info-soft);
+        }
+
+        .autonomy-job-card[data-state^="failed"] {
+            border-color: #efb3b3;
+            background: var(--danger-soft);
+        }
+
+        .autonomy-job-card progress {
+            width: 100%;
+            height: 10px;
+            accent-color: var(--accent);
+        }
+
+        .autonomy-job-card p {
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .autonomy-transition-banner {
+            margin-top: 10px;
+        }
+
+        .autonomy-decision-bridge {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .autonomy-decision-bridge span,
+        .autonomy-decision-bridge strong {
+            display: block;
+        }
+
+        .autonomy-decision-bridge span {
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .autonomy-decision-bridge strong {
+            margin-top: 4px;
+            font-size: 12px;
+        }
+
+        .autonomy-evidence-rail {
+            overflow: hidden auto;
+        }
+
+        .autonomy-close-button {
+            display: none;
+            padding: 7px 9px;
+            border-color: var(--border-strong);
+            background: var(--surface);
+            color: var(--muted-strong);
+            font-size: 11px;
+        }
+
+        .autonomy-rail-tabs {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 4px;
+            padding: 8px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-muted);
+        }
+
+        .autonomy-rail-tabs button {
+            padding: 7px 5px;
+            border-color: var(--border);
+            background: var(--surface);
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .autonomy-rail-tabs button.is-selected,
+        .autonomy-rail-tabs button[aria-selected="true"] {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+        }
+
+        .autonomy-rail-body {
+            padding: 10px;
+        }
+
+        .autonomy-rail-body > section {
+            display: grid;
+            gap: 9px;
+        }
+
+        .autonomy-evidence-record {
+            display: grid;
+            gap: 7px;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-evidence-record[data-status="accepted"] {
+            border-color: #9fcfae;
+            background: var(--success-soft);
+        }
+
+        .autonomy-evidence-record[data-status="provisional"] {
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+        }
+
+        .autonomy-evidence-record[data-status="conflict"] {
+            border-color: #efb3b3;
+            background: var(--danger-soft);
+        }
+
+        .autonomy-evidence-record h4 {
+            font-size: 12px;
+        }
+
+        .autonomy-evidence-record > div > span,
+        .autonomy-evidence-record p {
+            color: var(--muted-strong);
+            font-size: 10px;
+        }
+
+        .autonomy-evidence-record dl,
+        .autonomy-provenance-list {
+            display: grid;
+            gap: 5px;
+        }
+
+        .autonomy-evidence-record dl > div,
+        .autonomy-provenance-list > div {
+            display: grid;
+            grid-template-columns: 72px minmax(0, 1fr);
+            gap: 6px;
+            font-size: 10px;
+        }
+
+        .autonomy-evidence-record dt,
+        .autonomy-provenance-list dt {
+            color: var(--muted);
+        }
+
+        .autonomy-evidence-record dd,
+        .autonomy-provenance-list dd {
+            color: var(--muted-strong);
+            font-weight: 700;
+        }
+
+        .autonomy-detail-list,
+        .autonomy-provenance-list {
+            list-style: none;
+        }
+
+        .autonomy-detail-list {
+            display: grid;
+            gap: 7px;
+        }
+
+        .autonomy-detail-list li {
+            display: grid;
+            gap: 2px;
+            padding: 9px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface-muted);
+            font-size: 11px;
+        }
+
+        .autonomy-detail-list span {
+            color: var(--muted);
+        }
+
+        .autonomy-rail-backdrop {
+            display: none;
+        }
+
+        .autonomy-decision-brief {
+            display: grid;
+            min-width: 0;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 14px;
+        }
+
+        .autonomy-partial-warning,
+        .autonomy-immutable-banner,
+        .autonomy-superseded-banner {
+            padding: 12px 14px;
+            border-radius: 7px;
+            color: var(--muted-strong);
+        }
+
+        .autonomy-partial-warning,
+        .autonomy-superseded-banner {
+            border: 1px solid #e8c18d;
+            border-left: 4px solid var(--warning);
+            background: var(--warning-soft);
+        }
+
+        .autonomy-immutable-banner {
+            border: 1px solid #9fcfae;
+            border-left: 4px solid var(--success);
+            background: var(--success-soft);
+        }
+
+        .autonomy-partial-warning p,
+        .autonomy-immutable-banner p,
+        .autonomy-superseded-banner p {
+            margin-top: 3px;
+            font-size: 12px;
+        }
+
+        .autonomy-recommendation-hero {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 20px;
+            padding: 20px;
+            border-top: 4px solid var(--accent);
+            box-shadow: 0 10px 24px rgba(22, 34, 29, 0.06);
+        }
+
+        .autonomy-recommendation-heading {
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 4px;
+        }
+
+        .autonomy-recommendation-heading h2 {
+            font-size: clamp(24px, 3vw, 34px);
+            line-height: 1.15;
+        }
+
+        .autonomy-confidence {
+            flex: 0 0 auto;
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+            color: var(--warning);
+        }
+
+        #autonomyRecommendationCopy {
+            max-width: 900px;
+            margin-top: 9px;
+            color: var(--muted-strong);
+            font-size: 15px;
+            line-height: 1.55;
+        }
+
+        .autonomy-reason-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .autonomy-reason-grid article {
+            padding: 11px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-reason-grid span,
+        .autonomy-reason-grid strong {
+            display: block;
+        }
+
+        .autonomy-reason-grid span {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .autonomy-reason-grid strong {
+            margin: 3px 0;
+            font-size: 12px;
+        }
+
+        .autonomy-reason-grid p {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .autonomy-uncertainty {
+            margin-top: 12px;
+            padding: 9px 10px;
+            border-left: 4px solid var(--warning);
+            background: var(--warning-soft);
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .autonomy-hero-actions {
+            width: 180px;
+            align-content: start;
+            align-items: stretch;
+            flex-direction: column;
+            gap: 7px;
+        }
+
+        .autonomy-outcomes {
+            padding: 16px;
+        }
+
+        .autonomy-outcome-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .autonomy-outcome-grid a {
+            display: grid;
+            min-width: 0;
+            gap: 4px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .autonomy-outcome-grid a:hover,
+        .autonomy-outcome-grid a:focus-visible {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            outline: none;
+        }
+
+        .autonomy-outcome-grid span {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .autonomy-outcome-grid strong {
+            font-size: 15px;
+        }
+
+        .autonomy-outcome-grid small {
+            color: var(--muted-strong);
+            font-size: 10px;
+        }
+
+        .autonomy-analysis-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .autonomy-analysis-panel {
+            display: grid;
+            align-content: start;
+            gap: 8px;
+            min-width: 0;
+            padding: 14px;
+        }
+
+        .autonomy-analysis-panel h3 {
+            font-size: 15px;
+        }
+
+        .autonomy-analysis-panel > p:last-child {
+            color: var(--muted-strong);
+            font-size: 11px;
+        }
+
+        .autonomy-panel-meta {
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .autonomy-analysis-panel .autonomy-table-wrap table {
+            min-width: 100%;
+        }
+
+        .autonomy-brief-lower-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 300px;
+            gap: 12px;
+            align-items: start;
+        }
+
+        .autonomy-brief-lower-grid > div,
+        .autonomy-brief-side {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            min-width: 0;
+            gap: 12px;
+        }
+
+        .autonomy-reversal-panel,
+        .autonomy-evidence-caveats,
+        .autonomy-timeline,
+        .autonomy-compact-agent {
+            padding: 15px;
+        }
+
+        .autonomy-reversal-panel .autonomy-table-wrap {
+            margin: 12px 0;
+        }
+
+        .autonomy-evidence-caveats ul {
+            display: grid;
+            gap: 7px;
+            margin: 10px 0;
+            padding-left: 18px;
+            color: var(--muted-strong);
+            font-size: 12px;
+        }
+
+        .autonomy-timeline h3,
+        .autonomy-compact-agent h3 {
+            margin: 2px 0 10px;
+            font-size: 15px;
+        }
+
+        .autonomy-timeline li {
+            display: grid;
+            grid-template-columns: 52px minmax(0, 1fr);
+            gap: 2px 8px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .autonomy-timeline li:last-child {
+            border-bottom: 0;
+        }
+
+        .autonomy-timeline li > span {
+            grid-row: 1 / span 2;
+            color: var(--accent-strong);
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        .autonomy-timeline li strong {
+            font-size: 11px;
+        }
+
+        .autonomy-timeline li small {
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .autonomy-compact-agent {
+            display: grid;
+            gap: 7px;
+            border-left: 4px solid #6b7f91;
+        }
+
+        .autonomy-signoff-bar {
+            position: sticky;
+            bottom: 10px;
+            z-index: 8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 16px;
+            border-top: 3px solid var(--accent);
+            box-shadow: 0 12px 28px rgba(22, 34, 29, 0.14);
+        }
+
+        .autonomy-signoff-bar h3 {
+            margin: 2px 0;
+            font-size: 14px;
+        }
+
+        .autonomy-signoff-bar p:not(.autonomy-eyebrow) {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .autonomy-signoff-bar > div:last-child {
+            flex: 0 0 auto;
+            gap: 8px;
+        }
+
+        .autonomy-dialog {
+            width: min(760px, calc(100vw - 32px));
+            max-height: calc(100vh - 32px);
+            margin: auto;
+            padding: 0;
+            overflow: auto;
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--text);
+            box-shadow: 0 24px 64px rgba(22, 34, 29, 0.24);
+        }
+
+        .autonomy-dialog::backdrop {
+            background: rgba(23, 33, 29, 0.62);
+        }
+
+        .autonomy-dialog-content {
+            display: grid;
+            gap: 14px;
+            padding: 18px;
+        }
+
+        .autonomy-dialog-content > header {
+            display: grid;
+            gap: 5px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .autonomy-dialog-content > header h2 {
+            margin-top: 2px;
+            font-size: 22px;
+        }
+
+        .autonomy-dialog-content > header > p {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .autonomy-confirm-locks,
+        .autonomy-signoff-summary {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .autonomy-checkbox {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 9px;
+            align-items: start;
+            padding: 11px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 650;
+        }
+
+        .autonomy-checkbox input,
+        .autonomy-disposition-group input,
+        .autonomy-evidence-candidate input {
+            width: 18px;
+            height: 18px;
+            margin-top: 1px;
+            accent-color: var(--accent);
+        }
+
+        .autonomy-dialog-error {
+            padding: 10px;
+            border: 1px solid #efb3b3;
+            border-left: 4px solid var(--danger);
+            border-radius: 6px;
+            background: var(--danger-soft);
+            color: var(--danger);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .autonomy-dialog footer {
+            gap: 8px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .autonomy-dialog footer .autonomy-button:first-child {
+            margin-left: auto;
+        }
+
+        @media (max-width: 1279px) {
+            .autonomy-case-meta {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .autonomy-stage-track {
+                display: flex;
+                padding-bottom: 7px;
+            }
+
+            .autonomy-readiness-strip {
+                grid-template-columns: 1fr;
+            }
+
+            .autonomy-readiness-heading {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+            }
+
+            .autonomy-investigation-grid {
+                grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.4fr);
+            }
+
+            .autonomy-agent-panel {
+                grid-column: 1;
+            }
+
+            .autonomy-stage-canvas {
+                grid-column: 2;
+            }
+
+            .autonomy-evidence-rail {
+                position: fixed;
+                top: 0;
+                right: 0;
+                z-index: 1005;
+                width: min(380px, calc(100vw - 48px));
+                height: 100vh;
+                max-height: 100vh;
+                border-radius: 0;
+                opacity: 0;
+                visibility: hidden;
+                transform: translateX(100%);
+                pointer-events: none;
+                transition: transform 0.18s ease, opacity 0.18s ease, visibility 0.18s ease;
+            }
+
+            .autonomy-evidence-rail.is-open {
+                opacity: 1;
+                visibility: visible;
+                transform: translateX(0);
+                pointer-events: auto;
+            }
+
+            .autonomy-close-button {
+                display: inline-flex;
+                align-items: center;
+            }
+
+            .autonomy-rail-backdrop:not([hidden]) {
+                position: fixed;
+                inset: 0;
+                z-index: 1004;
+                display: block;
+                width: 100%;
+                height: 100%;
+                border: 0;
+                border-radius: 0;
+                background: rgba(23, 33, 29, 0.54);
+            }
+
+            .autonomy-recommendation-hero {
+                grid-template-columns: 1fr;
+            }
+
+            .autonomy-hero-actions {
+                width: auto;
+                flex-direction: row;
+                flex-wrap: wrap;
+            }
+
+            .autonomy-outcome-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .autonomy-analysis-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .autonomy-brief-lower-grid {
+                grid-template-columns: minmax(0, 1fr) 260px;
+            }
+
+            .autonomy-signoff-bar {
+                align-items: flex-start;
+                flex-wrap: wrap;
+            }
+
+            .autonomy-signoff-bar > div:first-child {
+                flex: 1 1 520px;
+            }
+        }
+
+        @media (max-width: 767px) {
+            .autonomy-fixture-toolbar,
+            .autonomy-empty-case,
+            .autonomy-case-topline,
+            .autonomy-case-heading-row,
+            .autonomy-state-banner,
+            .autonomy-transition-banner,
+            .autonomy-section-heading,
+            .autonomy-signoff-bar {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .autonomy-fixture-toolbar {
+                display: grid;
+                gap: 12px;
+            }
+
+            .autonomy-fixture-field {
+                width: 100%;
+            }
+
+            .autonomy-case-header {
+                padding: 12px;
+            }
+
+            .autonomy-case-picker {
+                grid-template-columns: 1fr;
+            }
+
+            .autonomy-case-actions {
+                align-self: stretch;
+                justify-content: space-between;
+            }
+
+            .autonomy-case-actions .autonomy-button {
+                flex: 1 1 auto;
+            }
+
+            .autonomy-overflow-menu {
+                right: auto;
+                left: 0;
+            }
+
+            .autonomy-view-switch {
+                width: 100%;
+            }
+
+            .autonomy-view-switch button {
+                flex: 1 1 50%;
+            }
+
+            .autonomy-case-meta {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .autonomy-case-meta > div:nth-child(3),
+            .autonomy-case-meta > div:nth-child(4) {
+                grid-column: 1 / -1;
+            }
+
+            .autonomy-stage-track {
+                display: none;
+            }
+
+            .autonomy-stage-select-label {
+                display: grid;
+                gap: 5px;
+            }
+
+            .autonomy-stage-select-label > span {
+                color: var(--muted-strong);
+                font-size: 11px;
+                font-weight: 800;
+            }
+
+            .autonomy-stage-select-label select {
+                width: 100%;
+                min-height: 44px;
+                padding: 9px 10px;
+                border: 1px solid var(--border-strong);
+                border-radius: 6px;
+                background: var(--surface);
+                color: var(--text);
+                font-size: 16px;
+                font-weight: 700;
+            }
+
+            .autonomy-readiness-items {
+                grid-template-columns: repeat(5, minmax(132px, 1fr));
+                padding-bottom: 4px;
+            }
+
+            .autonomy-mobile-tabs {
+                position: sticky;
+                top: 0;
+                z-index: 7;
+                display: grid;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 3px;
+                margin-bottom: 10px;
+                padding: 4px;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--surface);
+                box-shadow: 0 7px 18px rgba(22, 34, 29, 0.08);
+            }
+
+            .autonomy-mobile-tabs button {
+                min-height: 44px;
+                padding: 7px 3px;
+                background: transparent;
+                color: var(--muted);
+                font-size: 11px;
+            }
+
+            .autonomy-mobile-tabs button.is-selected,
+            .autonomy-mobile-tabs button[aria-selected="true"] {
+                background: var(--accent);
+                color: #ffffff;
+            }
+
+            .autonomy-investigation-grid {
+                display: block;
+            }
+
+            .autonomy-investigation-view .autonomy-agent-panel,
+            .autonomy-investigation-view .autonomy-stage-canvas {
+                display: none;
+            }
+
+            #autonomyPanel[data-mobile-section="ask"] .autonomy-agent-panel,
+            #autonomyPanel[data-mobile-section="scenarios"] .autonomy-stage-canvas {
+                display: flex;
+            }
+
+            #autonomyPanel[data-mobile-section="scenarios"] .autonomy-stage-canvas,
+            #autonomyPanel[data-mobile-section="decision"] .autonomy-stage-canvas {
+                display: block;
+            }
+
+            .autonomy-agent-panel,
+            .autonomy-stage-canvas {
+                position: static;
+                max-height: none;
+            }
+
+            .autonomy-agent-composer {
+                bottom: 0;
+                z-index: 4;
+            }
+
+            .autonomy-agent-composer > div {
+                flex-direction: column-reverse;
+            }
+
+            .autonomy-field input,
+            .autonomy-field select,
+            .autonomy-field textarea,
+            .autonomy-title-field input,
+            .autonomy-agent-composer textarea,
+            .autonomy-compact-agent textarea {
+                min-height: 44px;
+                font-size: 16px;
+            }
+
+            .autonomy-button,
+            .autonomy-link-button,
+            .autonomy-view-switch button,
+            .autonomy-readiness-items button,
+            .autonomy-mobile-tabs button,
+            .autonomy-rail-tabs button,
+            .autonomy-source-chips button,
+            .autonomy-starter-prompts button,
+            .autonomy-overflow summary,
+            .autonomy-overflow-menu button,
+            .autonomy-close-button {
+                min-height: 44px;
+            }
+
+            .autonomy-decision-frame,
+            .autonomy-scenario-grid,
+            .autonomy-decision-bridge,
+            .autonomy-confirm-locks,
+            .autonomy-signoff-summary {
+                grid-template-columns: 1fr;
+            }
+
+            .autonomy-scenario-matrix {
+                display: none;
+            }
+
+            .autonomy-scenario-mobile-list {
+                display: grid;
+                gap: 8px;
+            }
+
+            .autonomy-scenario-mobile-list article {
+                padding: 11px;
+                border: 1px solid var(--border);
+                border-radius: 7px;
+                background: var(--surface-muted);
+            }
+
+            .autonomy-scenario-mobile-list h4 {
+                margin-bottom: 6px;
+                font-size: 13px;
+            }
+
+            .autonomy-scenario-mobile-list dl > div {
+                display: flex;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 5px 0;
+                border-top: 1px solid var(--border);
+                font-size: 11px;
+            }
+
+            .autonomy-scenario-mobile-list dt {
+                color: var(--muted);
+            }
+
+            .autonomy-scenario-mobile-list dd {
+                text-align: right;
+                font-weight: 700;
+            }
+
+            .autonomy-evidence-rail {
+                width: 100vw;
+                max-width: 100vw;
+            }
+
+            #autonomyPanel[data-mobile-section="evidence"] .autonomy-evidence-rail {
+                position: static;
+                display: block;
+                width: 100%;
+                height: auto;
+                max-height: none;
+                opacity: 1;
+                visibility: visible;
+                transform: none;
+                pointer-events: auto;
+            }
+
+            #autonomyPanel[data-mobile-section="evidence"] .autonomy-close-button {
+                display: none;
+            }
+
+            .autonomy-recommendation-hero,
+            .autonomy-outcomes,
+            .autonomy-analysis-panel,
+            .autonomy-reversal-panel,
+            .autonomy-evidence-caveats,
+            .autonomy-timeline,
+            .autonomy-compact-agent {
+                width: 100%;
+                min-width: 0;
+                max-width: 100%;
+                box-sizing: border-box;
+                padding: 12px;
+            }
+
+            .autonomy-reversal-panel .autonomy-table-wrap {
+                width: 100%;
+                min-width: 0;
+                max-width: 100%;
+                box-sizing: border-box;
+            }
+
+            .autonomy-recommendation-heading {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .autonomy-reason-grid,
+            .autonomy-outcome-grid,
+            .autonomy-analysis-grid,
+            .autonomy-brief-lower-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .autonomy-hero-actions {
+                display: grid;
+                grid-template-columns: 1fr;
+            }
+
+            .autonomy-outcome-grid a {
+                min-height: 88px;
+            }
+
+            .autonomy-analysis-panel .autonomy-table-wrap {
+                order: -1;
+            }
+
+            .autonomy-analysis-panel .autonomy-table-wrap table {
+                min-width: 100%;
+            }
+
+            .autonomy-signoff-bar > div:last-child {
+                width: 100%;
+                min-width: 0;
+                max-width: 100%;
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .autonomy-signoff-bar {
+                width: 100%;
+                min-width: 0;
+                max-width: 100%;
+                box-sizing: border-box;
+            }
+
+            .autonomy-signoff-bar > div:first-child {
+                width: auto;
+                min-width: 0;
+                max-width: 100%;
+                flex: 0 1 auto;
+            }
+
+            .autonomy-signoff-dialog {
+                width: 100vw;
+                max-width: 100vw;
+                height: 100dvh;
+                max-height: 100dvh;
+                border: 0;
+                border-radius: 0;
+            }
+
+            .autonomy-signoff-dialog .autonomy-dialog-content {
+                min-height: 100%;
+                align-content: start;
+            }
+
+            .autonomy-signoff-dialog footer {
+                position: sticky;
+                bottom: 0;
+                margin-top: auto;
+                padding: 10px 0 0;
+                background: var(--surface);
+            }
+
+            .autonomy-dialog footer {
+                display: grid;
+                grid-template-columns: 1fr;
+            }
+
+            .autonomy-dialog footer .autonomy-button:first-child {
+                margin-left: 0;
+                order: 2;
+            }
+
+            .autonomy-disposition-group {
+                display: grid;
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 420px) {
+            .autonomy-case-meta {
+                grid-template-columns: 1fr;
+            }
+
+            .autonomy-case-meta > div:nth-child(3),
+            .autonomy-case-meta > div:nth-child(4) {
+                grid-column: auto;
+            }
+
+            .autonomy-case-actions {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto;
+            }
+
+            .autonomy-readiness-heading {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .autonomy-mobile-tabs button {
+                padding-inline: 1px;
+                font-size: 10px;
+            }
+
+            .autonomy-checklist article {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .autonomy-shell *,
+            .autonomy-shell *::before,
+            .autonomy-shell *::after {
+                scroll-behavior: auto !important;
+                transition-duration: 0.01ms !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+            }
+        }
+
+        @media (forced-colors: active) {
+            .autonomy-fixture-toolbar,
+            .autonomy-case-header,
+            .autonomy-readiness-strip,
+            .autonomy-agent-panel,
+            .autonomy-stage-canvas,
+            .autonomy-evidence-rail,
+            .autonomy-state-banner,
+            .autonomy-transition-banner,
+            .autonomy-partial-warning,
+            .autonomy-immutable-banner,
+            .autonomy-superseded-banner,
+            .autonomy-scenario-card,
+            .autonomy-job-card,
+            .autonomy-recommendation-hero,
+            .autonomy-outcomes,
+            .autonomy-analysis-panel,
+            .autonomy-reversal-panel,
+            .autonomy-evidence-caveats,
+            .autonomy-timeline,
+            .autonomy-compact-agent,
+            .autonomy-signoff-bar,
+            .autonomy-dialog {
+                border: 1px solid CanvasText;
+                box-shadow: none;
+            }
+
+            .autonomy-button-primary,
+            .autonomy-view-switch button[aria-selected="true"],
+            .autonomy-mobile-tabs button[aria-selected="true"] {
+                border: 2px solid ButtonText;
+                background: ButtonFace;
+                color: ButtonText;
+            }
+
+            .autonomy-stage-track button[aria-current="step"],
+            .autonomy-rail-tabs button[aria-selected="true"],
+            .autonomy-readiness-items button[data-status],
+            .autonomy-status-badge,
+            .autonomy-confidence,
+            .autonomy-basis-chip {
+                border: 2px solid CanvasText;
+                forced-color-adjust: auto;
+            }
+
+            .autonomy-rail-backdrop:not([hidden]),
+            .autonomy-dialog::backdrop {
+                background: Canvas;
+                opacity: 0.82;
+            }
+        }
