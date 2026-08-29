@@ -1176,6 +1176,95 @@
             gap: 9px;
         }
 
+        .autonomy-live-scenario-workspace,
+        .autonomy-live-run-workspace {
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .autonomy-scenario-create-actions,
+        .autonomy-scenario-card-actions,
+        .autonomy-job-card-actions {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 7px;
+        }
+
+        .autonomy-scenario-locks,
+        .autonomy-execution-summary {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .autonomy-scenario-locks > div,
+        .autonomy-execution-summary > div {
+            display: grid;
+            gap: 3px;
+            min-width: 0;
+            padding: 9px 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-scenario-locks span,
+        .autonomy-execution-summary span {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 760;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .autonomy-scenario-locks strong,
+        .autonomy-execution-summary strong,
+        .autonomy-scenario-locks code,
+        .autonomy-execution-summary code {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            color: var(--text);
+            font-size: 11px;
+        }
+
+        .autonomy-scenario-empty,
+        .autonomy-unavailable-panel {
+            display: grid;
+            gap: 5px;
+            padding: 14px;
+            border: 1px dashed var(--border-strong);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-scenario-empty p,
+        .autonomy-unavailable-panel p {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .autonomy-live-assumptions {
+            display: grid;
+            gap: 8px;
+        }
+
+        .autonomy-live-assumptions article {
+            display: grid;
+            gap: 4px;
+            padding: 9px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-live-assumptions p,
+        .autonomy-live-assumptions small {
+            color: var(--muted);
+            font-size: 10px;
+        }
+
         .autonomy-scenario-card {
             display: grid;
             gap: 6px;
@@ -1210,6 +1299,129 @@
         .autonomy-scenario-card small {
             color: var(--muted);
             font-size: 11px;
+        }
+
+        .autonomy-live-scenario-card {
+            align-content: start;
+        }
+
+        .autonomy-live-scenario-card[aria-selected="true"] {
+            outline: 3px solid rgba(15, 118, 110, 0.18);
+            outline-offset: 1px;
+        }
+
+        .autonomy-live-scenario-card.is-audit-history {
+            border-style: dashed;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-audit-only-label {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 760;
+            text-transform: uppercase;
+        }
+
+        .autonomy-scenario-selection {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-height: 44px;
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 760;
+        }
+
+        .autonomy-scenario-selection input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+        }
+
+        .autonomy-scenario-hash {
+            display: block;
+            padding: 7px;
+            overflow-wrap: anywhere;
+            border-radius: 5px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            font-size: 10px;
+        }
+
+        .autonomy-scenario-meta,
+        .autonomy-scenario-differences,
+        .autonomy-scenario-errors,
+        .autonomy-confirm-warnings {
+            display: grid;
+            gap: 5px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .autonomy-scenario-meta > div {
+            display: grid;
+            grid-template-columns: minmax(100px, 0.42fr) minmax(0, 1fr);
+            gap: 8px;
+            padding-top: 5px;
+            border-top: 1px solid var(--border);
+            font-size: 10px;
+        }
+
+        .autonomy-scenario-meta dt {
+            color: var(--muted);
+        }
+
+        .autonomy-scenario-meta dd {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            font-weight: 700;
+        }
+
+        .autonomy-scenario-differences li,
+        .autonomy-scenario-errors li,
+        .autonomy-confirm-warnings > * {
+            padding: 7px 8px;
+            border-left: 3px solid var(--border-strong);
+            background: var(--surface);
+            color: var(--muted-strong);
+            font-size: 10px;
+        }
+
+        .autonomy-scenario-errors li,
+        .autonomy-confirm-warnings [data-status="blocked"] {
+            border-left-color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        .autonomy-structural-warning {
+            padding: 8px;
+            border-left: 4px solid var(--warning);
+            background: var(--warning-soft);
+            color: var(--muted-strong);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .autonomy-revision-history {
+            padding-top: 5px;
+            border-top: 1px solid var(--border);
+        }
+
+        .autonomy-revision-history summary {
+            cursor: pointer;
+            color: var(--accent);
+            font-size: 11px;
+            font-weight: 760;
+        }
+
+        .autonomy-revision-history ol {
+            display: grid;
+            gap: 4px;
+            margin: 7px 0 0;
+            padding-left: 18px;
+            color: var(--muted);
+            font-size: 10px;
         }
 
         .autonomy-scenario-card[data-status="valid"] {
@@ -1361,6 +1573,45 @@
         .autonomy-job-card p {
             color: var(--muted);
             font-size: 10px;
+        }
+
+        .autonomy-job-card code {
+            overflow-wrap: anywhere;
+            color: var(--muted-strong);
+            font-size: 10px;
+        }
+
+        .autonomy-job-card[data-state="queued"],
+        .autonomy-job-card[data-state="leased"] {
+            border-color: var(--border-strong);
+        }
+
+        .autonomy-job-card[data-state="cancelled"],
+        .autonomy-job-card[data-state="interrupted"],
+        .autonomy-job-card[data-state="reconnecting"] {
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+        }
+
+        .autonomy-job-card-actions .autonomy-button {
+            min-height: 44px;
+            padding: 6px 9px;
+            font-size: 10px;
+        }
+
+        .autonomy-confirm-selection-target {
+            display: inline-grid;
+            width: 44px;
+            min-width: 44px;
+            height: 44px;
+            place-items: center;
+            cursor: pointer;
+        }
+
+        .autonomy-confirm-selection-target input {
+            width: 22px;
+            height: 22px;
+            accent-color: var(--accent);
         }
 
         .autonomy-transition-banner {
@@ -2255,9 +2506,31 @@
             .autonomy-decision-frame,
             .autonomy-scenario-grid,
             .autonomy-decision-bridge,
+            .autonomy-scenario-locks,
+            .autonomy-execution-summary,
             .autonomy-confirm-locks,
             .autonomy-signoff-summary {
                 grid-template-columns: 1fr;
+            }
+
+            .autonomy-scenario-create-actions {
+                display: grid;
+                grid-template-columns: 1fr;
+            }
+
+            .autonomy-run-confirmation-bar {
+                position: sticky;
+                bottom: 0;
+                z-index: 6;
+                padding: 10px;
+                border: 1px solid var(--border-strong);
+                border-radius: 8px;
+                background: var(--surface);
+                box-shadow: 0 -8px 18px rgba(22, 34, 29, 0.08);
+            }
+
+            .autonomy-run-confirmation-bar .autonomy-button {
+                width: 100%;
             }
 
             .autonomy-scenario-matrix {
@@ -2401,6 +2674,31 @@
                 border-radius: 0;
             }
 
+            .autonomy-confirm-dialog,
+            .autonomy-scenario-dialog {
+                width: 100vw;
+                max-width: 100vw;
+                height: 100dvh;
+                max-height: 100dvh;
+                border: 0;
+                border-radius: 0;
+            }
+
+            .autonomy-confirm-dialog .autonomy-dialog-content,
+            .autonomy-scenario-dialog .autonomy-dialog-content {
+                min-height: 100%;
+                align-content: start;
+            }
+
+            .autonomy-confirm-dialog footer,
+            .autonomy-scenario-dialog footer {
+                position: sticky;
+                bottom: 0;
+                margin-top: auto;
+                padding: 10px 0 0;
+                background: var(--surface);
+            }
+
             .autonomy-signoff-dialog .autonomy-dialog-content {
                 min-height: 100%;
                 align-content: start;
@@ -2485,6 +2783,10 @@
             .autonomy-superseded-banner,
             .autonomy-scenario-card,
             .autonomy-job-card,
+            .autonomy-scenario-locks > div,
+            .autonomy-execution-summary > div,
+            .autonomy-scenario-empty,
+            .autonomy-unavailable-panel,
             .autonomy-recommendation-hero,
             .autonomy-outcomes,
             .autonomy-analysis-panel,

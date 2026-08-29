@@ -561,9 +561,9 @@ class AutonomyApiTests(unittest.TestCase):
         self.assertLessEqual(cutoff, finished_at - lease)
         self.assertNotIn("worker_id", recovery_calls[0])
 
-    def test_later_phase_mutation_routes_do_not_exist(self):
+    def test_decision_brief_signoff_and_report_routes_do_not_exist(self):
         case_id = self._create_case()["case_id"]
-        for suffix in ("scenarios", "confirm", "signoff", "reports"):
+        for suffix in ("decision-brief", "signoff", "reports"):
             response = self.client.post(
                 f"/api/autonomy/cases/{case_id}/{suffix}", json={}
             )

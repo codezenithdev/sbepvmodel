@@ -2,7 +2,8 @@
 
 The model may explain these rules, but it never supplies or changes them.  The
 complete approved state vocabulary is retained so durable rows remain forwards
-compatible; this phase only exposes the foundation/evidence actions below.
+compatible. Scenario construction and execution are deterministic human-owned
+actions; recommendation, sign-off, and report generation remain unavailable.
 """
 
 from __future__ import annotations
@@ -50,14 +51,16 @@ PROVISIONAL_EVIDENCE_CLASSES = frozenset(
 )
 EVIDENCE_REVIEW_STATES = frozenset({"pending", "accepted", "rejected", "deleted"})
 
-# These are the only case actions exposed during the Agent + Evidence phase.
-# There is intentionally no run, queue, confirm, sign, or report action.
+# These are the only case actions exposed through the Scenarios + Execution phase.
+# There is intentionally no recommendation, sign, or report action.
 _PHASE_ACTIONS_BY_STATE: dict[str, tuple[str, ...]] = {
     "draft": (
         "edit_case",
         "lock_case_basis",
         "upload_evidence",
         "review_evidence",
+        "create_scenario",
+        "compare_scenarios",
         "ask_decision_agent",
         "view_history",
         "archive_case",
@@ -67,6 +70,8 @@ _PHASE_ACTIONS_BY_STATE: dict[str, tuple[str, ...]] = {
         "lock_case_basis",
         "upload_evidence",
         "review_evidence",
+        "create_scenario",
+        "compare_scenarios",
         "ask_decision_agent",
         "view_history",
         "archive_case",
@@ -76,6 +81,8 @@ _PHASE_ACTIONS_BY_STATE: dict[str, tuple[str, ...]] = {
         "lock_case_basis",
         "upload_evidence",
         "review_evidence",
+        "create_scenario",
+        "compare_scenarios",
         "ask_decision_agent",
         "view_history",
         "archive_case",
@@ -83,12 +90,27 @@ _PHASE_ACTIONS_BY_STATE: dict[str, tuple[str, ...]] = {
     "ready_to_run": (
         "upload_evidence",
         "review_evidence",
+        "create_scenario",
+        "compare_scenarios",
+        "confirm_scenarios",
         "ask_decision_agent",
         "view_history",
         "archive_case",
     ),
-    "running": ("ask_decision_agent", "view_history"),
-    "results_ready": ("ask_decision_agent", "view_history", "archive_case"),
+    "running": (
+        "monitor_execution",
+        "retry_failed_execution",
+        "cancel_execution",
+        "ask_decision_agent",
+        "view_history",
+    ),
+    "results_ready": (
+        "monitor_execution",
+        "compare_scenarios",
+        "ask_decision_agent",
+        "view_history",
+        "archive_case",
+    ),
     "decision_ready": ("ask_decision_agent", "view_history", "archive_case"),
     "signed": ("view_history", "archive_case"),
     "archived": ("view_history",),
@@ -99,6 +121,12 @@ ACTION_LABELS = {
     "lock_case_basis": "Select and lock an eligible Annual source",
     "upload_evidence": "Upload evidence",
     "review_evidence": "Review extracted evidence",
+    "create_scenario": "Create a scenario draft",
+    "compare_scenarios": "Compare scenario inputs",
+    "confirm_scenarios": "Review and confirm selected TEA runs",
+    "monitor_execution": "Monitor confirmed TEA runs",
+    "retry_failed_execution": "Retry an eligible TEA attempt",
+    "cancel_execution": "Cancel eligible TEA work",
     "ask_decision_agent": "Ask the Decision Agent",
     "view_history": "View case history",
     "archive_case": "Archive case",
@@ -136,6 +164,9 @@ def phase_actions_for_state(
     *,
     source_locked: bool = False,
     has_pending_evidence: bool = False,
+    has_validated_scenarios: bool = False,
+    has_retryable_execution: bool = False,
+    has_cancellable_execution: bool = False,
     agent_available: bool = True,
     extra_disabled: Iterable[str] = (),
 ) -> list[dict[str, object]]:
@@ -153,6 +184,21 @@ def phase_actions_for_state(
         elif action_id == "review_evidence" and not has_pending_evidence:
             enabled = False
             reason = "No evidence candidates are awaiting human review."
+        elif (
+            action_id in {"create_scenario", "compare_scenarios"}
+            and not source_locked
+        ):
+            enabled = False
+            reason = "Lock an eligible Annual source and analysis basis first."
+        elif action_id == "confirm_scenarios" and not has_validated_scenarios:
+            enabled = False
+            reason = "At least one current validated scenario is required."
+        elif action_id == "retry_failed_execution" and not has_retryable_execution:
+            enabled = False
+            reason = "No linked TEA attempt is eligible for retry."
+        elif action_id == "cancel_execution" and not has_cancellable_execution:
+            enabled = False
+            reason = "No linked queued or running TEA attempt can be cancelled."
         elif action_id == "ask_decision_agent" and not agent_available:
             enabled = False
             reason = "The Decision Agent is unavailable; deterministic readiness remains available."

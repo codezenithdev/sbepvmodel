@@ -1,8 +1,10 @@
 """Execute one lease-fenced probabilistic technoeconomic job.
 
-The runner consumes only the immutable TEA request and Annual source snapshot
-carried by the claimed record.  It never resolves the live Annual job and never
-places TEA state in the legacy in-memory model cache.
+The calculation consumes only the immutable TEA request and Annual source
+snapshot carried by the claimed record. Scenario-linked attempts additionally
+reverify their immutable accepted-evidence bindings before calculation; evidence
+never changes kernel inputs. The runner never resolves the live Annual job and
+never places TEA state in the legacy in-memory model cache.
 """
 
 from __future__ import annotations
@@ -843,6 +845,50 @@ def _verify_frozen_inputs(
     return request_sha256, verified_artifact
 
 
+def _verify_decision_scenario_evidence(
+    job_id: str,
+    request_payload: Mapping[str, Any],
+) -> None:
+    """Reverify a linked scenario's immutable evidence before kernel execution."""
+
+    context = state.AGENT_STORE.get_decision_scenario_job_context(job_id)
+    if context is None:
+        return
+    scenario_record = context.get("scenario")
+    if not isinstance(scenario_record, Mapping):
+        raise ValueError("The decision scenario execution binding is invalid")
+    request_sha256 = technoeconomic_api.canonical_json_sha256(request_payload)
+    if not secrets.compare_digest(
+        request_sha256,
+        str(scenario_record.get("request_sha256") or ""),
+    ):
+        raise ValueError("The TEA request no longer matches its confirmed scenario")
+
+    # Function-local imports keep the standalone TEA worker independent unless
+    # this exact job carries an immutable decision-scenario link.
+    from sbepv.autonomy import evidence as autonomy_evidence
+    from sbepv.autonomy import scenarios as autonomy_scenarios
+
+    case_id = str(scenario_record.get("case_id") or "")
+    verification = autonomy_scenarios.verify_accepted_evidence_references(
+        case_id=case_id,
+        request_payload=request_payload,
+        evidence_references=scenario_record.get("evidence_receipt_refs") or [],
+        receipt_loader=state.AGENT_STORE.get_decision_evidence_receipt,
+        evidence_snapshot_loader=lambda verified_case_id, asset_id: (
+            autonomy_evidence.verified_evidence_snapshot(
+                state.AGENT_STORE,
+                verified_case_id,
+                asset_id,
+            )
+        ),
+    )
+    if not verification.get("valid"):
+        raise ValueError(
+            "The confirmed decision scenario evidence failed immutable preflight"
+        )
+
+
 def _check_cancelled(job_id: str, *, worker_id: str, lease_token: str) -> None:
     if state.AGENT_STORE.is_technoeconomic_cancel_requested(
         job_id,
@@ -990,6 +1036,7 @@ def _run_technoeconomic_job(
 
     try:
         set_progress(3, "Verifying frozen technoeconomic inputs")
+        _verify_decision_scenario_evidence(job_id, request_payload)
         request_sha256, verified_source_artifact = _verify_frozen_inputs(
             request_payload=request_payload,
             source_snapshot=source_snapshot,

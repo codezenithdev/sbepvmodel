@@ -1,4 +1,4 @@
-"""Phase 0/1 contract tests for the fixture-backed Autonomy frontend.
+"""Contract tests for the live and fixture-backed Autonomy frontend.
 
 These tests intentionally inspect the canonical ``frontend/`` sources.  They do
 not prescribe one renderer function, card hierarchy, or JavaScript namespace;
@@ -217,7 +217,7 @@ class AutonomyFrontendSources(unittest.TestCase):
             self.assertNotRegex(block, r"fixture\.(?:caseState|stage)\s*=")
         self.assertIn("autonomyContentMode === 'live'", stage_navigation)
         self.assertIn("!AUTONOMY_LIVE_STAGES.includes(stage)", stage_navigation)
-        self.assertIn("autonomySelectFixture(previewFixture", stage_navigation)
+        self.assertNotIn("autonomySelectFixture", stage_navigation)
         self.assertNotIn("dataset.autonomyCaseId", stage_navigation)
         self.assertNotIn("dataset.autonomyCaseRevision", stage_navigation)
         self.assertNotRegex(stage_navigation, r"fixture\.(?:caseState|stage)\s*=")
@@ -322,13 +322,8 @@ class AutonomyFrontendSources(unittest.TestCase):
             with self.subTest(authority=authority):
                 self.assertNotRegex(fixture_catalog, pattern)
 
-        for forbidden_live_surface in (
-            r"/api/autonomy/[^'\"]*/scenarios",
-            r"/api/autonomy/[^'\"]*/confirm",
-            r"/api/autonomy/[^'\"]*/signoff",
-            r"/api/autonomy/[^'\"]*/reports",
-        ):
-            self.assertNotRegex(self.script, forbidden_live_surface)
+        for forbidden_live_surface in ("/signoff", "/reports"):
+            self.assertNotIn(forbidden_live_surface, self.script)
 
         for boundary_copy in (
             "Fixture preview",
@@ -338,7 +333,7 @@ class AutonomyFrontendSources(unittest.TestCase):
         ):
             self.assertIn(boundary_copy.lower(), self.combined.lower())
 
-    def test_live_ask_and_verify_use_only_the_narrow_durable_api(self):
+    def test_live_workspace_uses_only_the_narrow_durable_api(self):
         for endpoint in (
             "/api/autonomy/cases",
             "/api/autonomy/sources",
@@ -350,6 +345,10 @@ class AutonomyFrontendSources(unittest.TestCase):
             "/candidates/",
             "/review",
             "/download",
+            "/scenarios",
+            "/scenarios/compare",
+            "/scenarios/confirm",
+            "/execution",
         ):
             with self.subTest(endpoint=endpoint):
                 self.assertIn(endpoint, self.script)
@@ -358,6 +357,219 @@ class AutonomyFrontendSources(unittest.TestCase):
         self.assertIn('data-content-mode="live"', self.markup)
         self.assertIn("Later-phase fixture preview — not live case data", self.markup)
         self.assertIn("autonomySetContentMode('fixture')", self.script)
+
+    def test_live_compare_renders_durable_cards_exact_differences_and_history(self):
+        for element_id in (
+            "autonomyLiveScenarioGrid",
+            "autonomyScenarioLocks",
+            "autonomyLiveScenarioMatrix",
+            "autonomyScenarioMatrixHead",
+            "autonomyScenarioMatrixBody",
+            "autonomyLiveScenarioMobileList",
+            "autonomyComparisonSummary",
+            "autonomyScenarioDialog",
+            "autonomyScenarioForm",
+        ):
+            self.assertEqual(self.markup.count(f'id="{element_id}"'), 1)
+        for contract_field in (
+            "request_sha256",
+            "evidence_references",
+            "comparison_classification",
+            "structural_warning",
+            "revision_history",
+            "expires_at",
+        ):
+            self.assertIn(contract_field, self.script)
+        self.assertIn("function autonomyScenarioDifferences", self.script)
+        self.assertIn("autonomyLiveComparison?.difference_matrix", self.script)
+        self.assertIn("request_template_metadata", self.script)
+        self.assertIn("data-autonomy-open-expert-tea", self.script)
+        self.assertIn("Request SHA-256", self.script)
+        self.assertIn("Inputs remain hypotheses", self.script)
+        self.assertNotIn("innerHTML", self.script)
+
+    def test_live_scenario_mutations_are_revision_fenced_and_server_authorized(self):
+        for action_id in (
+            "create_scenario",
+            "revise_scenario",
+            "validate_scenario",
+            "expire_scenario",
+            "select_for_confirmation",
+        ):
+            self.assertIn(action_id, self.script)
+        self.assertIn("function autonomyActionIsAllowed", self.script)
+        self.assertIn("autonomyScenarioIsSelectable(scenario)", self.script)
+        mutation = self.script.split("async function autonomySubmitScenarioEditor", 1)[1].split(
+            "\n        async function autonomyValidateScenario", 1
+        )[0]
+        for field in (
+            "expected_case_revision",
+            "expected_scenario_revision",
+            "operator_name",
+            "changed_fields",
+            "evidence_references",
+        ):
+            self.assertIn(field, mutation)
+        self.assertIn("'/expire'", mutation)
+        self.assertIn("'/revisions'", mutation)
+        validation = self.script.split("async function autonomyValidateScenario", 1)[1].split(
+            "\n        async function autonomyExecutionAction", 1
+        )[0]
+        self.assertIn("expected_request_sha256", validation)
+        self.assertIn("'/validate'", validation)
+        self.assertIn("closestSupportedAlternatives", self.script)
+        self.assertIn("Array.isArray(detail)", self.script)
+        self.assertIn("item.loc.filter((part) => part !== 'body')", self.script)
+
+    def test_live_grouped_confirmation_freezes_exact_requests_and_named_authority(self):
+        confirmation = self.script.split("async function autonomySubmitLiveConfirmation", 1)[1].split(
+            "\n        function autonomyRenderLiveWorkspace", 1
+        )[0]
+        for field in (
+            "expected_case_revision",
+            "selections",
+            "scenario_id",
+            "revision",
+            "request_sha256",
+            "operator_name",
+            "rationale",
+            "acknowledgement_accepted: true",
+            "idempotency_key",
+        ):
+            self.assertIn(field, confirmation)
+        self.assertIn("scenarios.length > 4", confirmation)
+        self.assertIn("selectionSignature !== frozenSignature", confirmation)
+        self.assertIn("The same idempotency key will be reused", confirmation)
+        self.assertIn("Selected scenarios and full canonical request hashes", self.markup)
+        self.assertIn("Atomic creation · existing sequential leased worker", self.script)
+
+    def test_live_confirmation_exact_review_is_baseline_gated_and_replay_safe(self):
+        acknowledgement = (
+            "I confirm the selected scenarios, source and basis lock, evidence status, "
+            "realization count, seed, and exact request hashes shown here. I understand "
+            "the production action would create immutable TEA jobs for sequential worker "
+            "execution."
+        )
+        self.assertIn(acknowledgement, self.script)
+        self.assertIn("function autonomyConfirmationHasOneBaseline", self.script)
+        self.assertIn("!autonomyConfirmationHasOneBaseline(scenarios)", self.script)
+        self.assertIn("autonomyConfirmationReviewSignature", self.script)
+        self.assertIn("autonomyConfirmationSubmittedSignature", self.script)
+        self.assertIn("autonomyResetConfirmationReview", self.script)
+        self.assertIn("clearSelection: false", self.script)
+        self.assertIn("autonomyConfirmationInFlight && options.force !== true", self.script)
+        self.assertIn("autonomyCloseDialog(autonomyConfirmDialog, {force: true})", self.script)
+        self.assertRegex(
+            self.script,
+            r"autonomyConfirmDialog\?\.addEventListener\(['\"]cancel['\"][\s\S]{0,180}preventDefault\(\)",
+        )
+
+    def test_live_exact_differences_preserve_missing_null_and_empty_values(self):
+        difference = self.script.split("function autonomyScenarioDifferences", 1)[1].split(
+            "\n        function autonomyNewIdempotencyKey", 1
+        )[0]
+        for marker in (
+            "baselinePresent",
+            "valuePresent",
+            "baseline_present",
+            "scenario_present",
+            "hasNestedBaselineValue",
+            "hasNestedScenarioValue",
+        ):
+            self.assertIn(marker, difference)
+        self.assertIn("if (present === false) return 'Missing'", difference)
+        self.assertIn("if (value === null) return 'null'", difference)
+        self.assertIn("if (value === '') return 'Empty string'", difference)
+        self.assertNotRegex(difference, r"baseline\s*\|\|")
+
+    def test_live_execution_uses_linked_job_states_and_strict_action_bodies(self):
+        for element_id in (
+            "autonomyExecutionSummary",
+            "autonomyExecutionQueueState",
+            "autonomyLiveJobList",
+            "autonomyLivePartialResultsBanner",
+            "autonomyLiveResultsReadyBanner",
+        ):
+            self.assertEqual(self.markup.count(f'id="{element_id}"'), 1)
+        action = self.script.split("async function autonomyExecutionAction", 1)[1].split(
+            "\n        function autonomyConfirmationSelectionSignature", 1
+        )[0]
+        for field in ("expected_case_revision", "operator_name", "rationale"):
+            self.assertIn(field, action)
+        self.assertNotIn("idempotency_key", action)
+        self.assertIn("same frozen request, source, and evidence snapshot", action)
+        self.assertIn("retryable_job_ids", self.script)
+        self.assertIn("cancellable_job_ids", self.script)
+        self.assertIn("partial_results", self.script)
+        self.assertIn("all_successful", self.script)
+
+    def test_live_execution_keeps_attempt_history_and_poll_focus_stable(self):
+        render = self.script.split("function autonomyRenderLiveExecution", 1)[1].split(
+            "\n        async function autonomyFetchScenarioCollection", 1
+        )[0]
+        self.assertIn("const jobs = autonomyExecutionJobs()", render)
+        self.assertIn("autonomyExecutionJobs({latestOnly: true})", render)
+        self.assertIn("autonomyReconcileExecutionJobs(jobs)", render)
+        self.assertIn("all_successful === true", render)
+        self.assertIn("partial_results === true && !allComplete", render)
+        reconcile = self.script.split("function autonomyReconcileExecutionJobs", 1)[1].split(
+            "\n        function autonomyRenderLiveExecution", 1
+        )[0]
+        for marker in (
+            "dataset.teaJobId",
+            "structureSignature",
+            "document.activeElement",
+            "focusToken",
+            "preventScroll: true",
+        ):
+            self.assertIn(marker, reconcile)
+        self.assertIn("Confirmed case revision", self.script)
+        self.assertIn("Current case revision", self.script)
+
+    def test_live_scenario_fetch_and_execution_poll_are_abort_and_revision_fenced(self):
+        loader = self.script.split("async function autonomyLoadScenarioWorkspace", 1)[1].split(
+            "\n        function autonomyInvalidateExecutionPoll", 1
+        )[0]
+        self.assertIn("new AbortController()", loader)
+        self.assertIn("revision !== autonomyScenarioLoadRevision", loader)
+        self.assertIn("caseId !== autonomyCaseId()", loader)
+        poller = self.script.split("async function autonomyPollExecution", 1)[1].split(
+            "\n        function autonomyScenarioTemplate", 1
+        )[0]
+        self.assertIn("revision !== autonomyExecutionPollRevision", poller)
+        self.assertIn("autonomyExecutionPollFailures", poller)
+        self.assertIn("reconnecting", poller.lower())
+
+    def test_live_snapshot_switch_and_expired_history_are_fenced(self):
+        loader = self.script.split("async function autonomyLoadScenarioWorkspace", 1)[1].split(
+            "\n        function autonomyInvalidateExecutionPoll", 1
+        )[0]
+        for marker in (
+            "autonomySetScenarioWorkspaceBusy(true)",
+            "current_scenarios",
+            "historicalOnly",
+            "audit_only: true",
+            "mixed_case_revision",
+            "new Set(payloadRevisions).size !== 1",
+        ):
+            self.assertIn(marker, loader)
+        selector = self.script.split("async function autonomySelectLiveCase", 1)[1].split(
+            "\n        async function autonomyLoadCases", 1
+        )[0]
+        for marker in (
+            "autonomyCaseLoadRevision",
+            "autonomyDesiredCaseId",
+            "autonomyCaseAbortController.abort()",
+            "autonomyScenarioAbortController.abort()",
+            "autonomyLiveAllowedActions = []",
+            "autonomyConfirmationInFlight",
+        ):
+            self.assertIn(marker, selector)
+        permissions = self.script.split("function autonomyCollectAllowedActions", 1)[1].split(
+            "\n        function autonomyScenarioValidation", 1
+        )[0]
+        self.assertIn("if (next.length) entries = next", permissions)
+        self.assertNotIn("entries.push", permissions)
 
     def test_live_source_and_basis_lock_is_separate_immutable_operator_action(self):
         for element_id in (
@@ -503,13 +715,22 @@ class AutonomyFrontendSources(unittest.TestCase):
         self.assertIn("autonomyPendingTurn = null", self.script)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_proxy_allows_only_agent_and_evidence_phase_autonomy_routes(self):
+    def test_proxy_allows_only_contract_autonomy_routes(self):
         cases = [
             (["autonomy", "cases"], True),
             (["autonomy", "sources"], True),
             (["autonomy", "cases", "case_abc123"], True),
             (["autonomy", "cases", "case_abc123", "events"], True),
             (["autonomy", "cases", "case_abc123", "messages"], True),
+            (["autonomy", "cases", "case_abc123", "scenarios"], True),
+            (["autonomy", "cases", "case_abc123", "scenarios", "compare"], True),
+            (["autonomy", "cases", "case_abc123", "scenarios", "confirm"], True),
+            (["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "revisions"], True),
+            (["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "validate"], True),
+            (["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "expire"], True),
+            (["autonomy", "cases", "case_abc123", "execution"], True),
+            (["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "cancel"], True),
+            (["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "retry"], True),
             (["autonomy", "cases", "case_abc123", "readiness", "evaluate"], True),
             (["autonomy", "cases", "case_abc123", "message-stream", "turn_abc123"], True),
             (["autonomy", "cases", "case_abc123", "evidence"], True),
@@ -519,10 +740,13 @@ class AutonomyFrontendSources(unittest.TestCase):
             (["autonomy", "sources", "extra"], False),
             (["autonomy", ".."], False),
             (["autonomy", "cases", ".."], False),
-            (["autonomy", "cases", "case_abc123", "scenarios"], False),
             (["autonomy", "cases", "case_abc123", "confirm"], False),
             (["autonomy", "cases", "case_abc123", "signoff"], False),
             (["autonomy", "cases", "case_abc123", "reports"], False),
+            (["autonomy", "cases", "case_abc123", "scenarios", "dsc_bad-id", "validate"], False),
+            (["autonomy", "cases", "case_abc123", "scenarios", "..", "expire"], False),
+            (["autonomy", "cases", "case_abc123", "execution", "job_abc123", "retry"], False),
+            (["autonomy", "cases", "case_abc123", "execution", "tea_abc123", "delete"], False),
             (["autonomy", "cases", "case_abc123", "evidence", "..", "download"], False),
         ]
         script = f"""
@@ -666,6 +890,21 @@ for (const [path, expected] of cases) {{
         )
         self.assertIn("local preview", self.combined.lower())
 
+    def test_returning_to_live_clears_fixture_only_status_announcements(self):
+        content_mode = self.script.split("function autonomySetContentMode", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        open_workspace = self.script.split("async function autonomyOpenWorkspace", 1)[
+            1
+        ].split("\n        async function ", 1)[0]
+
+        self.assertIn("autonomyLiveStatus.textContent = ''", content_mode)
+        self.assertIn(
+            "Fixture preview data is no longer displayed",
+            open_workspace,
+        )
+        self.assertIn("Live durable case restored", open_workspace)
+
     def test_tabs_steps_tables_and_dialogs_have_screen_reader_semantics(self):
         for pattern in (
             r"role\s*=\s*['\"]tablist['\"]",
@@ -741,6 +980,15 @@ for (const [path, expected] of cases) {{
             "section === 'decision' && !autonomyCanOpenBrief",
             self.script,
         )
+        for selector in (
+            ".autonomy-scenario-selection",
+            ".autonomy-job-card-actions .autonomy-button",
+            ".autonomy-confirm-selection-target",
+        ):
+            self.assertRegex(
+                compact,
+                rf"{re.escape(selector)}\s*\{{[^}}]*(?:min-height|height):\s*44px",
+            )
 
     def test_reduced_motion_and_forced_colors_are_honored(self):
         compact = re.sub(r"\s+", " ", self.styles)

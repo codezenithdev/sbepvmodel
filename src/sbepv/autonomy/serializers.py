@@ -9,27 +9,78 @@ import re
 from typing import Any
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_SECRET_RE = re.compile(r"\b(?:sk|rk|sess)-(?:proj-)?[A-Za-z0-9_-]{10,}\b")
+_NAMED_CREDENTIAL_RE = re.compile(
+    r"(?i)\b(?:authorization|api[\s_-]?key|access[\s_-]?token|"
+    r"refresh[\s_-]?token|client[\s_-]?secret|password|passwd|secret)\b"
+    r"\s*[:=]\s*(?:bearer\s+)?[^\s,;]+"
+)
+_BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
+_CREDENTIAL_URI_RE = re.compile(
+    r"(?i)\b(?:https?|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://"
+    r"[^\s/@:]+:[^\s/@]+@[^\s,;<>\"']+"
+)
+_WINDOWS_PATH_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]|\\\\)[^\r\n,;<>\"']+"
+)
+_FILE_URI_RE = re.compile(r"(?i)\bfile://[^\r\n,;<>\"']+")
+_SERVER_PATH_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9])/(?:Users|home|tmp|var|srv|opt|private|root|etc|mnt|run)"
+    r"(?:/[^\r\n,;<>\"']*)?"
+)
+_PRIVATE_PATH_VALUE_RE = re.compile(
+    r"(?i)^(?:[A-Z]:[\\/]|\\\\|file://|"
+    r"/(?:Users|home|tmp|var|srv|opt|private|root|etc|mnt|run)(?:/|$))"
+)
 _PRIVATE_KEY_PARTS = (
-    "api_key",
+    "apikey",
     "authorization",
+    "credential",
     "secret",
-    "claim_token",
-    "lease_token",
-    "worker_id",
-    "storage_key",
-    "storage_path",
+    "password",
+    "passwd",
+    "token",
+    "cookie",
+    "idempotencykey",
+    "workerid",
+    "storagekey",
+    "storagepath",
+    "sourcepath",
     "filesystem",
-    "server_path",
-    "temp_path",
-    "raw_content",
+    "serverpath",
+    "temppath",
+    "localpath",
+    "filepath",
+    "traceback",
+    "rawcontent",
+    "rawtext",
 )
 
 
-def _safe_text(value: object, *, limit: int = 20_000) -> str | None:
+def scrub_public_text(value: object, *, limit: int = 20_000) -> str | None:
+    """Bound text and redact credential material and private server paths."""
+
     if value is None:
         return None
     text = _CONTROL_RE.sub("", str(value)).strip()
+    if _PRIVATE_PATH_VALUE_RE.match(text):
+        return "[redacted path]"
+    text = _SECRET_RE.sub("[redacted secret]", text)
+    text = _NAMED_CREDENTIAL_RE.sub("[redacted credential]", text)
+    text = _BEARER_RE.sub("[redacted credential]", text)
+    text = _CREDENTIAL_URI_RE.sub("[redacted credential URI]", text)
+    text = _FILE_URI_RE.sub("[redacted path]", text)
+    text = _WINDOWS_PATH_RE.sub("[redacted path]", text)
+    text = _SERVER_PATH_RE.sub("[redacted path]", text)
     return text[:limit]
+
+
+def _safe_text(value: object, *, limit: int = 20_000) -> str | None:
+    return scrub_public_text(value, limit=limit)
+
+
+def _normalized_public_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
 
 def safe_public_value(value: Any, *, depth: int = 0) -> Any:
@@ -51,7 +102,7 @@ def safe_public_value(value: Any, *, depth: int = 0) -> Any:
             key = _safe_text(raw_key, limit=128)
             if not key:
                 continue
-            normalized = key.casefold()
+            normalized = _normalized_public_key(key)
             if any(part in normalized for part in _PRIVATE_KEY_PARTS):
                 continue
             result[key] = safe_public_value(item, depth=depth + 1)
@@ -303,4 +354,173 @@ def public_decision_event(record: Mapping[str, Any]) -> dict[str, Any]:
             _pick(record, "occurred_at", "created_at"), limit=64
         ),
         "payload": safe_public_value(deepcopy(payload or {})),
+    }
+
+
+def public_decision_scenario(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one immutable scenario revision without private TEA source fields."""
+
+    evidence_references: list[dict[str, Any]] = []
+    raw_references = record.get("evidence_receipt_refs") or record.get(
+        "evidence_references"
+    ) or []
+    if isinstance(raw_references, Sequence) and not isinstance(
+        raw_references, (str, bytes, bytearray)
+    ):
+        for raw_reference in raw_references:
+            if not isinstance(raw_reference, Mapping):
+                continue
+            receipt = raw_reference.get("receipt")
+            evidence_references.append(
+                {
+                    "request_path": _safe_text(
+                        raw_reference.get("request_path"), limit=500
+                    ),
+                    "receipt_id": _safe_text(
+                        _pick(
+                            raw_reference,
+                            "evidence_receipt_id",
+                            "receipt_id",
+                        ),
+                        limit=128,
+                    ),
+                    "receipt": public_evidence_receipt(
+                        receipt if isinstance(receipt, Mapping) else None
+                    ),
+                }
+            )
+
+    validation = record.get("validation")
+    jobs = record.get("jobs") or []
+    tea_job_ids = record.get("tea_job_ids") or []
+    if isinstance(jobs, Sequence) and not isinstance(jobs, (str, bytes, bytearray)):
+        for job in jobs:
+            if isinstance(job, Mapping) and job.get("id"):
+                tea_job_ids = [*tea_job_ids, job.get("id")]
+    canonical_job_ids: list[str] = []
+    for job_id in tea_job_ids:
+        safe_id = _safe_text(job_id, limit=128)
+        if safe_id and safe_id not in canonical_job_ids:
+            canonical_job_ids.append(safe_id)
+
+    return {
+        "scenario_id": _safe_text(
+            _pick(record, "scenario_id", "id"), limit=128
+        ),
+        "scenario_revision_id": _safe_text(
+            record.get("scenario_revision_id"), limit=128
+        ),
+        "case_id": _safe_text(record.get("case_id"), limit=128),
+        "label": _safe_text(record.get("label"), limit=200),
+        "kind": _safe_text(record.get("kind"), limit=32),
+        "revision": int(record.get("revision") or 0),
+        "parent_revision_id": _safe_text(
+            record.get("parent_revision_id"), limit=128
+        ),
+        "superseded_by_revision_id": _safe_text(
+            record.get("superseded_by_revision_id"), limit=128
+        ),
+        "draft_status": _safe_text(
+            _pick(record, "draft_status", "status"), limit=32
+        ),
+        "request": safe_public_value(deepcopy(record.get("request") or {})),
+        "request_sha256": _safe_text(record.get("request_sha256"), limit=64),
+        "changed_fields": safe_public_value(record.get("changed_fields") or []),
+        "comparison_classification": _safe_text(
+            record.get("comparison_classification"), limit=32
+        ),
+        "structural_warning": (
+            "This scenario changes request structure; baseline-relative causal "
+            "attribution is limited."
+            if record.get("comparison_classification") == "structural"
+            else None
+        ),
+        "validation": safe_public_value(validation),
+        "validation_sha256": _safe_text(
+            record.get("validation_sha256"), limit=64
+        ),
+        "source_lock": {
+            "source_annual_job_id": _safe_text(
+                record.get("source_annual_job_id"), limit=128
+            ),
+            "source_snapshot_sha256": _safe_text(
+                record.get("source_snapshot_sha256"), limit=64
+            ),
+            "analysis_basis": _safe_text(record.get("analysis_basis"), limit=64),
+        },
+        "evidence_references": evidence_references,
+        "evidence_receipt_ids": [
+            item["receipt_id"] for item in evidence_references if item["receipt_id"]
+        ],
+        "created_by": _safe_text(record.get("created_by"), limit=300),
+        "updated_by": _safe_text(record.get("updated_by"), limit=300),
+        "created_at": _safe_text(record.get("created_at"), limit=64),
+        "updated_at": _safe_text(record.get("updated_at"), limit=64),
+        "expires_at": _safe_text(record.get("expires_at"), limit=64),
+        "validated_at": _safe_text(record.get("validated_at"), limit=64),
+        "confirmed_at": _safe_text(record.get("confirmed_at"), limit=64),
+        "expired_at": _safe_text(record.get("expired_at"), limit=64),
+        "confirmation_id": _safe_text(record.get("confirmation_id"), limit=128),
+        "tea_job_ids": canonical_job_ids,
+        "linked_tea_job_id": _safe_text(
+            record.get("linked_tea_job_id"), limit=128
+        ),
+        "latest_tea_job_id": _safe_text(
+            _pick(record, "latest_tea_job_id", "linked_tea_job_id"), limit=128
+        ),
+    }
+
+
+def public_scenario_confirmation(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the immutable named-human batch receipt and linked TEA identities."""
+
+    raw_items = record.get("items") or []
+    items: list[dict[str, Any]] = []
+    if isinstance(raw_items, Sequence) and not isinstance(
+        raw_items, (str, bytes, bytearray)
+    ):
+        for raw_item in raw_items:
+            if not isinstance(raw_item, Mapping):
+                continue
+            items.append(
+                {
+                    "item_index": int(raw_item.get("item_index") or 0),
+                    "scenario_id": _safe_text(
+                        raw_item.get("scenario_id"), limit=128
+                    ),
+                    "scenario_revision_id": _safe_text(
+                        raw_item.get("scenario_revision_id"), limit=128
+                    ),
+                    "revision": int(
+                        _pick(raw_item, "scenario_revision", "revision") or 0
+                    ),
+                    "request_sha256": _safe_text(
+                        raw_item.get("request_sha256"), limit=64
+                    ),
+                    "tea_job_id": _safe_text(
+                        _pick(raw_item, "tea_job_id", "job_id"), limit=128
+                    ),
+                }
+            )
+    return {
+        "confirmation_id": _safe_text(
+            _pick(record, "confirmation_id", "id"), limit=128
+        ),
+        "case_id": _safe_text(record.get("case_id"), limit=128),
+        "case_revision_before": int(
+            _pick(record, "expected_case_revision", "case_revision_before") or 0
+        ),
+        "case_revision_after": int(record.get("case_revision_after") or 0),
+        "operator_name": _safe_text(record.get("operator_name"), limit=300),
+        "rationale": _safe_text(record.get("rationale"), limit=4_000),
+        "acknowledgement": _safe_text(
+            record.get("acknowledgement"), limit=4_000
+        ),
+        "confirmation_request_sha256": _safe_text(
+            record.get("confirmation_request_sha256"), limit=64
+        ),
+        "receipt": safe_public_value(deepcopy(record.get("receipt") or {})),
+        "receipt_sha256": _safe_text(record.get("receipt_sha256"), limit=64),
+        "confirmed_at": _safe_text(record.get("confirmed_at"), limit=64),
+        "items": items,
     }

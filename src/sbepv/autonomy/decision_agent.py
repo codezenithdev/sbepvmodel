@@ -64,6 +64,57 @@ _RUNNABLE_FIELD_RE = re.compile(
     r"(?i)[\"']?(?:request|seed|n_samples|weather_years|source_annual_job_id|"
     r"confirm|queue)[\"']?\s*[:=]"
 )
+_NUMERIC_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_])[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)(?:\s*%)?"
+)
+_RUNNABLE_NUMERIC_RE = re.compile(
+    r"(?is)(?:\b(?:seed|n_samples|sample(?:s|\s+count)?|realization(?:s|\s+count)?|"
+    r"weather[_\s-]*years?)\b.{0,32}"
+    r"(?<![A-Za-z0-9_])[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)|"
+    r"(?<![A-Za-z0-9_])[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+).{0,32}"
+    r"\b(?:samples?|realizations?|weather[_\s-]*years?)\b)"
+)
+_OUTPUT_MUTATION_AUTHORITY_RE = re.compile(
+    r"(?is)(?:"
+    r"\b(?:i|we|the\s+(?:decision\s+)?agent|you|the\s+(?:user|operator))\b"
+    r".{0,48}\b(?:can|may|will|should|must|need\s+to|(?:is|are)\s+allowed\s+to)\b"
+    r".{0,48}\b(?:queue|run|execute|retry|cancel|confirm|create|revise|validate|"
+    r"expire|accept|reject|approve|sign|generate)\b|"
+    r"(?:^|[.!?]\s*)\s*(?:queue|run|execute|retry|cancel|confirm|create|revise|"
+    r"expire|accept|reject|approve|sign|generate)\b|"
+    r"\b(?:queue|run|execute|retry|cancel|confirm)\b.{0,32}"
+    r"\b(?:is|are)\s+(?:allowed|available|authorized|enabled)\b|"
+    r"\b(?:allowed|available|authorized|enabled)\b.{0,32}"
+    r"\b(?:queue|run|execute|retry|cancel|confirm)\b|"
+    r"\b(?:next|supported|closest)\s+action\b.{0,48}"
+    r"\b(?:queue|run|execute|retry|cancel|confirm|create|revise|validate|expire)\b|"
+    r"\b(?:proceed\s+with|use)\s+(?:the\s+)?"
+    r"(?:queue|run|retry|cancellation|confirmation|scenario\s+creation)\b)"
+)
+_RECOMMENDATION_RE = re.compile(
+    r"(?is)(?:\b(?:i|we|the\s+(?:decision\s+)?agent)\s+recommend\b|"
+    r"\b(?:recommendation|recommended\s+(?:option|decision|technology))\s*[:=]|"
+    r"\b(?:choose|select|prefer|go\s+with)\s+(?:SolarEdge|Solectria)\b|"
+    r"\b(?:SolarEdge|Solectria)\b.{0,32}"
+    r"\b(?:winner|recommended|preferred|best\s+option)\b|"
+    r"\bno\s+decisive\s+winner\b)"
+)
+_RESULT_INTERPRETATION_RE = re.compile(
+    r"(?is)(?:\b(?:TEA|lifecycle|economic)\s+(?:result|outcome|comparison)s?\b"
+    r".{0,64}\b(?:shows?|means?|indicates?|suggests?|demonstrates?|proves?|"
+    r"favors?|favours?|supports?|implies?)\b|"
+    r"\b(?:shows?|means?|indicates?|suggests?|demonstrates?|proves?|favors?|"
+    r"favours?|supports?|implies?)\b.{0,64}"
+    r"\b(?:TEA|lifecycle|economic)\s+(?:result|outcome|comparison)s?\b)"
+)
+_OUTCOME_METRIC_RE = re.compile(
+    r"(?i)\b(?:NPV|LCOE|IRR|ROI|payback|lifecycle\s+(?:cost|energy)|"
+    r"lifetime\s+(?:cost|energy)|outcome\s+probability|P5|P50|P95|"
+    r"sensitivity|convergence)\b"
+)
+_DEEP_LINK_CLAIM_RE = re.compile(
+    r"(?i)(?:#[a-z][A-Za-z0-9_.:-]*|\bautonomy-[A-Za-z0-9_.:-]+\b)"
+)
 _FORBIDDEN_EXECUTION_RE = re.compile(
     r"(?is)(?:\bplease\b|\bgo ahead\b|\bdo it\b|\bcan you\b|\bi authorize\b|^)"
     r".{0,80}\b(?:run|execute|queue|confirm|approve|accept|reject|waive|promote|"
@@ -163,7 +214,14 @@ class NonRunnableScenarioSuggestion(_StrictPublicModel):
 
     @model_validator(mode="after")
     def reject_runnable_payload_fields(self) -> "NonRunnableScenarioSuggestion":
-        if _RUNNABLE_FIELD_RE.search(self.text):
+        if (
+            _RUNNABLE_FIELD_RE.search(self.text)
+            or _RUNNABLE_NUMERIC_RE.search(self.text)
+            or _NUMERIC_TOKEN_RE.search(self.text)
+            or _OUTPUT_MUTATION_AUTHORITY_RE.search(self.text)
+            or "{" in self.text
+            or "}" in self.text
+        ):
             raise ValueError("scenario suggestion contains runnable request fields")
         return self
 
@@ -228,6 +286,7 @@ class DecisionRunContext:
     tool_call_count: int = 0
     tool_outcomes: list[dict[str, str]] = field(default_factory=list)
     grounded_source_ids: set[str] = field(default_factory=set)
+    grounded_action_pairs: set[tuple[str, str | None]] = field(default_factory=set)
 
     @property
     def durable_store(self) -> Any:
@@ -256,6 +315,9 @@ class DecisionRunContext:
 
     def record_grounded_source_ids(self, value: Any) -> None:
         self.grounded_source_ids.update(_collect_public_source_ids(value))
+
+    def record_readiness_actions(self, value: Any) -> None:
+        self.grounded_action_pairs.update(_collect_readiness_action_pairs(value))
 
 
 def _scrub_text(value: object, *, limit: int = 4_000) -> str:
@@ -314,6 +376,47 @@ def _collect_public_source_ids(value: Any, *, depth: int = 0) -> set[str]:
     ):
         for item in value[:100]:
             found.update(_collect_public_source_ids(item, depth=depth + 1))
+    return found
+
+
+def _normalize_deep_link(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = _scrub_text(value, limit=300).strip()
+    if not normalized:
+        return None
+    return normalized[1:] if normalized.startswith("#") else normalized
+
+
+def _action_pair(value: Mapping[str, Any]) -> tuple[str, str | None] | None:
+    label = value.get("label")
+    if not isinstance(label, str) or not label.strip():
+        return None
+    if value.get("enabled") is False:
+        return None
+    return (
+        _scrub_text(label, limit=500).strip(),
+        _normalize_deep_link(value.get("deep_link_id") or value.get("deep_link")),
+    )
+
+
+def _collect_readiness_action_pairs(value: Any) -> set[tuple[str, str | None]]:
+    """Collect only action labels/deep links explicitly returned by readiness."""
+
+    if not isinstance(value, Mapping):
+        return set()
+    found: set[tuple[str, str | None]] = set()
+    for key in ("supported_next_actions", "allowed_case_actions"):
+        candidates = value.get(key)
+        if not isinstance(candidates, Sequence) or isinstance(
+            candidates, (str, bytes, bytearray)
+        ):
+            continue
+        for candidate in candidates:
+            if isinstance(candidate, Mapping):
+                pair = _action_pair(candidate)
+                if pair is not None:
+                    found.add(pair)
     return found
 
 
@@ -399,16 +502,64 @@ async def _execute_read_tool(
             "trust_notice": "No state was returned. Do not infer missing facts.",
             "data": None,
         }
-    context.record_grounded_source_ids(data)
+    bounded = _bounded_tool_result(data)
+    public_data = bounded.get("data")
+    context.record_grounded_source_ids(public_data)
+    if name == "read_readiness":
+        context.record_readiness_actions(public_data)
     context.record_tool_outcome(name, "ok", success_summary(data))
-    return _bounded_tool_result(data)
+    return bounded
 
 
 def _read_public_case(case_id: str, agent_store: Any) -> dict[str, Any] | None:
     from sbepv.autonomy import serializers as autonomy_serializers
 
     record = agent_store.get_decision_case(case_id)
-    return autonomy_serializers.public_decision_case(record) if record else None
+    if not record:
+        return None
+    public = autonomy_serializers.public_decision_case(record)
+    list_scenarios = getattr(agent_store, "list_decision_scenarios", None)
+    if callable(list_scenarios):
+        scenario_records = list_scenarios(
+            case_id,
+            include_history=False,
+            include_expired=False,
+            limit=10,
+        )
+        if isinstance(scenario_records, Sequence) and not isinstance(
+            scenario_records, (str, bytes, bytearray)
+        ):
+            public["scenario_validation"] = [
+                {
+                    key: value
+                    for key, value in autonomy_serializers.public_decision_scenario(
+                        item
+                    ).items()
+                    if key
+                    in {
+                        "scenario_id",
+                        "scenario_revision_id",
+                        "label",
+                        "kind",
+                        "revision",
+                        "draft_status",
+                        "request_sha256",
+                        "changed_fields",
+                        "comparison_classification",
+                        "structural_warning",
+                        "validation",
+                        "source_lock",
+                        "evidence_receipt_ids",
+                        "expires_at",
+                        "confirmed_at",
+                        "tea_job_ids",
+                    }
+                }
+                for item in scenario_records
+                if isinstance(item, Mapping)
+                and not item.get("superseded_by_revision_id")
+            ]
+    return public
 
 
 def _read_public_readiness(case_id: str, agent_store: Any) -> dict[str, Any]:
@@ -478,14 +629,94 @@ def _value_names_case(value: Any, case_id: str, *, depth: int = 0) -> bool:
     return False
 
 
+def _public_immutable_tea_identity(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Project identity/state/hash metadata without requests or result values."""
+
+    raw_job = record.get("job")
+    job = raw_job if isinstance(raw_job, Mapping) else record
+    provenance = job.get("result_provenance")
+    if not isinstance(provenance, Mapping):
+        provenance = {}
+    sealed = provenance.get("sealed_calculation")
+    if not isinstance(sealed, Mapping):
+        sealed = {}
+    exports = provenance.get("exports")
+    if not isinstance(exports, Mapping):
+        exports = {}
+    kernel = provenance.get("kernel")
+    if not isinstance(kernel, Mapping):
+        kernel = {}
+    numerics = kernel.get("numerics")
+    if not isinstance(numerics, Mapping):
+        numerics = {}
+    return {
+        "job_id": job.get("id") or record.get("tea_job_id"),
+        "scenario_id": record.get("scenario_id"),
+        "scenario_revision_id": record.get("scenario_revision_id"),
+        "scenario_revision": record.get("scenario_revision"),
+        "attempt_number": record.get("attempt_number"),
+        "retry_of_job_id": job.get("retry_of_job_id") or record.get("retry_of_job_id"),
+        "confirmation_id": record.get("confirmation_id"),
+        "state": job.get("state"),
+        "source_annual_job_id": job.get("source_annual_job_id"),
+        "source_artifact_sha256": job.get("source_artifact_sha256"),
+        "source_snapshot_sha256": job.get("source_snapshot_sha256"),
+        "submission_provenance_sha256": job.get("submission_provenance_sha256"),
+        "created_at": job.get("created_at"),
+        "completed_at": job.get("completed_at"),
+        "provenance_identity": {
+            "schema_version": provenance.get("schema_version"),
+            "request_sha256": provenance.get("request_sha256"),
+            "source_snapshot_sha256": provenance.get("source_snapshot_sha256"),
+            "submission_provenance_sha256": provenance.get(
+                "submission_provenance_sha256"
+            ),
+            "validated_kernel_request_sha256": provenance.get(
+                "validated_kernel_request_sha256"
+            ),
+            "routine_result_sha256": provenance.get("routine_result_sha256"),
+            "sealed_calculation_sha256": sealed.get("sha256"),
+            "export_manifest_sha256": exports.get("manifest_sha256"),
+            "calculation_contract_version": kernel.get(
+                "calculation_contract_version"
+            ),
+            "sampling_version": kernel.get("sampling_version"),
+            "numerical_exactness_digest": numerics.get("exactness_digest"),
+            "numerical_probe_digests": numerics.get("probe_digests"),
+            "bit_identical_to_reference": numerics.get(
+                "bit_identical_to_reference"
+            ),
+        },
+    }
+
+
 def _read_public_immutable_tea_summaries(
     case_id: str, agent_store: Any
 ) -> list[dict[str, Any]]:
-    from sbepv.api import serializers as api_serializers
-
-    records = agent_store.list_technoeconomic_jobs(states=("done",), limit=100)
-    linked = [record for record in records if _value_names_case(record, case_id)]
-    return [api_serializers._public_technoeconomic_job(record) for record in linked[:10]]
+    list_linked = getattr(agent_store, "list_decision_scenario_jobs", None)
+    if callable(list_linked):
+        linked_records = list_linked(case_id)
+        if isinstance(linked_records, Sequence) and not isinstance(
+            linked_records, (str, bytes, bytearray)
+        ):
+            linked = [
+                item
+                for item in linked_records
+                if isinstance(item, Mapping)
+                and isinstance(item.get("job"), Mapping)
+                and item["job"].get("state") == "done"
+            ]
+        else:
+            records = agent_store.list_technoeconomic_jobs(
+                states=("done",), limit=100
+            )
+            linked = [
+                record for record in records if _value_names_case(record, case_id)
+            ]
+    else:
+        records = agent_store.list_technoeconomic_jobs(states=("done",), limit=100)
+        linked = [record for record in records if _value_names_case(record, case_id)]
+    return [_public_immutable_tea_identity(record) for record in linked[:10]]
 
 
 @function_tool(failure_error_function=_safe_tool_failure)
@@ -733,10 +964,48 @@ def _run_config(case_id: str, trace_id: str) -> RunConfig:
     )
 
 
+def _output_policy_texts(output: DecisionAgentOutput) -> list[str]:
+    texts = [
+        output.answer,
+        *[claim.text for claim in output.claims],
+        *output.exact_blockers,
+        *output.exact_rules,
+        *[citation.label for citation in output.citations],
+    ]
+    if output.why_not_details is not None:
+        texts.extend(
+            [
+                *output.why_not_details.blocking_rules,
+                *output.why_not_details.missing_evidence,
+                output.why_not_details.protective_reason,
+                output.why_not_details.closest_supported_alternative,
+            ]
+        )
+    if output.non_runnable_scenario_suggestion is not None:
+        texts.append(output.non_runnable_scenario_suggestion.text)
+    return texts
+
+
+def _proposed_action_pairs(
+    output: DecisionAgentOutput,
+) -> set[tuple[str, str | None]]:
+    actions = list(output.next_actions)
+    if output.why_not_details is not None:
+        actions.append(output.why_not_details.next_action)
+    return {
+        (
+            _scrub_text(action.label, limit=500).strip(),
+            _normalize_deep_link(action.deep_link_id),
+        )
+        for action in actions
+    }
+
+
 def _validate_final_output(
     value: Any,
     *,
     grounded_source_ids: set[str] | None = None,
+    grounded_action_pairs: set[tuple[str, str | None]] | None = None,
 ) -> DecisionAgentOutput:
     if isinstance(value, DecisionAgentOutput):
         output = DecisionAgentOutput.model_validate(value.model_dump(mode="python"))
@@ -751,6 +1020,27 @@ def _validate_final_output(
     )
     if cited - grounded:
         raise ValueError("output cites a source identifier not returned by a tool")
+    if "Model result" in output.basis_labels or any(
+        claim.basis == "Model result" for claim in output.claims
+    ) or any(citation.basis == "Model result" for citation in output.citations):
+        raise ValueError("result interpretation is unavailable in this phase")
+    for text in _output_policy_texts(output):
+        if _RECOMMENDATION_RE.search(text):
+            raise ValueError("recommendations are unavailable in this phase")
+        if _RESULT_INTERPRETATION_RE.search(text):
+            raise ValueError("result interpretation is unavailable in this phase")
+        if _OUTCOME_METRIC_RE.search(text) and _NUMERIC_TOKEN_RE.search(text):
+            raise ValueError("numeric outcome claims are unavailable in this phase")
+        if _OUTPUT_MUTATION_AUTHORITY_RE.search(text):
+            raise ValueError("model output cannot claim mutation or execution authority")
+        if _DEEP_LINK_CLAIM_RE.search(text):
+            raise ValueError("deep links must use a grounded structured next action")
+        if _RUNNABLE_FIELD_RE.search(text) or _RUNNABLE_NUMERIC_RE.search(text):
+            raise ValueError("model output contains runnable scenario fields")
+    proposed_actions = _proposed_action_pairs(output)
+    grounded_actions = grounded_action_pairs or set()
+    if proposed_actions - grounded_actions:
+        raise ValueError("output proposes an action not returned by readiness")
     return output
 
 
@@ -897,6 +1187,7 @@ async def run_decision_agent_turn(
         output = _validate_final_output(
             result.final_output,
             grounded_source_ids=context.grounded_source_ids,
+            grounded_action_pairs=context.grounded_action_pairs,
         )
         return _public_result(
             output,

@@ -381,6 +381,39 @@
                                 </section>
 
                                 <section class="autonomy-stage-panel" id="autonomyStageComparePanel" role="tabpanel" aria-labelledby="autonomyStageCompareBtn" data-autonomy-stage-panel="compare" tabindex="-1" hidden>
+                                    <div class="autonomy-live-scenario-workspace" data-autonomy-live-only>
+                                    <header class="autonomy-section-heading">
+                                        <div>
+                                            <p class="autonomy-eyebrow">Stage 3 · Compare scenarios</p>
+                                            <h3>Build one baseline and up to three alternatives</h3>
+                                            <p>Every displayed difference, validation result, evidence receipt, and request hash comes from the durable case. All pre-run values are inputs or hypotheses, never outcomes.</p>
+                                        </div>
+                                        <div class="autonomy-scenario-create-actions" aria-label="Scenario draft actions">
+                                            <button class="autonomy-button autonomy-button-secondary" id="autonomyCreateBaselineBtn" type="button">Create baseline</button>
+                                            <button class="autonomy-button autonomy-button-primary" id="autonomyCreateAlternativeBtn" type="button">Add alternative</button>
+                                        </div>
+                                    </header>
+                                    <section class="autonomy-scenario-locks" id="autonomyScenarioLocks" aria-label="Shared scenario source and analysis locks"></section>
+                                    <p class="autonomy-live-status" id="autonomyScenarioStatus" role="status">Open a durable case to load scenarios.</p>
+                                    <section class="autonomy-scenario-empty" id="autonomyScenarioEmpty" aria-labelledby="autonomyScenarioEmptyHeading" hidden>
+                                        <h4 id="autonomyScenarioEmptyHeading">No scenario drafts yet</h4>
+                                        <p>Create the baseline first. Deterministic server validation will identify unsupported fields, evidence gaps, and the closest supported alternative.</p>
+                                    </section>
+                                    <div class="autonomy-scenario-grid autonomy-live-scenario-grid" id="autonomyLiveScenarioGrid" role="list" aria-label="Durable scenario drafts"></div>
+                                    <div class="autonomy-table-wrap autonomy-scenario-matrix" id="autonomyLiveScenarioMatrix" tabindex="0" role="region" aria-label="Exact baseline-relative scenario difference matrix" hidden>
+                                        <table>
+                                            <caption>Exact differences from the durable baseline</caption>
+                                            <thead id="autonomyScenarioMatrixHead"></thead>
+                                            <tbody id="autonomyScenarioMatrixBody"></tbody>
+                                        </table>
+                                    </div>
+                                    <div class="autonomy-scenario-mobile-list" id="autonomyLiveScenarioMobileList" aria-label="Exact baseline-relative differences by scenario"></div>
+                                    <aside class="autonomy-validation-note" id="autonomyComparisonSummary" data-status="pending">
+                                        <strong>Deterministic comparison</strong>
+                                        <p>Validation and comparison have not been loaded.</p>
+                                    </aside>
+                                    </div>
+                                    <div data-autonomy-fixture-only>
                                     <header class="autonomy-section-heading">
                                         <div>
                                             <p class="autonomy-eyebrow">Stage 3 · Compare scenarios</p>
@@ -435,9 +468,36 @@
                                         <strong>Deterministic validation fixture</strong>
                                         <p>Three requests are structurally supported. Alternative 2 remains provisional; Alternative 3 cannot support a single-driver causal claim.</p>
                                     </aside>
+                                    </div>
                                 </section>
 
                                 <section class="autonomy-stage-panel" id="autonomyStageRunPanel" role="tabpanel" aria-labelledby="autonomyStageRunBtn" data-autonomy-stage-panel="run" tabindex="-1" hidden>
+                                    <div class="autonomy-live-run-workspace" data-autonomy-live-only>
+                                    <header class="autonomy-section-heading autonomy-run-confirmation-bar">
+                                        <div>
+                                            <p class="autonomy-eyebrow">Stage 4 · Run TEA</p>
+                                            <h3>Review and monitor the human execution boundary</h3>
+                                            <p>Only an authenticated grouped confirmation can create the selected immutable TEA jobs.</p>
+                                        </div>
+                                        <button class="autonomy-button autonomy-button-primary" id="autonomyOpenLiveConfirmationBtn" type="button" aria-describedby="autonomyLiveRunGateHelp" aria-disabled="true" disabled>Review grouped confirmation</button>
+                                    </header>
+                                    <p class="autonomy-live-status" id="autonomyLiveRunGateHelp" role="status">Select at least one validated scenario in Compare scenarios.</p>
+                                    <section class="autonomy-execution-summary" id="autonomyExecutionSummary" aria-label="Grouped execution summary"></section>
+                                    <section class="autonomy-job-monitor" aria-labelledby="autonomyLiveJobMonitorHeading">
+                                        <div class="autonomy-panel-header">
+                                            <div><p class="autonomy-eyebrow">Existing leased worker</p><h4 id="autonomyLiveJobMonitorHeading">Durable scenario queue</h4></div>
+                                            <span id="autonomyExecutionQueueState">Not confirmed</span>
+                                        </div>
+                                        <div class="autonomy-job-list" id="autonomyLiveJobList" role="list" aria-label="Linked TEA jobs"></div>
+                                    </section>
+                                    <section class="autonomy-transition-banner" id="autonomyLivePartialResultsBanner" data-status="partial" hidden>
+                                        <div><strong>Partial results are available</strong><p>Completed TEA results remain available while another linked job is active or failed. Decision Brief and recommendation remain unavailable until the next phase.</p></div>
+                                    </section>
+                                    <section class="autonomy-transition-banner" id="autonomyLiveResultsReadyBanner" data-status="complete" hidden>
+                                        <div><strong>Selected TEA runs completed</strong><p>Durable results are linked to this case. Decision Brief, recommendation, sign-off, and report generation are intentionally unavailable in this phase.</p></div>
+                                    </section>
+                                    </div>
+                                    <div data-autonomy-fixture-only>
                                     <header class="autonomy-section-heading">
                                         <div>
                                             <p class="autonomy-eyebrow">Stage 4 · Run TEA</p>
@@ -480,9 +540,16 @@
                                         <div><strong>Decision brief ready</strong><p>The comparison bundle is complete. Opening it is an explicit action and will not interrupt active typing.</p></div>
                                         <button class="autonomy-button autonomy-button-primary" id="autonomyOpenBriefBtn" type="button">Open Decision Brief</button>
                                     </section>
+                                    </div>
                                 </section>
 
                                 <section class="autonomy-stage-panel" id="autonomyStageDecidePanel" role="tabpanel" aria-labelledby="autonomyStageDecideBtn" data-autonomy-stage-panel="decide" tabindex="-1" hidden>
+                                    <section class="autonomy-unavailable-panel" data-autonomy-live-only aria-labelledby="autonomyLiveDecideHeading">
+                                        <p class="autonomy-eyebrow">Stage 5 · Decide</p>
+                                        <h3 id="autonomyLiveDecideHeading">Decision Brief is not available in this phase</h3>
+                                        <p>Completed scenario results remain durable and reviewable in Run TEA. No recommendation, interpretation, sign-off, PDF, or report is generated here.</p>
+                                    </section>
+                                    <div data-autonomy-fixture-only>
                                     <header class="autonomy-section-heading">
                                         <div>
                                             <p class="autonomy-eyebrow">Stage 5 · Decide</p>
@@ -496,6 +563,7 @@
                                         <div><span>Largest uncertainty</span><strong>Optimizer maintenance evidence</strong></div>
                                     </div>
                                     <button class="autonomy-button autonomy-button-primary" type="button" data-autonomy-open-brief>Open the shared-case Decision Brief</button>
+                                    </div>
                                 </section>
                             </section>
 
@@ -551,7 +619,10 @@
                                         </div>
                                     </section>
                                     <section id="autonomyRailAssumptionsPanel" role="tabpanel" aria-labelledby="autonomyRailAssumptionsTab" data-autonomy-rail-panel="assumptions" hidden>
-                                        <ul class="autonomy-detail-list">
+                                        <div id="autonomyLiveAssumptions" class="autonomy-live-assumptions" data-autonomy-live-only>
+                                            <p>Validated scenario inputs and hypotheses will appear here. No pre-run value is an outcome.</p>
+                                        </div>
+                                        <ul class="autonomy-detail-list" data-autonomy-fixture-only>
                                             <li><strong>Real discount rate</strong><span>5.0% · accepted assumption</span></li>
                                             <li><strong>Project life</strong><span>20 years · accepted assumption</span></li>
                                             <li><strong>Shared degradation</strong><span>0.5%/year · primary evidence</span></li>
@@ -584,7 +655,7 @@
                         </div>
                     </section>
 
-                    <section class="autonomy-decision-brief" id="autonomyDecisionBrief" role="tabpanel" aria-labelledby="autonomyBriefViewBtn" tabindex="-1" data-autonomy-case-workspace hidden>
+                    <section class="autonomy-decision-brief" id="autonomyDecisionBrief" role="tabpanel" aria-labelledby="autonomyBriefViewBtn" tabindex="-1" data-autonomy-case-workspace data-autonomy-fixture-only hidden>
                         <section class="autonomy-partial-warning" id="autonomyBriefPartialWarning" role="status" hidden>
                             <strong>Partial results preview — not a final recommendation.</strong>
                             <p>Some fixture scenarios are incomplete or failed. Sign-off remains unavailable.</p>
@@ -733,12 +804,18 @@
                         </section>
                     </section>
 
-                    <dialog class="autonomy-dialog" id="autonomyConfirmDialog" aria-labelledby="autonomyConfirmHeading" aria-describedby="autonomyConfirmDescription">
+                    <dialog class="autonomy-dialog autonomy-confirm-dialog" id="autonomyConfirmDialog" aria-labelledby="autonomyConfirmHeading" aria-describedby="autonomyConfirmDescription">
                         <div class="autonomy-dialog-content">
                             <header>
-                                <div><p class="autonomy-eyebrow">Grouped TEA confirmation · fixture only</p><h2 id="autonomyConfirmHeading">Review the exact frozen requests</h2></div>
-                                <p id="autonomyConfirmDescription">This Phase 1 surface previews the future human authority boundary. No jobs will be created.</p>
+                                <div><p class="autonomy-eyebrow" id="autonomyConfirmEyebrow">Grouped TEA confirmation</p><h2 id="autonomyConfirmHeading">Review the exact frozen requests</h2></div>
+                                <p id="autonomyConfirmDescription">Review every selected request and immutable lock before creating any TEA jobs.</p>
                             </header>
+                            <div data-autonomy-live-only>
+                            <section class="autonomy-confirm-locks" id="autonomyLiveConfirmLocks" aria-label="Durable source, analysis, evidence, and execution locks"></section>
+                            <div class="autonomy-table-wrap" tabindex="0" role="region" aria-label="Selected durable scenario requests"><table><caption>Selected scenarios and full canonical request hashes</caption><thead><tr><th scope="col">Include</th><th scope="col">Scenario</th><th scope="col">Exact difference</th><th scope="col">Evidence state</th><th scope="col">Request SHA-256</th></tr></thead><tbody id="autonomyLiveConfirmScenarioRows"></tbody></table></div>
+                            <section class="autonomy-confirm-warnings" id="autonomyLiveConfirmWarnings" aria-label="Confirmation warnings"></section>
+                            </div>
+                            <div data-autonomy-fixture-only>
                             <section class="autonomy-confirm-locks" aria-label="Source and analysis locks">
                                 <div><span>Annual source</span><strong>ann_2024_verified_017 · 82d9…91c4</strong></div>
                                 <div><span>Analysis basis</span><strong>SolarTAC site · tea-calculation-v3</strong></div>
@@ -748,15 +825,38 @@
                                 <div><span>Evidence</span><strong>14 accepted · 1 provisional</strong></div>
                             </section>
                             <div class="autonomy-table-wrap"><table><caption>Selected fixture scenarios and immutable request hashes</caption><thead><tr><th scope="col">Include</th><th scope="col">Scenario</th><th scope="col">Exact difference</th><th scope="col">Request hash</th></tr></thead><tbody><tr><td><input type="checkbox" checked aria-label="Include baseline" data-autonomy-confirm-scenario></td><td>Baseline</td><td>No difference</td><td><code>48a7…1bd2</code></td></tr><tr><td><input type="checkbox" checked aria-label="Include Alternative 1" data-autonomy-confirm-scenario></td><td>Alternative 1</td><td>SE installed cost −8%</td><td><code>a291…c871</code></td></tr><tr><td><input type="checkbox" checked aria-label="Include Alternative 2" data-autonomy-confirm-scenario></td><td>Alternative 2</td><td>SE maintenance +$3,400/year</td><td><code>7f03…e521</code></td></tr></tbody></table></div>
-                            <label class="autonomy-field" for="autonomyConfirmOperator"><span>Named operator</span><input id="autonomyConfirmOperator" type="text" autocomplete="name" required></label>
-                            <label class="autonomy-checkbox" for="autonomyConfirmAck"><input id="autonomyConfirmAck" type="checkbox"><span>I confirm the selected scenarios, source and basis lock, evidence status, realization count, seed, and exact request hashes shown here. I understand the production action would create immutable TEA jobs for sequential worker execution.</span></label>
                             <p class="autonomy-fixture-notice"><strong>Fixture preview — no jobs will be created.</strong></p>
+                            </div>
+                            <label class="autonomy-field" for="autonomyConfirmOperator"><span>Named operator</span><input id="autonomyConfirmOperator" type="text" autocomplete="name" required></label>
+                            <label class="autonomy-field" for="autonomyConfirmRationale"><span>Rationale and acknowledgement</span><textarea id="autonomyConfirmRationale" rows="3" required placeholder="State why these exact requests should run now."></textarea></label>
+                            <label class="autonomy-checkbox" for="autonomyConfirmAck"><input id="autonomyConfirmAck" type="checkbox"><span id="autonomyConfirmAckCopy">I confirm the selected scenarios, source and basis lock, evidence state, realization count, seed, exact request hashes, warnings, and expected sequential queue behavior shown here.</span></label>
+                            <p class="autonomy-confirm-revision" id="autonomyConfirmRevision">Expected case revision will be frozen when this review opens.</p>
                             <p class="autonomy-dialog-error" id="autonomyConfirmError" role="alert" tabindex="-1" hidden></p>
                             <footer>
                                 <button class="autonomy-button autonomy-button-secondary" id="autonomyConfirmCancelBtn" type="button">Cancel</button>
-                                <button class="autonomy-button autonomy-button-primary" id="autonomyConfirmSubmitBtn" type="button">Preview queued state</button>
+                                <button class="autonomy-button autonomy-button-primary" id="autonomyConfirmSubmitBtn" type="button">Confirm and create TEA jobs</button>
                             </footer>
                         </div>
+                    </dialog>
+
+                    <dialog class="autonomy-dialog autonomy-scenario-dialog" id="autonomyScenarioDialog" aria-labelledby="autonomyScenarioDialogHeading" aria-describedby="autonomyScenarioDialogDescription">
+                        <form class="autonomy-dialog-content" id="autonomyScenarioForm" method="dialog">
+                            <header>
+                                <div><p class="autonomy-eyebrow">Deterministic scenario draft</p><h2 id="autonomyScenarioDialogHeading">Create scenario</h2></div>
+                                <p id="autonomyScenarioDialogDescription">The server builds and validates the TEA request. Values shown before execution are inputs or hypotheses, never outcomes.</p>
+                            </header>
+                            <label class="autonomy-field" for="autonomyScenarioLabel"><span>Scenario label</span><input id="autonomyScenarioLabel" type="text" maxlength="120" required></label>
+                            <label class="autonomy-field" for="autonomyScenarioKind"><span>Scenario kind</span><select id="autonomyScenarioKind" required><option value="baseline">Baseline</option><option value="alternative">Alternative</option></select></label>
+                            <label class="autonomy-field" for="autonomyScenarioChangedFields"><span>Declared changed fields</span><input id="autonomyScenarioChangedFields" type="text" placeholder="Comma-separated server-supported field paths" aria-describedby="autonomyScenarioChangedFieldsHelp"><small id="autonomyScenarioChangedFieldsHelp">A controlled alternative may change only these declared assumptions. Structural changes receive a visible causal-attribution warning.</small></label>
+                            <label class="autonomy-field" for="autonomyScenarioRequest"><span>TEA request input</span><textarea id="autonomyScenarioRequest" rows="9" spellcheck="false" required aria-describedby="autonomyScenarioRequestHelp"></textarea><small id="autonomyScenarioRequestHelp">JSON input is sent to the deterministic scenario service; lifecycle outcomes are never calculated in the browser.</small></label>
+                            <label class="autonomy-field" for="autonomyScenarioEvidenceReferences"><span>Accepted evidence receipt references</span><input id="autonomyScenarioEvidenceReferences" type="text" placeholder="/request/path=evr_receipt, /other/path=evr_receipt"><small>Pair each JSON request path with its immutable accepted receipt ID.</small></label>
+                            <label class="autonomy-field" id="autonomyScenarioReasonField" for="autonomyScenarioReason" hidden><span>Reason</span><textarea id="autonomyScenarioReason" rows="3" placeholder="Explain why this unconfirmed draft revision should expire."></textarea></label>
+                            <p class="autonomy-dialog-error" id="autonomyScenarioError" role="alert" tabindex="-1" hidden></p>
+                            <footer>
+                                <button class="autonomy-button autonomy-button-secondary" id="autonomyScenarioCancelBtn" type="button">Cancel</button>
+                                <button class="autonomy-button autonomy-button-primary" id="autonomyScenarioSubmitBtn" type="submit">Save draft</button>
+                            </footer>
+                        </form>
                     </dialog>
 
                     <dialog class="autonomy-dialog autonomy-signoff-dialog" id="autonomySignoffDialog" aria-labelledby="autonomySignoffHeading" aria-describedby="autonomySignoffDescription">
@@ -790,4 +890,4 @@
                 </section>
             </div>
 
-            <!-- Autonomy is a deterministic local Phase 1 fixture. It has no backend, agent, evidence, scenario-execution, report, or TEA-kernel authority. -->
+            <!-- Live Autonomy owns authenticated case/evidence/scenario actions and grouped execution confirmation only. Fixture previews are explicit; Decision Brief, sign-off, reporting, and TEA-kernel authority remain unavailable. -->

@@ -9,6 +9,15 @@ const allowedAutonomyRoutes = [
   ["autonomy", "cases", "case_abc123"],
   ["autonomy", "cases", "case_abc123", "events"],
   ["autonomy", "cases", "case_abc123", "messages"],
+  ["autonomy", "cases", "case_abc123", "scenarios"],
+  ["autonomy", "cases", "case_abc123", "scenarios", "compare"],
+  ["autonomy", "cases", "case_abc123", "scenarios", "confirm"],
+  ["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "revisions"],
+  ["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "validate"],
+  ["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "expire"],
+  ["autonomy", "cases", "case_abc123", "execution"],
+  ["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "cancel"],
+  ["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "retry"],
   ["autonomy", "cases", "case_abc123", "readiness", "evaluate"],
   ["autonomy", "cases", "case_abc123", "message-stream", "turn_abc123"],
   ["autonomy", "cases", "case_abc123", "message-stream", "dturn_abc123"],
@@ -31,10 +40,14 @@ const rejectedAutonomyRoutes = [
   ["autonomy", "sources", "extra"],
   ["autonomy", ".."],
   ["autonomy", "cases", ".."],
-  ["autonomy", "cases", "case_abc123", "scenarios"],
   ["autonomy", "cases", "case_abc123", "confirm"],
   ["autonomy", "cases", "case_abc123", "signoff"],
   ["autonomy", "cases", "case_abc123", "reports"],
+  ["autonomy", "cases", "case_abc123", "scenarios", "confirm", "extra"],
+  ["autonomy", "cases", "case_abc123", "scenarios", "dsc_bad-id", "validate"],
+  ["autonomy", "cases", "case_abc123", "scenarios", "..", "expire"],
+  ["autonomy", "cases", "case_abc123", "execution", "job_abc123", "cancel"],
+  ["autonomy", "cases", "case_abc123", "execution", "tea_abc123", "delete"],
   ["autonomy", "cases", "case_abc123", "message-stream", "unsafe"],
   ["autonomy", "cases", "case_abc123", "evidence", "..", "download"],
   [
@@ -49,7 +62,7 @@ const rejectedAutonomyRoutes = [
   ],
 ];
 
-test("allows only the Autonomy case, readiness, message, and evidence phase", () => {
+test("allows only the Autonomy evidence, scenario, and execution routes", () => {
   for (const path of allowedAutonomyRoutes) {
     assert.equal(isAllowedApiPath(path), true, `expected allowed: ${path.join("/")}`);
   }

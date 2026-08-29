@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import importlib.util
@@ -366,6 +366,93 @@ def _evidence_health(agent_store: Any, case_id: str) -> dict[str, Any]:
         "rejected_count": rejected,
         "conflicts": conflicts,
         "invalid_provisional_count": invalid_provisional,
+    }
+
+
+def _scenario_health(
+    agent_store: Any,
+    case_id: str,
+    now: datetime,
+) -> dict[str, Any]:
+    """Summarize only current durable scenario revisions and linked TEA attempts."""
+
+    list_scenarios = getattr(agent_store, "list_decision_scenarios", None)
+    if not callable(list_scenarios):
+        return {
+            "scenarios": [],
+            "baseline_count": 0,
+            "alternative_count": 0,
+            "validated_count": 0,
+            "validated_baseline": False,
+            "cancellable_execution": False,
+            "retryable_execution": False,
+            "execution_states": {},
+        }
+    records = list_scenarios(
+        case_id,
+        include_history=False,
+        include_expired=False,
+        limit=100,
+    )
+    def elapsed_unconfirmed(item: Mapping[str, Any]) -> bool:
+        if item.get("status") not in {"draft", "invalid", "validated"}:
+            return False
+        expires_at = _parse_timestamp(item.get("expires_at"))
+        return expires_at is not None and expires_at <= now
+
+    current = [
+        item
+        for item in records
+        if not item.get("superseded_by_revision_id")
+        and item.get("status") != "expired"
+        and not elapsed_unconfirmed(item)
+    ]
+    jobs: list[Mapping[str, Any]] = []
+    for scenario in current:
+        raw_jobs = scenario.get("jobs") or []
+        if isinstance(raw_jobs, Sequence) and not isinstance(
+            raw_jobs, (str, bytes, bytearray)
+        ):
+            jobs.extend(item for item in raw_jobs if isinstance(item, Mapping))
+        latest = scenario.get("latest_job")
+        if isinstance(latest, Mapping) and latest not in jobs:
+            jobs.append(latest)
+    state_counts: dict[str, int] = {}
+    for job in jobs:
+        job_state = str(job.get("state") or "unknown")
+        state_counts[job_state] = state_counts.get(job_state, 0) + 1
+    return {
+        "scenarios": [
+            {
+                "scenario_id": item.get("id") or item.get("scenario_id"),
+                "revision": item.get("revision"),
+                "kind": item.get("kind"),
+                "status": item.get("status"),
+                "request_sha256": item.get("request_sha256"),
+                "classification": item.get("comparison_classification"),
+            }
+            for item in current
+        ],
+        "baseline_count": sum(item.get("kind") == "baseline" for item in current),
+        "alternative_count": sum(
+            item.get("kind") == "alternative" for item in current
+        ),
+        "validated_count": sum(
+            item.get("status") in {"validated", "confirmed"} for item in current
+        ),
+        "validated_baseline": any(
+            item.get("kind") == "baseline"
+            and item.get("status") in {"validated", "confirmed"}
+            for item in current
+        ),
+        "cancellable_execution": any(
+            item.get("state") in {"queued", "running"} for item in jobs
+        ),
+        "retryable_execution": any(
+            item.get("state") in {"error", "interrupted", "cancelled"}
+            for item in jobs
+        ),
+        "execution_states": state_counts,
     }
 
 
@@ -834,6 +921,62 @@ def evaluate_decision_case_readiness(
         )
     )
 
+    scenarios = _scenario_health(durable_store, case_id, evaluated_at)
+    scenario_blockers: list[dict[str, Any]] = []
+    if not source_locked:
+        scenario_status = "needs_attention"
+        scenario_summary = "Lock the Annual source and analysis basis before drafting scenarios."
+    elif scenarios["baseline_count"] == 0:
+        item = _blocker(
+            code="baseline_scenario_missing",
+            check_id="scenarios",
+            detail="The case has no current baseline scenario.",
+            why="Every comparison and grouped confirmation needs one immutable baseline request.",
+            rule_id="AUT-SCENARIO-1",
+            rule="A case has exactly one current baseline and no more than three current alternatives.",
+            action_id="create_scenario",
+            action_label="Create the baseline scenario",
+            deep_link="#autonomy-compare",
+        )
+        blockers.append(item)
+        scenario_blockers.append(item)
+        scenario_status = "needs_attention"
+        scenario_summary = item["detail"]
+    elif not scenarios["validated_baseline"]:
+        item = _blocker(
+            code="baseline_scenario_not_validated",
+            check_id="scenarios",
+            detail="The current baseline scenario has not passed deterministic validation.",
+            why="Only a validated immutable request may cross the human execution boundary.",
+            rule_id="AUT-SCENARIO-3",
+            rule="Every selected current scenario revision must be validated against its locked source, basis, evidence receipts, and TEA contract.",
+            action_id="validate_scenario",
+            action_label="Validate the baseline scenario",
+            deep_link="#autonomy-compare",
+        )
+        blockers.append(item)
+        scenario_blockers.append(item)
+        scenario_status = "needs_attention"
+        scenario_summary = item["detail"]
+    else:
+        scenario_status = "passed"
+        scenario_summary = (
+            f"{scenarios['validated_count']} current scenario revision(s) are "
+            "validated or already confirmed."
+        )
+    checks.append(
+        _check(
+            "scenarios",
+            "Scenario validation",
+            scenario_status,
+            scenario_summary,
+            rule_id="AUT-SCENARIO-3",
+            exact_rule="Every selected current scenario must match the immutable case source and basis, reference verified accepted evidence, and pass the existing TEA validators before confirmation.",
+            details=scenarios,
+            blockers=scenario_blockers,
+        )
+    )
+
     jobs = _job_health(durable_store, evaluated_at)
     if jobs["stale_count"]:
         jobs_status = "stale"
@@ -891,39 +1034,44 @@ def evaluate_decision_case_readiness(
         )
     )
 
-    # This delivery deliberately stops before runnable scenario validation. Even
-    # with all current checks passing it cannot claim ready_to_run.
-    phase_blocker = _blocker(
-        code="scenario_execution_not_in_phase",
-        check_id="phase_boundary",
-        detail="Runnable scenario validation and execution are not part of the Agent + Evidence phase.",
-        why="A case cannot be ready to run until a later phase adds deterministic scenario validation and explicit confirmation.",
-        rule_id="AUT-PHASE-1",
-        rule="This phase may explain non-runnable suggestions only; it exposes no scenario, queue, confirmation, sign-off, or report mutation.",
-        action_id="continue_evidence_review",
-        action_label="Continue evidence review",
-        deep_link="#autonomy-evidence",
-    )
-    blockers.append(phase_blocker)
     checks.append(
         _check(
             "phase_boundary",
             "Phase boundary",
-            "needs_attention",
-            phase_blocker["detail"],
-            rule_id=phase_blocker["rule_id"],
-            exact_rule=phase_blocker["exact_rule"],
-            blockers=[phase_blocker],
+            "passed",
+            "Deterministic scenarios and named-human TEA confirmation are available; Decision Brief, sign-off, and reporting remain unavailable.",
+            rule_id="AUT-PHASE-2",
+            exact_rule="Only authenticated deterministic services and explicit named-human confirmation may mutate scenarios or create TEA jobs; the Decision Agent remains read-only.",
         )
     )
 
     blocking_items = [item for item in blockers if item.get("blocking") is not False]
-    if any(item["check_id"] in {"calibration", "annual_source", "weather_coverage"} for item in blocking_items):
+    hard_blocked = any(
+        item["check_id"] in {"calibration", "annual_source", "weather_coverage"}
+        for item in blocking_items
+    )
+    current_status = str(case_record.get("status") or "draft")
+    ready_to_run = bool(
+        not blocking_items
+        and scenarios["validated_baseline"]
+        and current_status in {"draft", "evidence_needed", "blocked", "ready_to_run"}
+    )
+    if hard_blocked:
         overall_status = "blocked"
         suggested_status = "blocked"
-    else:
+    elif blocking_items:
         overall_status = "needs_attention"
         suggested_status = "evidence_needed"
+    else:
+        overall_status = "passed"
+        if current_status in {"running", "results_ready"}:
+            suggested_status = current_status
+        elif current_status == "draft":
+            # Preserve the approved state graph; normal evidence reconciliation
+            # advances a new case through evidence_needed before ready_to_run.
+            suggested_status = "evidence_needed"
+        else:
+            suggested_status = "ready_to_run"
     supported_actions: list[dict[str, Any]] = []
     seen_action_ids: set[str] = set()
     for item in [*blocking_items, *agent_blockers]:
@@ -935,6 +1083,9 @@ def evaluate_decision_case_readiness(
         case_record.get("status"),
         source_locked=source_locked,
         has_pending_evidence=bool(evidence["pending_count"]),
+        has_validated_scenarios=bool(scenarios["validated_count"]),
+        has_retryable_execution=bool(scenarios["retryable_execution"]),
+        has_cancellable_execution=bool(scenarios["cancellable_execution"]),
         agent_available=bool(agent["available"]),
     )
     return {
@@ -943,7 +1094,7 @@ def evaluate_decision_case_readiness(
         "case_revision": int(case_record.get("revision") or 0),
         "evaluated_at": evaluated_at.isoformat(),
         "overall_status": overall_status,
-        "ready_to_run": False,
+        "ready_to_run": ready_to_run,
         "suggested_case_status": suggested_status,
         "checks": checks,
         "blockers": blockers,
@@ -953,10 +1104,12 @@ def evaluate_decision_case_readiness(
         "supported_analysis_bases": list(SUPPORTED_ANALYSIS_BASES),
         "case": serializers.public_decision_case(case_record),
         "phase_boundary": {
-            "current_phase": "agent_and_evidence",
+            "current_phase": "scenarios_and_execution",
             "non_runnable_suggestions_only": True,
-            "scenario_execution_available": False,
-            "tea_confirmation_available": False,
+            "scenario_execution_available": True,
+            "tea_confirmation_available": True,
+            "pre_run_values_label": "inputs_or_hypotheses",
+            "decision_brief_available": False,
             "decision_signoff_available": False,
             "report_generation_available": False,
         },

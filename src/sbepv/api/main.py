@@ -1257,6 +1257,8 @@ def cancel_technoeconomic_job(job_id: str) -> JSONResponse:
         job = state.AGENT_STORE.cancel_technoeconomic_job(job_id)
     except RecordNotFound as exc:
         raise HTTPException(status_code=404, detail="Unknown technoeconomic job id") from exc
+    except InvalidStateTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     state._WORKER_WAKE.set()
     return JSONResponse({"job": _public_technoeconomic_job(job)})
 

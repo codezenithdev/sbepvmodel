@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 SAVED_RESULTS_LIMIT = 10
 PROPOSAL_STATES = frozenset(
     {"pending", "confirmed", "superseded", "dismissed", "expired"}
@@ -70,6 +70,14 @@ DECISION_EVIDENCE_CLASSES = frozenset(
     }
 )
 DECISION_EVIDENCE_DECISIONS = frozenset({"accepted", "rejected"})
+DECISION_SCENARIO_STATES = frozenset(
+    {"draft", "invalid", "validated", "confirmed", "expired"}
+)
+DECISION_SCENARIO_KINDS = frozenset({"baseline", "alternative"})
+DECISION_SCENARIO_COMPARISONS = frozenset(
+    {"baseline", "controlled", "structural"}
+)
+DECISION_SCENARIO_DRAFT_LIFETIME = timedelta(days=7)
 DECISION_EVIDENCE_MAX_FILE_BYTES = 10 * 1024 * 1024
 DECISION_EVIDENCE_MAX_FILES_PER_CASE = 10
 DECISION_EVIDENCE_MAX_CASE_BYTES = 50 * 1024 * 1024
@@ -260,6 +268,9 @@ class AgentStore:
                     version = 5
                 if version < 6:
                     self._migrate_v6(connection)
+                    version = 6
+                if version < 7:
+                    self._migrate_v7(connection)
             finally:
                 connection.close()
 
@@ -1592,6 +1603,639 @@ class AgentStore:
         connection.execute("PRAGMA user_version = 6")
         connection.commit()
 
+    def _migrate_v7(self, connection: sqlite3.Connection) -> None:
+        """Add append-only Autonomy scenario revisions and execution receipts."""
+
+        applied_at = _timestamp(self._current_time())
+        connection.executescript(
+            """
+            BEGIN IMMEDIATE;
+
+            CREATE TABLE IF NOT EXISTS decision_scenarios (
+                scenario_revision_id TEXT PRIMARY KEY CHECK (
+                    scenario_revision_id GLOB 'dscr_*'
+                    AND length(scenario_revision_id) > 5
+                ),
+                scenario_id TEXT NOT NULL CHECK (
+                    scenario_id GLOB 'dsc_*' AND length(scenario_id) > 4
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                label TEXT NOT NULL CHECK (
+                    label = trim(label) AND length(label) BETWEEN 1 AND 200
+                ),
+                kind TEXT NOT NULL CHECK (kind IN ('baseline','alternative')),
+                revision INTEGER NOT NULL CHECK (revision > 0),
+                parent_revision_id TEXT UNIQUE
+                    REFERENCES decision_scenarios(scenario_revision_id)
+                    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+                superseded_by_revision_id TEXT UNIQUE
+                    REFERENCES decision_scenarios(scenario_revision_id)
+                    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+                status TEXT NOT NULL CHECK (
+                    status IN ('draft','invalid','validated','confirmed','expired')
+                ),
+                request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+                request_sha256 TEXT NOT NULL CHECK (
+                    length(request_sha256) = 64
+                    AND request_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                changed_fields_json TEXT NOT NULL CHECK (
+                    json_valid(changed_fields_json)
+                    AND json_type(changed_fields_json) = 'array'
+                ),
+                comparison_classification TEXT NOT NULL CHECK (
+                    comparison_classification IN ('baseline','controlled','structural')
+                ),
+                validation_json TEXT CHECK (
+                    validation_json IS NULL OR json_valid(validation_json)
+                ),
+                validation_sha256 TEXT CHECK (
+                    validation_sha256 IS NULL OR (
+                        length(validation_sha256) = 64
+                        AND validation_sha256 NOT GLOB '*[^0-9a-f]*'
+                    )
+                ),
+                source_annual_job_id TEXT NOT NULL
+                    REFERENCES jobs(job_id) ON DELETE RESTRICT,
+                source_snapshot_sha256 TEXT NOT NULL CHECK (
+                    length(source_snapshot_sha256) = 64
+                    AND source_snapshot_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                analysis_basis TEXT NOT NULL CHECK (
+                    analysis_basis IN ('solartac_site','commercial_representative')
+                ),
+                confirmation_id TEXT
+                    REFERENCES decision_scenario_confirmations(confirmation_id)
+                    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+                created_by TEXT NOT NULL CHECK (
+                    created_by = trim(created_by)
+                    AND length(created_by) BETWEEN 1 AND 200
+                ),
+                updated_by TEXT NOT NULL CHECK (
+                    updated_by = trim(updated_by)
+                    AND length(updated_by) BETWEEN 1 AND 200
+                ),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                validated_at TEXT,
+                confirmed_at TEXT,
+                expired_at TEXT,
+                UNIQUE(scenario_id, revision),
+                UNIQUE(scenario_revision_id, case_id),
+                CHECK (
+                    (revision = 1 AND parent_revision_id IS NULL)
+                    OR (revision > 1 AND parent_revision_id IS NOT NULL)
+                ),
+                CHECK (
+                    (kind = 'baseline' AND comparison_classification = 'baseline')
+                    OR (kind = 'alternative'
+                        AND comparison_classification IN ('controlled','structural'))
+                ),
+                CHECK (
+                    (status = 'draft'
+                        AND validation_json IS NULL
+                        AND validation_sha256 IS NULL
+                        AND validated_at IS NULL
+                        AND confirmation_id IS NULL
+                        AND confirmed_at IS NULL
+                        AND expired_at IS NULL)
+                    OR (status IN ('invalid','validated')
+                        AND validation_json IS NOT NULL
+                        AND validation_sha256 IS NOT NULL
+                        AND validated_at IS NOT NULL
+                        AND confirmation_id IS NULL
+                        AND confirmed_at IS NULL
+                        AND expired_at IS NULL)
+                    OR (status = 'confirmed'
+                        AND validation_json IS NOT NULL
+                        AND validation_sha256 IS NOT NULL
+                        AND validated_at IS NOT NULL
+                        AND confirmation_id IS NOT NULL
+                        AND confirmed_at IS NOT NULL
+                        AND expired_at IS NULL)
+                    OR (status = 'expired'
+                        AND confirmation_id IS NULL
+                        AND confirmed_at IS NULL
+                        AND expired_at IS NOT NULL)
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_scenario_evidence (
+                scenario_revision_id TEXT NOT NULL,
+                request_path TEXT NOT NULL CHECK (
+                    request_path = trim(request_path)
+                    AND request_path GLOB '/*'
+                    AND length(request_path) BETWEEN 1 AND 500
+                ),
+                evidence_receipt_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(scenario_revision_id, request_path),
+                FOREIGN KEY(scenario_revision_id, case_id)
+                    REFERENCES decision_scenarios(scenario_revision_id, case_id)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY(evidence_receipt_id)
+                    REFERENCES decision_evidence_receipts(evidence_receipt_id)
+                    ON DELETE RESTRICT
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_scenario_confirmations (
+                confirmation_id TEXT PRIMARY KEY CHECK (
+                    confirmation_id GLOB 'dconf_*'
+                    AND length(confirmation_id) > 6
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                idempotency_key TEXT NOT NULL CHECK (
+                    idempotency_key = trim(idempotency_key)
+                    AND length(idempotency_key) BETWEEN 1 AND 200
+                ),
+                expected_case_revision INTEGER NOT NULL CHECK (
+                    expected_case_revision > 0
+                ),
+                case_revision_after INTEGER NOT NULL CHECK (
+                    case_revision_after = expected_case_revision + 1
+                ),
+                confirmation_request_json TEXT NOT NULL CHECK (
+                    json_valid(confirmation_request_json)
+                ),
+                confirmation_request_sha256 TEXT NOT NULL CHECK (
+                    length(confirmation_request_sha256) = 64
+                    AND confirmation_request_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                receipt_json TEXT NOT NULL CHECK (json_valid(receipt_json)),
+                receipt_sha256 TEXT NOT NULL CHECK (
+                    length(receipt_sha256) = 64
+                    AND receipt_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                operator_name TEXT NOT NULL CHECK (
+                    operator_name = trim(operator_name)
+                    AND length(operator_name) BETWEEN 1 AND 200
+                ),
+                rationale TEXT NOT NULL CHECK (
+                    rationale = trim(rationale)
+                    AND length(rationale) BETWEEN 1 AND 4000
+                ),
+                acknowledgement TEXT NOT NULL CHECK (
+                    acknowledgement = trim(acknowledgement)
+                    AND length(acknowledgement) BETWEEN 1 AND 4000
+                ),
+                confirmed_at TEXT NOT NULL,
+                UNIQUE(case_id, idempotency_key),
+                UNIQUE(confirmation_id, case_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_scenario_confirmation_items (
+                confirmation_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                item_index INTEGER NOT NULL CHECK (item_index BETWEEN 0 AND 3),
+                scenario_revision_id TEXT NOT NULL UNIQUE,
+                scenario_id TEXT NOT NULL,
+                scenario_revision INTEGER NOT NULL CHECK (scenario_revision > 0),
+                request_sha256 TEXT NOT NULL CHECK (
+                    length(request_sha256) = 64
+                    AND request_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                tea_job_id TEXT NOT NULL UNIQUE
+                    REFERENCES technoeconomic_jobs(tea_job_id) ON DELETE RESTRICT,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(confirmation_id, item_index),
+                FOREIGN KEY(confirmation_id, case_id)
+                    REFERENCES decision_scenario_confirmations(confirmation_id, case_id)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY(scenario_revision_id, case_id)
+                    REFERENCES decision_scenarios(scenario_revision_id, case_id)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY(scenario_id, scenario_revision)
+                    REFERENCES decision_scenarios(scenario_id, revision)
+                    ON DELETE RESTRICT
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_scenario_jobs (
+                tea_job_id TEXT PRIMARY KEY
+                    REFERENCES technoeconomic_jobs(tea_job_id) ON DELETE RESTRICT,
+                scenario_revision_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+                retry_of_job_id TEXT
+                    REFERENCES technoeconomic_jobs(tea_job_id) ON DELETE RESTRICT,
+                confirmation_id TEXT
+                    REFERENCES decision_scenario_confirmations(confirmation_id)
+                    ON DELETE RESTRICT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(scenario_revision_id, case_id)
+                    REFERENCES decision_scenarios(scenario_revision_id, case_id)
+                    ON DELETE RESTRICT,
+                UNIQUE(scenario_revision_id, attempt_number),
+                CHECK (
+                    (attempt_number = 1
+                        AND retry_of_job_id IS NULL
+                        AND confirmation_id IS NOT NULL)
+                    OR (attempt_number > 1
+                        AND retry_of_job_id IS NOT NULL
+                        AND confirmation_id IS NULL)
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_scenario_confirmation_idempotency (
+                case_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                confirmation_request_sha256 TEXT NOT NULL CHECK (
+                    length(confirmation_request_sha256) = 64
+                    AND confirmation_request_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                confirmation_id TEXT NOT NULL UNIQUE
+                    REFERENCES decision_scenario_confirmations(confirmation_id)
+                    ON DELETE RESTRICT,
+                response_json TEXT NOT NULL CHECK (json_valid(response_json)),
+                response_sha256 TEXT NOT NULL CHECK (
+                    length(response_sha256) = 64
+                    AND response_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(case_id, idempotency_key),
+                FOREIGN KEY(case_id, idempotency_key)
+                    REFERENCES decision_scenario_confirmations(case_id, idempotency_key)
+                    ON DELETE RESTRICT
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS decision_scenario_live_revision_idx
+                ON decision_scenarios(scenario_id)
+                WHERE superseded_by_revision_id IS NULL;
+            CREATE INDEX IF NOT EXISTS decision_scenarios_case_live_idx
+                ON decision_scenarios(
+                    case_id, superseded_by_revision_id, status, kind, created_at
+                );
+            CREATE INDEX IF NOT EXISTS decision_scenarios_expiry_idx
+                ON decision_scenarios(status, expires_at)
+                WHERE status IN ('draft','invalid','validated');
+            CREATE INDEX IF NOT EXISTS decision_scenario_evidence_receipt_idx
+                ON decision_scenario_evidence(evidence_receipt_id);
+            CREATE INDEX IF NOT EXISTS decision_scenario_items_case_idx
+                ON decision_scenario_confirmation_items(case_id, confirmation_id);
+            CREATE INDEX IF NOT EXISTS decision_scenario_jobs_revision_idx
+                ON decision_scenario_jobs(scenario_revision_id, attempt_number DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS decision_scenario_retry_once_idx
+                ON decision_scenario_jobs(scenario_revision_id, retry_of_job_id)
+                WHERE retry_of_job_id IS NOT NULL;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_insert_guard
+            BEFORE INSERT ON decision_scenarios
+            WHEN NEW.status <> 'draft'
+                 OR NEW.validation_json IS NOT NULL
+                 OR NEW.confirmation_id IS NOT NULL
+                 OR NEW.validated_at IS NOT NULL
+                 OR NEW.confirmed_at IS NOT NULL
+                 OR NEW.expired_at IS NOT NULL
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario revisions must begin as drafts');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_source_basis_guard
+            BEFORE INSERT ON decision_scenarios
+            WHEN NOT EXISTS (
+                SELECT 1 FROM decision_cases c
+                 WHERE c.case_id = NEW.case_id
+                   AND c.source_annual_job_id = NEW.source_annual_job_id
+                   AND c.source_snapshot_sha256 = NEW.source_snapshot_sha256
+                   AND c.analysis_basis = NEW.analysis_basis
+                   AND c.source_basis_locked_at IS NOT NULL
+                   AND c.status NOT IN ('signed','archived')
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario must match the immutable case source and basis');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_lineage_guard
+            BEFORE INSERT ON decision_scenarios
+            WHEN NEW.revision > 1 AND NOT EXISTS (
+                SELECT 1 FROM decision_scenarios p
+                 WHERE p.scenario_revision_id = NEW.parent_revision_id
+                   AND p.scenario_id = NEW.scenario_id
+                   AND p.case_id = NEW.case_id
+                   AND p.kind = NEW.kind
+                   AND p.revision = NEW.revision - 1
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario revision lineage is invalid');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_baseline_limit_guard
+            BEFORE INSERT ON decision_scenarios
+            WHEN NEW.kind = 'baseline' AND EXISTS (
+                SELECT 1 FROM decision_scenarios s
+                 WHERE s.case_id = NEW.case_id
+                   AND s.kind = 'baseline'
+                   AND s.status <> 'expired'
+                   AND s.superseded_by_revision_id IS NULL
+                   AND s.scenario_id <> NEW.scenario_id
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision case already has a live baseline scenario');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_alternative_limit_guard
+            BEFORE INSERT ON decision_scenarios
+            WHEN NEW.kind = 'alternative' AND (
+                SELECT COUNT(DISTINCT s.scenario_id)
+                  FROM decision_scenarios s
+                 WHERE s.case_id = NEW.case_id
+                   AND s.kind = 'alternative'
+                   AND s.status <> 'expired'
+                   AND s.superseded_by_revision_id IS NULL
+                   AND s.scenario_id <> NEW.scenario_id
+            ) >= 3
+            BEGIN
+                SELECT RAISE(ABORT, 'decision case cannot have more than three live alternatives');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_core_is_immutable
+            BEFORE UPDATE OF
+                scenario_revision_id, scenario_id, case_id, label, kind, revision,
+                parent_revision_id, request_json, request_sha256,
+                changed_fields_json, comparison_classification,
+                source_annual_job_id, source_snapshot_sha256, analysis_basis,
+                created_by, created_at, expires_at
+            ON decision_scenarios
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario revision inputs are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_validation_is_immutable
+            BEFORE UPDATE OF validation_json, validation_sha256, validated_at
+            ON decision_scenarios
+            WHEN OLD.validation_json IS NOT NULL
+                 OR OLD.validation_sha256 IS NOT NULL
+                 OR OLD.validated_at IS NOT NULL
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario validation receipts are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_status_transition_guard
+            BEFORE UPDATE OF status ON decision_scenarios
+            WHEN NEW.status <> OLD.status AND NOT (
+                (OLD.status = 'draft' AND NEW.status IN ('invalid','validated','expired'))
+                OR (OLD.status IN ('invalid','validated') AND NEW.status = 'expired')
+                OR (OLD.status = 'validated' AND NEW.status = 'confirmed')
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid decision scenario state transition');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_terminal_is_immutable
+            BEFORE UPDATE OF
+                status, validation_json, validation_sha256, validated_at,
+                confirmation_id, confirmed_at, expired_at, updated_by, updated_at
+            ON decision_scenarios
+            WHEN OLD.status IN ('confirmed','expired')
+            BEGIN
+                SELECT RAISE(ABORT, 'terminal decision scenario revision is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_supersession_is_one_way
+            BEFORE UPDATE OF superseded_by_revision_id ON decision_scenarios
+            WHEN NOT (
+                (OLD.superseded_by_revision_id IS NULL
+                    AND NEW.superseded_by_revision_id IS NOT NULL)
+                OR (
+                    OLD.superseded_by_revision_id GLOB 'dscr_pending_*'
+                    AND NEW.superseded_by_revision_id IS NULL
+                    AND OLD.revision > 1
+                    AND EXISTS (
+                        SELECT 1 FROM decision_scenarios p
+                         WHERE p.scenario_revision_id = OLD.parent_revision_id
+                           AND p.scenario_id = OLD.scenario_id
+                           AND p.case_id = OLD.case_id
+                           AND p.superseded_by_revision_id = OLD.scenario_revision_id
+                    )
+                )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario supersession is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_supersession_target_guard
+            BEFORE UPDATE OF superseded_by_revision_id ON decision_scenarios
+            WHEN OLD.superseded_by_revision_id IS NULL
+                 AND NEW.superseded_by_revision_id IS NOT NULL
+                 AND NOT EXISTS (
+                    SELECT 1 FROM decision_scenarios n
+                     WHERE n.scenario_revision_id = NEW.superseded_by_revision_id
+                       AND n.scenario_id = OLD.scenario_id
+                       AND n.case_id = OLD.case_id
+                       AND n.kind = OLD.kind
+                       AND n.parent_revision_id = OLD.scenario_revision_id
+                       AND n.revision = OLD.revision + 1
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario supersession target is invalid');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_delete_guard
+            BEFORE DELETE ON decision_scenarios
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario revisions are retained, not deleted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_evidence_insert_guard
+            BEFORE INSERT ON decision_scenario_evidence
+            WHEN NOT EXISTS (
+                SELECT 1
+                  FROM decision_scenarios s
+                  JOIN decision_evidence_receipts r
+                    ON r.evidence_receipt_id = NEW.evidence_receipt_id
+                 WHERE s.scenario_revision_id = NEW.scenario_revision_id
+                   AND s.case_id = NEW.case_id
+                   AND s.status = 'draft'
+                   AND r.case_id = NEW.case_id
+                   AND r.decision = 'accepted'
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'scenario evidence must be an accepted receipt from the same case');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_evidence_update_guard
+            BEFORE UPDATE ON decision_scenario_evidence
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario evidence links are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_evidence_delete_guard
+            BEFORE DELETE ON decision_scenario_evidence
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario evidence links are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_confirmation_update_guard
+            BEFORE UPDATE ON decision_scenario_confirmations
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario confirmations are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_confirmation_delete_guard
+            BEFORE DELETE ON decision_scenario_confirmations
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario confirmations are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_confirmation_item_insert_guard
+            BEFORE INSERT ON decision_scenario_confirmation_items
+            WHEN NOT EXISTS (
+                SELECT 1
+                  FROM decision_scenarios s
+                  JOIN technoeconomic_jobs j
+                    ON j.tea_job_id = NEW.tea_job_id
+                 WHERE s.scenario_revision_id = NEW.scenario_revision_id
+                   AND s.case_id = NEW.case_id
+                   AND s.scenario_id = NEW.scenario_id
+                   AND s.revision = NEW.scenario_revision
+                   AND s.request_sha256 = NEW.request_sha256
+                   AND s.confirmation_id = NEW.confirmation_id
+                   AND s.status = 'confirmed'
+                   AND j.request_json = s.request_json
+                   AND j.source_annual_job_id = s.source_annual_job_id
+                   AND j.source_snapshot_sha256 = s.source_snapshot_sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'confirmation item does not match its immutable scenario and TEA job');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_confirmation_item_update_guard
+            BEFORE UPDATE ON decision_scenario_confirmation_items
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario confirmation items are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_confirmation_item_delete_guard
+            BEFORE DELETE ON decision_scenario_confirmation_items
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario confirmation items are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_job_insert_guard
+            BEFORE INSERT ON decision_scenario_jobs
+            WHEN NOT EXISTS (
+                SELECT 1
+                  FROM decision_scenarios s
+                  JOIN technoeconomic_jobs j
+                    ON j.tea_job_id = NEW.tea_job_id
+                 WHERE s.scenario_revision_id = NEW.scenario_revision_id
+                   AND s.case_id = NEW.case_id
+                   AND s.status = 'confirmed'
+                   AND j.request_json = s.request_json
+                   AND j.source_annual_job_id = s.source_annual_job_id
+                   AND j.source_snapshot_sha256 = s.source_snapshot_sha256
+                   AND j.retry_of_job_id IS NEW.retry_of_job_id
+                   AND (
+                        (NEW.attempt_number = 1
+                            AND s.confirmation_id = NEW.confirmation_id
+                            AND j.retry_of_job_id IS NULL)
+                        OR (NEW.attempt_number > 1
+                            AND NEW.confirmation_id IS NULL
+                            AND EXISTS (
+                                SELECT 1 FROM decision_scenario_jobs prior
+                                 WHERE prior.tea_job_id = NEW.retry_of_job_id
+                                   AND prior.scenario_revision_id =
+                                       NEW.scenario_revision_id
+                                   AND prior.case_id = NEW.case_id
+                                   AND prior.attempt_number =
+                                       NEW.attempt_number - 1
+                            ))
+                   )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'scenario TEA link does not match immutable frozen inputs');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_job_update_guard
+            BEFORE UPDATE ON decision_scenario_jobs
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario TEA links are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_job_delete_guard
+            BEFORE DELETE ON decision_scenario_jobs
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario TEA links are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_idempotency_update_guard
+            BEFORE UPDATE ON decision_scenario_confirmation_idempotency
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario idempotency receipts are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_idempotency_insert_guard
+            BEFORE INSERT ON decision_scenario_confirmation_idempotency
+            WHEN NOT EXISTS (
+                SELECT 1 FROM decision_scenario_confirmations c
+                 WHERE c.confirmation_id = NEW.confirmation_id
+                   AND c.case_id = NEW.case_id
+                   AND c.idempotency_key = NEW.idempotency_key
+                   AND c.confirmation_request_sha256 =
+                       NEW.confirmation_request_sha256
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'idempotency record does not match its confirmation');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_scenario_idempotency_delete_guard
+            BEFORE DELETE ON decision_scenario_confirmation_idempotency
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario idempotency receipts are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS retained_decision_scenario_tea_job_guard
+            BEFORE DELETE ON technoeconomic_jobs
+            WHEN EXISTS (
+                SELECT 1 FROM decision_scenario_jobs
+                 WHERE tea_job_id = OLD.tea_job_id
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision scenario TEA jobs are retained');
+            END;
+
+            DROP TRIGGER IF EXISTS decision_case_transition_guard;
+            CREATE TRIGGER decision_case_transition_guard
+            BEFORE UPDATE OF status ON decision_cases
+            WHEN NEW.status <> OLD.status AND NOT (
+                (OLD.status = 'draft'
+                    AND NEW.status IN ('evidence_needed','blocked','archived'))
+                OR (OLD.status = 'evidence_needed'
+                    AND NEW.status IN ('blocked','ready_to_run','archived'))
+                OR (OLD.status = 'blocked'
+                    AND NEW.status IN ('evidence_needed','ready_to_run','archived'))
+                OR (OLD.status = 'ready_to_run'
+                    AND NEW.status IN ('evidence_needed','blocked','running','archived'))
+                OR (OLD.status = 'running' AND NEW.status = 'results_ready')
+                OR (OLD.status = 'results_ready' AND NEW.status = 'decision_ready')
+                OR (OLD.status = 'results_ready' AND NEW.status = 'running'
+                    AND EXISTS (
+                        SELECT 1
+                          FROM decision_scenario_jobs l
+                          JOIN technoeconomic_jobs j
+                            ON j.tea_job_id = l.tea_job_id
+                         WHERE l.case_id = OLD.case_id
+                           AND j.state = 'queued'
+                           AND j.created_at = NEW.updated_at
+                    ))
+                OR (OLD.status = 'decision_ready' AND NEW.status = 'signed')
+                OR (OLD.status = 'signed' AND NEW.status = 'archived')
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid decision case state transition');
+            END;
+            """
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (7, applied_at),
+        )
+        connection.execute("PRAGMA user_version = 7")
+        connection.commit()
+
     def _current_time(self) -> datetime:
         return _as_utc(self._now())
 
@@ -1745,6 +2389,522 @@ class AgentStore:
         result["id"] = result.pop("event_id")
         result["payload"] = _json_load(result.pop("payload_json"))
         return result
+
+    @staticmethod
+    def _decision_scenario_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        # ``scenario_id`` is the stable public identity.  A revision row has its
+        # own explicit identity so callers never have to infer it from a counter.
+        result["id"] = str(result["scenario_id"])
+        result["request"] = _json_load(result.pop("request_json"))
+        result["changed_fields"] = _json_load(result.pop("changed_fields_json"))
+        result["validation"] = _json_load(result.pop("validation_json"))
+        result["is_current"] = result["superseded_by_revision_id"] is None
+        return result
+
+    @staticmethod
+    def _decision_scenario_confirmation_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = result.pop("confirmation_id")
+        result["confirmation_request"] = _json_load(
+            result.pop("confirmation_request_json")
+        )
+        result["receipt"] = _json_load(result.pop("receipt_json"))
+        return result
+
+    @staticmethod
+    def _normalize_decision_scenario_evidence_refs(
+        evidence_receipt_refs: Sequence[str | Mapping[str, Any]],
+    ) -> list[dict[str, str]]:
+        normalized: dict[str, str] = {}
+        for index, raw in enumerate(evidence_receipt_refs):
+            if isinstance(raw, str):
+                receipt_id = raw.strip()
+                request_path = f"/evidence/{index}"
+            elif isinstance(raw, Mapping):
+                receipt_id = str(
+                    raw.get("evidence_receipt_id") or raw.get("receipt_id") or ""
+                ).strip()
+                request_path = str(raw.get("request_path") or "").strip()
+            else:
+                raise ValueError("evidence receipt references must be strings or objects")
+            if not receipt_id.startswith("evr_") or len(receipt_id) <= 4:
+                raise ValueError("evidence receipt ids must use the 'evr_' prefix")
+            if (
+                not request_path.startswith("/")
+                or len(request_path) > 500
+                or request_path != request_path.strip()
+            ):
+                raise ValueError("evidence request_path must be a JSON pointer")
+            if request_path in normalized:
+                raise ValueError(f"duplicate evidence request_path: {request_path}")
+            normalized[request_path] = receipt_id
+        return [
+            {"request_path": path, "evidence_receipt_id": normalized[path]}
+            for path in sorted(normalized)
+        ]
+
+    @staticmethod
+    def _normalize_decision_scenario_changed_fields(
+        changed_fields: Sequence[str],
+    ) -> list[str]:
+        if isinstance(changed_fields, (str, bytes)):
+            raise ValueError("changed_fields must be an array of request paths")
+        normalized: set[str] = set()
+        for raw in changed_fields:
+            path = str(raw).strip()
+            if not path.startswith("/") or len(path) > 500:
+                raise ValueError("changed_fields entries must be JSON pointers")
+            normalized.add(path)
+        return sorted(normalized)
+
+    @staticmethod
+    def _require_decision_scenario_row(
+        connection: sqlite3.Connection,
+        scenario_revision_id: str,
+        *,
+        current: bool = False,
+    ) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM decision_scenarios WHERE scenario_revision_id = ?",
+            (str(scenario_revision_id),),
+        ).fetchone()
+        if row is None:
+            raise RecordNotFound(
+                f"unknown decision scenario revision: {scenario_revision_id}"
+            )
+        if current and row["superseded_by_revision_id"] is not None:
+            raise StoreConflict("decision scenario revision was superseded")
+        return row
+
+    @staticmethod
+    def _require_decision_scenario_revision(
+        row: sqlite3.Row,
+        expected_revision: int,
+    ) -> None:
+        if isinstance(expected_revision, bool) or not isinstance(expected_revision, int):
+            raise ValueError("expected_revision must be an integer")
+        if int(row["revision"]) != expected_revision:
+            raise StoreConflict(
+                "decision scenario revision changed "
+                f"(expected {expected_revision}, found {row['revision']})"
+            )
+
+    @staticmethod
+    def _verify_decision_scenario_evidence_refs(
+        connection: sqlite3.Connection,
+        case_id: str,
+        evidence_refs: Sequence[Mapping[str, str]],
+    ) -> list[sqlite3.Row]:
+        verified: list[sqlite3.Row] = []
+        for reference in evidence_refs:
+            receipt_id = str(reference["evidence_receipt_id"])
+            row = connection.execute(
+                """
+                SELECT r.*, a.sha256 AS current_asset_sha256,
+                       a.byte_count AS current_asset_byte_count,
+                       a.detected_media_type AS current_asset_media_type,
+                       a.removed_at AS current_asset_removed_at
+                  FROM decision_evidence_receipts r
+                  JOIN decision_evidence_assets a
+                    ON a.evidence_asset_id = r.evidence_asset_id
+                   AND a.case_id = r.case_id
+                 WHERE r.evidence_receipt_id = ?
+                """,
+                (receipt_id,),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(f"unknown decision evidence receipt: {receipt_id}")
+            if row["case_id"] != case_id:
+                raise StoreConflict("scenario evidence belongs to a different case")
+            if row["decision"] != "accepted":
+                raise InvalidStateTransition(
+                    f"scenario evidence receipt is not accepted: {receipt_id}"
+                )
+            if row["current_asset_removed_at"] is not None:
+                raise StoreConflict("accepted scenario evidence content was removed")
+            receipt_json = str(row["receipt_json"])
+            if not secrets.compare_digest(
+                str(row["receipt_sha256"]), _sha256_text(receipt_json)
+            ):
+                raise StoreConflict("scenario evidence receipt digest is invalid")
+            receipt_payload = _json_load(receipt_json)
+            content = (
+                receipt_payload.get("content")
+                if isinstance(receipt_payload, Mapping)
+                else None
+            )
+            if not isinstance(content, Mapping) or any(
+                (
+                    receipt_payload.get("evidence_receipt_id") != receipt_id,
+                    receipt_payload.get("case_id") != case_id,
+                    content.get("sha256") != row["asset_sha256"],
+                    content.get("byte_count") != row["asset_byte_count"],
+                    content.get("media_type") != row["current_asset_media_type"],
+                    row["asset_sha256"] != row["current_asset_sha256"],
+                    row["asset_byte_count"] != row["current_asset_byte_count"],
+                )
+            ):
+                raise StoreConflict(
+                    "scenario evidence receipt does not match server-managed content"
+                )
+            verified.append(row)
+        return verified
+
+    def _decision_scenario_bundle(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        result = self._decision_scenario_from_row(row)
+        assert result is not None
+        evidence_rows = connection.execute(
+            """
+            SELECT e.request_path AS linked_request_path, r.*
+              FROM decision_scenario_evidence e
+              JOIN decision_evidence_receipts r
+                ON r.evidence_receipt_id = e.evidence_receipt_id
+             WHERE e.scenario_revision_id = ?
+             ORDER BY e.request_path ASC
+            """,
+            (row["scenario_revision_id"],),
+        ).fetchall()
+        evidence_refs: list[dict[str, Any]] = []
+        for evidence_row in evidence_rows:
+            receipt = self._decision_evidence_receipt_from_row(evidence_row)
+            assert receipt is not None
+            evidence_refs.append(
+                {
+                    "request_path": str(evidence_row["linked_request_path"]),
+                    "evidence_receipt_id": str(evidence_row["evidence_receipt_id"]),
+                    "receipt": receipt,
+                }
+            )
+        result["evidence_receipt_refs"] = evidence_refs
+        result["evidence_receipt_ids"] = [
+            reference["evidence_receipt_id"] for reference in evidence_refs
+        ]
+
+        job_rows = connection.execute(
+            """
+            SELECT j.*, l.attempt_number, l.confirmation_id AS scenario_confirmation_id
+              FROM decision_scenario_jobs l
+              JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+             WHERE l.scenario_revision_id = ?
+             ORDER BY l.attempt_number ASC
+            """,
+            (row["scenario_revision_id"],),
+        ).fetchall()
+        jobs: list[dict[str, Any]] = []
+        for job_row in job_rows:
+            job = self._technoeconomic_job_from_row(job_row)
+            assert job is not None
+            job["attempt_number"] = int(job_row["attempt_number"])
+            job["scenario_confirmation_id"] = job_row["scenario_confirmation_id"]
+            jobs.append(job)
+        result["jobs"] = jobs
+        result["tea_job_ids"] = [job["id"] for job in jobs]
+        result["linked_tea_job_id"] = jobs[-1]["id"] if jobs else None
+        result["latest_job"] = jobs[-1] if jobs else None
+        return result
+
+    def _decision_scenario_confirmation_bundle(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        result = self._decision_scenario_confirmation_from_row(row)
+        assert result is not None
+        item_rows = connection.execute(
+            """
+            SELECT i.*, j.*
+              FROM decision_scenario_confirmation_items i
+              JOIN technoeconomic_jobs j ON j.tea_job_id = i.tea_job_id
+             WHERE i.confirmation_id = ?
+             ORDER BY i.item_index ASC
+            """,
+            (row["confirmation_id"],),
+        ).fetchall()
+        items: list[dict[str, Any]] = []
+        for item_row in item_rows:
+            job = self._technoeconomic_job_from_row(item_row)
+            assert job is not None
+            items.append(
+                {
+                    "item_index": int(item_row["item_index"]),
+                    "scenario_id": str(item_row["scenario_id"]),
+                    "scenario_revision_id": str(item_row["scenario_revision_id"]),
+                    "scenario_revision": int(item_row["scenario_revision"]),
+                    "request_sha256": str(item_row["request_sha256"]),
+                    "tea_job_id": str(item_row["tea_job_id"]),
+                    "job": job,
+                }
+            )
+        result["items"] = items
+        result["jobs"] = [item["job"] for item in items]
+        return result
+
+    def _prepare_decision_scenario_revision(
+        self,
+        *,
+        label: str,
+        kind: str,
+        request: Mapping[str, Any],
+        request_sha256: str,
+        changed_fields: Sequence[str],
+        comparison_classification: str,
+        evidence_receipt_refs: Sequence[str | Mapping[str, Any]],
+        expires_at: datetime | None,
+    ) -> dict[str, Any]:
+        normalized_label = _bounded_text(label, field="label", maximum=200)
+        if kind not in DECISION_SCENARIO_KINDS:
+            raise ValueError("scenario kind must be baseline or alternative")
+        if comparison_classification not in DECISION_SCENARIO_COMPARISONS:
+            raise ValueError("unsupported scenario comparison classification")
+        if kind == "baseline" and comparison_classification != "baseline":
+            raise ValueError("baseline scenarios require baseline classification")
+        if kind == "alternative" and comparison_classification == "baseline":
+            raise ValueError("alternative scenarios require controlled or structural classification")
+        if not isinstance(request, Mapping):
+            raise ValueError("scenario request must be an object")
+        request_json = _json_dump(dict(request))
+        normalized_hash = self._validate_sha256(
+            request_sha256, field="request_sha256"
+        )
+        if not secrets.compare_digest(normalized_hash, _sha256_text(request_json)):
+            raise StoreConflict("scenario request SHA-256 does not match canonical request")
+        normalized_changed = self._normalize_decision_scenario_changed_fields(
+            changed_fields
+        )
+        if kind == "baseline" and normalized_changed:
+            raise ValueError("baseline changed_fields must be empty")
+        normalized_evidence = self._normalize_decision_scenario_evidence_refs(
+            evidence_receipt_refs
+        )
+        now = self._current_time()
+        expiry = now + DECISION_SCENARIO_DRAFT_LIFETIME
+        if expires_at is not None:
+            expiry = _as_utc(expires_at)
+            if expiry <= now:
+                raise ValueError("scenario expiry must be in the future")
+            if expiry > now + DECISION_SCENARIO_DRAFT_LIFETIME:
+                raise ValueError("scenario drafts cannot live longer than seven days")
+        return {
+            "label": normalized_label,
+            "kind": kind,
+            "request_json": request_json,
+            "request_sha256": normalized_hash,
+            "changed_fields_json": _json_dump(normalized_changed),
+            "comparison_classification": comparison_classification,
+            "evidence_receipt_refs": normalized_evidence,
+            "now_text": _timestamp(now),
+            "expires_at": _timestamp(expiry),
+        }
+
+    def _prepare_decision_scenario_tea_item(
+        self,
+        raw: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        scenario_revision_id = str(raw.get("scenario_revision_id") or "").strip()
+        if not scenario_revision_id.startswith("dscr_"):
+            raise ValueError("scenario_revision_id must use the 'dscr_' prefix")
+        expected_revision = raw.get("expected_revision")
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision <= 0
+        ):
+            raise ValueError("scenario expected_revision must be a positive integer")
+        request = raw.get("request")
+        if not isinstance(request, Mapping):
+            raise ValueError("confirmed scenario request must be an object")
+        request_json = _json_dump(dict(request))
+        request_hash = self._validate_sha256(
+            str(raw.get("request_sha256") or ""), field="request_sha256"
+        )
+        if not secrets.compare_digest(request_hash, _sha256_text(request_json)):
+            raise StoreConflict("confirmed scenario request hash is not canonical")
+
+        job_id = self._validate_technoeconomic_job_id(
+            str(raw.get("job_id") or _new_id("tea"))
+        )
+        source_id = _bounded_text(
+            raw.get("source_annual_job_id"),
+            field="source_annual_job_id",
+            maximum=300,
+        )
+        artifact_hash = self._validate_sha256(
+            str(raw.get("source_artifact_sha256") or ""),
+            field="source_artifact_sha256",
+        )
+        storage_key = str(raw.get("source_artifact_storage_key") or "").strip()
+        expected_storage_key = f"sha256/{artifact_hash[:2]}/{artifact_hash}.csv"
+        if storage_key != expected_storage_key:
+            raise ValueError(
+                "source_artifact_storage_key must be the canonical content address "
+                f"{expected_storage_key!r}"
+            )
+        artifact_bytes = raw.get("source_artifact_bytes")
+        if (
+            isinstance(artifact_bytes, bool)
+            or not isinstance(artifact_bytes, int)
+            or artifact_bytes <= 0
+        ):
+            raise ValueError("source_artifact_bytes must be a positive integer")
+        snapshot = raw.get("source_snapshot")
+        if not isinstance(snapshot, Mapping):
+            raise ValueError("source_snapshot must be an object")
+        snapshot_payload = dict(snapshot)
+        if snapshot_payload.get("source_annual_job_id") != source_id:
+            raise ValueError("source snapshot must identify the Annual Simulation source")
+        artifact = snapshot_payload.get("midc_source_artifact")
+        expected_artifact = {
+            "owner_annual_job_id": source_id,
+            "storage_key": storage_key,
+            "sha256": artifact_hash,
+            "byte_count": artifact_bytes,
+        }
+        if not isinstance(artifact, Mapping) or any(
+            artifact.get(field) != expected for field, expected in expected_artifact.items()
+        ):
+            raise ValueError("source snapshot artifact must match the frozen identity")
+        snapshot_json = _json_dump(snapshot_payload)
+        provenance = raw.get("submission_provenance")
+        if not isinstance(provenance, Mapping):
+            raise ValueError("submission_provenance must be an object")
+        provenance_json = _json_dump(dict(provenance))
+        return {
+            "scenario_revision_id": scenario_revision_id,
+            "expected_revision": expected_revision,
+            "request_json": request_json,
+            "request_sha256": request_hash,
+            "job_id": job_id,
+            "source_annual_job_id": source_id,
+            "source_artifact_storage_key": storage_key,
+            "source_artifact_sha256": artifact_hash,
+            "source_artifact_bytes": artifact_bytes,
+            "source_snapshot_json": snapshot_json,
+            "source_snapshot_sha256": _sha256_text(snapshot_json),
+            "submission_provenance_json": provenance_json,
+            "submission_provenance_sha256": _sha256_text(provenance_json),
+        }
+
+    def _expire_due_scenario_before_mutation(
+        self,
+        *,
+        scenario_id: str | None = None,
+        scenario_revision_id: str | None = None,
+        operator_name: str,
+    ) -> None:
+        """Commit elapsed draft expiry before rejecting a stale mutation."""
+
+        if (scenario_id is None) == (scenario_revision_id is None):
+            raise ValueError("exactly one scenario identity is required")
+        clause = (
+            "scenario_id = ? AND superseded_by_revision_id IS NULL"
+            if scenario_id is not None
+            else "scenario_revision_id = ?"
+        )
+        identity = scenario_id if scenario_id is not None else scenario_revision_id
+        with self._transaction() as connection:
+            row = connection.execute(
+                f"SELECT * FROM decision_scenarios WHERE {clause}",
+                (str(identity),),
+            ).fetchone()
+            if row is None:
+                return
+            case = self._require_decision_case_row(connection, str(row["case_id"]))
+            due = (
+                row["superseded_by_revision_id"] is None
+                and row["status"] in {"draft", "invalid", "validated"}
+                and str(row["expires_at"])
+                <= _timestamp(self._current_time())
+            )
+            expected_case_revision = int(case["revision"])
+            expected_revision = int(row["revision"])
+            stable_id = str(row["scenario_id"])
+        if not due:
+            return
+        self.expire_decision_scenario(
+            stable_id,
+            expected_case_revision=expected_case_revision,
+            expected_revision=expected_revision,
+            operator_name=operator_name,
+            reason="The unconfirmed scenario draft reached its seven-day expiry.",
+        )
+        raise InvalidStateTransition("decision scenario draft has expired")
+
+    def _decision_scenario_job_record(
+        self,
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        job = self._technoeconomic_job_from_row(row)
+        assert job is not None
+        return {
+            "tea_job_id": str(row["tea_job_id"]),
+            "case_id": str(row["case_id"]),
+            "scenario_id": str(row["scenario_id"]),
+            "scenario_revision_id": str(row["scenario_revision_id"]),
+            "scenario_revision": int(row["scenario_revision"]),
+            "attempt_number": int(row["attempt_number"]),
+            "retry_of_job_id": row["retry_of_job_id"],
+            "confirmation_id": row["scenario_confirmation_id"],
+            "job": job,
+        }
+
+    def _decision_case_execution_summary(
+        self,
+        connection: sqlite3.Connection,
+        case_id: str,
+    ) -> dict[str, Any]:
+        rows = connection.execute(
+            """
+            SELECT j.*, l.case_id, l.scenario_revision_id, l.attempt_number,
+                   l.confirmation_id AS scenario_confirmation_id,
+                   s.scenario_id, s.revision AS scenario_revision
+             FROM decision_scenario_jobs l
+              JOIN decision_scenarios s
+                ON s.scenario_revision_id = l.scenario_revision_id
+              JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+             WHERE l.case_id = ?
+             ORDER BY s.kind ASC, s.scenario_id ASC, l.attempt_number ASC
+            """,
+            (str(case_id),),
+        ).fetchall()
+        links = [self._decision_scenario_job_record(row) for row in rows]
+        latest_by_revision: dict[str, dict[str, Any]] = {}
+        for link in links:
+            latest_by_revision[link["scenario_revision_id"]] = link
+        latest_links = list(latest_by_revision.values())
+        states = [str(item["job"]["state"]) for item in latest_links]
+        counts = {state: states.count(state) for state in sorted(JOB_STATES)}
+        terminal_count = sum(state in TERMINAL_JOB_STATES for state in states)
+        done_count = states.count("done")
+        return {
+            "jobs": [link["job"] for link in links],
+            "links": links,
+            "latest_jobs": [link["job"] for link in latest_links],
+            "latest_links": latest_links,
+            "job_count": len(links),
+            "state_counts": counts,
+            "all_terminal": bool(latest_links) and terminal_count == len(latest_links),
+            "all_successful": bool(latest_links) and done_count == len(latest_links),
+            "results_available": done_count > 0,
+            "partial_results": done_count > 0 and done_count < len(latest_links),
+            "retryable_job_ids": [
+                item["tea_job_id"]
+                for item in latest_links
+                if item["job"]["state"] in {"error", "cancelled", "interrupted"}
+            ],
+        }
 
     @staticmethod
     def _require_decision_case_row(
@@ -3299,6 +4459,11 @@ class AgentStore:
                         f"technoeconomic job {job_id}"
                     )
                 raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
+            if row["state"] in TERMINAL_JOB_STATES and expected_worker_id is not None:
+                raise LeaseOwnershipLost(
+                    f"runner no longer owns the active lease for "
+                    f"technoeconomic job {job_id}"
+                )
             if row["state"] in TERMINAL_JOB_STATES:
                 raise InvalidStateTransition(
                     f"terminal technoeconomic job {job_id} is immutable"
@@ -3411,6 +4576,13 @@ class AgentStore:
             ).fetchone()
             if row is None:
                 raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
+            if connection.execute(
+                "SELECT 1 FROM decision_scenario_jobs WHERE tea_job_id = ?",
+                (job_id,),
+            ).fetchone() is not None:
+                raise InvalidStateTransition(
+                    "decision scenario TEA jobs require case-scoped cancellation"
+                )
             if row["state"] == "queued":
                 connection.execute(
                     """
@@ -3514,6 +4686,13 @@ class AgentStore:
             ).fetchone()
             if row is None:
                 raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
+            if connection.execute(
+                "SELECT 1 FROM decision_scenario_jobs WHERE tea_job_id = ?",
+                (job_id,),
+            ).fetchone() is not None:
+                raise InvalidStateTransition(
+                    "decision scenario TEA jobs require case-scoped retry"
+                )
             if row["state"] not in {"interrupted", "error", "cancelled"}:
                 raise InvalidStateTransition(
                     f"cannot retry technoeconomic job in state {row['state']}"
@@ -3580,6 +4759,13 @@ class AgentStore:
             ).fetchone()
             if row is None:
                 raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
+            if connection.execute(
+                "SELECT 1 FROM decision_scenario_jobs WHERE tea_job_id = ?",
+                (job_id,),
+            ).fetchone() is not None:
+                raise InvalidStateTransition(
+                    "decision scenario TEA jobs are retained for audit history"
+                )
             if row["state"] not in TERMINAL_JOB_STATES:
                 raise InvalidStateTransition(
                     "cancel active technoeconomic work before deleting it"
@@ -5560,6 +6746,50 @@ class AgentStore:
             assert updated is not None
             return self._decision_evidence_asset_bundle(connection, updated)
 
+    def get_decision_evidence_receipt(
+        self,
+        evidence_receipt_id: str,
+    ) -> dict[str, Any] | None:
+        """Return one canonical evidence receipt without scanning case assets."""
+
+        receipt_id = str(evidence_receipt_id).strip()
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM decision_evidence_receipts
+                 WHERE evidence_receipt_id = ?
+                """,
+                (receipt_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            receipt_json = str(row["receipt_json"])
+            if not secrets.compare_digest(
+                str(row["receipt_sha256"]), _sha256_text(receipt_json)
+            ):
+                raise StoreConflict("decision evidence receipt digest is invalid")
+            payload = _json_load(receipt_json)
+            if not isinstance(payload, Mapping) or any(
+                (
+                    payload.get("evidence_receipt_id") != receipt_id,
+                    payload.get("case_id") != row["case_id"],
+                    payload.get("decision") != row["decision"],
+                )
+            ):
+                raise StoreConflict("decision evidence receipt payload is invalid")
+            if row["decision"] == "accepted":
+                self._verify_decision_scenario_evidence_refs(
+                    connection,
+                    str(row["case_id"]),
+                    [
+                        {
+                            "request_path": "/receipt-integrity-check",
+                            "evidence_receipt_id": receipt_id,
+                        }
+                    ],
+                )
+            return self._decision_evidence_receipt_from_row(row)
+
     def record_decision_evidence_review(
         self,
         evidence_candidate_id: str,
@@ -5735,6 +6965,1655 @@ class AgentStore:
             return self._decision_evidence_receipt_from_row(
                 receipt_row
             )  # type: ignore[return-value]
+
+    def create_decision_scenario(
+        self,
+        case_id: str,
+        *,
+        expected_case_revision: int,
+        label: str,
+        kind: str,
+        request: Mapping[str, Any],
+        request_sha256: str,
+        changed_fields: Sequence[str],
+        comparison_classification: str,
+        evidence_receipt_refs: Sequence[str | Mapping[str, Any]],
+        operator_name: str,
+        scenario_id: str | None = None,
+        scenario_revision_id: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Create a revision-one scenario draft against a locked decision case."""
+
+        stable_id = str(scenario_id or _new_id("dsc")).strip()
+        revision_id = str(scenario_revision_id or _new_id("dscr")).strip()
+        if not stable_id.startswith("dsc_") or len(stable_id) <= 4:
+            raise ValueError("scenario ids must use the 'dsc_' prefix")
+        if not revision_id.startswith("dscr_") or len(revision_id) <= 5:
+            raise ValueError("scenario revision ids must use the 'dscr_' prefix")
+        operator = _bounded_text(operator_name, field="operator_name", maximum=200)
+        prepared = self._prepare_decision_scenario_revision(
+            label=label,
+            kind=kind,
+            request=request,
+            request_sha256=request_sha256,
+            changed_fields=changed_fields,
+            comparison_classification=comparison_classification,
+            evidence_receipt_refs=evidence_receipt_refs,
+            expires_at=expires_at,
+        )
+        with self._transaction(write=True) as connection:
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            if case["source_annual_job_id"] is None:
+                raise InvalidStateTransition(
+                    "decision case source and analysis basis must be locked first"
+                )
+            request_payload = _json_load(prepared["request_json"])
+            request_source_id = request_payload.get("source_annual_job_id")
+            if (
+                request_source_id is not None
+                and request_source_id != case["source_annual_job_id"]
+            ):
+                raise StoreConflict(
+                    "scenario Annual source differs from the locked case; create a new case"
+                )
+            if request_payload.get("basis") != case["analysis_basis"]:
+                raise StoreConflict(
+                    "scenario analysis basis differs from the locked case; create a new case"
+                )
+            self._verify_decision_scenario_evidence_refs(
+                connection, str(case_id), prepared["evidence_receipt_refs"]
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_scenarios (
+                        scenario_revision_id, scenario_id, case_id, label, kind,
+                        revision, parent_revision_id, superseded_by_revision_id,
+                        status, request_json, request_sha256, changed_fields_json,
+                        comparison_classification, validation_json,
+                        validation_sha256, source_annual_job_id,
+                        source_snapshot_sha256, analysis_basis, confirmation_id,
+                        created_by, updated_by, created_at, updated_at, expires_at,
+                        validated_at, confirmed_at, expired_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, 1, NULL, NULL, 'draft', ?, ?, ?, ?,
+                        NULL, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL
+                    )
+                    """,
+                    (
+                        revision_id,
+                        stable_id,
+                        str(case_id),
+                        prepared["label"],
+                        prepared["kind"],
+                        prepared["request_json"],
+                        prepared["request_sha256"],
+                        prepared["changed_fields_json"],
+                        prepared["comparison_classification"],
+                        case["source_annual_job_id"],
+                        case["source_snapshot_sha256"],
+                        case["analysis_basis"],
+                        operator,
+                        operator,
+                        prepared["now_text"],
+                        prepared["now_text"],
+                        prepared["expires_at"],
+                    ),
+                )
+                for reference in prepared["evidence_receipt_refs"]:
+                    connection.execute(
+                        """
+                        INSERT INTO decision_scenario_evidence (
+                            scenario_revision_id, request_path,
+                            evidence_receipt_id, case_id, created_at
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            revision_id,
+                            reference["request_path"],
+                            reference["evidence_receipt_id"],
+                            str(case_id),
+                            prepared["now_text"],
+                        ),
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not create decision scenario draft") from exc
+            updated_case = self._touch_decision_case(
+                connection,
+                case,
+                now_text=prepared["now_text"],
+                operator_name=operator,
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_scenario_created",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "scenario_id": stable_id,
+                    "scenario_revision_id": revision_id,
+                    "scenario_revision": 1,
+                    "kind": prepared["kind"],
+                    "request_sha256": prepared["request_sha256"],
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=prepared["now_text"],
+            )
+            row = self._require_decision_scenario_row(connection, revision_id)
+            return self._decision_scenario_bundle(connection, row)
+
+    def revise_decision_scenario(
+        self,
+        scenario_id: str,
+        *,
+        expected_case_revision: int,
+        expected_revision: int,
+        label: str,
+        request: Mapping[str, Any],
+        request_sha256: str,
+        changed_fields: Sequence[str],
+        comparison_classification: str,
+        evidence_receipt_refs: Sequence[str | Mapping[str, Any]],
+        operator_name: str,
+        scenario_revision_id: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Supersede the current row and append a new immutable draft revision."""
+
+        stable_id = str(scenario_id).strip()
+        if not stable_id.startswith("dsc_") or len(stable_id) <= 4:
+            raise ValueError("scenario ids must use the 'dsc_' prefix")
+        revision_id = str(scenario_revision_id or _new_id("dscr")).strip()
+        if not revision_id.startswith("dscr_") or len(revision_id) <= 5:
+            raise ValueError("scenario revision ids must use the 'dscr_' prefix")
+        operator = _bounded_text(operator_name, field="operator_name", maximum=200)
+        self._expire_due_scenario_before_mutation(
+            scenario_id=stable_id,
+            operator_name=operator,
+        )
+        with self._transaction(write=True) as connection:
+            parent = connection.execute(
+                """
+                SELECT * FROM decision_scenarios
+                 WHERE scenario_id = ? AND superseded_by_revision_id IS NULL
+                """,
+                (stable_id,),
+            ).fetchone()
+            if parent is None:
+                raise RecordNotFound(f"unknown current decision scenario: {stable_id}")
+            self._require_decision_scenario_revision(parent, expected_revision)
+            if parent["status"] == "expired":
+                raise InvalidStateTransition("expired decision scenarios cannot be revised")
+            case = self._require_decision_case_row(
+                connection, str(parent["case_id"]), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            prepared = self._prepare_decision_scenario_revision(
+                label=label,
+                kind=str(parent["kind"]),
+                request=request,
+                request_sha256=request_sha256,
+                changed_fields=changed_fields,
+                comparison_classification=comparison_classification,
+                evidence_receipt_refs=evidence_receipt_refs,
+                expires_at=expires_at,
+            )
+            request_payload = _json_load(prepared["request_json"])
+            request_source_id = request_payload.get("source_annual_job_id")
+            if (
+                request_source_id is not None
+                and request_source_id != case["source_annual_job_id"]
+            ):
+                raise StoreConflict(
+                    "scenario Annual source differs from the locked case; create a new case"
+                )
+            if request_payload.get("basis") != case["analysis_basis"]:
+                raise StoreConflict(
+                    "scenario analysis basis differs from the locked case; create a new case"
+                )
+            self._verify_decision_scenario_evidence_refs(
+                connection,
+                str(parent["case_id"]),
+                prepared["evidence_receipt_refs"],
+            )
+            next_revision = int(parent["revision"]) + 1
+            pending_supersession_id = (
+                "dscr_pending_" + revision_id.removeprefix("dscr_")
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_scenarios (
+                        scenario_revision_id, scenario_id, case_id, label, kind,
+                        revision, parent_revision_id, superseded_by_revision_id,
+                        status, request_json, request_sha256, changed_fields_json,
+                        comparison_classification, validation_json,
+                        validation_sha256, source_annual_job_id,
+                        source_snapshot_sha256, analysis_basis, confirmation_id,
+                        created_by, updated_by, created_at, updated_at, expires_at,
+                        validated_at, confirmed_at, expired_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?,
+                        NULL, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL
+                    )
+                    """,
+                    (
+                        revision_id,
+                        stable_id,
+                        parent["case_id"],
+                        prepared["label"],
+                        parent["kind"],
+                        next_revision,
+                        parent["scenario_revision_id"],
+                        pending_supersession_id,
+                        prepared["request_json"],
+                        prepared["request_sha256"],
+                        prepared["changed_fields_json"],
+                        prepared["comparison_classification"],
+                        parent["source_annual_job_id"],
+                        parent["source_snapshot_sha256"],
+                        parent["analysis_basis"],
+                        operator,
+                        operator,
+                        prepared["now_text"],
+                        prepared["now_text"],
+                        prepared["expires_at"],
+                    ),
+                )
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_scenarios
+                       SET superseded_by_revision_id = ?
+                     WHERE scenario_revision_id = ?
+                       AND superseded_by_revision_id IS NULL
+                       AND revision = ?
+                    """,
+                    (revision_id, parent["scenario_revision_id"], expected_revision),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreConflict("decision scenario changed during revision")
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_scenarios
+                       SET superseded_by_revision_id = NULL
+                     WHERE scenario_revision_id = ?
+                       AND superseded_by_revision_id = ?
+                    """,
+                    (revision_id, pending_supersession_id),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreConflict("decision scenario revision was not activated")
+                for reference in prepared["evidence_receipt_refs"]:
+                    connection.execute(
+                        """
+                        INSERT INTO decision_scenario_evidence (
+                            scenario_revision_id, request_path,
+                            evidence_receipt_id, case_id, created_at
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            revision_id,
+                            reference["request_path"],
+                            reference["evidence_receipt_id"],
+                            parent["case_id"],
+                            prepared["now_text"],
+                        ),
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not revise decision scenario") from exc
+            updated_case = self._touch_decision_case(
+                connection,
+                case,
+                now_text=prepared["now_text"],
+                operator_name=operator,
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(parent["case_id"]),
+                event_type="decision_scenario_revised",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "scenario_id": stable_id,
+                    "parent_scenario_revision_id": parent["scenario_revision_id"],
+                    "scenario_revision_id": revision_id,
+                    "scenario_revision": next_revision,
+                    "request_sha256": prepared["request_sha256"],
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=prepared["now_text"],
+            )
+            row = self._require_decision_scenario_row(connection, revision_id)
+            return self._decision_scenario_bundle(connection, row)
+
+    def record_decision_scenario_validation(
+        self,
+        scenario_revision_id: str,
+        *,
+        expected_case_revision: int,
+        expected_revision: int,
+        request_sha256: str,
+        validation: Mapping[str, Any],
+        valid: bool,
+        operator_name: str,
+    ) -> dict[str, Any]:
+        """Freeze deterministic validation on the exact current request revision."""
+
+        if not isinstance(valid, bool):
+            raise ValueError("valid must be a boolean")
+        if not isinstance(validation, Mapping):
+            raise ValueError("validation must be an object")
+        operator = _bounded_text(operator_name, field="operator_name", maximum=200)
+        self._expire_due_scenario_before_mutation(
+            scenario_revision_id=str(scenario_revision_id),
+            operator_name=operator,
+        )
+        request_hash = self._validate_sha256(
+            request_sha256, field="request_sha256"
+        )
+        validation_json = _json_dump(dict(validation))
+        validation_hash = _sha256_text(validation_json)
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = self._require_decision_scenario_row(
+                connection, scenario_revision_id, current=True
+            )
+            self._require_decision_scenario_revision(row, expected_revision)
+            case = self._require_decision_case_row(
+                connection, str(row["case_id"]), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            if row["status"] != "draft":
+                raise InvalidStateTransition(
+                    f"cannot validate decision scenario in state {row['status']}"
+                )
+            if not secrets.compare_digest(str(row["request_sha256"]), request_hash):
+                raise StoreConflict("scenario request changed before validation")
+            if validation.get("valid") is not valid:
+                raise ValueError(
+                    "validation.valid must match the requested validation state"
+                )
+            if validation.get("request_sha256") != request_hash:
+                raise StoreConflict(
+                    "scenario validation must bind the exact canonical request hash"
+                )
+            stored_changed_fields = _json_load(str(row["changed_fields_json"]))
+            if (
+                validation.get("kind") != row["kind"]
+                or validation.get("comparison_classification")
+                != row["comparison_classification"]
+                or validation.get("declared_changed_fields")
+                != stored_changed_fields
+            ):
+                raise StoreConflict(
+                    "scenario validation does not match the immutable draft metadata"
+                )
+            if valid and (
+                validation.get("field_errors") != []
+                or validation.get("changed_fields") != stored_changed_fields
+            ):
+                raise StoreConflict(
+                    "valid scenario receipt does not prove its declared differences"
+                )
+            if row["kind"] == "alternative" and valid:
+                self._validate_sha256(
+                    str(validation.get("baseline_request_sha256") or ""),
+                    field="baseline_request_sha256",
+                )
+            self._verify_decision_scenario_evidence_refs(
+                connection,
+                str(row["case_id"]),
+                self._normalize_decision_scenario_evidence_refs(
+                    [
+                        {
+                            "request_path": evidence["request_path"],
+                            "evidence_receipt_id": evidence["evidence_receipt_id"],
+                        }
+                        for evidence in connection.execute(
+                            """
+                            SELECT request_path, evidence_receipt_id
+                              FROM decision_scenario_evidence
+                             WHERE scenario_revision_id = ?
+                             ORDER BY request_path
+                            """,
+                            (scenario_revision_id,),
+                        ).fetchall()
+                    ]
+                ),
+            )
+            target_status = "validated" if valid else "invalid"
+            try:
+                connection.execute(
+                    """
+                    UPDATE decision_scenarios
+                       SET status = ?, validation_json = ?, validation_sha256 = ?,
+                           validated_at = ?, updated_at = ?, updated_by = ?
+                     WHERE scenario_revision_id = ? AND status = 'draft'
+                    """,
+                    (
+                        target_status,
+                        validation_json,
+                        validation_hash,
+                        now_text,
+                        now_text,
+                        operator,
+                        scenario_revision_id,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not record scenario validation") from exc
+            updated_case = self._touch_decision_case(
+                connection, case, now_text=now_text, operator_name=operator
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(row["case_id"]),
+                event_type="decision_scenario_validated",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "scenario_id": row["scenario_id"],
+                    "scenario_revision_id": scenario_revision_id,
+                    "scenario_revision": int(row["revision"]),
+                    "status": target_status,
+                    "request_sha256": request_hash,
+                    "validation_sha256": validation_hash,
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            updated = self._require_decision_scenario_row(connection, scenario_revision_id)
+            return self._decision_scenario_bundle(connection, updated)
+
+    def get_decision_scenario(
+        self, scenario_revision_id: str
+    ) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM decision_scenarios WHERE scenario_revision_id = ?",
+                (str(scenario_revision_id),),
+            ).fetchone()
+            return None if row is None else self._decision_scenario_bundle(connection, row)
+
+    def list_decision_scenarios(
+        self,
+        case_id: str,
+        *,
+        include_history: bool = True,
+        include_expired: bool = True,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        if limit > 500:
+            raise ValueError("decision scenario limit cannot exceed 500")
+        clauses = ["case_id = ?"]
+        parameters: list[Any] = [str(case_id)]
+        if not include_history:
+            clauses.append("superseded_by_revision_id IS NULL")
+        if not include_expired:
+            clauses.append("status <> 'expired'")
+        parameters.append(int(limit))
+        with self._transaction() as connection:
+            self._require_decision_case_row(connection, str(case_id))
+            rows = connection.execute(
+                "SELECT * FROM decision_scenarios WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY kind ASC, scenario_id ASC, revision DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+            return [self._decision_scenario_bundle(connection, row) for row in rows]
+
+    def get_decision_scenario_confirmation(
+        self, confirmation_id: str
+    ) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM decision_scenario_confirmations
+                 WHERE confirmation_id = ?
+                """,
+                (str(confirmation_id),),
+            ).fetchone()
+            return (
+                None
+                if row is None
+                else self._decision_scenario_confirmation_bundle(connection, row)
+            )
+
+    def get_decision_scenario_confirmation_by_idempotency(
+        self,
+        case_id: str,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        """Return the immutable replay record before any external byte recheck."""
+
+        key = _bounded_text(
+            idempotency_key, field="idempotency_key", maximum=200
+        )
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT c.*, i.response_json, i.response_sha256
+                  FROM decision_scenario_confirmations c
+                  JOIN decision_scenario_confirmation_idempotency i
+                    ON i.confirmation_id = c.confirmation_id
+                 WHERE c.case_id = ? AND c.idempotency_key = ?
+                """,
+                (str(case_id), key),
+            ).fetchone()
+            if row is None:
+                return None
+            result = self._decision_scenario_confirmation_bundle(connection, row)
+            response_json = str(row["response_json"])
+            if not secrets.compare_digest(
+                str(row["response_sha256"]), _sha256_text(response_json)
+            ):
+                raise StoreConflict("scenario confirmation replay receipt is invalid")
+            result["response"] = _json_load(response_json)
+            return result
+
+    def confirm_decision_scenarios_batch(
+        self,
+        case_id: str,
+        confirmations: Sequence[Mapping[str, Any]],
+        *,
+        expected_case_revision: int,
+        idempotency_key: str,
+        operator_name: str,
+        rationale: str,
+        acknowledgement: str,
+        confirmation_review: Mapping[str, Any],
+        atomic_source_check: Callable[[sqlite3.Connection], str | None],
+        max_active_jobs: int | None = None,
+        confirmation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Confirm exact scenario revisions and create every TEA job or none."""
+
+        if not confirmations or len(confirmations) > 4:
+            raise ValueError("confirmations must select between one and four scenarios")
+        if not isinstance(confirmation_review, Mapping):
+            raise ValueError("confirmation_review must be an object")
+        if not callable(atomic_source_check):
+            raise ValueError("atomic_source_check is required")
+        key = _bounded_text(idempotency_key, field="idempotency_key", maximum=200)
+        operator = _bounded_text(operator_name, field="operator_name", maximum=200)
+        normalized_rationale = _bounded_text(rationale, field="rationale", maximum=4_000)
+        normalized_acknowledgement = _bounded_text(
+            acknowledgement, field="acknowledgement", maximum=4_000
+        )
+        if (
+            isinstance(expected_case_revision, bool)
+            or not isinstance(expected_case_revision, int)
+            or expected_case_revision <= 0
+        ):
+            raise ValueError("expected_case_revision must be a positive integer")
+        normalized_confirmation_id = str(
+            confirmation_id or _new_id("dconf")
+        ).strip()
+        if (
+            not normalized_confirmation_id.startswith("dconf_")
+            or len(normalized_confirmation_id) <= 6
+        ):
+            raise ValueError("confirmation ids must use the 'dconf_' prefix")
+
+        prepared = [self._prepare_decision_scenario_tea_item(item) for item in confirmations]
+        revision_ids = [item["scenario_revision_id"] for item in prepared]
+        if len(set(revision_ids)) != len(revision_ids):
+            raise ValueError("a scenario revision may be confirmed only once per batch")
+        job_ids = [item["job_id"] for item in prepared]
+        if len(set(job_ids)) != len(job_ids):
+            raise ValueError("TEA job ids must be unique within a confirmation")
+
+        confirmation_request = {
+            "schema_version": 1,
+            "case_id": str(case_id),
+            "expected_case_revision": expected_case_revision,
+            "idempotency_key": key,
+            "operator_name": operator,
+            "rationale": normalized_rationale,
+            "acknowledgement": normalized_acknowledgement,
+            "confirmation_review": dict(confirmation_review),
+            "scenarios": [
+                {
+                    "scenario_revision_id": item["scenario_revision_id"],
+                    "expected_revision": item["expected_revision"],
+                    "request_sha256": item["request_sha256"],
+                    "source_annual_job_id": item["source_annual_job_id"],
+                    "source_artifact_sha256": item["source_artifact_sha256"],
+                    "source_artifact_bytes": item["source_artifact_bytes"],
+                    "source_snapshot_sha256": item["source_snapshot_sha256"],
+                    "submission_provenance_sha256": item[
+                        "submission_provenance_sha256"
+                    ],
+                }
+                for item in prepared
+            ],
+        }
+        confirmation_request_json = _json_dump(confirmation_request)
+        confirmation_request_hash = _sha256_text(confirmation_request_json)
+        now_text = _timestamp(self._current_time())
+
+        # Persist every elapsed unconfirmed revision before evaluating the
+        # confirmation fence. If anything expires, the case revision advances
+        # and this browser confirmation becomes safely stale.
+        with self._transaction() as connection:
+            replay_exists = connection.execute(
+                "SELECT 1 FROM decision_scenario_confirmation_idempotency "
+                "WHERE case_id = ? AND idempotency_key = ?",
+                (str(case_id), key),
+            ).fetchone()
+        if replay_exists is None:
+            self.expire_decision_scenario_drafts(
+                str(case_id),
+                operator_name="system:scenario-expiry",
+            )
+
+        with self._transaction(write=True) as connection:
+            replay = connection.execute(
+                """
+                SELECT * FROM decision_scenario_confirmation_idempotency
+                 WHERE case_id = ? AND idempotency_key = ?
+                """,
+                (str(case_id), key),
+            ).fetchone()
+            if replay is not None:
+                if not secrets.compare_digest(
+                    str(replay["confirmation_request_sha256"]),
+                    confirmation_request_hash,
+                ):
+                    raise StoreConflict(
+                        "idempotency key was already used for a different confirmation"
+                    )
+                response_json = str(replay["response_json"])
+                if not secrets.compare_digest(
+                    str(replay["response_sha256"]), _sha256_text(response_json)
+                ):
+                    raise StoreConflict("scenario confirmation replay receipt is invalid")
+                confirmation_row = connection.execute(
+                    """
+                    SELECT * FROM decision_scenario_confirmations
+                     WHERE confirmation_id = ?
+                    """,
+                    (replay["confirmation_id"],),
+                ).fetchone()
+                assert confirmation_row is not None
+                stored_response = _json_load(response_json)
+                return {
+                    "confirmation": self._decision_scenario_confirmation_bundle(
+                        connection, confirmation_row
+                    ),
+                    "items": self._decision_scenario_confirmation_bundle(
+                        connection, confirmation_row
+                    )["items"],
+                    "jobs": self._decision_scenario_confirmation_bundle(
+                        connection, confirmation_row
+                    )["jobs"],
+                    "case": stored_response["case"],
+                    "idempotent_replay": True,
+                }
+
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            if case["status"] != "ready_to_run":
+                raise InvalidStateTransition(
+                    "decision case must be ready_to_run before scenario confirmation"
+                )
+            if case["source_annual_job_id"] is None:
+                raise InvalidStateTransition("decision case source and basis are not locked")
+            source = connection.execute(
+                "SELECT mode, state FROM jobs WHERE job_id = ?",
+                (case["source_annual_job_id"],),
+            ).fetchone()
+            if source is None:
+                raise RecordNotFound(
+                    f"unknown Annual Simulation source: {case['source_annual_job_id']}"
+                )
+            if source["mode"] != "annual" or source["state"] != "done":
+                raise InvalidStateTransition(
+                    "scenario source must remain a completed Annual Simulation"
+                )
+
+            scenario_rows: list[sqlite3.Row] = []
+            baseline_count = 0
+            evidence_by_revision: dict[str, list[dict[str, str]]] = {}
+            validation_by_revision: dict[str, dict[str, Any]] = {}
+            for item in prepared:
+                row = self._require_decision_scenario_row(
+                    connection, item["scenario_revision_id"], current=True
+                )
+                if row["case_id"] != str(case_id):
+                    raise StoreConflict("cannot confirm scenarios from different cases")
+                self._require_decision_scenario_revision(
+                    row, int(item["expected_revision"])
+                )
+                if row["status"] != "validated":
+                    raise InvalidStateTransition(
+                        f"cannot confirm scenario in state {row['status']}"
+                    )
+                if str(row["expires_at"]) <= now_text:
+                    raise InvalidStateTransition("decision scenario draft has expired")
+                if not secrets.compare_digest(
+                    str(row["request_sha256"]), item["request_sha256"]
+                ) or str(row["request_json"]) != item["request_json"]:
+                    raise StoreConflict("scenario request changed before confirmation")
+                if (
+                    row["source_annual_job_id"] != case["source_annual_job_id"]
+                    or row["source_snapshot_sha256"]
+                    != case["source_snapshot_sha256"]
+                    or row["analysis_basis"] != case["analysis_basis"]
+                    or item["source_annual_job_id"] != case["source_annual_job_id"]
+                    or item["source_snapshot_sha256"]
+                    != case["source_snapshot_sha256"]
+                ):
+                    raise StoreConflict(
+                        "scenario source or basis differs from the locked case; create a new case"
+                    )
+                validation_json = str(row["validation_json"])
+                if not secrets.compare_digest(
+                    str(row["validation_sha256"]), _sha256_text(validation_json)
+                ):
+                    raise StoreConflict("scenario validation receipt digest is invalid")
+                validation_payload = _json_load(validation_json)
+                if (
+                    not isinstance(validation_payload, Mapping)
+                    or validation_payload.get("valid") is not True
+                    or validation_payload.get("request_sha256")
+                    != row["request_sha256"]
+                    or validation_payload.get("kind") != row["kind"]
+                    or validation_payload.get("comparison_classification")
+                    != row["comparison_classification"]
+                    or validation_payload.get("declared_changed_fields")
+                    != _json_load(str(row["changed_fields_json"]))
+                    or validation_payload.get("changed_fields")
+                    != _json_load(str(row["changed_fields_json"]))
+                    or validation_payload.get("field_errors") != []
+                ):
+                    raise StoreConflict(
+                        "scenario validation receipt does not prove the frozen request"
+                    )
+                validation_by_revision[str(row["scenario_revision_id"])] = dict(
+                    validation_payload
+                )
+                refs = [
+                    {
+                        "request_path": str(link["request_path"]),
+                        "evidence_receipt_id": str(link["evidence_receipt_id"]),
+                    }
+                    for link in connection.execute(
+                        """
+                        SELECT request_path, evidence_receipt_id
+                          FROM decision_scenario_evidence
+                         WHERE scenario_revision_id = ?
+                         ORDER BY request_path
+                        """,
+                        (row["scenario_revision_id"],),
+                    ).fetchall()
+                ]
+                self._verify_decision_scenario_evidence_refs(
+                    connection, str(case_id), refs
+                )
+                evidence_by_revision[str(row["scenario_revision_id"])] = refs
+                baseline_count += int(row["kind"] == "baseline")
+                scenario_rows.append(row)
+            if baseline_count != 1:
+                raise InvalidStateTransition(
+                    "a grouped confirmation must include exactly one validated baseline"
+                )
+            baseline_row = next(
+                row for row in scenario_rows if row["kind"] == "baseline"
+            )
+            baseline_request = _json_load(str(baseline_row["request_json"]))
+            baseline_hash = str(baseline_row["request_sha256"])
+            for row in scenario_rows:
+                if row["kind"] != "alternative":
+                    continue
+                alternative_request = _json_load(str(row["request_json"]))
+                validation_payload = validation_by_revision[
+                    str(row["scenario_revision_id"])
+                ]
+                if (
+                    validation_payload.get("baseline_request_sha256")
+                    != baseline_hash
+                    or alternative_request.get("n") != baseline_request.get("n")
+                    or alternative_request.get("seed")
+                    != baseline_request.get("seed")
+                ):
+                    raise StoreConflict(
+                        "alternative validation does not match the selected baseline; "
+                        "revalidate the alternative"
+                    )
+
+            self._ensure_queue_capacity(
+                connection,
+                max_active_jobs=max_active_jobs,
+                required=len(prepared),
+            )
+            for job_id in job_ids:
+                if connection.execute(
+                    "SELECT 1 FROM technoeconomic_jobs WHERE tea_job_id = ?",
+                    (job_id,),
+                ).fetchone() is not None or connection.execute(
+                    "SELECT 1 FROM jobs WHERE job_id = ?", (job_id,)
+                ).fetchone() is not None:
+                    raise StoreConflict(f"technoeconomic job id already exists: {job_id}")
+            verified_snapshot_hash = atomic_source_check(connection)
+            if not isinstance(verified_snapshot_hash, str) or not secrets.compare_digest(
+                verified_snapshot_hash, str(case["source_snapshot_sha256"])
+            ):
+                raise StoreConflict(
+                    "Annual Simulation source changed or does not match the locked case"
+                )
+
+            receipt_payload = {
+                "schema_version": 1,
+                "confirmation_id": normalized_confirmation_id,
+                "case_id": str(case_id),
+                "case_revision_before": expected_case_revision,
+                "case_revision_after": expected_case_revision + 1,
+                "source_lock": {
+                    "source_annual_job_id": case["source_annual_job_id"],
+                    "source_snapshot_sha256": case["source_snapshot_sha256"],
+                    "analysis_basis": case["analysis_basis"],
+                },
+                "operator": {
+                    "name": operator,
+                    "rationale": normalized_rationale,
+                    "acknowledgement": normalized_acknowledgement,
+                },
+                "confirmation_review": dict(confirmation_review),
+                "scenarios": [
+                    {
+                        "scenario_id": row["scenario_id"],
+                        "scenario_revision_id": row["scenario_revision_id"],
+                        "scenario_revision": int(row["revision"]),
+                        "kind": row["kind"],
+                        "request_sha256": row["request_sha256"],
+                        "evidence_receipt_refs": evidence_by_revision[
+                            str(row["scenario_revision_id"])
+                        ],
+                        "tea_job_id": item["job_id"],
+                    }
+                    for item, row in zip(prepared, scenario_rows, strict=True)
+                ],
+                "confirmed_at": now_text,
+            }
+            receipt_json = _json_dump(receipt_payload)
+            receipt_hash = _sha256_text(receipt_json)
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_scenario_confirmations (
+                        confirmation_id, case_id, idempotency_key,
+                        expected_case_revision, case_revision_after,
+                        confirmation_request_json, confirmation_request_sha256,
+                        receipt_json, receipt_sha256, operator_name, rationale,
+                        acknowledgement, confirmed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_confirmation_id,
+                        str(case_id),
+                        key,
+                        expected_case_revision,
+                        expected_case_revision + 1,
+                        confirmation_request_json,
+                        confirmation_request_hash,
+                        receipt_json,
+                        receipt_hash,
+                        operator,
+                        normalized_rationale,
+                        normalized_acknowledgement,
+                        now_text,
+                    ),
+                )
+                for index, (item, row) in enumerate(
+                    zip(prepared, scenario_rows, strict=True)
+                ):
+                    self._insert_technoeconomic_job(
+                        connection,
+                        job_id=item["job_id"],
+                        request_json=item["request_json"],
+                        source_annual_job_id=item["source_annual_job_id"],
+                        source_artifact_storage_key=item[
+                            "source_artifact_storage_key"
+                        ],
+                        source_artifact_sha256=item["source_artifact_sha256"],
+                        source_artifact_bytes=item["source_artifact_bytes"],
+                        source_snapshot_json=item["source_snapshot_json"],
+                        source_snapshot_sha256=item["source_snapshot_sha256"],
+                        submission_provenance_json=item[
+                            "submission_provenance_json"
+                        ],
+                        submission_provenance_sha256=item[
+                            "submission_provenance_sha256"
+                        ],
+                        retry_of_job_id=None,
+                        now_text=now_text,
+                    )
+                    cursor = connection.execute(
+                        """
+                        UPDATE decision_scenarios
+                           SET status = 'confirmed', confirmation_id = ?,
+                               confirmed_at = ?, updated_at = ?, updated_by = ?
+                         WHERE scenario_revision_id = ?
+                           AND status = 'validated'
+                           AND revision = ?
+                        """,
+                        (
+                            normalized_confirmation_id,
+                            now_text,
+                            now_text,
+                            operator,
+                            row["scenario_revision_id"],
+                            item["expected_revision"],
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise StoreConflict("scenario changed during confirmation")
+                    connection.execute(
+                        """
+                        INSERT INTO decision_scenario_confirmation_items (
+                            confirmation_id, case_id, item_index,
+                            scenario_revision_id, scenario_id,
+                            scenario_revision, request_sha256, tea_job_id, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            normalized_confirmation_id,
+                            str(case_id),
+                            index,
+                            row["scenario_revision_id"],
+                            row["scenario_id"],
+                            row["revision"],
+                            row["request_sha256"],
+                            item["job_id"],
+                            now_text,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO decision_scenario_jobs (
+                            tea_job_id, scenario_revision_id, case_id,
+                            attempt_number, retry_of_job_id,
+                            confirmation_id, created_at
+                        ) VALUES (?, ?, ?, 1, NULL, ?, ?)
+                        """,
+                        (
+                            item["job_id"],
+                            row["scenario_revision_id"],
+                            str(case_id),
+                            normalized_confirmation_id,
+                            now_text,
+                        ),
+                    )
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_cases
+                       SET status = 'running', revision = revision + 1,
+                           updated_at = ?, updated_by = ?
+                     WHERE case_id = ? AND revision = ? AND status = 'ready_to_run'
+                    """,
+                    (now_text, operator, str(case_id), expected_case_revision),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreConflict("decision case changed during confirmation")
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict(
+                    "could not atomically confirm decision scenarios"
+                ) from exc
+            updated_case_row = self._require_decision_case_row(connection, str(case_id))
+            updated_case = self._decision_case_from_row(updated_case_row)
+            assert updated_case is not None
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_scenarios_confirmed",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "confirmation_id": normalized_confirmation_id,
+                    "receipt_sha256": receipt_hash,
+                    "scenario_revision_ids": revision_ids,
+                    "tea_job_ids": job_ids,
+                    "case_revision": int(updated_case_row["revision"]),
+                },
+                created_at=now_text,
+            )
+            stored_response = {
+                "schema_version": 1,
+                "confirmation_id": normalized_confirmation_id,
+                "case": updated_case,
+                "scenario_revision_ids": revision_ids,
+                "tea_job_ids": job_ids,
+            }
+            stored_response_json = _json_dump(stored_response)
+            connection.execute(
+                """
+                INSERT INTO decision_scenario_confirmation_idempotency (
+                    case_id, idempotency_key, confirmation_request_sha256,
+                    confirmation_id, response_json, response_sha256, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(case_id),
+                    key,
+                    confirmation_request_hash,
+                    normalized_confirmation_id,
+                    stored_response_json,
+                    _sha256_text(stored_response_json),
+                    now_text,
+                ),
+            )
+            confirmation_row = connection.execute(
+                """
+                SELECT * FROM decision_scenario_confirmations
+                 WHERE confirmation_id = ?
+                """,
+                (normalized_confirmation_id,),
+            ).fetchone()
+            assert confirmation_row is not None
+            confirmation = self._decision_scenario_confirmation_bundle(
+                connection, confirmation_row
+            )
+            return {
+                "confirmation": confirmation,
+                "items": confirmation["items"],
+                "jobs": confirmation["jobs"],
+                "case": updated_case,
+                "idempotent_replay": False,
+            }
+
+    def expire_decision_scenario(
+        self,
+        scenario_id: str,
+        *,
+        expected_case_revision: int,
+        expected_revision: int,
+        operator_name: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Explicitly expire one current unconfirmed scenario revision."""
+
+        operator = _bounded_text(operator_name, field="operator_name", maximum=200)
+        normalized_reason = _bounded_text(reason, field="reason", maximum=2_000)
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM decision_scenarios
+                 WHERE scenario_id = ? AND superseded_by_revision_id IS NULL
+                """,
+                (str(scenario_id),),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(f"unknown current decision scenario: {scenario_id}")
+            self._require_decision_scenario_revision(row, expected_revision)
+            if row["status"] == "expired":
+                return self._decision_scenario_bundle(connection, row)
+            if row["status"] == "confirmed":
+                raise InvalidStateTransition("confirmed decision scenarios cannot expire")
+            case = self._require_decision_case_row(
+                connection, str(row["case_id"]), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            connection.execute(
+                """
+                UPDATE decision_scenarios
+                   SET status = 'expired', expired_at = ?, updated_at = ?, updated_by = ?
+                 WHERE scenario_revision_id = ?
+                   AND status IN ('draft','invalid','validated')
+                """,
+                (now_text, now_text, operator, row["scenario_revision_id"]),
+            )
+            updated_case = self._touch_decision_case(
+                connection, case, now_text=now_text, operator_name=operator
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(row["case_id"]),
+                event_type="decision_scenario_expired",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "scenario_id": row["scenario_id"],
+                    "scenario_revision_id": row["scenario_revision_id"],
+                    "scenario_revision": int(row["revision"]),
+                    "reason": normalized_reason,
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            updated = self._require_decision_scenario_row(
+                connection, str(row["scenario_revision_id"])
+            )
+            return self._decision_scenario_bundle(connection, updated)
+
+    def get_decision_scenario_job(
+        self,
+        case_id: str,
+        job_id: str,
+    ) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT j.*, l.case_id, l.scenario_revision_id, l.attempt_number,
+                       l.confirmation_id AS scenario_confirmation_id,
+                       s.scenario_id, s.revision AS scenario_revision
+                  FROM decision_scenario_jobs l
+                  JOIN decision_scenarios s
+                    ON s.scenario_revision_id = l.scenario_revision_id
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE l.case_id = ? AND l.tea_job_id = ?
+                """,
+                (str(case_id), str(job_id)),
+            ).fetchone()
+            return None if row is None else self._decision_scenario_job_record(row)
+
+    def get_decision_scenario_job_context(
+        self,
+        job_id: str,
+    ) -> dict[str, Any] | None:
+        """Return the immutable scenario/evidence binding for a TEA attempt."""
+
+        with self._transaction() as connection:
+            link_row = connection.execute(
+                """
+                SELECT j.*, l.case_id, l.scenario_revision_id, l.attempt_number,
+                       l.confirmation_id AS scenario_confirmation_id,
+                       s.scenario_id, s.revision AS scenario_revision
+                  FROM decision_scenario_jobs l
+                  JOIN decision_scenarios s
+                    ON s.scenario_revision_id = l.scenario_revision_id
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE l.tea_job_id = ?
+                """,
+                (str(job_id),),
+            ).fetchone()
+            if link_row is None:
+                return None
+            scenario_row = self._require_decision_scenario_row(
+                connection,
+                str(link_row["scenario_revision_id"]),
+            )
+            return {
+                "link": self._decision_scenario_job_record(link_row),
+                "scenario": self._decision_scenario_bundle(
+                    connection,
+                    scenario_row,
+                ),
+            }
+
+    def list_decision_scenario_jobs(
+        self,
+        case_id: str,
+        *,
+        latest_attempts_only: bool = False,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        if limit > 1_000:
+            raise ValueError("decision scenario job limit cannot exceed 1000")
+        latest_clause = ""
+        if latest_attempts_only:
+            latest_clause = """
+                AND l.attempt_number = (
+                    SELECT MAX(newer.attempt_number)
+                      FROM decision_scenario_jobs newer
+                     WHERE newer.scenario_revision_id = l.scenario_revision_id
+                )
+            """
+        with self._transaction() as connection:
+            self._require_decision_case_row(connection, str(case_id))
+            rows = connection.execute(
+                """
+                SELECT j.*, l.case_id, l.scenario_revision_id, l.attempt_number,
+                       l.confirmation_id AS scenario_confirmation_id,
+                       s.scenario_id, s.revision AS scenario_revision
+                  FROM decision_scenario_jobs l
+                  JOIN decision_scenarios s
+                    ON s.scenario_revision_id = l.scenario_revision_id
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE l.case_id = ?
+                """
+                + latest_clause
+                + " ORDER BY j.created_at ASC, j.tea_job_id ASC LIMIT ?",
+                (str(case_id), int(limit)),
+            ).fetchall()
+            return [self._decision_scenario_job_record(row) for row in rows]
+
+    def retry_decision_scenario_job(
+        self,
+        case_id: str,
+        scenario_revision_id: str,
+        job_id: str,
+        *,
+        expected_case_revision: int,
+        operator_name: str,
+        reason: str | None = None,
+        new_job_id: str | None = None,
+        max_active_jobs: int | None = None,
+    ) -> dict[str, Any]:
+        """Append one linked TEA retry from the exact frozen prior attempt."""
+
+        operator = _bounded_text(operator_name, field="operator_name", maximum=200)
+        retry_reason = _optional_bounded_text(reason, field="reason", maximum=4000)
+        retry_id = self._validate_technoeconomic_job_id(new_job_id or _new_id("tea"))
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            link = connection.execute(
+                """
+                SELECT l.*, j.*, s.scenario_id, s.revision AS scenario_revision,
+                       l.confirmation_id AS scenario_confirmation_id
+                  FROM decision_scenario_jobs l
+                  JOIN decision_scenarios s
+                    ON s.scenario_revision_id = l.scenario_revision_id
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE l.case_id = ? AND l.scenario_revision_id = ?
+                   AND l.tea_job_id = ?
+                """,
+                (str(case_id), str(scenario_revision_id), str(job_id)),
+            ).fetchone()
+            if link is None:
+                raise RecordNotFound("TEA job is not linked to that decision scenario")
+            existing = connection.execute(
+                """
+                SELECT j.*, l.case_id, l.scenario_revision_id, l.attempt_number,
+                       l.confirmation_id AS scenario_confirmation_id,
+                       s.scenario_id, s.revision AS scenario_revision
+                  FROM decision_scenario_jobs l
+                  JOIN decision_scenarios s
+                    ON s.scenario_revision_id = l.scenario_revision_id
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE l.scenario_revision_id = ? AND l.retry_of_job_id = ?
+                """,
+                (str(scenario_revision_id), str(job_id)),
+            ).fetchone()
+            if existing is not None:
+                existing_link = self._decision_scenario_job_record(existing)
+                scenario_row = self._require_decision_scenario_row(
+                    connection, str(scenario_revision_id)
+                )
+                return {
+                    "link": existing_link,
+                    "job": existing_link["job"],
+                    "scenario": self._decision_scenario_bundle(
+                        connection, scenario_row
+                    ),
+                    "case": self._decision_case_from_row(case),
+                    "idempotent_replay": True,
+                }
+            self._require_case_revision(case, expected_case_revision)
+            if case["status"] not in {"running", "results_ready"}:
+                raise InvalidStateTransition(
+                    "decision scenario retries require running or results_ready cases"
+                )
+            if link["state"] not in {"interrupted", "error", "cancelled"}:
+                raise InvalidStateTransition(
+                    f"cannot retry technoeconomic job in state {link['state']}"
+                )
+            if connection.execute(
+                "SELECT 1 FROM technoeconomic_jobs WHERE tea_job_id = ?", (retry_id,)
+            ).fetchone() is not None or connection.execute(
+                "SELECT 1 FROM jobs WHERE job_id = ?", (retry_id,)
+            ).fetchone() is not None:
+                raise StoreConflict(f"technoeconomic job id already exists: {retry_id}")
+            self._ensure_queue_capacity(
+                connection, max_active_jobs=max_active_jobs, required=1
+            )
+            next_attempt = int(
+                connection.execute(
+                    """
+                    SELECT COALESCE(MAX(attempt_number), 0) + 1
+                      FROM decision_scenario_jobs
+                     WHERE scenario_revision_id = ?
+                    """,
+                    (str(scenario_revision_id),),
+                ).fetchone()[0]
+            )
+            try:
+                self._insert_technoeconomic_job(
+                    connection,
+                    job_id=retry_id,
+                    request_json=str(link["request_json"]),
+                    source_annual_job_id=str(link["source_annual_job_id"]),
+                    source_artifact_storage_key=str(
+                        link["source_artifact_storage_key"]
+                    ),
+                    source_artifact_sha256=str(link["source_artifact_sha256"]),
+                    source_artifact_bytes=int(link["source_artifact_bytes"]),
+                    source_snapshot_json=str(link["source_snapshot_json"]),
+                    source_snapshot_sha256=str(link["source_snapshot_sha256"]),
+                    submission_provenance_json=str(
+                        link["submission_provenance_json"]
+                    ),
+                    submission_provenance_sha256=str(
+                        link["submission_provenance_sha256"]
+                    ),
+                    retry_of_job_id=str(job_id),
+                    now_text=now_text,
+                )
+                connection.execute(
+                    """
+                    INSERT INTO decision_scenario_jobs (
+                        tea_job_id, scenario_revision_id, case_id,
+                        attempt_number, retry_of_job_id, confirmation_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+                    """,
+                    (
+                        retry_id,
+                        str(scenario_revision_id),
+                        str(case_id),
+                        next_attempt,
+                        str(job_id),
+                        now_text,
+                    ),
+                )
+                next_status = "running"
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_cases
+                       SET status = ?, revision = revision + 1,
+                           updated_at = ?, updated_by = ?
+                     WHERE case_id = ? AND revision = ?
+                       AND status IN ('running','results_ready')
+                    """,
+                    (
+                        next_status,
+                        now_text,
+                        operator,
+                        str(case_id),
+                        expected_case_revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreConflict("decision case changed during scenario retry")
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not retry decision scenario TEA job") from exc
+            updated_case = self._require_decision_case_row(connection, str(case_id))
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_scenario_job_retried",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "scenario_revision_id": str(scenario_revision_id),
+                    "retry_of_job_id": str(job_id),
+                    "tea_job_id": retry_id,
+                    "attempt_number": next_attempt,
+                    "reason": retry_reason,
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            retry_row = connection.execute(
+                """
+                SELECT j.*, l.case_id, l.scenario_revision_id, l.attempt_number,
+                       l.confirmation_id AS scenario_confirmation_id,
+                       s.scenario_id, s.revision AS scenario_revision
+                  FROM decision_scenario_jobs l
+                  JOIN decision_scenarios s
+                    ON s.scenario_revision_id = l.scenario_revision_id
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE l.tea_job_id = ?
+                """,
+                (retry_id,),
+            ).fetchone()
+            assert retry_row is not None
+            retry_link = self._decision_scenario_job_record(retry_row)
+            scenario_row = self._require_decision_scenario_row(
+                connection, str(scenario_revision_id)
+            )
+            return {
+                "link": retry_link,
+                "job": retry_link["job"],
+                "scenario": self._decision_scenario_bundle(
+                    connection, scenario_row
+                ),
+                "case": self._decision_case_from_row(updated_case),
+                "idempotent_replay": False,
+            }
+
+    def cancel_decision_scenario_job(
+        self,
+        case_id: str,
+        job_id: str,
+        *,
+        expected_case_revision: int,
+        operator_name: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Apply the existing TEA cancellation policy to one case-linked job."""
+
+        operator = _bounded_text(operator_name, field="operator_name", maximum=200)
+        normalized_reason = _bounded_text(reason, field="reason", maximum=2_000)
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            row = connection.execute(
+                """
+                SELECT j.*, l.case_id, l.scenario_revision_id, l.attempt_number,
+                       l.confirmation_id AS scenario_confirmation_id,
+                       s.scenario_id, s.revision AS scenario_revision
+                  FROM decision_scenario_jobs l
+                  JOIN decision_scenarios s
+                    ON s.scenario_revision_id = l.scenario_revision_id
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE l.case_id = ? AND l.tea_job_id = ?
+                """,
+                (str(case_id), str(job_id)),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound("TEA job is not linked to that decision case")
+            changed = False
+            if row["state"] == "queued":
+                cursor = connection.execute(
+                    """
+                    UPDATE technoeconomic_jobs
+                       SET state = 'cancelled', cancel_requested = 1,
+                           cancel_requested_at = ?, completed_at = ?, updated_at = ?,
+                           stage = 'Cancelled'
+                     WHERE tea_job_id = ? AND state = 'queued'
+                    """,
+                    (now_text, now_text, now_text, str(job_id)),
+                )
+                changed = cursor.rowcount == 1
+            elif row["state"] == "running" and not row["cancel_requested"]:
+                cursor = connection.execute(
+                    """
+                    UPDATE technoeconomic_jobs
+                       SET cancel_requested = 1, cancel_requested_at = ?, updated_at = ?
+                     WHERE tea_job_id = ? AND state = 'running'
+                       AND cancel_requested = 0
+                    """,
+                    (now_text, now_text, str(job_id)),
+                )
+                changed = cursor.rowcount == 1
+            if changed:
+                execution = self._decision_case_execution_summary(
+                    connection, str(case_id)
+                )
+                next_status = (
+                    "results_ready"
+                    if case["status"] == "running" and execution["all_successful"]
+                    else str(case["status"])
+                )
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_cases
+                       SET status = ?, revision = revision + 1,
+                           updated_at = ?, updated_by = ?
+                     WHERE case_id = ? AND revision = ?
+                    """,
+                    (
+                        next_status,
+                        now_text,
+                        operator,
+                        str(case_id),
+                        expected_case_revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreConflict("decision case changed during cancellation")
+                case = self._require_decision_case_row(connection, str(case_id))
+                self._insert_decision_event(
+                    connection,
+                    case_id=str(case_id),
+                    event_type="decision_scenario_job_cancelled",
+                    actor_kind="operator",
+                    operator_name=operator,
+                    payload={
+                        "scenario_revision_id": row["scenario_revision_id"],
+                        "tea_job_id": str(job_id),
+                        "reason": normalized_reason,
+                        "state": (
+                            "cancelled" if row["state"] == "queued" else "running"
+                        ),
+                        "cancel_requested": True,
+                        "case_status": next_status,
+                        "case_revision": int(case["revision"]),
+                    },
+                    created_at=now_text,
+                )
+            updated_row = connection.execute(
+                """
+                SELECT j.*, l.case_id, l.scenario_revision_id, l.attempt_number,
+                       l.confirmation_id AS scenario_confirmation_id,
+                       s.scenario_id, s.revision AS scenario_revision
+                  FROM decision_scenario_jobs l
+                  JOIN decision_scenarios s
+                    ON s.scenario_revision_id = l.scenario_revision_id
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE l.case_id = ? AND l.tea_job_id = ?
+                """,
+                (str(case_id), str(job_id)),
+            ).fetchone()
+            assert updated_row is not None
+            return {
+                "link": self._decision_scenario_job_record(updated_row),
+                "case": self._decision_case_from_row(case),
+                "changed": changed,
+            }
+
+    def reconcile_decision_case_execution(
+        self,
+        case_id: str,
+        *,
+        operator_name: str = "system:scenario-execution",
+    ) -> dict[str, Any]:
+        """Project existing TEA states onto the case without changing job semantics."""
+
+        operator = _bounded_text(operator_name, field="operator_name", maximum=200)
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            case = self._require_decision_case_row(connection, str(case_id))
+            execution = self._decision_case_execution_summary(connection, str(case_id))
+            transitioned = False
+            if case["status"] == "running" and execution["all_successful"]:
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_cases
+                       SET status = 'results_ready', revision = revision + 1,
+                           updated_at = ?, updated_by = ?
+                     WHERE case_id = ? AND revision = ? AND status = 'running'
+                    """,
+                    (now_text, operator, str(case_id), case["revision"]),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreConflict("decision case changed during execution reconciliation")
+                case = self._require_decision_case_row(connection, str(case_id))
+                self._insert_decision_event(
+                    connection,
+                    case_id=str(case_id),
+                    event_type="decision_case_results_ready",
+                    actor_kind="system",
+                    payload={
+                        "state_counts": execution["state_counts"],
+                        "results_available": execution["results_available"],
+                        "partial_results": execution["partial_results"],
+                        "case_revision": int(case["revision"]),
+                    },
+                    created_at=now_text,
+                )
+                transitioned = True
+            execution["case"] = self._decision_case_from_row(case)
+            execution["case_transitioned"] = transitioned
+            return execution
+
+    def expire_decision_scenario_drafts(
+        self,
+        case_id: str,
+        *,
+        operator_name: str,
+        expected_case_revision: int | None = None,
+        before: datetime | None = None,
+    ) -> dict[str, Any]:
+        operator = _bounded_text(operator_name, field="operator_name", maximum=200)
+        now_text = _timestamp(self._current_time())
+        cutoff_text = _timestamp(before or self._current_time())
+        with self._transaction(write=True) as connection:
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            rows = connection.execute(
+                """
+                SELECT * FROM decision_scenarios
+                 WHERE case_id = ?
+                   AND status IN ('draft','invalid','validated')
+                   AND expires_at <= ?
+                 ORDER BY created_at, scenario_revision_id
+                """,
+                (str(case_id), cutoff_text),
+            ).fetchall()
+            revision_ids = [str(row["scenario_revision_id"]) for row in rows]
+            if revision_ids:
+                placeholders = ",".join("?" for _ in revision_ids)
+                connection.execute(
+                    f"""
+                    UPDATE decision_scenarios
+                       SET status = 'expired', expired_at = ?, updated_at = ?,
+                           updated_by = ?
+                     WHERE scenario_revision_id IN ({placeholders})
+                    """,
+                    (now_text, now_text, operator, *revision_ids),
+                )
+                case = self._touch_decision_case(
+                    connection, case, now_text=now_text, operator_name=operator
+                )
+                self._insert_decision_event(
+                    connection,
+                    case_id=str(case_id),
+                    event_type="decision_scenarios_expired",
+                    actor_kind="operator",
+                    operator_name=operator,
+                    payload={
+                        "scenario_revision_ids": revision_ids,
+                        "cutoff": cutoff_text,
+                        "case_revision": int(case["revision"]),
+                    },
+                    created_at=now_text,
+                )
+            return {
+                "expired_count": len(revision_ids),
+                "scenario_revision_ids": revision_ids,
+                "case": self._decision_case_from_row(case),
+            }
 
     def snapshot_state(
         self, *, mode: str | None = None, recent_limit: int = 10

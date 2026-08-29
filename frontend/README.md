@@ -48,7 +48,7 @@ The markup files are ordered pieces of one document, not independently well-form
 fragments. `.app-shell` and `#annualPanel`, for example, span multiple files. Only
 the assembled result is valid HTML.
 
-## Hybrid Autonomy Phase 1 fixture foundation
+## Hybrid Autonomy workspace
 
 The approved Phase 0 and Phase 1 authority is recorded in
 `docs/HYBRID_AUTONOMY_FRONTEND_FOUNDATION_V1.md`. The preserved unified and hybrid
@@ -58,25 +58,34 @@ interaction and phase numbering when the plans differ.
 The Autonomy frontend is assembled from:
 
 - `html/55-autonomy-workspace.html` — the shared case shell, five-stage
-  Investigation Workspace, Decision Brief, evidence/readiness rail, confirmation,
-  and sign-off surfaces;
+  Investigation Workspace, evidence/readiness rail, live scenario and execution
+  surfaces, and fixture-only Decision Brief and sign-off previews;
 - `css/16-autonomy-workspace.css` — namespaced desktop, tablet, mobile,
   reduced-motion, and forced-colors behavior; and
-- `js/07-autonomy-workspace.js` — deterministic local fixture states and view,
-  tab, drawer, dialog, focus, and keyboard behavior.
+- `js/07-autonomy-workspace.js` — authenticated live case, evidence, scenario, and
+  execution clients plus deterministic fixture previews and the shared view, tab,
+  drawer, dialog, focus, keyboard, reconnect, and polling behavior.
 
-All Phase 1 Autonomy content is local preview data for one stable case identity,
-`case_sbe_hybrid_001`. The fixture state selector must expose the complete contract
-catalog without network access. It may change local presentation state, but must
-not call `fetch`, an OpenAI client, a decision endpoint, a TEA mutation endpoint,
-or an existing model execution control. It must not calculate lifecycle values or
-write evidence, scenarios, jobs, sign-offs, reports, baselines, or agent messages.
+Live Ask, Verify, Compare, and Run content comes only from authenticated Autonomy
+APIs. Scenario cards expose server-owned allowed actions and canonical request
+hashes; grouped confirmation sends the exact selected revisions, named operator,
+rationale, acknowledgement, expected case revision, and idempotency key. Execution
+polling links to the existing TEA job contract and exposes only the server-permitted
+cancel and retry controls. Browser state never grants mutation or execution
+authority.
 
-The Investigation and Decision Brief roots share the same case header, source lock,
-basis lock, revision, and fixture results. A stage selection changes only the
-visible section. Opening the brief and returning to Investigation are explicit,
-deterministic transitions. The grouped confirmation button previews queue state and
-creates no job; fixture sign-off transitions only to the local signed state.
+The fixture selector remains an explicit, offline preview catalog for the stable
+case identity `case_sbe_hybrid_001`. Fixture mode may change local presentation
+state, but must not call `fetch`, an OpenAI client, a decision endpoint, a TEA
+mutation endpoint, or an existing model execution control. It must not write
+evidence, scenarios, jobs, sign-offs, reports, baselines, or agent messages.
+
+The fixture Investigation and Decision Brief roots share the same case header,
+source lock, basis lock, revision, and fixture results. In live mode, Decide and
+Decision Brief remain visibly unavailable: no recommendation, result
+interpretation, sign-off, or report is synthesized. In fixture mode, grouped
+confirmation previews queue state and creates no job; fixture sign-off transitions
+only to the local signed preview state.
 
 The existing Solar Agent is removed from the visual and accessibility trees only
 while Autonomy mode is active. Calibration, Annual Simulation, the existing TEA,

@@ -9,12 +9,22 @@ from sbepv.autonomy import readiness
 
 
 class _ReadinessStore:
-    def __init__(self, case: dict, *, assets=None, jobs=None, tea_jobs=None, annual=None):
+    def __init__(
+        self,
+        case: dict,
+        *,
+        assets=None,
+        jobs=None,
+        tea_jobs=None,
+        annual=None,
+        scenarios=None,
+    ):
         self.case = deepcopy(case)
         self.assets = deepcopy(assets or [])
         self.jobs = deepcopy(jobs or [])
         self.tea_jobs = deepcopy(tea_jobs or [])
         self.annual = deepcopy(annual)
+        self.scenarios = deepcopy(scenarios or [])
 
     def get_decision_case(self, case_id):
         return deepcopy(self.case) if case_id == self.case["id"] else None
@@ -42,6 +52,11 @@ class _ReadinessStore:
         if self.annual and self.annual.get("id") == job_id:
             return deepcopy(self.annual)
         return next((deepcopy(item) for item in self.jobs if item.get("id") == job_id), None)
+
+    def list_decision_scenarios(self, case_id, **_kwargs):
+        if case_id != self.case["id"]:
+            raise AssertionError("wrong case")
+        return deepcopy(self.scenarios)
 
 
 def _case(**overrides):
@@ -168,7 +183,6 @@ class AutonomyReadinessTests(unittest.TestCase):
                 "calibration_not_ready",
                 "eligible_annual_source_missing",
                 "accepted_evidence_missing",
-                "scenario_execution_not_in_phase",
             }.issubset(codes)
         )
         actions = {item["id"]: item for item in result["supported_next_actions"]}
@@ -180,8 +194,9 @@ class AutonomyReadinessTests(unittest.TestCase):
             & {"run_scenario", "queue_tea", "confirm_run", "sign_decision", "generate_report"}
         )
         self.assertTrue(result["phase_boundary"]["non_runnable_suggestions_only"])
+        self.assertTrue(result["phase_boundary"]["scenario_execution_available"])
 
-    def test_verified_locked_foundation_passes_but_phase_never_claims_ready_to_run(self):
+    def test_verified_locked_foundation_and_validated_baseline_are_ready_to_run(self):
         source = _source()
         case = _case(
             source_annual_job_id=source["annual_job_id"],
@@ -189,7 +204,22 @@ class AutonomyReadinessTests(unittest.TestCase):
             analysis_basis="solartac_site",
         )
         annual = {"id": source["annual_job_id"], "mode": "annual", "state": "done"}
-        store = _ReadinessStore(case, assets=[_accepted_asset()], annual=annual)
+        store = _ReadinessStore(
+            case,
+            assets=[_accepted_asset()],
+            annual=annual,
+            scenarios=[
+                {
+                    "id": "dsc_baseline",
+                    "revision": 1,
+                    "kind": "baseline",
+                    "status": "validated",
+                    "request_sha256": "c" * 64,
+                    "comparison_classification": "baseline",
+                    "jobs": [],
+                }
+            ],
+        )
         bundle = {
             "baseline": {"id": "cal_verified"},
             "quality": {"review_id": "review_1"},
@@ -212,15 +242,61 @@ class AutonomyReadinessTests(unittest.TestCase):
             "evidence",
             "job_health",
             "agent",
+            "scenarios",
         ):
             self.assertEqual(by_id[check_id]["status"], "passed", check_id)
-        self.assertEqual(result["overall_status"], "needs_attention")
-        self.assertFalse(result["ready_to_run"])
-        self.assertEqual(
-            {item["code"] for item in result["blockers"]},
-            {"scenario_execution_not_in_phase"},
-        )
+        self.assertEqual(result["overall_status"], "passed")
+        self.assertTrue(result["ready_to_run"])
+        self.assertEqual(result["blockers"], [])
         self.assertNotIn("allowed_actions", result["case"])
+
+    def test_elapsed_unconfirmed_baseline_is_not_ready_without_an_expiry_sweep(self):
+        source = _source()
+        case = _case(
+            source_annual_job_id=source["annual_job_id"],
+            source_snapshot_sha256=source["source_snapshot_sha256"],
+            analysis_basis="solartac_site",
+        )
+        store = _ReadinessStore(
+            case,
+            assets=[_accepted_asset()],
+            annual={"id": source["annual_job_id"], "mode": "annual", "state": "done"},
+            scenarios=[
+                {
+                    "id": "dsc_expired_baseline",
+                    "revision": 1,
+                    "kind": "baseline",
+                    "status": "validated",
+                    "expires_at": "2026-08-28T23:59:59+00:00",
+                    "request_sha256": "c" * 64,
+                    "comparison_classification": "baseline",
+                    "jobs": [],
+                }
+            ],
+        )
+        bundle = {
+            "baseline": {"id": "cal_verified"},
+            "quality": {"review_id": "review_1"},
+            "promotion": {"promoted_at": "2026-08-20T00:00:00+00:00"},
+            "profile_sha256": "b" * 64,
+        }
+
+        result = self._evaluate(
+            store,
+            sources=[source],
+            bundle=bundle,
+            inspection=_inspection(source),
+        )
+
+        self.assertFalse(result["ready_to_run"])
+        self.assertIn(
+            "baseline_scenario_missing",
+            {item["code"] for item in result["blockers"]},
+        )
+        scenarios_check = next(
+            item for item in result["checks"] if item["id"] == "scenarios"
+        )
+        self.assertEqual("needs_attention", scenarios_check["status"])
 
     def test_locked_unverifiable_lineage_never_falls_back_to_current_baseline(self):
         source = _source()

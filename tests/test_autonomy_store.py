@@ -139,8 +139,8 @@ class AutonomyStoreTests(unittest.TestCase):
 
         reopened = AgentStore(self.db_path, now=self.clock)
 
-        self.assertEqual(6, SCHEMA_VERSION)
-        self.assertEqual(6, reopened.schema_version)
+        self.assertEqual(7, SCHEMA_VERSION)
+        self.assertEqual(7, reopened.schema_version)
         self.assertEqual(source["id"], reopened.get_job(source["id"])["id"])
         with closing(sqlite3.connect(self.db_path)) as connection:
             tables = {
@@ -162,10 +162,16 @@ class AutonomyStoreTests(unittest.TestCase):
                 "decision_evidence_candidates",
                 "decision_evidence_receipts",
                 "decision_events",
+                "decision_scenarios",
+                "decision_scenario_evidence",
+                "decision_scenario_confirmations",
+                "decision_scenario_confirmation_items",
+                "decision_scenario_jobs",
+                "decision_scenario_confirmation_idempotency",
             },
             tables,
         )
-        self.assertEqual([(1,), (2,), (3,), (4,), (5,), (6,)], migrations)
+        self.assertEqual([(1,), (2,), (3,), (4,), (5,), (6,), (7,)], migrations)
 
     def test_case_round_trip_update_cas_and_original_question_immutability(self) -> None:
         created = self._case()

@@ -83,6 +83,8 @@ class DecisionAgentContractTests(unittest.TestCase):
         self.assertIn("untrusted data", instructions.casefold())
         self.assertIn("never queue", instructions.casefold())
         self.assertIn("runnable set\nto false", instructions)
+        self.assertIn("do not interpret, compare, rank", instructions.casefold())
+        self.assertIn("do not claim that an action is allowed", instructions.casefold())
         for label in (
             "Measured fact",
             "Model result",
@@ -146,6 +148,84 @@ class DecisionAgentContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             decision_agent.DecisionAgentOutput.model_validate(
                 {**_valid_output(), "scenario_request": {"seed": 42}}
+            )
+        with self.assertRaises(ValidationError):
+            decision_agent.DecisionAgentOutput.model_validate(
+                _valid_output(
+                    non_runnable_scenario_suggestion={
+                        "text": "Use seed 42 and 10000 samples.",
+                        "runnable": False,
+                    }
+                )
+            )
+
+    def test_output_policy_rejects_results_recommendations_and_ungrounded_actions(self):
+        invalid_outputs = [
+            _valid_output(
+                answer="The NPV outcome is 1000000 USD.",
+                basis_labels=["Model result"],
+                claims=[
+                    {
+                        "text": "The NPV outcome is 1000000 USD.",
+                        "basis": "Model result",
+                        "source_ids": [],
+                    }
+                ],
+            ),
+            _valid_output(answer="I recommend SolarEdge for this decision."),
+            _valid_output(answer="You can queue the TEA job now."),
+            _valid_output(answer="The next action is retry the failed TEA job."),
+            _valid_output(answer="Continue at #autonomy-run."),
+            _valid_output(
+                next_actions=[
+                    {"label": "Retry the failed TEA job", "deep_link_id": None}
+                ]
+            ),
+        ]
+        for output in invalid_outputs:
+            with self.subTest(output=output), self.assertRaises(ValueError):
+                decision_agent._validate_final_output(output)
+
+    def test_output_policy_allows_validation_explanation_and_prose_only_suggestion(self):
+        output = decision_agent._validate_final_output(
+            _valid_output(
+                answer=(
+                    "The current scenario validation is blocked by a missing accepted "
+                    "finance assumption."
+                ),
+                claims=[
+                    {
+                        "text": "The validation blocker remains deterministic.",
+                        "basis": "Agent interpretation",
+                        "source_ids": [],
+                    }
+                ],
+                non_runnable_scenario_suggestion={
+                    "text": "Consider testing a higher replacement-cost assumption.",
+                    "runnable": False,
+                },
+            )
+        )
+        self.assertFalse(output.non_runnable_scenario_suggestion.runnable)
+
+    def test_next_action_must_match_readiness_label_and_deep_link_exactly(self):
+        action = {
+            "label": "Review deterministic readiness",
+            "deep_link_id": "autonomy-readiness",
+        }
+        output = decision_agent._validate_final_output(
+            _valid_output(next_actions=[action]),
+            grounded_action_pairs={
+                ("Review deterministic readiness", "autonomy-readiness")
+            },
+        )
+        self.assertEqual(output.next_actions[0].deep_link_id, "autonomy-readiness")
+        with self.assertRaises(ValueError):
+            decision_agent._validate_final_output(
+                _valid_output(next_actions=[{**action, "deep_link_id": "autonomy-run"}]),
+                grounded_action_pairs={
+                    ("Review deterministic readiness", "autonomy-readiness")
+                },
             )
 
     def test_case_and_message_validation_rejects_traversal_and_size_abuse(self):
@@ -231,6 +311,12 @@ class DecisionAgentContractTests(unittest.TestCase):
             "id": "tea-linked",
             "state": "done",
             "request": {"provenance": {"decision_case_id": "case-1"}},
+            "result": {"npv_usd": 1_000_000},
+            "result_provenance": {
+                "schema_version": "tea-result-provenance-v1",
+                "request_sha256": "1" * 64,
+                "routine_result_sha256": "2" * 64,
+            },
         }
         unrelated = {
             "id": "tea-unrelated",
@@ -239,19 +325,61 @@ class DecisionAgentContractTests(unittest.TestCase):
         }
         fake_store = Mock()
         fake_store.list_technoeconomic_jobs.return_value = [linked, unrelated]
-        with (
-            patch(
-                "sbepv.api.serializers._public_technoeconomic_job",
-                side_effect=lambda job: {"job_id": job["id"]},
-            ),
-        ):
-            result = decision_agent._read_public_immutable_tea_summaries(
-                "case-1", fake_store
-            )
-        self.assertEqual(result, [{"job_id": "tea-linked"}])
+        result = decision_agent._read_public_immutable_tea_summaries(
+            "case-1", fake_store
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["job_id"], "tea-linked")
+        self.assertEqual(result[0]["state"], "done")
+        self.assertEqual(
+            result[0]["provenance_identity"]["routine_result_sha256"], "2" * 64
+        )
+        self.assertNotIn("request", result[0])
+        self.assertNotIn("result", result[0])
+        self.assertNotIn("npv_usd", str(result[0]))
         fake_store.list_technoeconomic_jobs.assert_called_once_with(
             states=("done",), limit=100
         )
+
+    def test_scenario_linked_tea_reader_exposes_identity_not_request_or_result(self):
+        fake_store = Mock()
+        fake_store.list_decision_scenario_jobs.return_value = [
+            {
+                "tea_job_id": "tea-scenario-linked",
+                "scenario_id": "dsc_1",
+                "scenario_revision_id": "dscr_1",
+                "scenario_revision": 1,
+                "attempt_number": 1,
+                "confirmation_id": "dscf_1",
+                "job": {
+                    "id": "tea-scenario-linked",
+                    "state": "done",
+                    "request": {"seed": 42, "n": 10_000},
+                    "result": {"npv_usd": 1_000_000},
+                    "source_snapshot_sha256": "a" * 64,
+                    "submission_provenance_sha256": "b" * 64,
+                    "result_provenance": {
+                        "schema_version": "tea-result-provenance-v1",
+                        "request_sha256": "c" * 64,
+                        "routine_result_sha256": "d" * 64,
+                        "validated_kernel_request_sha256": "e" * 64,
+                        "sealed_calculation": {"sha256": "f" * 64},
+                        "exports": {"manifest_sha256": "0" * 64},
+                    },
+                },
+            }
+        ]
+        result = decision_agent._read_public_immutable_tea_summaries(
+            "case-1", fake_store
+        )
+        self.assertEqual(result[0]["scenario_id"], "dsc_1")
+        self.assertEqual(result[0]["provenance_identity"]["request_sha256"], "c" * 64)
+        encoded = str(result)
+        self.assertNotIn("'request':", encoded)
+        self.assertNotIn("'result':", encoded)
+        self.assertNotIn("npv_usd", encoded)
+        self.assertNotIn("1000000", encoded)
+        self.assertNotIn("10000", encoded)
 
     def test_readiness_helpers_receive_the_explicit_durable_store(self):
         fake_store = Mock()
@@ -567,12 +695,30 @@ class DecisionAgentAsyncTests(unittest.IsolatedAsyncioTestCase):
                 "case_id": "case-1",
                 "checks": [{"check_id": "annual-source-integrity"}],
                 "description": "not-an-identifier",
+                "supported_next_actions": [
+                    {
+                        "id": "open_annual",
+                        "label": "Open Annual Simulation",
+                        "deep_link": "#annual",
+                    }
+                ],
+                "allowed_case_actions": [
+                    {
+                        "id": "confirm_scenarios",
+                        "label": "Confirm scenarios",
+                        "enabled": False,
+                    }
+                ],
             },
             success_summary=lambda data: "Readiness was returned.",
         )
         self.assertEqual(
             context.grounded_source_ids,
-            {"case-1", "annual-source-integrity"},
+            {"case-1", "annual-source-integrity", "open_annual", "confirm_scenarios"},
+        )
+        self.assertEqual(
+            context.grounded_action_pairs,
+            {("Open Annual Simulation", "annual")},
         )
 
 

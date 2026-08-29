@@ -17,6 +17,7 @@ from sbepv import model
 from sbepv.api import config, state
 from sbepv.api import technoeconomic as tea_api
 from sbepv.api.schemas import TechnoeconomicSubmissionRequest
+from sbepv.autonomy import scenarios as autonomy_scenarios
 from sbepv.store import AgentStore
 from sbepv.worker import loop as worker_loop
 from sbepv.worker import run_technoeconomic
@@ -124,6 +125,61 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         state._WORKER_STOP.clear()
         state._WORKER_WAKE.clear()
         shutil.rmtree(self.test_root, ignore_errors=True)
+
+    def test_linked_scenario_evidence_preflight_uses_existing_worker_path(self) -> None:
+        scenario_record = {
+            "case_id": "dcase_worker_evidence",
+            "request_sha256": tea_api.canonical_json_sha256(self.request_payload),
+            "evidence_receipt_refs": [
+                {
+                    "request_path": "/cost_lines/0/distribution/value",
+                    "evidence_receipt_id": "evr_worker_evidence",
+                }
+            ],
+        }
+        with (
+            patch.object(
+                self.store,
+                "get_decision_scenario_job_context",
+                return_value={"link": {}, "scenario": scenario_record},
+            ),
+            patch.object(
+                autonomy_scenarios,
+                "verify_accepted_evidence_references",
+                return_value={"valid": True, "field_errors": [], "receipts": []},
+            ) as verify_evidence,
+        ):
+            run_technoeconomic._verify_decision_scenario_evidence(
+                self.job_id,
+                self.request_payload,
+            )
+        verify_evidence.assert_called_once()
+        self.assertEqual(
+            "dcase_worker_evidence",
+            verify_evidence.call_args.kwargs["case_id"],
+        )
+
+        with (
+            patch.object(
+                self.store,
+                "get_decision_scenario_job_context",
+                return_value={"link": {}, "scenario": scenario_record},
+            ),
+            patch.object(
+                autonomy_scenarios,
+                "verify_accepted_evidence_references",
+                return_value={
+                    "valid": False,
+                    "field_errors": [{"code": "evidence_content_digest_mismatch"}],
+                    "receipts": [],
+                },
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "evidence failed immutable preflight"):
+                run_technoeconomic._verify_decision_scenario_evidence(
+                    self.job_id,
+                    self.request_payload,
+                )
 
     def _completed_annual_source(self) -> None:
         self.store.create_job(
