@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 SAVED_RESULTS_LIMIT = 10
 PROPOSAL_STATES = frozenset(
     {"pending", "confirmed", "superseded", "dismissed", "expired"}
@@ -32,6 +32,55 @@ MODES = frozenset({"validation", "annual"})
 COMPARISON_KINDS = frozenset({"same_input", "cross_run"})
 TECHNOECONOMIC_ID_PREFIX = "tea_"
 TERMINAL_JOB_STATES = frozenset({"done", "error", "cancelled", "interrupted"})
+
+DECISION_CASE_STATES = frozenset(
+    {
+        "draft",
+        "evidence_needed",
+        "blocked",
+        "ready_to_run",
+        "running",
+        "results_ready",
+        "decision_ready",
+        "signed",
+        "archived",
+    }
+)
+DECISION_CASE_TRANSITIONS: dict[str, frozenset[str]] = {
+    "draft": frozenset({"evidence_needed", "blocked", "archived"}),
+    "evidence_needed": frozenset({"blocked", "ready_to_run", "archived"}),
+    "blocked": frozenset({"evidence_needed", "ready_to_run", "archived"}),
+    "ready_to_run": frozenset(
+        {"evidence_needed", "blocked", "running", "archived"}
+    ),
+    "running": frozenset({"results_ready"}),
+    "results_ready": frozenset({"decision_ready"}),
+    "decision_ready": frozenset({"signed"}),
+    "signed": frozenset({"archived"}),
+    "archived": frozenset(),
+}
+DECISION_TURN_STATES = frozenset({"pending", "claimed", "completed", "failed"})
+DECISION_EVIDENCE_CLASSES = frozenset(
+    {
+        "project_actual",
+        "direct_quote_or_primary_document",
+        "public_market_proxy_or_benchmark",
+        "engineering_judgment",
+        "secondary_synthesis",
+    }
+)
+DECISION_EVIDENCE_DECISIONS = frozenset({"accepted", "rejected"})
+DECISION_EVIDENCE_MAX_FILE_BYTES = 10 * 1024 * 1024
+DECISION_EVIDENCE_MAX_FILES_PER_CASE = 10
+DECISION_EVIDENCE_MAX_CASE_BYTES = 50 * 1024 * 1024
+_DECISION_EVIDENCE_MEDIA_EXTENSIONS = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "text/csv": ".csv",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+}
 
 
 class AgentStoreError(RuntimeError):
@@ -52,6 +101,10 @@ class StoreConflict(AgentStoreError):
 
 class QueueCapacityExceeded(StoreConflict):
     """Raised when accepting another job would exceed the active queue limit."""
+
+
+class EvidenceLimitExceeded(StoreConflict):
+    """Raised when a decision evidence upload would exceed a durable case limit."""
 
 
 class LeaseOwnershipLost(StoreConflict):
@@ -105,6 +158,31 @@ def _new_id(prefix: str) -> str:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _bounded_text(value: Any, *, field: str, maximum: int) -> str:
+    normalized = str(value).strip() if isinstance(value, str) else ""
+    if not normalized or len(normalized) > maximum:
+        raise ValueError(f"{field} must contain between 1 and {maximum} characters")
+    return normalized
+
+
+def _optional_bounded_text(
+    value: Any,
+    *,
+    field: str,
+    maximum: int,
+) -> str | None:
+    if value is None:
+        return None
+    return _bounded_text(value, field=field, maximum=maximum)
+
+
+def _decision_evidence_storage_key(sha256: str, media_type: str) -> tuple[str, str]:
+    extension = _DECISION_EVIDENCE_MEDIA_EXTENSIONS.get(media_type)
+    if extension is None:
+        raise ValueError("unsupported decision evidence media type")
+    return f"sha256/{sha256[:2]}/{sha256}{extension}", extension
 
 
 class AgentStore:
@@ -179,6 +257,9 @@ class AgentStore:
                     version = 4
                 if version < 5:
                     self._migrate_v5(connection)
+                    version = 5
+                if version < 6:
+                    self._migrate_v6(connection)
             finally:
                 connection.close()
 
@@ -749,6 +830,768 @@ class AgentStore:
         connection.execute("PRAGMA user_version = 5")
         connection.commit()
 
+    def _migrate_v6(self, connection: sqlite3.Connection) -> None:
+        """Add durable, append-only Autonomy case and evidence state."""
+
+        applied_at = _timestamp(self._current_time())
+        connection.executescript(
+            """
+            BEGIN IMMEDIATE;
+
+            CREATE TABLE IF NOT EXISTS decision_cases (
+                case_id TEXT PRIMARY KEY CHECK (
+                    case_id GLOB 'case_*' AND length(case_id) > 5
+                ),
+                title TEXT NOT NULL CHECK (
+                    title = trim(title) AND length(title) BETWEEN 1 AND 200
+                ),
+                original_question TEXT NOT NULL CHECK (
+                    original_question = trim(original_question)
+                    AND length(original_question) BETWEEN 1 AND 8000
+                ),
+                question TEXT NOT NULL CHECK (
+                    question = trim(question) AND length(question) BETWEEN 1 AND 8000
+                ),
+                status TEXT NOT NULL CHECK (
+                    status IN (
+                        'draft','evidence_needed','blocked','ready_to_run',
+                        'running','results_ready','decision_ready','signed','archived'
+                    )
+                ),
+                source_annual_job_id TEXT
+                    REFERENCES jobs(job_id) ON DELETE RESTRICT,
+                source_snapshot_sha256 TEXT,
+                analysis_basis TEXT CHECK (
+                    analysis_basis IS NULL OR analysis_basis IN (
+                        'solartac_site','commercial_representative'
+                    )
+                ),
+                source_basis_locked_at TEXT,
+                source_basis_locked_by TEXT,
+                decision_owner TEXT CHECK (
+                    decision_owner IS NULL OR (
+                        decision_owner = trim(decision_owner)
+                        AND length(decision_owner) BETWEEN 1 AND 200
+                    )
+                ),
+                active_recommendation_revision INTEGER CHECK (
+                    active_recommendation_revision IS NULL
+                    OR active_recommendation_revision > 0
+                ),
+                revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+                created_by TEXT NOT NULL CHECK (
+                    created_by = trim(created_by)
+                    AND length(created_by) BETWEEN 1 AND 200
+                ),
+                updated_by TEXT NOT NULL CHECK (
+                    updated_by = trim(updated_by)
+                    AND length(updated_by) BETWEEN 1 AND 200
+                ),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                archived_at TEXT,
+                CHECK (
+                    (
+                        source_annual_job_id IS NULL
+                        AND source_snapshot_sha256 IS NULL
+                        AND analysis_basis IS NULL
+                        AND source_basis_locked_at IS NULL
+                        AND source_basis_locked_by IS NULL
+                    ) OR (
+                        source_annual_job_id IS NOT NULL
+                        AND source_snapshot_sha256 IS NOT NULL
+                        AND length(source_snapshot_sha256) = 64
+                        AND source_snapshot_sha256 NOT GLOB '*[^0-9a-f]*'
+                        AND analysis_basis IS NOT NULL
+                        AND source_basis_locked_at IS NOT NULL
+                        AND source_basis_locked_by IS NOT NULL
+                        AND source_basis_locked_by = trim(source_basis_locked_by)
+                        AND length(source_basis_locked_by) BETWEEN 1 AND 200
+                    )
+                ),
+                CHECK (
+                    (status = 'archived' AND archived_at IS NOT NULL)
+                    OR (status <> 'archived' AND archived_at IS NULL)
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_agent_turns (
+                turn_id TEXT PRIMARY KEY CHECK (
+                    turn_id GLOB 'dturn_*' AND length(turn_id) > 6
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                client_message_id TEXT NOT NULL CHECK (
+                    client_message_id = trim(client_message_id)
+                    AND length(client_message_id) BETWEEN 1 AND 200
+                ),
+                state TEXT NOT NULL CHECK (
+                    state IN ('pending','claimed','completed','failed')
+                ),
+                created_by TEXT NOT NULL CHECK (
+                    created_by = trim(created_by)
+                    AND length(created_by) BETWEEN 1 AND 200
+                ),
+                worker_id TEXT,
+                claim_token TEXT,
+                trace_id TEXT CHECK (
+                    trace_id IS NULL OR (
+                        trace_id = trim(trace_id)
+                        AND length(trace_id) BETWEEN 1 AND 200
+                    )
+                ),
+                error_code TEXT,
+                error_detail TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                claimed_at TEXT,
+                completed_at TEXT,
+                failed_at TEXT,
+                UNIQUE(case_id, client_message_id),
+                UNIQUE(turn_id, case_id),
+                CHECK (
+                    (state = 'pending'
+                        AND worker_id IS NULL AND claim_token IS NULL
+                        AND claimed_at IS NULL AND completed_at IS NULL
+                        AND failed_at IS NULL AND error_code IS NULL
+                        AND error_detail IS NULL)
+                    OR (state = 'claimed'
+                        AND worker_id IS NOT NULL AND length(trim(worker_id)) > 0
+                        AND claim_token IS NOT NULL AND length(trim(claim_token)) > 0
+                        AND claimed_at IS NOT NULL AND completed_at IS NULL
+                        AND failed_at IS NULL AND error_code IS NULL
+                        AND error_detail IS NULL)
+                    OR (state = 'completed'
+                        AND worker_id IS NOT NULL AND claim_token IS NOT NULL
+                        AND claimed_at IS NOT NULL AND completed_at IS NOT NULL
+                        AND failed_at IS NULL AND error_code IS NULL
+                        AND error_detail IS NULL)
+                    OR (state = 'failed'
+                        AND worker_id IS NOT NULL AND claim_token IS NOT NULL
+                        AND claimed_at IS NOT NULL AND completed_at IS NULL
+                        AND failed_at IS NOT NULL
+                        AND error_code IS NOT NULL
+                        AND length(trim(error_code)) > 0
+                        AND error_detail IS NOT NULL
+                        AND length(trim(error_detail)) > 0)
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_messages (
+                message_id TEXT PRIMARY KEY CHECK (
+                    message_id GLOB 'dmsg_*' AND length(message_id) > 5
+                ),
+                case_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                message_sequence INTEGER NOT NULL CHECK (message_sequence > 0),
+                role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+                status TEXT NOT NULL CHECK (status IN ('complete','error')),
+                content_text TEXT NOT NULL CHECK (length(content_text) > 0),
+                structured_output_json TEXT CHECK (
+                    structured_output_json IS NULL
+                    OR json_valid(structured_output_json)
+                ),
+                citations_json TEXT NOT NULL CHECK (json_valid(citations_json)),
+                tool_outcomes_json TEXT NOT NULL CHECK (
+                    json_valid(tool_outcomes_json)
+                ),
+                trace_id TEXT CHECK (
+                    trace_id IS NULL OR (
+                        trace_id = trim(trace_id)
+                        AND length(trace_id) BETWEEN 1 AND 200
+                    )
+                ),
+                operator_name TEXT,
+                error_code TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(turn_id, case_id)
+                    REFERENCES decision_agent_turns(turn_id, case_id)
+                    ON DELETE RESTRICT,
+                UNIQUE(case_id, message_sequence),
+                UNIQUE(turn_id, role),
+                CHECK (
+                    (role = 'user' AND status = 'complete'
+                        AND operator_name IS NOT NULL
+                        AND operator_name = trim(operator_name)
+                        AND length(operator_name) BETWEEN 1 AND 200
+                        AND error_code IS NULL)
+                    OR (role = 'assistant' AND operator_name IS NULL)
+                ),
+                CHECK (
+                    (status = 'error' AND error_code IS NOT NULL
+                        AND length(trim(error_code)) > 0)
+                    OR (status = 'complete' AND error_code IS NULL)
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_evidence_assets (
+                evidence_asset_id TEXT PRIMARY KEY CHECK (
+                    evidence_asset_id GLOB 'evi_*'
+                    AND length(evidence_asset_id) > 4
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                evidence_class TEXT NOT NULL CHECK (
+                    evidence_class IN (
+                        'project_actual','direct_quote_or_primary_document',
+                        'public_market_proxy_or_benchmark',
+                        'engineering_judgment','secondary_synthesis'
+                    )
+                ),
+                original_filename TEXT NOT NULL CHECK (
+                    original_filename = trim(original_filename)
+                    AND length(original_filename) BETWEEN 1 AND 255
+                    AND original_filename NOT GLOB '.*'
+                    AND instr(original_filename, '/') = 0
+                    AND instr(original_filename, '\\') = 0
+                ),
+                display_filename TEXT NOT NULL CHECK (
+                    display_filename = trim(display_filename)
+                    AND length(display_filename) BETWEEN 1 AND 255
+                    AND display_filename NOT GLOB '.*'
+                    AND instr(display_filename, '/') = 0
+                    AND instr(display_filename, '\\') = 0
+                ),
+                declared_media_type TEXT NOT NULL,
+                detected_media_type TEXT NOT NULL CHECK (
+                    detected_media_type IN (
+                        'application/pdf',
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        'text/csv','image/png','image/jpeg','image/webp'
+                    )
+                ),
+                canonical_extension TEXT NOT NULL CHECK (
+                    canonical_extension IN (
+                        '.pdf','.xlsx','.csv','.png','.jpg','.webp'
+                    )
+                ),
+                sha256 TEXT NOT NULL CHECK (
+                    length(sha256) = 64
+                    AND sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                byte_count INTEGER NOT NULL CHECK (byte_count > 0),
+                storage_key TEXT NOT NULL CHECK (
+                    storage_key = 'sha256/' || substr(sha256, 1, 2) || '/'
+                        || sha256 || canonical_extension
+                ),
+                extraction_status TEXT NOT NULL CHECK (
+                    extraction_status IN ('complete','not_supported','failed')
+                ),
+                extraction_metadata_json TEXT NOT NULL CHECK (
+                    json_valid(extraction_metadata_json)
+                ),
+                source_metadata_json TEXT NOT NULL CHECK (
+                    json_valid(source_metadata_json)
+                ),
+                uploaded_by TEXT NOT NULL CHECK (
+                    uploaded_by = trim(uploaded_by)
+                    AND length(uploaded_by) BETWEEN 1 AND 200
+                ),
+                uploaded_at TEXT NOT NULL,
+                removed_by TEXT,
+                removed_reason TEXT,
+                removed_at TEXT,
+                UNIQUE(evidence_asset_id, case_id),
+                CHECK (declared_media_type = detected_media_type),
+                CHECK (
+                    canonical_extension = CASE detected_media_type
+                        WHEN 'application/pdf' THEN '.pdf'
+                        WHEN 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                            THEN '.xlsx'
+                        WHEN 'text/csv' THEN '.csv'
+                        WHEN 'image/png' THEN '.png'
+                        WHEN 'image/jpeg' THEN '.jpg'
+                        WHEN 'image/webp' THEN '.webp'
+                    END
+                ),
+                CHECK (
+                    (removed_at IS NULL AND removed_by IS NULL AND removed_reason IS NULL)
+                    OR (removed_at IS NOT NULL
+                        AND removed_by IS NOT NULL
+                        AND removed_by = trim(removed_by)
+                        AND length(removed_by) BETWEEN 1 AND 200
+                        AND removed_reason IS NOT NULL
+                        AND length(trim(removed_reason)) > 0)
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_evidence_candidates (
+                evidence_candidate_id TEXT PRIMARY KEY CHECK (
+                    evidence_candidate_id GLOB 'evc_*'
+                    AND length(evidence_candidate_id) > 4
+                ),
+                evidence_asset_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                field_name TEXT NOT NULL CHECK (
+                    field_name = trim(field_name)
+                    AND length(field_name) BETWEEN 1 AND 300
+                ),
+                value_json TEXT NOT NULL CHECK (json_valid(value_json)),
+                unit TEXT CHECK (
+                    unit IS NULL OR (
+                        unit = trim(unit) AND length(unit) BETWEEN 1 AND 100
+                    )
+                ),
+                confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+                source_location_json TEXT NOT NULL CHECK (
+                    json_valid(source_location_json)
+                ),
+                extracted_at TEXT NOT NULL,
+                FOREIGN KEY(evidence_asset_id, case_id)
+                    REFERENCES decision_evidence_assets(evidence_asset_id, case_id)
+                    ON DELETE RESTRICT,
+                UNIQUE(evidence_candidate_id, evidence_asset_id, case_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_evidence_receipts (
+                evidence_receipt_id TEXT PRIMARY KEY CHECK (
+                    evidence_receipt_id GLOB 'evr_*'
+                    AND length(evidence_receipt_id) > 4
+                ),
+                evidence_candidate_id TEXT NOT NULL UNIQUE,
+                evidence_asset_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                decision TEXT NOT NULL CHECK (decision IN ('accepted','rejected')),
+                evidence_class TEXT NOT NULL CHECK (
+                    evidence_class IN (
+                        'project_actual','direct_quote_or_primary_document',
+                        'public_market_proxy_or_benchmark',
+                        'engineering_judgment','secondary_synthesis'
+                    )
+                ),
+                field_name TEXT NOT NULL,
+                value_json TEXT NOT NULL CHECK (json_valid(value_json)),
+                unit TEXT,
+                confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+                source_location_json TEXT NOT NULL CHECK (
+                    json_valid(source_location_json)
+                ),
+                asset_sha256 TEXT NOT NULL CHECK (
+                    length(asset_sha256) = 64
+                    AND asset_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                asset_byte_count INTEGER NOT NULL CHECK (asset_byte_count > 0),
+                preservation_mode TEXT NOT NULL CHECK (
+                    preservation_mode = 'server_managed_content_v1'
+                ),
+                operator_name TEXT NOT NULL CHECK (
+                    operator_name = trim(operator_name)
+                    AND length(operator_name) BETWEEN 1 AND 200
+                ),
+                rationale TEXT,
+                reviewed_at TEXT NOT NULL,
+                receipt_json TEXT NOT NULL CHECK (json_valid(receipt_json)),
+                receipt_sha256 TEXT NOT NULL CHECK (
+                    length(receipt_sha256) = 64
+                    AND receipt_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                FOREIGN KEY(evidence_candidate_id, evidence_asset_id, case_id)
+                    REFERENCES decision_evidence_candidates(
+                        evidence_candidate_id, evidence_asset_id, case_id
+                    ) ON DELETE RESTRICT
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_events (
+                event_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL UNIQUE CHECK (
+                    event_id GLOB 'devt_*' AND length(event_id) > 5
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                turn_id TEXT,
+                event_type TEXT NOT NULL CHECK (
+                    event_type = trim(event_type)
+                    AND length(event_type) BETWEEN 1 AND 100
+                ),
+                actor_kind TEXT NOT NULL CHECK (
+                    actor_kind IN ('operator','decision_agent','system')
+                ),
+                operator_name TEXT,
+                trace_id TEXT CHECK (
+                    trace_id IS NULL OR (
+                        trace_id = trim(trace_id)
+                        AND length(trace_id) BETWEEN 1 AND 200
+                    )
+                ),
+                payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(turn_id, case_id)
+                    REFERENCES decision_agent_turns(turn_id, case_id)
+                    ON DELETE RESTRICT,
+                CHECK (
+                    (actor_kind = 'operator'
+                        AND operator_name IS NOT NULL
+                        AND operator_name = trim(operator_name)
+                        AND length(operator_name) BETWEEN 1 AND 200)
+                    OR (actor_kind <> 'operator' AND operator_name IS NULL)
+                )
+            );
+
+            CREATE INDEX IF NOT EXISTS decision_cases_status_updated_idx
+                ON decision_cases(status, updated_at DESC, case_id DESC);
+            CREATE INDEX IF NOT EXISTS decision_cases_source_idx
+                ON decision_cases(source_annual_job_id)
+                WHERE source_annual_job_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS decision_turns_case_state_idx
+                ON decision_agent_turns(case_id, state, created_at, turn_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS decision_turns_claim_token_unique
+                ON decision_agent_turns(claim_token)
+                WHERE claim_token IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS decision_messages_case_sequence_idx
+                ON decision_messages(case_id, message_sequence DESC);
+            CREATE INDEX IF NOT EXISTS decision_evidence_case_live_idx
+                ON decision_evidence_assets(case_id, removed_at, uploaded_at DESC);
+            CREATE INDEX IF NOT EXISTS decision_evidence_sha256_idx
+                ON decision_evidence_assets(sha256);
+            CREATE INDEX IF NOT EXISTS decision_candidates_asset_idx
+                ON decision_evidence_candidates(evidence_asset_id, extracted_at);
+            CREATE INDEX IF NOT EXISTS decision_receipts_case_decision_idx
+                ON decision_evidence_receipts(case_id, decision, reviewed_at DESC);
+            CREATE INDEX IF NOT EXISTS decision_events_case_sequence_idx
+                ON decision_events(case_id, event_sequence);
+            CREATE INDEX IF NOT EXISTS decision_events_turn_sequence_idx
+                ON decision_events(turn_id, event_sequence)
+                WHERE turn_id IS NOT NULL;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_insert_guard
+            BEFORE INSERT ON decision_cases
+            WHEN NEW.status <> 'draft'
+                 OR NEW.revision <> 1
+                 OR NEW.archived_at IS NOT NULL
+            BEGIN
+                SELECT RAISE(ABORT, 'decision cases must begin as revision-one drafts');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_identity_is_immutable
+            BEFORE UPDATE OF case_id, original_question, created_by, created_at
+            ON decision_cases
+            BEGIN
+                SELECT RAISE(ABORT, 'decision case identity is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_revision_must_increment
+            BEFORE UPDATE ON decision_cases
+            WHEN NEW.revision <> OLD.revision + 1
+            BEGIN
+                SELECT RAISE(ABORT, 'decision case revision must increment by one');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_transition_guard
+            BEFORE UPDATE OF status ON decision_cases
+            WHEN NEW.status <> OLD.status AND NOT (
+                (OLD.status = 'draft'
+                    AND NEW.status IN ('evidence_needed','blocked','archived'))
+                OR (OLD.status = 'evidence_needed'
+                    AND NEW.status IN ('blocked','ready_to_run','archived'))
+                OR (OLD.status = 'blocked'
+                    AND NEW.status IN ('evidence_needed','ready_to_run','archived'))
+                OR (OLD.status = 'ready_to_run'
+                    AND NEW.status IN ('evidence_needed','blocked','running','archived'))
+                OR (OLD.status = 'running' AND NEW.status = 'results_ready')
+                OR (OLD.status = 'results_ready' AND NEW.status = 'decision_ready')
+                OR (OLD.status = 'decision_ready' AND NEW.status = 'signed')
+                OR (OLD.status = 'signed' AND NEW.status = 'archived')
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid decision case state transition');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_active_turn_archive_guard
+            BEFORE UPDATE OF status ON decision_cases
+            WHEN NEW.status IN ('signed','archived') AND EXISTS (
+                SELECT 1 FROM decision_agent_turns
+                 WHERE case_id = OLD.case_id
+                   AND state IN ('pending','claimed')
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'active decision turns must finish first');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_signed_mutation_guard
+            BEFORE UPDATE ON decision_cases
+            WHEN OLD.status = 'signed' AND NEW.status <> 'archived'
+            BEGIN
+                SELECT RAISE(ABORT, 'signed decision cases are read-only');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_archived_mutation_guard
+            BEFORE UPDATE ON decision_cases
+            WHEN OLD.status = 'archived'
+            BEGIN
+                SELECT RAISE(ABORT, 'archived decision cases are read-only');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_source_basis_is_one_way
+            BEFORE UPDATE OF
+                source_annual_job_id, source_snapshot_sha256, analysis_basis,
+                source_basis_locked_at, source_basis_locked_by
+            ON decision_cases
+            WHEN OLD.source_annual_job_id IS NOT NULL AND NOT (
+                NEW.source_annual_job_id IS OLD.source_annual_job_id
+                AND NEW.source_snapshot_sha256 IS OLD.source_snapshot_sha256
+                AND NEW.analysis_basis IS OLD.analysis_basis
+                AND NEW.source_basis_locked_at IS OLD.source_basis_locked_at
+                AND NEW.source_basis_locked_by IS OLD.source_basis_locked_by
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision case source and basis lock is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_source_insert_guard
+            BEFORE INSERT ON decision_cases
+            WHEN NEW.source_annual_job_id IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM jobs
+                 WHERE job_id = NEW.source_annual_job_id
+                   AND mode = 'annual' AND state = 'done'
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision case source must be a completed annual job');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_source_update_guard
+            BEFORE UPDATE OF source_annual_job_id ON decision_cases
+            WHEN NEW.source_annual_job_id IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM jobs
+                 WHERE job_id = NEW.source_annual_job_id
+                   AND mode = 'annual' AND state = 'done'
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision case source must be a completed annual job');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS retained_decision_case_annual_source_guard
+            BEFORE UPDATE OF
+                request_json, result_json, provenance_json, artifacts_json,
+                source_path, source_hash, kind, mode, state
+            ON jobs
+            WHEN EXISTS (
+                SELECT 1 FROM decision_cases
+                 WHERE source_annual_job_id = OLD.job_id
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision case annual source payload is retained');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_case_delete_guard
+            BEFORE DELETE ON decision_cases
+            BEGIN
+                SELECT RAISE(ABORT, 'decision cases are archived, not deleted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_turn_identity_is_immutable
+            BEFORE UPDATE OF turn_id, case_id, client_message_id, created_by, created_at
+            ON decision_agent_turns
+            BEGIN
+                SELECT RAISE(ABORT, 'decision turn identity is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_turn_transition_guard
+            BEFORE UPDATE OF state ON decision_agent_turns
+            WHEN NEW.state <> OLD.state AND NOT (
+                (OLD.state = 'pending' AND NEW.state = 'claimed')
+                OR (OLD.state = 'claimed' AND NEW.state IN ('completed','failed'))
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid decision turn state transition');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_turn_terminal_is_immutable
+            BEFORE UPDATE ON decision_agent_turns
+            WHEN OLD.state IN ('completed','failed')
+            BEGIN
+                SELECT RAISE(ABORT, 'terminal decision turn is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_turn_claim_is_immutable
+            BEFORE UPDATE OF worker_id, claim_token, claimed_at
+            ON decision_agent_turns
+            WHEN OLD.state <> 'pending' AND NOT (
+                NEW.worker_id IS OLD.worker_id
+                AND NEW.claim_token IS OLD.claim_token
+                AND NEW.claimed_at IS OLD.claimed_at
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision turn claim identity is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_turn_trace_is_one_way
+            BEFORE UPDATE OF trace_id ON decision_agent_turns
+            WHEN OLD.trace_id IS NOT NULL AND NEW.trace_id IS NOT OLD.trace_id
+            BEGIN
+                SELECT RAISE(ABORT, 'decision turn trace identity is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_turn_delete_guard
+            BEFORE DELETE ON decision_agent_turns
+            BEGIN
+                SELECT RAISE(ABORT, 'decision turns are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_message_update_guard
+            BEFORE UPDATE ON decision_messages
+            BEGIN
+                SELECT RAISE(ABORT, 'decision messages are append-only');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_message_delete_guard
+            BEFORE DELETE ON decision_messages
+            BEGIN
+                SELECT RAISE(ABORT, 'decision messages are append-only');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_insert_must_be_active
+            BEFORE INSERT ON decision_evidence_assets
+            WHEN NEW.removed_at IS NOT NULL
+                 OR NEW.removed_by IS NOT NULL
+                 OR NEW.removed_reason IS NOT NULL
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence must begin active');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_file_limit_guard
+            BEFORE INSERT ON decision_evidence_assets
+            WHEN NEW.byte_count > 10485760
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence file limit exceeded');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_count_limit_guard
+            BEFORE INSERT ON decision_evidence_assets
+            WHEN (
+                SELECT COUNT(*) FROM decision_evidence_assets
+                 WHERE case_id = NEW.case_id AND removed_at IS NULL
+            ) >= 10
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence count limit exceeded');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_case_bytes_limit_guard
+            BEFORE INSERT ON decision_evidence_assets
+            WHEN COALESCE((
+                SELECT SUM(byte_count) FROM decision_evidence_assets
+                 WHERE case_id = NEW.case_id AND removed_at IS NULL
+            ), 0) + NEW.byte_count > 52428800
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence case byte limit exceeded');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_asset_identity_is_immutable
+            BEFORE UPDATE OF
+                evidence_asset_id, case_id, evidence_class, original_filename,
+                display_filename, declared_media_type, detected_media_type,
+                canonical_extension, sha256, byte_count, storage_key,
+                extraction_status, extraction_metadata_json,
+                source_metadata_json, uploaded_by, uploaded_at
+            ON decision_evidence_assets
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence identity is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_removal_is_one_way
+            BEFORE UPDATE OF removed_by, removed_reason, removed_at
+            ON decision_evidence_assets
+            WHEN OLD.removed_at IS NOT NULL
+            BEGIN
+                SELECT RAISE(ABORT, 'removed decision evidence is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS accepted_evidence_removal_guard
+            BEFORE UPDATE OF removed_at ON decision_evidence_assets
+            WHEN NEW.removed_at IS NOT NULL AND EXISTS (
+                SELECT 1 FROM decision_evidence_receipts
+                 WHERE evidence_asset_id = OLD.evidence_asset_id
+                   AND decision = 'accepted'
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'accepted decision evidence cannot be removed');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_asset_delete_guard
+            BEFORE DELETE ON decision_evidence_assets
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence is tombstoned, not deleted');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_candidate_update_guard
+            BEFORE UPDATE ON decision_evidence_candidates
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence candidates are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_candidate_delete_guard
+            BEFORE DELETE ON decision_evidence_candidates
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence candidates are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_receipt_snapshot_guard
+            BEFORE INSERT ON decision_evidence_receipts
+            WHEN NOT EXISTS (
+                SELECT 1
+                  FROM decision_evidence_candidates c
+                  JOIN decision_evidence_assets a
+                    ON a.evidence_asset_id = c.evidence_asset_id
+                   AND a.case_id = c.case_id
+                 WHERE c.evidence_candidate_id = NEW.evidence_candidate_id
+                   AND c.evidence_asset_id = NEW.evidence_asset_id
+                   AND c.case_id = NEW.case_id
+                   AND c.field_name = NEW.field_name
+                   AND c.value_json = NEW.value_json
+                   AND c.unit IS NEW.unit
+                   AND c.confidence = NEW.confidence
+                   AND c.source_location_json = NEW.source_location_json
+                   AND a.evidence_class = NEW.evidence_class
+                   AND a.sha256 = NEW.asset_sha256
+                   AND a.byte_count = NEW.asset_byte_count
+                   AND a.removed_at IS NULL
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'evidence receipt does not match immutable evidence');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS provisional_evidence_rationale_guard
+            BEFORE INSERT ON decision_evidence_receipts
+            WHEN NEW.decision = 'accepted'
+                 AND NEW.evidence_class IN (
+                    'engineering_judgment','secondary_synthesis'
+                 )
+                 AND (NEW.rationale IS NULL OR length(trim(NEW.rationale)) = 0)
+            BEGIN
+                SELECT RAISE(ABORT, 'provisional evidence requires a rationale');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_receipt_update_guard
+            BEFORE UPDATE ON decision_evidence_receipts
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence receipts are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_evidence_receipt_delete_guard
+            BEFORE DELETE ON decision_evidence_receipts
+            BEGIN
+                SELECT RAISE(ABORT, 'decision evidence receipts are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_event_update_guard
+            BEFORE UPDATE ON decision_events
+            BEGIN
+                SELECT RAISE(ABORT, 'decision events are append-only');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_event_delete_guard
+            BEFORE DELETE ON decision_events
+            BEGIN
+                SELECT RAISE(ABORT, 'decision events are append-only');
+            END;
+            """
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (6, applied_at),
+        )
+        connection.execute("PRAGMA user_version = 6")
+        connection.commit()
+
     def _current_time(self) -> datetime:
         return _as_utc(self._now())
 
@@ -819,6 +1662,280 @@ class AgentStore:
         result["cancel_requested"] = bool(result["cancel_requested"])
         if result["state"] == "interrupted" and not result.get("completed_at"):
             result["completed_at"] = result.get("interrupted_at")
+        return result
+
+    @staticmethod
+    def _decision_case_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = result.pop("case_id")
+        return result
+
+    @staticmethod
+    def _decision_turn_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = result.pop("turn_id")
+        return result
+
+    @staticmethod
+    def _decision_message_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = result.pop("message_id")
+        for field in ("structured_output", "citations", "tool_outcomes"):
+            result[field] = _json_load(result.pop(f"{field}_json"))
+        return result
+
+    @staticmethod
+    def _decision_evidence_asset_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = result.pop("evidence_asset_id")
+        result["extraction_metadata"] = _json_load(
+            result.pop("extraction_metadata_json")
+        )
+        result["source_metadata"] = _json_load(result.pop("source_metadata_json"))
+        return result
+
+    @staticmethod
+    def _decision_evidence_candidate_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = result.pop("evidence_candidate_id")
+        result["value"] = _json_load(result.pop("value_json"))
+        result["source_location"] = _json_load(result.pop("source_location_json"))
+        return result
+
+    @staticmethod
+    def _decision_evidence_receipt_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = result.pop("evidence_receipt_id")
+        result["value"] = _json_load(result.pop("value_json"))
+        result["source_location"] = _json_load(result.pop("source_location_json"))
+        result["receipt"] = _json_load(result.pop("receipt_json"))
+        return result
+
+    @staticmethod
+    def _decision_event_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = result.pop("event_id")
+        result["payload"] = _json_load(result.pop("payload_json"))
+        return result
+
+    @staticmethod
+    def _require_decision_case_row(
+        connection: sqlite3.Connection,
+        case_id: str,
+        *,
+        mutable: bool = False,
+    ) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM decision_cases WHERE case_id = ?",
+            (case_id,),
+        ).fetchone()
+        if row is None:
+            raise RecordNotFound(f"unknown decision case: {case_id}")
+        if mutable and row["status"] in {"signed", "archived"}:
+            raise InvalidStateTransition(
+                f"{row['status']} decision cases are read-only"
+            )
+        return row
+
+    @staticmethod
+    def _require_case_revision(
+        row: sqlite3.Row,
+        expected_revision: int | None,
+    ) -> None:
+        if expected_revision is None:
+            return
+        if isinstance(expected_revision, bool) or not isinstance(expected_revision, int):
+            raise ValueError("expected_revision must be an integer")
+        if int(row["revision"]) != expected_revision:
+            raise StoreConflict(
+                "decision case revision changed "
+                f"(expected {expected_revision}, found {row['revision']})"
+            )
+
+    @staticmethod
+    def _touch_decision_case(
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        now_text: str,
+        operator_name: str,
+    ) -> sqlite3.Row:
+        next_revision = int(row["revision"]) + 1
+        cursor = connection.execute(
+            """
+            UPDATE decision_cases
+               SET revision = ?, updated_at = ?, updated_by = ?
+             WHERE case_id = ? AND revision = ?
+            """,
+            (
+                next_revision,
+                now_text,
+                operator_name,
+                row["case_id"],
+                row["revision"],
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise StoreConflict("decision case changed during mutation")
+        updated = connection.execute(
+            "SELECT * FROM decision_cases WHERE case_id = ?",
+            (row["case_id"],),
+        ).fetchone()
+        assert updated is not None
+        return updated
+
+    @staticmethod
+    def _next_decision_message_sequence(
+        connection: sqlite3.Connection,
+        case_id: str,
+    ) -> int:
+        row = connection.execute(
+            """
+            SELECT COALESCE(MAX(message_sequence), 0) + 1 AS next_sequence
+              FROM decision_messages
+             WHERE case_id = ?
+            """,
+            (case_id,),
+        ).fetchone()
+        return int(row["next_sequence"])
+
+    @staticmethod
+    def _insert_decision_event(
+        connection: sqlite3.Connection,
+        *,
+        case_id: str,
+        event_type: str,
+        actor_kind: str,
+        payload: Mapping[str, Any],
+        created_at: str,
+        operator_name: str | None = None,
+        turn_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> sqlite3.Row:
+        event_id = _new_id("devt")
+        connection.execute(
+            """
+            INSERT INTO decision_events (
+                event_id, case_id, turn_id, event_type, actor_kind,
+                operator_name, trace_id, payload_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                case_id,
+                turn_id,
+                event_type,
+                actor_kind,
+                operator_name,
+                trace_id,
+                _json_dump(dict(payload)),
+                created_at,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM decision_events WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        assert row is not None
+        return row
+
+    def _decision_turn_bundle(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        result = self._decision_turn_from_row(row)
+        assert result is not None
+        message_rows = connection.execute(
+            """
+            SELECT * FROM decision_messages
+             WHERE turn_id = ?
+             ORDER BY message_sequence ASC
+            """,
+            (row["turn_id"],),
+        ).fetchall()
+        messages = [
+            self._decision_message_from_row(message_row)
+            for message_row in message_rows
+        ]
+        result["messages"] = messages
+        result["user_message"] = next(
+            (item for item in messages if item and item["role"] == "user"),
+            None,
+        )
+        result["assistant_message"] = next(
+            (item for item in messages if item and item["role"] == "assistant"),
+            None,
+        )
+        return result
+
+    def _decision_evidence_asset_bundle(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        result = self._decision_evidence_asset_from_row(row)
+        assert result is not None
+        candidate_rows = connection.execute(
+            """
+            SELECT c.*, r.evidence_receipt_id
+              FROM decision_evidence_candidates c
+              LEFT JOIN decision_evidence_receipts r
+                ON r.evidence_candidate_id = c.evidence_candidate_id
+             WHERE c.evidence_asset_id = ?
+             ORDER BY c.extracted_at ASC, c.evidence_candidate_id ASC
+            """,
+            (row["evidence_asset_id"],),
+        ).fetchall()
+        candidates: list[dict[str, Any]] = []
+        for candidate_row in candidate_rows:
+            candidate = self._decision_evidence_candidate_from_row(candidate_row)
+            assert candidate is not None
+            receipt_id = candidate.pop("evidence_receipt_id", None)
+            receipt_row = None
+            if receipt_id is not None:
+                receipt_row = connection.execute(
+                    """
+                    SELECT * FROM decision_evidence_receipts
+                     WHERE evidence_receipt_id = ?
+                    """,
+                    (receipt_id,),
+                ).fetchone()
+            receipt = self._decision_evidence_receipt_from_row(receipt_row)
+            candidate["receipt"] = receipt
+            candidate["review_state"] = (
+                str(receipt["decision"]) if receipt is not None else "pending"
+            )
+            candidates.append(candidate)
+        result["candidates"] = candidates
         return result
 
     @staticmethod
@@ -2647,6 +3764,16 @@ class AgentStore:
                     "Annual Simulation is retained by technoeconomic job "
                     f"{referenced_tea['tea_job_id']}"
                 )
+            referenced_case = connection.execute(
+                "SELECT case_id FROM decision_cases "
+                "WHERE source_annual_job_id = ? LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if referenced_case is not None:
+                raise InvalidStateTransition(
+                    "Annual Simulation is retained by decision case "
+                    f"{referenced_case['case_id']}"
+                )
             is_scenario = row["kind"] == "candidate"
             is_baseline = row["kind"] in {"baseline", "manual"}
             if not (is_scenario or is_baseline) or (
@@ -2865,6 +3992,1750 @@ class AgentStore:
             ).fetchone()
         return None if row is None else dict(row)
 
+    def create_decision_case(
+        self,
+        *,
+        title: str,
+        question: str,
+        operator_name: str,
+        case_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create one durable draft case and its first append-only event."""
+
+        normalized_id = str(case_id or _new_id("case")).strip()
+        if not normalized_id.startswith("case_") or len(normalized_id) <= 5:
+            raise ValueError("decision case ids must use the 'case_' prefix")
+        normalized_title = _bounded_text(title, field="title", maximum=200)
+        normalized_question = _bounded_text(
+            question, field="question", maximum=8_000
+        )
+        operator = _bounded_text(
+            operator_name, field="operator_name", maximum=200
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_cases (
+                        case_id, title, original_question, question, status,
+                        revision, created_by, updated_by, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'draft', 1, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_id,
+                        normalized_title,
+                        normalized_question,
+                        normalized_question,
+                        operator,
+                        operator,
+                        now_text,
+                        now_text,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict(
+                    f"decision case id already exists or is invalid: {normalized_id}"
+                ) from exc
+            self._insert_decision_event(
+                connection,
+                case_id=normalized_id,
+                event_type="decision_case_created",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "case_id": normalized_id,
+                    "status": "draft",
+                    "revision": 1,
+                    "title": normalized_title,
+                    "question": normalized_question,
+                },
+                created_at=now_text,
+            )
+            row = connection.execute(
+                "SELECT * FROM decision_cases WHERE case_id = ?",
+                (normalized_id,),
+            ).fetchone()
+        return self._decision_case_from_row(row)  # type: ignore[return-value]
+
+    def get_decision_case(self, case_id: str) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM decision_cases WHERE case_id = ?",
+                (str(case_id),),
+            ).fetchone()
+        return self._decision_case_from_row(row)
+
+    def list_decision_cases(
+        self,
+        *,
+        statuses: Sequence[str] | None = None,
+        include_archived: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if statuses is not None:
+            unknown = set(statuses) - DECISION_CASE_STATES
+            if unknown:
+                raise ValueError(f"unknown decision case states: {sorted(unknown)}")
+        if limit <= 0:
+            return []
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        if statuses:
+            clauses.append(f"status IN ({','.join('?' for _ in statuses)})")
+            parameters.extend(statuses)
+        elif not include_archived:
+            clauses.append("status <> 'archived'")
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(int(limit))
+        with self._transaction() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM decision_cases {where} "
+                "ORDER BY updated_at DESC, case_id DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+        return [
+            self._decision_case_from_row(row) for row in rows
+        ]  # type: ignore[misc]
+
+    def update_decision_case(
+        self,
+        case_id: str,
+        *,
+        expected_revision: int,
+        operator_name: str,
+        title: str | object = _UNSET,
+        question: str | object = _UNSET,
+        decision_owner: str | None | object = _UNSET,
+    ) -> dict[str, Any]:
+        """Edit mutable case metadata with compare-and-swap revision fencing."""
+
+        operator = _bounded_text(
+            operator_name, field="operator_name", maximum=200
+        )
+        values: dict[str, Any] = {}
+        if title is not _UNSET:
+            values["title"] = _bounded_text(title, field="title", maximum=200)
+        if question is not _UNSET:
+            values["question"] = _bounded_text(
+                question, field="question", maximum=8_000
+            )
+        if decision_owner is not _UNSET:
+            values["decision_owner"] = _optional_bounded_text(
+                decision_owner,
+                field="decision_owner",
+                maximum=200,
+            )
+        if not values:
+            raise ValueError("at least one mutable decision case field is required")
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            current = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(current, expected_revision)
+            changed = {
+                field: value
+                for field, value in values.items()
+                if current[field] != value
+            }
+            if not changed:
+                return self._decision_case_from_row(current)  # type: ignore[return-value]
+            assignments = [f"{field} = ?" for field in changed]
+            parameters = [*changed.values(), now_text, operator, str(case_id), expected_revision]
+            cursor = connection.execute(
+                "UPDATE decision_cases SET "
+                + ", ".join(assignments)
+                + ", revision = revision + 1, updated_at = ?, updated_by = ? "
+                "WHERE case_id = ? AND revision = ?",
+                parameters,
+            )
+            if cursor.rowcount != 1:
+                raise StoreConflict("decision case changed during update")
+            updated = connection.execute(
+                "SELECT * FROM decision_cases WHERE case_id = ?",
+                (str(case_id),),
+            ).fetchone()
+            assert updated is not None
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_case_updated",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "changed_fields": sorted(changed),
+                    "changes": {
+                        field: {
+                            "before": current[field],
+                            "after": changed[field],
+                        }
+                        for field in sorted(changed)
+                    },
+                    "revision": int(updated["revision"]),
+                },
+                created_at=now_text,
+            )
+        return self._decision_case_from_row(updated)  # type: ignore[return-value]
+
+    def lock_decision_case(
+        self,
+        case_id: str,
+        *,
+        expected_revision: int,
+        source_annual_job_id: str,
+        source_snapshot_sha256: str,
+        analysis_basis: str,
+        operator_name: str,
+    ) -> dict[str, Any]:
+        """Set the case's Annual source and TEA basis exactly once."""
+
+        source_id = _bounded_text(
+            source_annual_job_id,
+            field="source_annual_job_id",
+            maximum=300,
+        )
+        source_hash = self._validate_sha256(
+            source_snapshot_sha256,
+            field="source_snapshot_sha256",
+        )
+        if analysis_basis not in {"solartac_site", "commercial_representative"}:
+            raise ValueError("analysis_basis is unsupported")
+        operator = _bounded_text(
+            operator_name, field="operator_name", maximum=200
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            current = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            if current["source_annual_job_id"] is not None:
+                matches = (
+                    current["source_annual_job_id"] == source_id
+                    and current["source_snapshot_sha256"] == source_hash
+                    and current["analysis_basis"] == analysis_basis
+                )
+                if matches:
+                    return self._decision_case_from_row(current)  # type: ignore[return-value]
+                raise InvalidStateTransition(
+                    "a locked decision source or basis requires a new case"
+                )
+            self._require_case_revision(current, expected_revision)
+            source = connection.execute(
+                "SELECT mode, state FROM jobs WHERE job_id = ?",
+                (source_id,),
+            ).fetchone()
+            if source is None:
+                raise RecordNotFound(f"unknown Annual Simulation source: {source_id}")
+            if source["mode"] != "annual" or source["state"] != "done":
+                raise InvalidStateTransition(
+                    "decision case source must be a completed Annual Simulation"
+                )
+            try:
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_cases
+                       SET source_annual_job_id = ?, source_snapshot_sha256 = ?,
+                           analysis_basis = ?, source_basis_locked_at = ?,
+                           source_basis_locked_by = ?, revision = revision + 1,
+                           updated_at = ?, updated_by = ?
+                     WHERE case_id = ? AND revision = ?
+                    """,
+                    (
+                        source_id,
+                        source_hash,
+                        analysis_basis,
+                        now_text,
+                        operator,
+                        now_text,
+                        operator,
+                        str(case_id),
+                        expected_revision,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not lock decision case source and basis") from exc
+            if cursor.rowcount != 1:
+                raise StoreConflict("decision case changed while its source was locked")
+            updated = connection.execute(
+                "SELECT * FROM decision_cases WHERE case_id = ?",
+                (str(case_id),),
+            ).fetchone()
+            assert updated is not None
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_case_source_basis_locked",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "source_annual_job_id": source_id,
+                    "source_snapshot_sha256": source_hash,
+                    "analysis_basis": analysis_basis,
+                    "revision": int(updated["revision"]),
+                },
+                created_at=now_text,
+            )
+        return self._decision_case_from_row(updated)  # type: ignore[return-value]
+
+    def transition_decision_case(
+        self,
+        case_id: str,
+        *,
+        expected_revision: int,
+        status: str,
+        operator_name: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply one deterministic lifecycle edge with revision fencing."""
+
+        if status not in DECISION_CASE_STATES:
+            raise ValueError(f"unknown decision case status: {status}")
+        operator = _bounded_text(
+            operator_name, field="operator_name", maximum=200
+        )
+        normalized_reason = _optional_bounded_text(
+            reason, field="reason", maximum=2_000
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            current = self._require_decision_case_row(connection, str(case_id))
+            self._require_case_revision(current, expected_revision)
+            current_status = str(current["status"])
+            if current_status == status:
+                return self._decision_case_from_row(current)  # type: ignore[return-value]
+            if status not in DECISION_CASE_TRANSITIONS[current_status]:
+                raise InvalidStateTransition(
+                    f"cannot move decision case from {current_status} to {status}"
+                )
+            archived_at = now_text if status == "archived" else None
+            try:
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_cases
+                       SET status = ?, archived_at = ?, revision = revision + 1,
+                           updated_at = ?, updated_by = ?
+                     WHERE case_id = ? AND revision = ?
+                    """,
+                    (
+                        status,
+                        archived_at,
+                        now_text,
+                        operator,
+                        str(case_id),
+                        expected_revision,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise InvalidStateTransition(
+                    f"cannot move decision case from {current_status} to {status}"
+                ) from exc
+            if cursor.rowcount != 1:
+                raise StoreConflict("decision case changed during transition")
+            updated = connection.execute(
+                "SELECT * FROM decision_cases WHERE case_id = ?",
+                (str(case_id),),
+            ).fetchone()
+            assert updated is not None
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type=(
+                    "decision_case_archived"
+                    if status == "archived"
+                    else "decision_case_transitioned"
+                ),
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "from_status": current_status,
+                    "to_status": status,
+                    "reason": normalized_reason,
+                    "revision": int(updated["revision"]),
+                },
+                created_at=now_text,
+            )
+        return self._decision_case_from_row(updated)  # type: ignore[return-value]
+
+    def archive_decision_case(
+        self,
+        case_id: str,
+        *,
+        expected_revision: int,
+        operator_name: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        return self.transition_decision_case(
+            case_id,
+            expected_revision=expected_revision,
+            status="archived",
+            operator_name=operator_name,
+            reason=reason,
+        )
+
+    def create_decision_turn(
+        self,
+        case_id: str,
+        *,
+        client_message_id: str,
+        user_message: str,
+        operator_name: str,
+        expected_revision: int | None = None,
+        turn_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist one user message exactly once for an idempotent agent turn."""
+
+        normalized_turn_id = str(turn_id or _new_id("dturn")).strip()
+        if not normalized_turn_id.startswith("dturn_") or len(normalized_turn_id) <= 6:
+            raise ValueError("decision turn ids must use the 'dturn_' prefix")
+        client_id = _bounded_text(
+            client_message_id,
+            field="client_message_id",
+            maximum=200,
+        )
+        message_text = _bounded_text(
+            user_message,
+            field="user_message",
+            maximum=32_000,
+        )
+        operator = _bounded_text(
+            operator_name, field="operator_name", maximum=200
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            existing = connection.execute(
+                """
+                SELECT * FROM decision_agent_turns
+                 WHERE case_id = ? AND client_message_id = ?
+                """,
+                (str(case_id), client_id),
+            ).fetchone()
+            if existing is not None:
+                existing_message = connection.execute(
+                    """
+                    SELECT * FROM decision_messages
+                     WHERE turn_id = ? AND role = 'user'
+                    """,
+                    (existing["turn_id"],),
+                ).fetchone()
+                if (
+                    existing_message is None
+                    or existing_message["content_text"] != message_text
+                    or existing_message["operator_name"] != operator
+                ):
+                    raise StoreConflict(
+                        "client_message_id already identifies a different user message"
+                    )
+                return self._decision_turn_bundle(connection, existing)
+
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(case, expected_revision)
+            message_id = _new_id("dmsg")
+            sequence = self._next_decision_message_sequence(
+                connection, str(case_id)
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_agent_turns (
+                        turn_id, case_id, client_message_id, state, created_by,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, 'pending', ?, ?, ?)
+                    """,
+                    (
+                        normalized_turn_id,
+                        str(case_id),
+                        client_id,
+                        operator,
+                        now_text,
+                        now_text,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO decision_messages (
+                        message_id, case_id, turn_id, message_sequence, role,
+                        status, content_text, structured_output_json,
+                        citations_json, tool_outcomes_json, trace_id,
+                        operator_name, error_code, created_at
+                    ) VALUES (
+                        ?, ?, ?, ?, 'user', 'complete', ?, NULL,
+                        '[]', '[]', NULL, ?, NULL, ?
+                    )
+                    """,
+                    (
+                        message_id,
+                        str(case_id),
+                        normalized_turn_id,
+                        sequence,
+                        message_text,
+                        operator,
+                        now_text,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not create decision agent turn") from exc
+            updated_case = self._touch_decision_case(
+                connection,
+                case,
+                now_text=now_text,
+                operator_name=operator,
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                turn_id=normalized_turn_id,
+                event_type="decision_turn_created",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "turn_id": normalized_turn_id,
+                    "message_id": message_id,
+                    "client_message_id": client_id,
+                    "status": "pending",
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            row = connection.execute(
+                "SELECT * FROM decision_agent_turns WHERE turn_id = ?",
+                (normalized_turn_id,),
+            ).fetchone()
+            assert row is not None
+            return self._decision_turn_bundle(connection, row)
+
+    def get_decision_turn(self, turn_id: str) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM decision_agent_turns WHERE turn_id = ?",
+                (str(turn_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._decision_turn_bundle(connection, row)
+
+    def claim_decision_turn(
+        self,
+        turn_id: str,
+        *,
+        worker_id: str,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Claim a pending turn once and return its fenced private token."""
+
+        worker = _bounded_text(worker_id, field="worker_id", maximum=200)
+        normalized_trace_id = _optional_bounded_text(
+            trace_id, field="trace_id", maximum=200
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM decision_agent_turns WHERE turn_id = ?",
+                (str(turn_id),),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(f"unknown decision turn: {turn_id}")
+            if row["state"] == "claimed" and row["worker_id"] == worker:
+                if (
+                    normalized_trace_id is not None
+                    and row["trace_id"] is not None
+                    and row["trace_id"] != normalized_trace_id
+                ):
+                    raise StoreConflict("decision turn trace id changed")
+                return self._decision_turn_bundle(connection, row)
+            if row["state"] != "pending":
+                raise InvalidStateTransition(
+                    f"cannot claim decision turn in state {row['state']}"
+                )
+            case = self._require_decision_case_row(
+                connection, str(row["case_id"]), mutable=True
+            )
+            claim_token = secrets.token_hex(32)
+            try:
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_agent_turns
+                       SET state = 'claimed', worker_id = ?, claim_token = ?,
+                           trace_id = ?, claimed_at = ?, updated_at = ?
+                     WHERE turn_id = ? AND state = 'pending'
+                    """,
+                    (
+                        worker,
+                        claim_token,
+                        normalized_trace_id,
+                        now_text,
+                        now_text,
+                        str(turn_id),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not claim decision turn") from exc
+            if cursor.rowcount != 1:
+                raise StoreConflict("decision turn was claimed concurrently")
+            updated_case = self._touch_decision_case(
+                connection,
+                case,
+                now_text=now_text,
+                operator_name=f"decision-agent:{worker}"[:200],
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(row["case_id"]),
+                turn_id=str(turn_id),
+                event_type="decision_turn_claimed",
+                actor_kind="decision_agent",
+                trace_id=normalized_trace_id,
+                payload={
+                    "turn_id": str(turn_id),
+                    "status": "claimed",
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            updated = connection.execute(
+                "SELECT * FROM decision_agent_turns WHERE turn_id = ?",
+                (str(turn_id),),
+            ).fetchone()
+            assert updated is not None
+            return self._decision_turn_bundle(connection, updated)
+
+    @staticmethod
+    def _validate_decision_turn_lease(
+        row: sqlite3.Row,
+        *,
+        worker_id: str,
+        claim_token: str,
+    ) -> None:
+        if row["worker_id"] != worker_id or not secrets.compare_digest(
+            str(row["claim_token"] or ""), claim_token
+        ):
+            raise LeaseOwnershipLost(
+                f"runner no longer owns decision turn {row['turn_id']}"
+            )
+
+    def complete_decision_turn(
+        self,
+        turn_id: str,
+        *,
+        worker_id: str,
+        claim_token: str,
+        assistant_message: str,
+        structured_output: Mapping[str, Any] | None,
+        citations: Sequence[Mapping[str, Any]] = (),
+        tool_outcomes: Sequence[Mapping[str, Any]] = (),
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomically persist the final assistant message and replayable event."""
+
+        worker = _bounded_text(worker_id, field="worker_id", maximum=200)
+        token = _bounded_text(claim_token, field="claim_token", maximum=200)
+        message_text = _bounded_text(
+            assistant_message,
+            field="assistant_message",
+            maximum=100_000,
+        )
+        structured_json = (
+            None if structured_output is None else _json_dump(dict(structured_output))
+        )
+        citations_json = _json_dump([dict(item) for item in citations])
+        outcomes_json = _json_dump([dict(item) for item in tool_outcomes])
+        normalized_trace_id = _optional_bounded_text(
+            trace_id, field="trace_id", maximum=200
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM decision_agent_turns WHERE turn_id = ?",
+                (str(turn_id),),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(f"unknown decision turn: {turn_id}")
+            if row["state"] == "completed":
+                self._validate_decision_turn_lease(
+                    row, worker_id=worker, claim_token=token
+                )
+                existing = connection.execute(
+                    """
+                    SELECT * FROM decision_messages
+                     WHERE turn_id = ? AND role = 'assistant'
+                    """,
+                    (str(turn_id),),
+                ).fetchone()
+                if (
+                    existing is None
+                    or existing["content_text"] != message_text
+                    or existing["structured_output_json"] != structured_json
+                    or existing["citations_json"] != citations_json
+                    or existing["tool_outcomes_json"] != outcomes_json
+                ):
+                    raise StoreConflict(
+                        "completed decision turn has a different assistant response"
+                    )
+                return self._decision_turn_bundle(connection, row)
+            if row["state"] != "claimed":
+                raise InvalidStateTransition(
+                    f"cannot complete decision turn in state {row['state']}"
+                )
+            self._validate_decision_turn_lease(
+                row, worker_id=worker, claim_token=token
+            )
+            effective_trace_id = normalized_trace_id or row["trace_id"]
+            if (
+                normalized_trace_id is not None
+                and row["trace_id"] is not None
+                and normalized_trace_id != row["trace_id"]
+            ):
+                raise StoreConflict("decision turn trace id changed")
+            case = self._require_decision_case_row(
+                connection, str(row["case_id"]), mutable=True
+            )
+            message_id = _new_id("dmsg")
+            sequence = self._next_decision_message_sequence(
+                connection, str(row["case_id"])
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_messages (
+                        message_id, case_id, turn_id, message_sequence, role,
+                        status, content_text, structured_output_json,
+                        citations_json, tool_outcomes_json, trace_id,
+                        operator_name, error_code, created_at
+                    ) VALUES (
+                        ?, ?, ?, ?, 'assistant', 'complete', ?, ?, ?, ?, ?,
+                        NULL, NULL, ?
+                    )
+                    """,
+                    (
+                        message_id,
+                        row["case_id"],
+                        str(turn_id),
+                        sequence,
+                        message_text,
+                        structured_json,
+                        citations_json,
+                        outcomes_json,
+                        effective_trace_id,
+                        now_text,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE decision_agent_turns
+                       SET state = 'completed', trace_id = ?, completed_at = ?,
+                           updated_at = ?
+                     WHERE turn_id = ? AND state = 'claimed'
+                    """,
+                    (effective_trace_id, now_text, now_text, str(turn_id)),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not complete decision turn") from exc
+            updated_case = self._touch_decision_case(
+                connection,
+                case,
+                now_text=now_text,
+                operator_name=f"decision-agent:{worker}"[:200],
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(row["case_id"]),
+                turn_id=str(turn_id),
+                event_type="decision_turn_completed",
+                actor_kind="decision_agent",
+                trace_id=effective_trace_id,
+                payload={
+                    "turn_id": str(turn_id),
+                    "status": "completed",
+                    "message": {
+                        "message_id": message_id,
+                        "content": message_text,
+                        "structured_output": _json_load(structured_json),
+                        "citations": _json_load(citations_json),
+                        "trace_id": effective_trace_id,
+                    },
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            updated = connection.execute(
+                "SELECT * FROM decision_agent_turns WHERE turn_id = ?",
+                (str(turn_id),),
+            ).fetchone()
+            assert updated is not None
+            return self._decision_turn_bundle(connection, updated)
+
+    def fail_decision_turn(
+        self,
+        turn_id: str,
+        *,
+        worker_id: str,
+        claim_token: str,
+        assistant_message: str,
+        error_code: str,
+        error_detail: str,
+        structured_output: Mapping[str, Any] | None = None,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomically persist one sanitized terminal failure and error message."""
+
+        worker = _bounded_text(worker_id, field="worker_id", maximum=200)
+        token = _bounded_text(claim_token, field="claim_token", maximum=200)
+        message_text = _bounded_text(
+            assistant_message,
+            field="assistant_message",
+            maximum=100_000,
+        )
+        code = _bounded_text(error_code, field="error_code", maximum=200)
+        detail = _bounded_text(error_detail, field="error_detail", maximum=4_000)
+        structured_json = (
+            None if structured_output is None else _json_dump(dict(structured_output))
+        )
+        normalized_trace_id = _optional_bounded_text(
+            trace_id, field="trace_id", maximum=200
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM decision_agent_turns WHERE turn_id = ?",
+                (str(turn_id),),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(f"unknown decision turn: {turn_id}")
+            if row["state"] == "failed":
+                self._validate_decision_turn_lease(
+                    row, worker_id=worker, claim_token=token
+                )
+                existing = connection.execute(
+                    """
+                    SELECT * FROM decision_messages
+                     WHERE turn_id = ? AND role = 'assistant'
+                    """,
+                    (str(turn_id),),
+                ).fetchone()
+                if (
+                    existing is None
+                    or existing["content_text"] != message_text
+                    or existing["error_code"] != code
+                    or row["error_detail"] != detail
+                    or existing["structured_output_json"] != structured_json
+                ):
+                    raise StoreConflict(
+                        "failed decision turn has a different terminal response"
+                    )
+                return self._decision_turn_bundle(connection, row)
+            if row["state"] != "claimed":
+                raise InvalidStateTransition(
+                    f"cannot fail decision turn in state {row['state']}"
+                )
+            self._validate_decision_turn_lease(
+                row, worker_id=worker, claim_token=token
+            )
+            effective_trace_id = normalized_trace_id or row["trace_id"]
+            if (
+                normalized_trace_id is not None
+                and row["trace_id"] is not None
+                and normalized_trace_id != row["trace_id"]
+            ):
+                raise StoreConflict("decision turn trace id changed")
+            case = self._require_decision_case_row(
+                connection, str(row["case_id"]), mutable=True
+            )
+            message_id = _new_id("dmsg")
+            sequence = self._next_decision_message_sequence(
+                connection, str(row["case_id"])
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_messages (
+                        message_id, case_id, turn_id, message_sequence, role,
+                        status, content_text, structured_output_json,
+                        citations_json, tool_outcomes_json, trace_id,
+                        operator_name, error_code, created_at
+                    ) VALUES (
+                        ?, ?, ?, ?, 'assistant', 'error', ?, ?, '[]', '[]', ?,
+                        NULL, ?, ?
+                    )
+                    """,
+                    (
+                        message_id,
+                        row["case_id"],
+                        str(turn_id),
+                        sequence,
+                        message_text,
+                        structured_json,
+                        effective_trace_id,
+                        code,
+                        now_text,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE decision_agent_turns
+                       SET state = 'failed', trace_id = ?, error_code = ?,
+                           error_detail = ?, failed_at = ?, updated_at = ?
+                     WHERE turn_id = ? AND state = 'claimed'
+                    """,
+                    (
+                        effective_trace_id,
+                        code,
+                        detail,
+                        now_text,
+                        now_text,
+                        str(turn_id),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not fail decision turn") from exc
+            updated_case = self._touch_decision_case(
+                connection,
+                case,
+                now_text=now_text,
+                operator_name=f"decision-agent:{worker}"[:200],
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(row["case_id"]),
+                turn_id=str(turn_id),
+                event_type="decision_turn_failed",
+                actor_kind="decision_agent",
+                trace_id=effective_trace_id,
+                payload={
+                    "turn_id": str(turn_id),
+                    "status": "failed",
+                    "message": {
+                        "message_id": message_id,
+                        "content": message_text,
+                        "structured_output": _json_load(structured_json),
+                        "trace_id": effective_trace_id,
+                    },
+                    "error": {"code": code, "detail": detail},
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            updated = connection.execute(
+                "SELECT * FROM decision_agent_turns WHERE turn_id = ?",
+                (str(turn_id),),
+            ).fetchone()
+            assert updated is not None
+            return self._decision_turn_bundle(connection, updated)
+
+    def mark_stale_claimed_decision_turns_failed(
+        self,
+        *,
+        before: datetime,
+        worker_id: str | None = None,
+        recovery_reason: str = "stale_claim_after_process_restart",
+        error_code: str = "agent_interrupted",
+        error_detail: str = (
+            "The Decision Agent process stopped before the response completed."
+        ),
+    ) -> int:
+        """Fail bounded stale claims, optionally fenced to one exact worker."""
+
+        if not isinstance(before, datetime):
+            raise ValueError("before must be a datetime")
+        cutoff_text = _timestamp(before)
+        worker = _optional_bounded_text(
+            worker_id, field="worker_id", maximum=200
+        )
+        reason = _bounded_text(
+            recovery_reason, field="recovery_reason", maximum=200
+        )
+        code = _bounded_text(error_code, field="error_code", maximum=200)
+        detail = _bounded_text(error_detail, field="error_detail", maximum=4_000)
+        assistant_message = (
+            "The Decision Agent was interrupted before it finished. "
+            "Please retry your question."
+        )
+        now_text = _timestamp(self._current_time())
+        recovered = 0
+        with self._transaction(write=True) as connection:
+            worker_clause = "" if worker is None else " AND worker_id = ?"
+            parameters = (
+                (cutoff_text,) if worker is None else (cutoff_text, worker)
+            )
+            stale_rows = connection.execute(
+                f"""
+                SELECT * FROM decision_agent_turns
+                 WHERE state = 'claimed' AND claimed_at < ?{worker_clause}
+                 ORDER BY claimed_at ASC, turn_id ASC
+                """,
+                parameters,
+            ).fetchall()
+            for row in stale_rows:
+                existing_message = connection.execute(
+                    """
+                    SELECT 1 FROM decision_messages
+                     WHERE turn_id = ? AND role = 'assistant'
+                    """,
+                    (row["turn_id"],),
+                ).fetchone()
+                if existing_message is not None:
+                    raise StoreConflict(
+                        "claimed decision turn already has an assistant message"
+                    )
+                case = self._require_decision_case_row(
+                    connection, str(row["case_id"])
+                )
+                message_id = _new_id("dmsg")
+                sequence = self._next_decision_message_sequence(
+                    connection, str(row["case_id"])
+                )
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO decision_messages (
+                            message_id, case_id, turn_id, message_sequence, role,
+                            status, content_text, structured_output_json,
+                            citations_json, tool_outcomes_json, trace_id,
+                            operator_name, error_code, created_at
+                        ) VALUES (
+                            ?, ?, ?, ?, 'assistant', 'error', ?, NULL,
+                            '[]', '[]', ?, NULL, ?, ?
+                        )
+                        """,
+                        (
+                            message_id,
+                            row["case_id"],
+                            row["turn_id"],
+                            sequence,
+                            assistant_message,
+                            row["trace_id"],
+                            code,
+                            now_text,
+                        ),
+                    )
+                    cursor = connection.execute(
+                        """
+                        UPDATE decision_agent_turns
+                           SET state = 'failed', error_code = ?, error_detail = ?,
+                               failed_at = ?, updated_at = ?
+                         WHERE turn_id = ? AND state = 'claimed'
+                           AND worker_id = ? AND claim_token = ?
+                        """,
+                        (
+                            code,
+                            detail,
+                            now_text,
+                            now_text,
+                            row["turn_id"],
+                            row["worker_id"],
+                            row["claim_token"],
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise StoreConflict(
+                        "could not recover stale decision turn"
+                    ) from exc
+                if cursor.rowcount != 1:
+                    raise StoreConflict(
+                        "decision turn changed during stale-claim recovery"
+                    )
+                updated_case = self._touch_decision_case(
+                    connection,
+                    case,
+                    now_text=now_text,
+                    operator_name="system:decision-agent-recovery",
+                )
+                self._insert_decision_event(
+                    connection,
+                    case_id=str(row["case_id"]),
+                    turn_id=str(row["turn_id"]),
+                    event_type="decision_turn_failed",
+                    actor_kind="system",
+                    trace_id=row["trace_id"],
+                    payload={
+                        "turn_id": str(row["turn_id"]),
+                        "status": "failed",
+                        "message": {
+                            "message_id": message_id,
+                            "content": assistant_message,
+                            "structured_output": None,
+                            "trace_id": row["trace_id"],
+                        },
+                        "error": {"code": code, "detail": detail},
+                        "recovery_reason": reason,
+                        "case_revision": int(updated_case["revision"]),
+                    },
+                    created_at=now_text,
+                )
+                recovered += 1
+        return recovered
+
+    def list_decision_messages(
+        self,
+        case_id: str,
+        *,
+        limit: int = 20,
+        before_message_sequence: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return bounded chronological conversation context for one case."""
+
+        if limit <= 0:
+            return []
+        if limit > 200:
+            raise ValueError("decision message limit cannot exceed 200")
+        parameters: list[Any] = [str(case_id)]
+        before_clause = ""
+        if before_message_sequence is not None:
+            if (
+                isinstance(before_message_sequence, bool)
+                or not isinstance(before_message_sequence, int)
+                or before_message_sequence <= 0
+            ):
+                raise ValueError("before_message_sequence must be a positive integer")
+            before_clause = " AND message_sequence < ?"
+            parameters.append(before_message_sequence)
+        parameters.append(int(limit))
+        with self._transaction() as connection:
+            self._require_decision_case_row(connection, str(case_id))
+            rows = connection.execute(
+                "SELECT * FROM ("
+                "SELECT * FROM decision_messages WHERE case_id = ?"
+                + before_clause
+                + " ORDER BY message_sequence DESC LIMIT ?"
+                ") ORDER BY message_sequence ASC",
+                parameters,
+            ).fetchall()
+        return [
+            self._decision_message_from_row(row) for row in rows
+        ]  # type: ignore[misc]
+
+    def list_decision_events(
+        self,
+        case_id: str,
+        *,
+        after_event_sequence: int = 0,
+        turn_id: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Replay ordered case or turn events strictly after a durable cursor."""
+
+        if (
+            isinstance(after_event_sequence, bool)
+            or not isinstance(after_event_sequence, int)
+            or after_event_sequence < 0
+        ):
+            raise ValueError("after_event_sequence must be a nonnegative integer")
+        if limit <= 0:
+            return []
+        if limit > 1_000:
+            raise ValueError("decision event limit cannot exceed 1000")
+        clauses = ["case_id = ?", "event_sequence > ?"]
+        parameters: list[Any] = [str(case_id), after_event_sequence]
+        if turn_id is not None:
+            clauses.append("turn_id = ?")
+            parameters.append(str(turn_id))
+        parameters.append(int(limit))
+        with self._transaction() as connection:
+            self._require_decision_case_row(connection, str(case_id))
+            if turn_id is not None:
+                owned = connection.execute(
+                    """
+                    SELECT 1 FROM decision_agent_turns
+                     WHERE turn_id = ? AND case_id = ?
+                    """,
+                    (str(turn_id), str(case_id)),
+                ).fetchone()
+                if owned is None:
+                    raise RecordNotFound(
+                        f"unknown decision turn for case {case_id}: {turn_id}"
+                    )
+            rows = connection.execute(
+                "SELECT * FROM decision_events WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY event_sequence ASC LIMIT ?",
+                parameters,
+            ).fetchall()
+        return [
+            self._decision_event_from_row(row) for row in rows
+        ]  # type: ignore[misc]
+
+    def create_decision_evidence_asset(
+        self,
+        case_id: str,
+        *,
+        original_filename: str,
+        display_filename: str,
+        media_type: str,
+        sha256: str,
+        byte_count: int,
+        storage_key: str,
+        evidence_class: str,
+        operator_name: str,
+        candidates: Sequence[Mapping[str, Any]] = (),
+        extraction_status: str = "complete",
+        extraction_metadata: Mapping[str, Any] | None = None,
+        source_metadata: Mapping[str, Any] | None = None,
+        declared_media_type: str | None = None,
+        expected_revision: int | None = None,
+        evidence_asset_id: str | None = None,
+        max_file_bytes: int = DECISION_EVIDENCE_MAX_FILE_BYTES,
+        max_files_per_case: int = DECISION_EVIDENCE_MAX_FILES_PER_CASE,
+        max_case_bytes: int = DECISION_EVIDENCE_MAX_CASE_BYTES,
+    ) -> dict[str, Any]:
+        """Atomically register one verified blob and all extracted candidates."""
+
+        asset_id = str(evidence_asset_id or _new_id("evi")).strip()
+        if not asset_id.startswith("evi_") or len(asset_id) <= 4:
+            raise ValueError("decision evidence ids must use the 'evi_' prefix")
+        if evidence_class not in DECISION_EVIDENCE_CLASSES:
+            raise ValueError("unsupported decision evidence class")
+        filename = _bounded_text(
+            original_filename, field="original_filename", maximum=255
+        )
+        display = _bounded_text(
+            display_filename, field="display_filename", maximum=255
+        )
+        for field, value in (
+            ("original_filename", filename),
+            ("display_filename", display),
+        ):
+            if (
+                value.startswith(".")
+                or "/" in value
+                or "\\" in value
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise ValueError(f"{field} is unsafe")
+        detected_media_type = str(media_type).strip().lower()
+        declared = str(declared_media_type or detected_media_type).strip().lower()
+        if declared != detected_media_type:
+            raise ValueError("declared and detected evidence media types differ")
+        content_hash = self._validate_sha256(sha256, field="sha256")
+        expected_storage_key, extension = _decision_evidence_storage_key(
+            content_hash, detected_media_type
+        )
+        if str(storage_key).strip() != expected_storage_key:
+            raise ValueError(
+                "storage_key must be the canonical decision evidence content address"
+            )
+        if isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count <= 0:
+            raise ValueError("byte_count must be a positive integer")
+        for field, value in (
+            ("max_file_bytes", max_file_bytes),
+            ("max_files_per_case", max_files_per_case),
+            ("max_case_bytes", max_case_bytes),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{field} must be a positive integer")
+        if byte_count > max_file_bytes:
+            raise EvidenceLimitExceeded(
+                f"decision evidence file exceeds {max_file_bytes} bytes"
+            )
+        if extraction_status not in {"complete", "not_supported", "failed"}:
+            raise ValueError("unsupported evidence extraction status")
+        if extraction_status != "complete" and candidates:
+            raise ValueError("only complete extraction may include candidates")
+        operator = _bounded_text(
+            operator_name, field="operator_name", maximum=200
+        )
+        extraction_json = _json_dump(dict(extraction_metadata or {}))
+        source_json = _json_dump(dict(source_metadata or {}))
+        now_text = _timestamp(self._current_time())
+
+        normalized_candidates: list[dict[str, Any]] = []
+        seen_candidate_ids: set[str] = set()
+        for raw_candidate in candidates:
+            if not isinstance(raw_candidate, Mapping):
+                raise ValueError("each evidence candidate must be an object")
+            candidate_id = str(
+                raw_candidate.get("evidence_candidate_id") or _new_id("evc")
+            ).strip()
+            if not candidate_id.startswith("evc_") or len(candidate_id) <= 4:
+                raise ValueError("evidence candidate ids must use the 'evc_' prefix")
+            if candidate_id in seen_candidate_ids:
+                raise ValueError("evidence candidate ids must be unique")
+            seen_candidate_ids.add(candidate_id)
+            field_name = _bounded_text(
+                raw_candidate.get("field_name"),
+                field="candidate field_name",
+                maximum=300,
+            )
+            unit = _optional_bounded_text(
+                raw_candidate.get("unit"),
+                field="candidate unit",
+                maximum=100,
+            )
+            confidence = raw_candidate.get("confidence")
+            if (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not math.isfinite(float(confidence))
+                or not 0 <= float(confidence) <= 1
+            ):
+                raise ValueError("candidate confidence must be between zero and one")
+            source_location = raw_candidate.get("source_location")
+            if not isinstance(source_location, Mapping):
+                raise ValueError("candidate source_location must be an object")
+            normalized_candidates.append(
+                {
+                    "id": candidate_id,
+                    "field_name": field_name,
+                    "value_json": _json_dump(raw_candidate.get("value")),
+                    "unit": unit,
+                    "confidence": float(confidence),
+                    "source_location_json": _json_dump(dict(source_location)),
+                }
+            )
+
+        with self._transaction(write=True) as connection:
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(case, expected_revision)
+            usage = connection.execute(
+                """
+                SELECT COUNT(*) AS file_count,
+                       COALESCE(SUM(byte_count), 0) AS byte_count
+                  FROM decision_evidence_assets
+                 WHERE case_id = ? AND removed_at IS NULL
+                """,
+                (str(case_id),),
+            ).fetchone()
+            if int(usage["file_count"]) + 1 > max_files_per_case:
+                raise EvidenceLimitExceeded(
+                    f"decision case cannot contain more than {max_files_per_case} files"
+                )
+            if int(usage["byte_count"]) + byte_count > max_case_bytes:
+                raise EvidenceLimitExceeded(
+                    f"decision case evidence exceeds {max_case_bytes} bytes"
+                )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_evidence_assets (
+                        evidence_asset_id, case_id, evidence_class,
+                        original_filename, display_filename,
+                        declared_media_type, detected_media_type,
+                        canonical_extension, sha256, byte_count, storage_key,
+                        extraction_status, extraction_metadata_json,
+                        source_metadata_json, uploaded_by, uploaded_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        asset_id,
+                        str(case_id),
+                        evidence_class,
+                        filename,
+                        display,
+                        declared,
+                        detected_media_type,
+                        extension,
+                        content_hash,
+                        byte_count,
+                        expected_storage_key,
+                        extraction_status,
+                        extraction_json,
+                        source_json,
+                        operator,
+                        now_text,
+                    ),
+                )
+                for candidate in normalized_candidates:
+                    connection.execute(
+                        """
+                        INSERT INTO decision_evidence_candidates (
+                            evidence_candidate_id, evidence_asset_id, case_id,
+                            field_name, value_json, unit, confidence,
+                            source_location_json, extracted_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            candidate["id"],
+                            asset_id,
+                            str(case_id),
+                            candidate["field_name"],
+                            candidate["value_json"],
+                            candidate["unit"],
+                            candidate["confidence"],
+                            candidate["source_location_json"],
+                            now_text,
+                        ),
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not register decision evidence") from exc
+            updated_case = self._touch_decision_case(
+                connection,
+                case,
+                now_text=now_text,
+                operator_name=operator,
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_evidence_uploaded",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "evidence_asset_id": asset_id,
+                    "sha256": content_hash,
+                    "byte_count": byte_count,
+                    "media_type": detected_media_type,
+                    "evidence_class": evidence_class,
+                    "candidate_count": len(normalized_candidates),
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM decision_evidence_assets
+                 WHERE evidence_asset_id = ?
+                """,
+                (asset_id,),
+            ).fetchone()
+            assert row is not None
+            return self._decision_evidence_asset_bundle(connection, row)
+
+    def get_decision_evidence_asset(
+        self,
+        evidence_asset_id: str,
+    ) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM decision_evidence_assets
+                 WHERE evidence_asset_id = ?
+                """,
+                (str(evidence_asset_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._decision_evidence_asset_bundle(connection, row)
+
+    def list_decision_evidence_assets(
+        self,
+        case_id: str,
+        *,
+        include_removed: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        if limit > 500:
+            raise ValueError("decision evidence limit cannot exceed 500")
+        removed_clause = "" if include_removed else " AND removed_at IS NULL"
+        with self._transaction() as connection:
+            self._require_decision_case_row(connection, str(case_id))
+            rows = connection.execute(
+                "SELECT * FROM decision_evidence_assets WHERE case_id = ?"
+                + removed_clause
+                + " ORDER BY uploaded_at DESC, evidence_asset_id DESC LIMIT ?",
+                (str(case_id), int(limit)),
+            ).fetchall()
+            return [
+                self._decision_evidence_asset_bundle(connection, row) for row in rows
+            ]
+
+    def decision_evidence_storage_is_referenced(
+        self,
+        storage_key: str,
+        *,
+        exclude_evidence_asset_id: str | None = None,
+    ) -> bool:
+        """Return whether verified private bytes must still be retained."""
+
+        key = _bounded_text(storage_key, field="storage_key", maximum=500)
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT 1
+                  FROM decision_evidence_assets a
+                 WHERE a.storage_key = ?
+                   AND (
+                        (
+                            a.removed_at IS NULL
+                            AND (? IS NULL OR a.evidence_asset_id <> ?)
+                        )
+                        OR EXISTS (
+                            SELECT 1 FROM decision_evidence_receipts r
+                             WHERE r.evidence_asset_id = a.evidence_asset_id
+                               AND r.decision = 'accepted'
+                        )
+                   )
+                 LIMIT 1
+                """,
+                (
+                    key,
+                    exclude_evidence_asset_id,
+                    exclude_evidence_asset_id,
+                ),
+            ).fetchone()
+        return row is not None
+
+    def tombstone_decision_evidence_asset(
+        self,
+        evidence_asset_id: str,
+        *,
+        operator_name: str,
+        reason: str,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Tombstone unaccepted evidence while retaining immutable audit rows."""
+
+        operator = _bounded_text(
+            operator_name, field="operator_name", maximum=200
+        )
+        normalized_reason = _bounded_text(reason, field="reason", maximum=2_000)
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM decision_evidence_assets
+                 WHERE evidence_asset_id = ?
+                """,
+                (str(evidence_asset_id),),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(
+                    f"unknown decision evidence: {evidence_asset_id}"
+                )
+            if row["removed_at"] is not None:
+                return self._decision_evidence_asset_bundle(connection, row)
+            case = self._require_decision_case_row(
+                connection, str(row["case_id"]), mutable=True
+            )
+            self._require_case_revision(case, expected_revision)
+            accepted = connection.execute(
+                """
+                SELECT evidence_receipt_id FROM decision_evidence_receipts
+                 WHERE evidence_asset_id = ? AND decision = 'accepted'
+                 LIMIT 1
+                """,
+                (str(evidence_asset_id),),
+            ).fetchone()
+            if accepted is not None:
+                raise InvalidStateTransition(
+                    "accepted decision evidence cannot be removed"
+                )
+            try:
+                connection.execute(
+                    """
+                    UPDATE decision_evidence_assets
+                       SET removed_by = ?, removed_reason = ?, removed_at = ?
+                     WHERE evidence_asset_id = ? AND removed_at IS NULL
+                    """,
+                    (
+                        operator,
+                        normalized_reason,
+                        now_text,
+                        str(evidence_asset_id),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise InvalidStateTransition(
+                    "decision evidence cannot be removed"
+                ) from exc
+            updated_case = self._touch_decision_case(
+                connection,
+                case,
+                now_text=now_text,
+                operator_name=operator,
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(row["case_id"]),
+                event_type="decision_evidence_removed",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "evidence_asset_id": str(evidence_asset_id),
+                    "reason": normalized_reason,
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            updated = connection.execute(
+                """
+                SELECT * FROM decision_evidence_assets
+                 WHERE evidence_asset_id = ?
+                """,
+                (str(evidence_asset_id),),
+            ).fetchone()
+            assert updated is not None
+            return self._decision_evidence_asset_bundle(connection, updated)
+
+    def record_decision_evidence_review(
+        self,
+        evidence_candidate_id: str,
+        *,
+        decision: str,
+        operator_name: str,
+        rationale: str | None = None,
+        expected_revision: int | None = None,
+        evidence_receipt_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Append exactly one immutable acceptance or rejection receipt."""
+
+        if decision not in DECISION_EVIDENCE_DECISIONS:
+            raise ValueError("evidence decision must be accepted or rejected")
+        operator = _bounded_text(
+            operator_name, field="operator_name", maximum=200
+        )
+        normalized_rationale = _optional_bounded_text(
+            rationale, field="rationale", maximum=4_000
+        )
+        receipt_id = str(evidence_receipt_id or _new_id("evr")).strip()
+        if not receipt_id.startswith("evr_") or len(receipt_id) <= 4:
+            raise ValueError("evidence receipt ids must use the 'evr_' prefix")
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            joined = connection.execute(
+                """
+                SELECT c.*, a.evidence_class, a.sha256 AS asset_sha256,
+                       a.byte_count AS asset_byte_count,
+                       a.detected_media_type, a.removed_at
+                  FROM decision_evidence_candidates c
+                  JOIN decision_evidence_assets a
+                    ON a.evidence_asset_id = c.evidence_asset_id
+                   AND a.case_id = c.case_id
+                 WHERE c.evidence_candidate_id = ?
+                """,
+                (str(evidence_candidate_id),),
+            ).fetchone()
+            if joined is None:
+                raise RecordNotFound(
+                    f"unknown decision evidence candidate: {evidence_candidate_id}"
+                )
+            existing = connection.execute(
+                """
+                SELECT * FROM decision_evidence_receipts
+                 WHERE evidence_candidate_id = ?
+                """,
+                (str(evidence_candidate_id),),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["decision"] == decision
+                    and existing["operator_name"] == operator
+                    and existing["rationale"] == normalized_rationale
+                ):
+                    return self._decision_evidence_receipt_from_row(
+                        existing
+                    )  # type: ignore[return-value]
+                raise StoreConflict("evidence candidate was already reviewed")
+            if joined["removed_at"] is not None:
+                raise InvalidStateTransition("removed evidence cannot be reviewed")
+            if (
+                decision == "accepted"
+                and joined["evidence_class"]
+                in {"engineering_judgment", "secondary_synthesis"}
+                and normalized_rationale is None
+            ):
+                raise ValueError("provisional evidence acceptance requires a rationale")
+            case = self._require_decision_case_row(
+                connection, str(joined["case_id"]), mutable=True
+            )
+            self._require_case_revision(case, expected_revision)
+            receipt_payload = {
+                "schema_version": 1,
+                "preservation_mode": "server_managed_content_v1",
+                "evidence_receipt_id": receipt_id,
+                "case_id": str(joined["case_id"]),
+                "evidence_asset_id": str(joined["evidence_asset_id"]),
+                "evidence_candidate_id": str(evidence_candidate_id),
+                "decision": decision,
+                "evidence_class": str(joined["evidence_class"]),
+                "candidate": {
+                    "field_name": str(joined["field_name"]),
+                    "value": _json_load(str(joined["value_json"])),
+                    "unit": joined["unit"],
+                    "confidence": float(joined["confidence"]),
+                    "source_location": _json_load(
+                        str(joined["source_location_json"])
+                    ),
+                },
+                "content": {
+                    "sha256": str(joined["asset_sha256"]),
+                    "byte_count": int(joined["asset_byte_count"]),
+                    "media_type": str(joined["detected_media_type"]),
+                },
+                "review": {
+                    "operator_name": operator,
+                    "rationale": normalized_rationale,
+                    "reviewed_at": now_text,
+                },
+            }
+            receipt_json = _json_dump(receipt_payload)
+            receipt_hash = _sha256_text(receipt_json)
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_evidence_receipts (
+                        evidence_receipt_id, evidence_candidate_id,
+                        evidence_asset_id, case_id, decision, evidence_class,
+                        field_name, value_json, unit, confidence,
+                        source_location_json, asset_sha256, asset_byte_count,
+                        preservation_mode, operator_name, rationale, reviewed_at,
+                        receipt_json, receipt_sha256
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        'server_managed_content_v1', ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        receipt_id,
+                        str(evidence_candidate_id),
+                        joined["evidence_asset_id"],
+                        joined["case_id"],
+                        decision,
+                        joined["evidence_class"],
+                        joined["field_name"],
+                        joined["value_json"],
+                        joined["unit"],
+                        joined["confidence"],
+                        joined["source_location_json"],
+                        joined["asset_sha256"],
+                        joined["asset_byte_count"],
+                        operator,
+                        normalized_rationale,
+                        now_text,
+                        receipt_json,
+                        receipt_hash,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not record evidence review") from exc
+            updated_case = self._touch_decision_case(
+                connection,
+                case,
+                now_text=now_text,
+                operator_name=operator,
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(joined["case_id"]),
+                event_type="decision_evidence_reviewed",
+                actor_kind="operator",
+                operator_name=operator,
+                payload={
+                    "evidence_receipt_id": receipt_id,
+                    "evidence_asset_id": str(joined["evidence_asset_id"]),
+                    "evidence_candidate_id": str(evidence_candidate_id),
+                    "decision": decision,
+                    "evidence_class": str(joined["evidence_class"]),
+                    "receipt_sha256": receipt_hash,
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            receipt_row = connection.execute(
+                """
+                SELECT * FROM decision_evidence_receipts
+                 WHERE evidence_receipt_id = ?
+                """,
+                (receipt_id,),
+            ).fetchone()
+            assert receipt_row is not None
+            return self._decision_evidence_receipt_from_row(
+                receipt_row
+            )  # type: ignore[return-value]
+
     def snapshot_state(
         self, *, mode: str | None = None, recent_limit: int = 10
     ) -> dict[str, Any]:
@@ -2932,6 +5803,15 @@ __all__ = [
     "AgentStore",
     "AgentStoreError",
     "COMPARISON_KINDS",
+    "DECISION_CASE_STATES",
+    "DECISION_CASE_TRANSITIONS",
+    "DECISION_EVIDENCE_CLASSES",
+    "DECISION_EVIDENCE_DECISIONS",
+    "DECISION_EVIDENCE_MAX_CASE_BYTES",
+    "DECISION_EVIDENCE_MAX_FILE_BYTES",
+    "DECISION_EVIDENCE_MAX_FILES_PER_CASE",
+    "DECISION_TURN_STATES",
+    "EvidenceLimitExceeded",
     "InvalidStateTransition",
     "JOB_STATES",
     "LeaseOwnershipLost",

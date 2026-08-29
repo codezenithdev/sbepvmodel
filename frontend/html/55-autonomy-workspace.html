@@ -1,9 +1,9 @@
-            <div class="autonomy-only" id="autonomyPanel" data-autonomy-case-id="case_sbe_hybrid_001" data-autonomy-case-revision="revision_003" data-autonomy-fixture="new-case" data-mobile-section="ask">
+            <div class="autonomy-only" id="autonomyPanel" data-autonomy-case-id="case_sbe_hybrid_001" data-autonomy-case-revision="revision_003" data-autonomy-fixture="new-case" data-content-mode="live" data-mobile-section="ask">
                 <section class="autonomy-shell" aria-labelledby="autonomyWorkspaceHeading">
                     <div class="autonomy-fixture-toolbar" role="region" aria-labelledby="autonomyFixtureHeading">
                         <div class="autonomy-fixture-copy">
-                            <p class="autonomy-eyebrow" id="autonomyFixtureHeading">Phase 1 preview</p>
-                            <p><strong>Fixture-only workspace.</strong> Local preview data never creates jobs, saves evidence, calls an agent, or changes an existing dashboard workflow.</p>
+                            <p class="autonomy-eyebrow" id="autonomyFixtureHeading">Later-phase preview states</p>
+                            <p>Select a deterministic fixture to inspect Compare, Run TEA, or Decide without changing the live case.</p>
                         </div>
                         <label class="autonomy-field autonomy-fixture-field" for="autonomyFixtureSelect">
                             <span>Fixture state</span>
@@ -31,9 +31,23 @@
                                 <option value="network-reconnecting">Message stream reconnecting</option>
                                 <option value="shared-case-stale">Shared case changed</option>
                             </select>
-                            <small id="autonomyFixtureHelp">Changes only deterministic local presentation state.</small>
+                            <small id="autonomyFixtureHelp">Fixture selection changes only local presentation state.</small>
                         </label>
+                        <button class="autonomy-button autonomy-button-secondary" id="autonomyReturnLiveBtn" type="button" hidden>Return to live case</button>
                     </div>
+
+                    <section class="autonomy-fixture-notice autonomy-content-mode-notice" id="autonomyContentModeNotice" role="note" hidden>
+                        <strong>Later-phase fixture preview — not live case data.</strong>
+                        Compare, Run TEA, Decide, confirmation, results, and sign-off remain deterministic local demonstrations in this phase.
+                    </section>
+
+                    <section class="autonomy-live-toolbar" id="autonomyLiveToolbar" aria-label="Live decision-case connection" data-autonomy-live-only>
+                        <label class="autonomy-field" for="autonomyOperatorName">
+                            <span>Named operator</span>
+                            <input id="autonomyOperatorName" type="text" autocomplete="name" placeholder="Enter your name" required>
+                        </label>
+                        <p id="autonomyConnectionStatus" role="status">Open Autonomy to load durable decision cases.</p>
+                    </section>
 
                     <header class="autonomy-case-header" id="autonomyCaseHeader">
                         <section class="autonomy-empty-case" id="autonomyCaseEmpty" aria-labelledby="autonomyEmptyHeading" hidden>
@@ -189,7 +203,9 @@
                                     <span class="autonomy-status-badge" id="autonomyAgentStatus" data-status="available">Available · local fixture</span>
                                 </header>
 
-                                <div class="autonomy-agent-thread" aria-label="Decision Agent fixture conversation">
+                                <div class="autonomy-agent-thread" id="autonomyAgentThread" role="log" aria-label="Decision Agent conversation">
+                                    <div id="autonomyLiveMessageList" data-autonomy-live-only></div>
+                                    <div id="autonomyFixtureConversation" data-autonomy-fixture-only>
                                     <article class="autonomy-user-message">
                                         <p class="autonomy-message-author">You</p>
                                         <p>What is driving the performance and cost difference between the two systems?</p>
@@ -224,6 +240,7 @@
                                         <p><span class="autonomy-basis-chip" data-basis="agent">Agent interpretation</span> Draft only · deterministic validation has authority.</p>
                                         <button class="autonomy-button autonomy-button-secondary" type="button" data-autonomy-proposal-action="review">Review draft differences</button>
                                     </section>
+                                    </div>
                                 </div>
 
                                 <div class="autonomy-starter-prompts" aria-label="Suggested fixture questions">
@@ -233,13 +250,13 @@
                                 </div>
 
                                 <form class="autonomy-agent-composer" id="autonomyAgentForm">
-                                    <label for="autonomyAgentComposer">Ask a fixture question</label>
+                                    <label for="autonomyAgentComposer">Ask the Decision Agent</label>
                                     <textarea id="autonomyAgentComposer" rows="3" placeholder="Ask why, what, or what could reverse the decision"></textarea>
                                     <div>
                                         <button class="autonomy-button autonomy-button-secondary" type="button" data-autonomy-attach-evidence>Attach evidence</button>
-                                        <button class="autonomy-button autonomy-button-primary" id="autonomyAgentSendBtn" type="button">Preview response</button>
+                                        <button class="autonomy-button autonomy-button-primary" id="autonomyAgentSendBtn" type="button">Send</button>
                                     </div>
-                                    <small>No network request is made.</small>
+                                    <small id="autonomyAgentComposerHelp">Messages are stored with the durable case. The agent can explain but cannot execute work or approve evidence.</small>
                                 </form>
                             </aside>
 
@@ -301,20 +318,50 @@
                                             <p>Blocked and provisional items explain what remains safe and offer one supported recovery.</p>
                                         </div>
                                     </header>
-                                    <div class="autonomy-checklist" role="list" aria-label="Readiness checks">
+                                    <section class="autonomy-source-selection" id="autonomy-source-selection" aria-labelledby="autonomySourceSelectionHeading" tabindex="-1" data-autonomy-live-only>
+                                        <div>
+                                            <p class="autonomy-eyebrow">Immutable decision basis</p>
+                                            <h4 id="autonomySourceSelectionHeading">Select the verified Annual source and analysis basis</h4>
+                                            <p>Choose one eligible completed Annual Simulation and the approved basis. A named operator must lock both together; the lock cannot be changed later.</p>
+                                        </div>
+                                        <form id="autonomySourceLockForm">
+                                            <div class="autonomy-source-selection-fields">
+                                                <label class="autonomy-field" for="autonomyAnnualSourceSelect">
+                                                    <span>Eligible Annual source</span>
+                                                    <select id="autonomyAnnualSourceSelect">
+                                                        <option value="">Select an eligible Annual source</option>
+                                                    </select>
+                                                </label>
+                                                <label class="autonomy-field" for="autonomyAnalysisBasisSelect">
+                                                    <span>Analysis basis</span>
+                                                    <select id="autonomyAnalysisBasisSelect">
+                                                        <option value="">Select an approved analysis basis</option>
+                                                    </select>
+                                                </label>
+                                            </div>
+                                            <div class="autonomy-source-selection-actions">
+                                                <button class="autonomy-button autonomy-button-primary" id="autonomySourceLockBtn" type="submit">Lock source and analysis basis</button>
+                                                <p id="autonomySourceLockStatus" role="status">Loading eligible Annual sources…</p>
+                                            </div>
+                                        </form>
+                                    </section>
+                                    <div class="autonomy-checklist" id="autonomyLiveReadinessChecklist" role="list" aria-label="Live readiness checks" data-autonomy-live-only></div>
+                                    <div class="autonomy-checklist" role="list" aria-label="Fixture readiness checks" data-autonomy-fixture-only>
                                         <article role="listitem" data-status="passed"><span>Passed</span><div><h4>Promoted calibration lineage</h4><p>Review and source hash agree with the selected Annual source.</p></div></article>
                                         <article role="listitem" data-status="passed"><span>Passed</span><div><h4>Annual source integrity</h4><p><span class="autonomy-basis-chip" data-basis="measured">Measured fact</span> Eleven complete paired weather years remain source verified.</p></div></article>
                                         <article role="listitem" data-status="needs-attention"><span>Needs attention</span><div><h4>Maintenance evidence</h4><p>One secondary synthesis value needs named rationale before a runnable request.</p></div></article>
                                     </div>
                                     <section class="autonomy-source-timeline" aria-labelledby="autonomySourceTimelineHeading">
                                         <h4 id="autonomySourceTimelineHeading">Source lineage</h4>
-                                        <ol>
+                                        <ol id="autonomyLiveEventTimeline" data-autonomy-live-only></ol>
+                                        <ol data-autonomy-fixture-only>
                                             <li><strong>Calibration promoted</strong><span>Reviewed validation · cal_2026_spring</span></li>
                                             <li><strong>Annual source completed</strong><span>ann_2024_verified_017 · 11 eligible years</span></li>
                                             <li><strong>TEA basis locked</strong><span>SolarTAC site · applied-capacity normalization</span></li>
                                         </ol>
                                     </section>
-                                    <section class="autonomy-evidence-candidate" aria-labelledby="autonomyCandidateHeading">
+                                    <div id="autonomyLiveEvidenceCandidates" class="autonomy-live-candidate-list" data-autonomy-live-only></div>
+                                    <section class="autonomy-evidence-candidate" aria-labelledby="autonomyCandidateHeading" data-autonomy-fixture-only>
                                         <div>
                                             <p class="autonomy-eyebrow">Candidate evidence · provisional</p>
                                             <h4 id="autonomyCandidateHeading">Annual optimizer maintenance allowance</h4>
@@ -466,6 +513,26 @@
                                 </div>
                                 <div class="autonomy-rail-body">
                                     <section id="autonomyRailEvidencePanel" role="tabpanel" aria-labelledby="autonomyRailEvidenceTab" data-autonomy-rail-panel="evidence">
+                                        <form class="autonomy-evidence-upload" id="autonomyEvidenceUploadForm" data-autonomy-live-only>
+                                            <h4>Add evidence</h4>
+                                            <p>PDF, XLSX, CSV, PNG, JPEG, or WebP only. Maximum 10 MB per file, 10 files, and 50 MB per case.</p>
+                                            <label class="autonomy-field" for="autonomyEvidenceClass"><span>Evidence class</span>
+                                                <select id="autonomyEvidenceClass">
+                                                    <option value="project_actual">Project actual</option>
+                                                    <option value="direct_quote_or_primary_document">Direct quote or primary document</option>
+                                                    <option value="public_market_proxy_or_benchmark">Public benchmark</option>
+                                                    <option value="engineering_judgment">Engineering judgment · provisional</option>
+                                                    <option value="secondary_synthesis">Secondary synthesis · provisional</option>
+                                                </select>
+                                            </label>
+                                            <label class="autonomy-field" for="autonomyEvidenceFileInput"><span>Files</span>
+                                                <input id="autonomyEvidenceFileInput" type="file" accept=".pdf,.xlsx,.csv,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,image/png,image/jpeg,image/webp" multiple>
+                                            </label>
+                                            <button class="autonomy-button autonomy-button-primary" id="autonomyEvidenceUploadBtn" type="submit">Upload selected evidence</button>
+                                            <p id="autonomyEvidenceUploadStatus" role="status"></p>
+                                        </form>
+                                        <div id="autonomyLiveEvidenceList" class="autonomy-live-evidence-list" data-autonomy-live-only></div>
+                                        <div data-autonomy-fixture-only>
                                         <article class="autonomy-evidence-record" data-status="accepted">
                                             <div><span>Project actual</span><strong>Accepted</strong></div>
                                             <h4>Annual energy lineage</h4>
@@ -481,6 +548,7 @@
                                             <h4>Installation labor productivity</h4>
                                             <p>Two fixture sources remain side by side until a human chooses the applicable scope.</p>
                                         </article>
+                                        </div>
                                     </section>
                                     <section id="autonomyRailAssumptionsPanel" role="tabpanel" aria-labelledby="autonomyRailAssumptionsTab" data-autonomy-rail-panel="assumptions" hidden>
                                         <ul class="autonomy-detail-list">
@@ -491,7 +559,8 @@
                                         </ul>
                                     </section>
                                     <section id="autonomyRailReadinessPanel" role="tabpanel" aria-labelledby="autonomyRailReadinessTab" data-autonomy-rail-panel="readiness" hidden>
-                                        <ul class="autonomy-detail-list">
+                                        <ul class="autonomy-detail-list" id="autonomyLiveReadinessDetails" data-autonomy-live-only></ul>
+                                        <ul class="autonomy-detail-list" data-autonomy-fixture-only>
                                             <li><strong>Calibration</strong><span>Passed · promoted lineage verified</span></li>
                                             <li><strong>Annual source</strong><span>Passed · immutable source lock</span></li>
                                             <li><strong>Weather coverage</strong><span>Passed · 11 complete years</span></li>
@@ -500,7 +569,8 @@
                                         </ul>
                                     </section>
                                     <section id="autonomyRailProvenancePanel" role="tabpanel" aria-labelledby="autonomyRailProvenanceTab" data-autonomy-rail-panel="provenance" hidden>
-                                        <dl class="autonomy-provenance-list">
+                                        <dl class="autonomy-provenance-list" id="autonomyLiveProvenance" data-autonomy-live-only></dl>
+                                        <dl class="autonomy-provenance-list" data-autonomy-fixture-only>
                                             <div><dt>Case ID</dt><dd>case_sbe_hybrid_001</dd></div>
                                             <div><dt>Case revision</dt><dd>3</dd></div>
                                             <div><dt>Annual source</dt><dd>ann_2024_verified_017</dd></div>

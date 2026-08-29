@@ -113,7 +113,7 @@ class AgentStoreTests(unittest.TestCase):
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
         self.assertEqual(SCHEMA_VERSION, version)
-        self.assertEqual([(1,), (2,), (3,), (4,), (5,)], migrations)
+        self.assertEqual([(1,), (2,), (3,), (4,), (5,), (6,)], migrations)
 
     def test_newer_schema_is_rejected(self) -> None:
         other_path = self.db_path.with_name(f"{self.db_path.stem}-future.sqlite3")

@@ -7,6 +7,37 @@
             display: none !important;
         }
 
+        #autonomyPanel[data-content-mode="live"] [data-autonomy-fixture-only],
+        #autonomyPanel[data-content-mode="fixture"] [data-autonomy-live-only] {
+            display: none !important;
+        }
+
+        .autonomy-content-mode-notice {
+            margin-bottom: 12px;
+        }
+
+        .autonomy-live-toolbar {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-live-toolbar .autonomy-field {
+            width: min(280px, 100%);
+        }
+
+        .autonomy-live-toolbar > p {
+            color: var(--muted-strong);
+            font-size: 11px;
+            text-align: right;
+        }
+
         .autonomy-shell h2,
         .autonomy-shell h3,
         .autonomy-shell h4,
@@ -667,6 +698,29 @@
             background: var(--surface-muted);
         }
 
+        #autonomyLiveMessageList,
+        #autonomyFixtureConversation,
+        .autonomy-live-candidate-list,
+        .autonomy-live-evidence-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .autonomy-message-meta,
+        .autonomy-agent-suggestion,
+        .autonomy-evidence-upload > p,
+        #autonomyEvidenceUploadStatus {
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .autonomy-agent-suggestion {
+            padding: 9px;
+            border: 1px solid #c7b8db;
+            border-radius: 6px;
+            background: #faf7fc;
+        }
+
         .autonomy-user-message,
         .autonomy-agent-message,
         .autonomy-agent-proposal {
@@ -971,6 +1025,7 @@
             background: var(--warning-soft);
         }
 
+        .autonomy-source-selection,
         .autonomy-source-timeline,
         .autonomy-evidence-candidate,
         .autonomy-job-monitor {
@@ -978,6 +1033,57 @@
             border: 1px solid var(--border);
             border-radius: 7px;
             background: var(--surface);
+        }
+
+        .autonomy-source-selection {
+            display: grid;
+            gap: 12px;
+            scroll-margin-top: 12px;
+            border-left: 4px solid var(--accent);
+            background: var(--surface-muted);
+        }
+
+        .autonomy-source-selection:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.2);
+            outline-offset: 2px;
+        }
+
+        .autonomy-source-selection[data-locked="true"] {
+            border-color: #6da97f;
+            background: var(--success-soft);
+        }
+
+        .autonomy-source-selection h4 {
+            margin: 2px 0 4px;
+            font-size: 14px;
+        }
+
+        .autonomy-source-selection > div > p:last-child,
+        #autonomySourceLockStatus {
+            color: var(--muted-strong);
+            font-size: 11px;
+        }
+
+        #autonomySourceLockForm {
+            display: grid;
+            gap: 10px;
+        }
+
+        .autonomy-source-selection-fields {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .autonomy-source-selection-actions {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .autonomy-source-selection-actions > p {
+            flex: 1 1 260px;
         }
 
         .autonomy-source-timeline h4,
@@ -1335,6 +1441,43 @@
             border: 1px solid var(--border);
             border-radius: 7px;
             background: var(--surface-muted);
+        }
+
+        .autonomy-evidence-upload {
+            display: grid;
+            gap: 8px;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-evidence-upload h4 {
+            font-size: 12px;
+        }
+
+        .autonomy-evidence-actions,
+        .autonomy-candidate-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+        }
+
+        .autonomy-evidence-actions a {
+            display: inline-flex;
+            align-items: center;
+            min-height: 34px;
+            padding: 7px 9px;
+            border: 1px solid var(--border-strong);
+            border-radius: 6px;
+            color: var(--accent-strong);
+            font-size: 10px;
+            font-weight: 750;
+            text-decoration: none;
+        }
+
+        .autonomy-live-candidate-list .autonomy-evidence-candidate {
+            margin-top: 0;
         }
 
         .autonomy-evidence-record[data-status="accepted"] {
@@ -1917,6 +2060,19 @@
         }
 
         @media (max-width: 767px) {
+            .autonomy-live-toolbar {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .autonomy-live-toolbar > p {
+                text-align: left;
+            }
+
+            .autonomy-source-selection-fields {
+                grid-template-columns: 1fr;
+            }
+
             .autonomy-fixture-toolbar,
             .autonomy-empty-case,
             .autonomy-case-topline,

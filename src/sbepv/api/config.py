@@ -48,6 +48,19 @@ def _bounded_env_number(
     return value
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    normalized = raw.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    logger.warning("Ignoring invalid %s value", name)
+    return default
+
+
 PROJECT_ROOT = discover_project_root(Path(__file__))
 historian.load_dotenv(str(PROJECT_ROOT / ".env"))
 
@@ -68,10 +81,13 @@ CALIBRATION_REVIEW_DIR = OUTPUT_DIR / ".calibration_reviews"
 CALIBRATION_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
 ANNUAL_SOURCE_ARTIFACT_DIR = OUTPUT_DIR / ".annual_sources"
 ANNUAL_SOURCE_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+DECISION_EVIDENCE_DIR = OUTPUT_DIR / ".decision_evidence"
+DECISION_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 PRIVATE_OUTPUT_DIRS = (
     (OUTPUT_DIR / ".agent_state").resolve(),
     CALIBRATION_REVIEW_DIR.resolve(),
     ANNUAL_SOURCE_ARTIFACT_DIR.resolve(),
+    DECISION_EVIDENCE_DIR.resolve(),
     (OUTPUT_DIR / ".technoeconomic_attempts").resolve(),
 )
 PUBLIC_OUTPUT_SUFFIXES = frozenset({".csv", ".png", ".xlsx"})
@@ -117,6 +133,31 @@ OPENAI_REASONING_EFFORTS = frozenset({
 if OPENAI_REASONING_EFFORT not in OPENAI_REASONING_EFFORTS:
     logger.warning("Ignoring invalid OPENAI_REASONING_EFFORT value")
     OPENAI_REASONING_EFFORT = "low"
+
+# The Decision Agent is deliberately separate from the Solar Agent. These limits
+# are server authority, not prompt suggestions, and are kept module-qualified so
+# tests can replace them without touching process-global environment state.
+DECISION_AGENT_ENABLED = _env_flag("DECISION_AGENT_ENABLED", True)
+DECISION_AGENT_TIMEOUT_SECONDS = _bounded_env_number(
+    "DECISION_AGENT_TIMEOUT_SECONDS", 45, minimum=5, maximum=45
+)
+DECISION_AGENT_TURN_STALE_SECONDS = max(
+    DECISION_AGENT_TIMEOUT_SECONDS + 15,
+    _bounded_env_number(
+        "DECISION_AGENT_TURN_STALE_SECONDS", 120, minimum=60, maximum=600
+    ),
+)
+DECISION_AGENT_MAX_RETRIES = int(
+    _bounded_env_number("DECISION_AGENT_MAX_RETRIES", 2, minimum=0, maximum=2)
+)
+DECISION_AGENT_MAX_TOOL_CALLS = 4
+DECISION_AGENT_CONTEXT_MESSAGES = 12
+DECISION_AGENT_CONTEXT_CHARACTERS = 12_000
+
+DECISION_EVIDENCE_MAX_FILE_BYTES = 10 * 1024 * 1024
+DECISION_EVIDENCE_MAX_FILES_PER_CASE = 10
+DECISION_EVIDENCE_MAX_BYTES_PER_CASE = 50 * 1024 * 1024
+DECISION_EVIDENCE_MAX_EXTRACTED_CANDIDATES = 500
 
 SERVER_SESSION_ID = uuid.uuid4().hex
 

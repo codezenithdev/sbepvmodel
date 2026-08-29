@@ -163,8 +163,8 @@ class TechnoeconomicStoreTests(unittest.TestCase):
 
         reopened = AgentStore(self.db_path, now=self.clock)
 
-        self.assertEqual(5, SCHEMA_VERSION)
-        self.assertEqual(5, reopened.schema_version)
+        self.assertEqual(6, SCHEMA_VERSION)
+        self.assertEqual(6, reopened.schema_version)
         self.assertEqual(self.source["id"], reopened.get_job(self.source["id"])["id"])
         with closing(sqlite3.connect(self.db_path)) as connection:
             table = connection.execute(
@@ -175,7 +175,7 @@ class TechnoeconomicStoreTests(unittest.TestCase):
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
         self.assertEqual(("technoeconomic_jobs",), table)
-        self.assertEqual([(1,), (2,), (3,), (4,), (5,)], migrations)
+        self.assertEqual([(1,), (2,), (3,), (4,), (5,), (6,)], migrations)
 
     def test_v5_migration_fails_closed_on_legacy_reserved_namespace_collision(self) -> None:
         other_path = self.db_path.with_name(f"{self.db_path.stem}-collision.sqlite3")

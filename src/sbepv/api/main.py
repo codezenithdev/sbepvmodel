@@ -40,6 +40,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from sbepv import dashboard, model, reporting
 from sbepv import technoeconomic as technoeconomic_kernel
+from sbepv.api import autonomy as autonomy_api
 from sbepv.api import config, job_store, plots, review_store, state
 from sbepv.api import technoeconomic as technoeconomic_api
 from sbepv.api import baselines as baselines_module
@@ -213,6 +214,12 @@ def __getattr__(name: str) -> Any:
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
     _dashboard_basic_credentials()
+    state.AGENT_STORE.mark_stale_claimed_decision_turns_failed(
+        before=datetime.now(timezone.utc)
+        - timedelta(seconds=config.DECISION_AGENT_TURN_STALE_SECONDS),
+        error_code="agent_interrupted",
+        error_detail="The Decision Agent process stopped before the response completed.",
+    )
     worker_loop._mark_stale_running_work_interrupted(
         before=datetime.now(timezone.utc)
         - timedelta(seconds=config.JOB_STALE_SECONDS)
@@ -223,6 +230,7 @@ async def _app_lifespan(_app: FastAPI):
         yield
     finally:
         state._APP_STARTED = False
+        await autonomy_api.shutdown_decision_agent_tasks()
         worker_loop._stop_model_worker()
 
 
@@ -242,6 +250,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
 )
+app.include_router(autonomy_api.router)
 app.mount(
     "/outputs",
     PublicOutputStaticFiles(directory=str(config.OUTPUT_DIR)),
@@ -275,7 +284,10 @@ async def require_dashboard_basic_auth(request: Request, call_next):
     ).rstrip("/")
     private_roots = (
         "/outputs/.agent_state",
+        "/outputs/.annual_sources",
         "/outputs/.calibration_reviews",
+        "/outputs/.decision_evidence",
+        "/outputs/.technoeconomic_attempts",
     )
     if any(
         normalized_path == root or normalized_path.startswith(f"{root}/")
