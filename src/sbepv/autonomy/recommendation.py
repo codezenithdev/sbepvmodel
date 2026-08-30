@@ -878,7 +878,8 @@ def _tradeoff_evidence(
         direction = "solaredge"
     elif solectria_probability >= WINNER_PROBABILITY_THRESHOLD:
         direction = "solectria"
-    assert direction in _SELECTION_STATES
+    # direction is one of the three _SELECTION_STATES literals assigned above; the
+    # former bare assert here restated that and would vanish under python -O.
     return {
         "scenario_revision_id": revision_id,
         "scenario_id": scenario.get("scenario_id"),

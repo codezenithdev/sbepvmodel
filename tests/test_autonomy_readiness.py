@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 import unittest
 from unittest.mock import patch
 
-from sbepv.autonomy import readiness
+from sbepv.api import config, security
+from sbepv.autonomy import readiness, recommendation
 
 
 class _ReadinessStore:
@@ -193,14 +194,64 @@ class AutonomyReadinessTests(unittest.TestCase):
             allowed_ids
             & {"run_scenario", "queue_tea", "confirm_run", "sign_decision", "generate_report"}
         )
-        self.assertTrue(result["phase_boundary"]["non_runnable_suggestions_only"])
-        self.assertTrue(result["phase_boundary"]["scenario_execution_available"])
-        self.assertTrue(result["phase_boundary"]["decision_brief_available"])
+        boundary = result["phase_boundary"]
+        self.assertTrue(boundary["non_runnable_suggestions_only"])
+        self.assertTrue(boundary["decision_brief_available"])
         self.assertEqual(
-            "classification_pending_contract",
-            result["phase_boundary"]["recommendation_contract_state"],
+            recommendation.RECOMMENDATION_CONTRACT_VERSION,
+            boundary["recommendation_contract_version"],
         )
-        self.assertFalse(result["phase_boundary"]["decision_signoff_available"])
+        self.assertEqual(
+            recommendation.RECOMMENDATION_CONTRACT_DIGEST,
+            boundary["recommendation_contract_digest"],
+        )
+
+    def test_phase_boundary_reports_the_authority_the_routes_actually_enforce(self):
+        """Readiness must not describe a phase the server has moved past.
+
+        The Decision Agent is told readiness is authoritative, so a frozen literal
+        here becomes a confident false statement about what an operator may do.
+        """
+
+        store = _ReadinessStore(_case(status="draft"))
+        for shadow_mode, credentials in ((True, ("ops", "pw")), (False, None), (False, ("ops", "pw"))):
+            with self.subTest(shadow_mode=shadow_mode, authenticated=bool(credentials)):
+                with (
+                    patch.object(config, "DECISION_AGENT_SHADOW_MODE", shadow_mode),
+                    patch.object(
+                        security, "_dashboard_basic_credentials", return_value=credentials
+                    ),
+                ):
+                    result = self._evaluate(store, sources=[], bundle=None)
+                boundary = result["phase_boundary"]
+                self.assertEqual(shadow_mode, boundary["shadow_mode"])
+                self.assertEqual(
+                    "shadow" if shadow_mode else "active",
+                    boundary["recommendation_contract_state"],
+                )
+                self.assertEqual(
+                    not shadow_mode, boundary["tea_confirmation_available"]
+                )
+                self.assertEqual(
+                    bool(credentials) and not shadow_mode,
+                    boundary["decision_signoff_available"],
+                )
+                self.assertEqual(
+                    bool(credentials), boundary["report_generation_available"]
+                )
+                self.assertEqual(
+                    bool(credentials) and not shadow_mode,
+                    boundary["final_report_available"],
+                )
+                actions = {
+                    item["id"]: item for item in result["allowed_case_actions"]
+                }
+                if shadow_mode and "confirm_scenarios" in actions:
+                    self.assertFalse(actions["confirm_scenarios"]["enabled"])
+                    self.assertEqual(
+                        "Shadow mode blocks execution authority.",
+                        actions["confirm_scenarios"]["disabled_reason"],
+                    )
 
     def test_verified_locked_foundation_and_validated_baseline_are_ready_to_run(self):
         source = _source()
@@ -255,6 +306,63 @@ class AutonomyReadinessTests(unittest.TestCase):
         self.assertTrue(result["ready_to_run"])
         self.assertEqual(result["blockers"], [])
         self.assertNotIn("allowed_actions", result["case"])
+
+    def test_weather_policy_is_anchored_to_the_frozen_source_not_the_clock(self):
+        """A verified immutable source must not expire because the year changed.
+
+        Judging a frozen Annual source against today's calendar hard-blocked a
+        passing case every 1 January, and the only offered action was to rebuild
+        an Annual Simulation that had not become invalid.
+        """
+
+        source = _source()
+        case = _case(
+            source_annual_job_id=source["annual_job_id"],
+            source_snapshot_sha256=source["source_snapshot_sha256"],
+            analysis_basis="solartac_site",
+        )
+        store = _ReadinessStore(
+            case,
+            assets=[_accepted_asset()],
+            annual={"id": source["annual_job_id"], "mode": "annual", "state": "done"},
+        )
+        bundle = {
+            "baseline": {"id": "cal_verified"},
+            "quality": {"review_id": "review_1"},
+            "promotion": {"promoted_at": "2026-08-20T00:00:00+00:00"},
+            "profile_sha256": "b" * 64,
+        }
+        for stamp in (
+            datetime(2026, 12, 31, 23, tzinfo=timezone.utc),
+            datetime(2027, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+            datetime(2031, 6, 1, tzinfo=timezone.utc),
+        ):
+            with self.subTest(now=stamp.isoformat()):
+                with (
+                    patch.object(
+                        readiness, "list_eligible_annual_sources", return_value=[source]
+                    ),
+                    patch.object(
+                        readiness.baselines_module,
+                        "_current_calibration_bundle",
+                        return_value=bundle,
+                    ),
+                    patch.object(
+                        readiness,
+                        "_inspect_annual_source",
+                        return_value=_inspection(source),
+                    ),
+                ):
+                    result = readiness.evaluate_decision_case_readiness(
+                        store.case["id"], agent_store=store, now=stamp
+                    )
+                check = next(
+                    item
+                    for item in result["checks"]
+                    if item["id"] == "weather_coverage"
+                )
+                self.assertEqual("passed", check["status"])
+                self.assertEqual(2026, check["details"]["coverage_anchor_year"])
 
     def test_elapsed_unconfirmed_baseline_is_not_ready_without_an_expiry_sweep(self):
         source = _source()

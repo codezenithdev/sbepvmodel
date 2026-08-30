@@ -6,6 +6,7 @@ import csv
 from dataclasses import dataclass
 import hashlib
 import io
+import logging
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -19,6 +20,8 @@ from collections.abc import Mapping
 
 from sbepv.api import config
 from sbepv.autonomy import lifecycle
+
+logger = logging.getLogger(__name__)
 
 
 _XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -159,6 +162,23 @@ class ValidatedEvidence:
 
 def _fail(code: str, detail: str, *, status_code: int = 400) -> None:
     raise EvidencePolicyError(code, detail, status_code=status_code)
+
+
+def _extractor_unavailable(label: str, exc: BaseException) -> EvidencePolicyError:
+    """Separate a missing extractor library from untrusted user content.
+
+    The parsers are imported inside their validators, so an absent pypdf,
+    openpyxl, or Pillow used to be swallowed by the same handler as a corrupt
+    file. A valid document was then reported to the operator as unparseable,
+    while the real cause -- an incomplete install -- was never surfaced.
+    """
+
+    logger.error("Evidence extractor for %s is unavailable: %s", label, exc)
+    return EvidencePolicyError(
+        "evidence_extractor_unavailable",
+        f"{label} evidence review is temporarily unavailable on this server.",
+        status_code=503,
+    )
 
 
 def validate_upload_filename(filename: object) -> tuple[str, str]:
@@ -467,6 +487,8 @@ def _validate_pdf(path: Path) -> ValidatedEvidence:
             )
     except EvidencePolicyError:
         raise
+    except ImportError as exc:
+        raise _extractor_unavailable("PDF", exc) from exc
     except Exception as exc:
         raise EvidencePolicyError(
             "malformed_pdf", "The PDF could not be safely parsed."
@@ -581,6 +603,10 @@ def _validate_xlsx(path: Path) -> ValidatedEvidence:
             if len(candidates) >= config.DECISION_EVIDENCE_MAX_EXTRACTED_CANDIDATES:
                 break
         workbook.close()
+    except EvidencePolicyError:
+        raise
+    except ImportError as exc:
+        raise _extractor_unavailable("XLSX", exc) from exc
     except Exception as exc:
         raise EvidencePolicyError(
             "malformed_xlsx", "The XLSX workbook could not be safely parsed."
@@ -809,6 +835,8 @@ def _validate_image(path: Path, extension: str) -> ValidatedEvidence:
             image.verify()
     except EvidencePolicyError:
         raise
+    except ImportError as exc:
+        raise _extractor_unavailable("image", exc) from exc
     except Exception as exc:
         raise EvidencePolicyError(
             "malformed_image", "The image could not be safely decoded."

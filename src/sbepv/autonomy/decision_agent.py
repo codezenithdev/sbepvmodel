@@ -44,7 +44,15 @@ MAX_CASE_ID_CHARACTERS = 128
 MAX_HISTORY_MESSAGES = 12
 MAX_HISTORY_CHARACTERS = 12_000
 MAX_MODEL_TURNS = 6
-MAX_OUTPUT_TOKENS = 1_200
+# Reasoning tokens count against this cap on the Responses API, so it must cover
+# the whole structured answer plus the effort setting below. At 1,200 a why_not
+# answer -- which the contract requires to carry blocking rules, missing evidence,
+# a protective reason, a closest alternative, and a next action on top of the usual
+# claims and citations -- was cut off mid-JSON. The SDK reported that as a
+# ModelBehaviorError, so a truncated reply reached the operator as
+# "The Decision Agent is unavailable" rather than as a length problem.
+MAX_OUTPUT_TOKENS = 8_000
+DEFAULT_OUTPUT_TOKENS = 4_000
 MAX_TOOL_RESULT_CHARACTERS = 24_000
 
 _CASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -208,22 +216,33 @@ class WhyNotDetails(_StrictPublicModel):
         return self
 
 
+def scenario_suggestion_violates_policy(text: object) -> bool:
+    """Return True when a scenario idea reads as a runnable request.
+
+    The policy itself is unchanged and still bans every digit: a number beside a
+    scenario idea is what makes it look like a parameter the user may run. What
+    changed is where it is enforced. This deliberately is NOT a model validator on
+    the SDK ``output_type``: a violation in this one optional field used to abort
+    parsing of the whole ``DecisionAgentOutput``, which the Agents SDK surfaces as
+    ``ModelBehaviorError`` and the turn then reported as ``agent_unavailable``. A
+    complete, grounded answer was discarded because of its closing sentence.
+    ``_validate_final_output`` now drops the offending suggestion instead.
+    """
+
+    value = str(text or "")
+    return bool(
+        _RUNNABLE_FIELD_RE.search(value)
+        or _RUNNABLE_NUMERIC_RE.search(value)
+        or _NUMERIC_TOKEN_RE.search(value)
+        or _OUTPUT_MUTATION_AUTHORITY_RE.search(value)
+        or "{" in value
+        or "}" in value
+    )
+
+
 class NonRunnableScenarioSuggestion(_StrictPublicModel):
     text: str = Field(min_length=1, max_length=1_500)
     runnable: Literal[False] = False
-
-    @model_validator(mode="after")
-    def reject_runnable_payload_fields(self) -> "NonRunnableScenarioSuggestion":
-        if (
-            _RUNNABLE_FIELD_RE.search(self.text)
-            or _RUNNABLE_NUMERIC_RE.search(self.text)
-            or _NUMERIC_TOKEN_RE.search(self.text)
-            or _OUTPUT_MUTATION_AUTHORITY_RE.search(self.text)
-            or "{" in self.text
-            or "}" in self.text
-        ):
-            raise ValueError("scenario suggestion contains runnable request fields")
-        return self
 
 
 class DecisionAgentOutput(_StrictPublicModel):
@@ -914,6 +933,14 @@ def _configured_timeout() -> float:
         return 45.0
 
 
+def _configured_max_output_tokens() -> int:
+    raw = getattr(config, "DECISION_AGENT_MAX_OUTPUT_TOKENS", DEFAULT_OUTPUT_TOKENS)
+    try:
+        return min(MAX_OUTPUT_TOKENS, max(1_200, int(raw)))
+    except (TypeError, ValueError):
+        return DEFAULT_OUTPUT_TOKENS
+
+
 def _configured_max_retries() -> int:
     raw = getattr(config, "DECISION_AGENT_MAX_RETRIES", 2)
     try:
@@ -939,7 +966,7 @@ def _create_agent_runtime() -> tuple[Agent[DecisionRunContext], AsyncOpenAI]:
         model_settings=ModelSettings(
             reasoning={"effort": reasoning_effort},
             verbosity="low",
-            max_tokens=MAX_OUTPUT_TOKENS,
+            max_tokens=_configured_max_output_tokens(),
             parallel_tool_calls=False,
             store=False,
         ),
@@ -1013,6 +1040,16 @@ def _validate_final_output(
         output = DecisionAgentOutput.model_validate_json(value)
     else:
         output = DecisionAgentOutput.model_validate(value)
+    if output.non_runnable_scenario_suggestion is not None and (
+        scenario_suggestion_violates_policy(
+            output.non_runnable_scenario_suggestion.text
+        )
+    ):
+        # The suggestion is optional and carries no authority, so a policy
+        # violation here removes the field and keeps the answer. Every check
+        # below still fails the turn, because those fields are load bearing.
+        logger.info("Dropped a Decision Agent scenario suggestion that violated policy")
+        output.non_runnable_scenario_suggestion = None
     grounded = grounded_source_ids or set()
     cited = {citation.source_id for citation in output.citations}
     cited.update(
@@ -1231,4 +1268,5 @@ __all__ = [
     "NonRunnableScenarioSuggestion",
     "WhyNotDetails",
     "run_decision_agent_turn",
+    "scenario_suggestion_violates_policy",
 ]

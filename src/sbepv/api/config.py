@@ -161,9 +161,19 @@ DECISION_AGENT_TURN_STALE_SECONDS = max(
 DECISION_AGENT_MAX_RETRIES = int(
     _bounded_env_number("DECISION_AGENT_MAX_RETRIES", 2, minimum=0, maximum=2)
 )
+DECISION_AGENT_MAX_OUTPUT_TOKENS = int(
+    _bounded_env_number(
+        "DECISION_AGENT_MAX_OUTPUT_TOKENS", 4_000, minimum=1_200, maximum=8_000
+    )
+)
 DECISION_AGENT_MAX_TOOL_CALLS = 4
 DECISION_AGENT_CONTEXT_MESSAGES = 12
 DECISION_AGENT_CONTEXT_CHARACTERS = 12_000
+# decision_agent reads this through getattr and falls back to "high"; declaring it
+# here is what actually makes it settable. An unrecognized value is ignored there.
+DECISION_AGENT_REASONING_EFFORT = (
+    os.getenv("DECISION_AGENT_REASONING_EFFORT", "high").strip().lower() or "high"
+)
 
 DECISION_EVIDENCE_MAX_FILE_BYTES = 10 * 1024 * 1024
 DECISION_EVIDENCE_MAX_FILES_PER_CASE = 10

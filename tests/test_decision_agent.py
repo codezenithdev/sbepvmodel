@@ -65,9 +65,30 @@ class DecisionAgentContractTests(unittest.TestCase):
         self.assertIs(agent.output_type, decision_agent.DecisionAgentOutput)
         self.assertFalse(agent.model_settings.parallel_tool_calls)
         self.assertFalse(agent.model_settings.store)
-        self.assertEqual(agent.model_settings.max_tokens, 1_200)
+        self.assertEqual(
+            agent.model_settings.max_tokens,
+            decision_agent._configured_max_output_tokens(),
+        )
         self.assertEqual(agent.model_settings.reasoning.effort, "high")
         client.assert_called_once_with(timeout=45.0, max_retries=2)
+
+    def test_output_token_budget_covers_the_largest_required_answer(self):
+        """A truncated reply used to reach the operator as an outage.
+
+        Reasoning tokens share this budget, and at 1,200 a why_not answer was cut
+        off mid-JSON. The SDK raised ModelBehaviorError and the turn reported
+        agent_unavailable rather than a length problem.
+        """
+
+        self.assertGreaterEqual(decision_agent._configured_max_output_tokens(), 4_000)
+        for value, expected in ((100, 1_200), (99_999, 8_000), ("nope", 4_000)):
+            with self.subTest(configured=value):
+                with patch.object(
+                    config, "DECISION_AGENT_MAX_OUTPUT_TOKENS", value
+                ):
+                    self.assertEqual(
+                        expected, decision_agent._configured_max_output_tokens()
+                    )
 
     def test_run_config_disables_sensitive_traces_and_serializes_tools(self):
         run_config = decision_agent._run_config(
@@ -135,29 +156,58 @@ class DecisionAgentContractTests(unittest.TestCase):
             )
         )
 
-    def test_structured_output_rejects_runnable_suggestion_and_extra_fields(self):
-        with self.assertRaises(ValidationError):
-            decision_agent.DecisionAgentOutput.model_validate(
-                _valid_output(
-                    non_runnable_scenario_suggestion={
-                        "text": 'Use {"seed": 42} and queue it.',
-                        "runnable": False,
-                    }
-                )
-            )
+    def test_structured_output_rejects_extra_fields(self):
         with self.assertRaises(ValidationError):
             decision_agent.DecisionAgentOutput.model_validate(
                 {**_valid_output(), "scenario_request": {"seed": 42}}
             )
-        with self.assertRaises(ValidationError):
-            decision_agent.DecisionAgentOutput.model_validate(
-                _valid_output(
-                    non_runnable_scenario_suggestion={
-                        "text": "Use seed 42 and 10000 samples.",
-                        "runnable": False,
-                    }
+
+    def test_runnable_scenario_suggestions_are_identified(self):
+        violations = (
+            'Use {"seed": 42} and queue it.',
+            "Use seed 42 and 10000 samples.",
+            "Test a 15 percent higher module degradation rate.",
+            "Compare against a Tier 1 supplier quote.",
+            "You can queue the alternative once it validates.",
+        )
+        for text in violations:
+            with self.subTest(text=text):
+                self.assertTrue(
+                    decision_agent.scenario_suggestion_violates_policy(text)
                 )
+        allowed = (
+            "Consider testing a higher replacement-cost assumption.",
+            "Consider a controlled alternative with a higher degradation rate.",
+        )
+        for text in allowed:
+            with self.subTest(text=text):
+                self.assertFalse(
+                    decision_agent.scenario_suggestion_violates_policy(text)
+                )
+
+    def test_a_runnable_suggestion_is_dropped_without_discarding_the_answer(self):
+        """A policy break in the optional suggestion must not fail the whole turn.
+
+        Enforcing this inside the SDK output_type meant one trailing sentence
+        aborted parsing of a complete, grounded answer and the turn was reported
+        to the operator as agent_unavailable.
+        """
+
+        output = decision_agent._validate_final_output(
+            _valid_output(
+                answer="Scenario drafting is blocked until an Annual source is locked.",
+                non_runnable_scenario_suggestion={
+                    "text": "Test a 15 percent higher module degradation rate.",
+                    "runnable": False,
+                },
             )
+        )
+        self.assertIsNone(output.non_runnable_scenario_suggestion)
+        self.assertEqual(
+            "Scenario drafting is blocked until an Annual source is locked.",
+            output.answer,
+        )
+        self.assertTrue(output.claims)
 
     def test_output_policy_rejects_results_recommendations_and_ungrounded_actions(self):
         invalid_outputs = [

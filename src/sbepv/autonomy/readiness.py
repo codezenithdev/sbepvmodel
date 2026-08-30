@@ -30,6 +30,11 @@ SUPPORTED_ANALYSIS_BASES = (
     },
 )
 _CHECK_STATUSES = frozenset({"passed", "needs_attention", "blocked", "stale"})
+# Shadow mode is an execution gate, not a deterministic prerequisite, so it never
+# changes ready_to_run. It does remove execution authority, and readiness owns that
+# answer so every consumer -- API responses, the frontend, and the Decision Agent's
+# read_readiness tool -- sees one allowlist instead of a locally patched copy.
+_SHADOW_BLOCKED_ACTIONS = frozenset({"confirm_scenarios", "retry_failed_execution"})
 _FORECAST_START_YEAR = 2012
 _KNOWN_INCOMPLETE_YEARS = frozenset({2022, 2023})
 _MINIMUM_VERIFIED_YEARS = 10
@@ -256,6 +261,75 @@ def _agent_availability() -> dict[str, Any]:
         "reason_codes": reasons,
         "manual_readiness_available": True,
     }
+
+
+def _decision_authority() -> dict[str, Any]:
+    """Report what the Decision Brief authority boundary actually permits now.
+
+    These fields used to be frozen literals describing an earlier phase, which
+    made readiness state that sign-off, reports, and recommendation
+    classification did not exist after they had shipped. The Decision Agent is
+    told readiness is authoritative and may never override it, so a stale literal
+    here becomes a confident false statement to the operator. Everything below is
+    derived from the same runtime facts the API routes enforce.
+    """
+
+    # Function-local: readiness is imported early by the request schemas, and the
+    # recommendation classifier pulls in the TEA kernel.
+    from sbepv.api import security
+    from sbepv.autonomy import recommendation
+
+    shadow_mode = bool(getattr(config, "DECISION_AGENT_SHADOW_MODE", False))
+    try:
+        human_authority_configured = (
+            security._dashboard_basic_credentials() is not None
+        )
+    except RuntimeError:
+        # Half-configured credentials fail the request anyway; report no authority.
+        human_authority_configured = False
+    return {
+        "shadow_mode": shadow_mode,
+        "human_authority_configured": human_authority_configured,
+        "recommendation_contract_version": (
+            recommendation.RECOMMENDATION_CONTRACT_VERSION
+        ),
+        "recommendation_contract_digest": (
+            recommendation.RECOMMENDATION_CONTRACT_DIGEST
+        ),
+        "recommendation_contract_state": "shadow" if shadow_mode else "active",
+        "scenario_execution_available": not shadow_mode,
+        "tea_confirmation_available": not shadow_mode,
+        "decision_signoff_available": human_authority_configured and not shadow_mode,
+        "report_generation_available": human_authority_configured,
+        "final_report_available": human_authority_configured and not shadow_mode,
+    }
+
+
+def _phase_boundary_summary(authority: Mapping[str, Any]) -> str:
+    available = ["deterministic scenarios", "verified comparison bundles", "Decision Brief revisions"]
+    unavailable: list[str] = []
+    (available if authority["tea_confirmation_available"] else unavailable).append(
+        "named-human TEA confirmation"
+    )
+    (available if authority["decision_signoff_available"] else unavailable).append(
+        "decision sign-off"
+    )
+    (available if authority["final_report_available"] else unavailable).append(
+        "final report generation"
+    )
+    summary = f"Available: {', '.join(available)}."
+    if unavailable:
+        reason = (
+            "shadow mode is active"
+            if authority["shadow_mode"]
+            else "dashboard authentication is not configured"
+        )
+        if authority["shadow_mode"] and not authority["human_authority_configured"]:
+            reason = (
+                "shadow mode is active and dashboard authentication is not configured"
+            )
+        summary += f" Unavailable because {reason}: {', '.join(unavailable)}."
+    return summary
 
 
 def _is_job_stale(job: Mapping[str, Any], now: datetime) -> bool:
@@ -766,9 +840,19 @@ def evaluate_decision_case_readiness(
     weather_source = selected_source if selected_source and selected_source.get("eligible") else None
     if weather_source:
         eligible_years = sorted({int(year) for year in weather_source.get("eligible_years") or []})
+        # Anchor the expected set to when the immutable source was produced, not to
+        # the wall clock. Judging a frozen source against today's calendar made a
+        # verified case hard-block itself every 1 January, because a year the source
+        # could never contain joined the expected set and the only offered action was
+        # to build an Annual Simulation that had not actually become invalid.
+        coverage_anchor = (
+            _parse_timestamp(weather_source.get("completed_at"))
+            or _parse_timestamp(case_record.get("source_basis_locked_at"))
+            or evaluated_at
+        )
         expected_years = [
             year
-            for year in range(_FORECAST_START_YEAR, evaluated_at.year)
+            for year in range(_FORECAST_START_YEAR, coverage_anchor.year)
             if year not in _KNOWN_INCOMPLETE_YEARS
         ]
         missing_years = sorted(set(expected_years) - set(eligible_years))
@@ -793,6 +877,7 @@ def evaluate_decision_case_readiness(
                         "eligible_years": eligible_years,
                         "excluded_years": sorted(_KNOWN_INCOMPLETE_YEARS),
                         "minimum_years": _MINIMUM_VERIFIED_YEARS,
+                        "coverage_anchor_year": coverage_anchor.year,
                     },
                 )
             )
@@ -822,6 +907,7 @@ def evaluate_decision_case_readiness(
                         "missing_policy_years": missing_years,
                         "hourly_interval": hourly,
                         "minimum_years": _MINIMUM_VERIFIED_YEARS,
+                        "coverage_anchor_year": coverage_anchor.year,
                     },
                     blockers=[item],
                 )
@@ -1034,14 +1120,16 @@ def evaluate_decision_case_readiness(
         )
     )
 
+    authority = _decision_authority()
     checks.append(
         _check(
             "phase_boundary",
             "Phase boundary",
             "passed",
-            "Deterministic scenarios, named-human TEA confirmation, verified comparison bundles, and unsigned Decision Brief revisions are available; sign-off and reporting remain unavailable.",
+            _phase_boundary_summary(authority),
             rule_id="AUT-PHASE-2",
             exact_rule="Only authenticated deterministic services and explicit named-human confirmation may mutate scenarios or create TEA jobs; comparison and Decision Brief services are read-only over immutable results, and the Decision Agent remains result-blind and read-only.",
+            details=authority,
         )
     )
 
@@ -1088,6 +1176,17 @@ def evaluate_decision_case_readiness(
         has_cancellable_execution=bool(scenarios["cancellable_execution"]),
         agent_available=bool(agent["available"]),
     )
+    if authority["shadow_mode"]:
+        actions = [
+            {
+                **item,
+                "enabled": False,
+                "disabled_reason": "Shadow mode blocks execution authority.",
+            }
+            if item.get("id") in _SHADOW_BLOCKED_ACTIONS
+            else item
+            for item in actions
+        ]
     return {
         "schema_version": READINESS_SCHEMA_VERSION,
         "case_id": case_id,
@@ -1106,13 +1205,9 @@ def evaluate_decision_case_readiness(
         "phase_boundary": {
             "current_phase": "autonomy_decision_brief",
             "non_runnable_suggestions_only": True,
-            "scenario_execution_available": True,
-            "tea_confirmation_available": True,
             "pre_run_values_label": "inputs_or_hypotheses",
             "decision_brief_available": True,
             "decision_brief_result_interpretation": "deterministic_server_only",
-            "recommendation_contract_state": "classification_pending_contract",
-            "decision_signoff_available": False,
-            "report_generation_available": False,
+            **authority,
         },
     }

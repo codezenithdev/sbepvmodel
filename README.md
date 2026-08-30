@@ -87,6 +87,11 @@ Each release-counted shadow review is additionally bound to one strictly verifie
 draft PDF, its immutable case/brief/report identities, and the active recommendation
 and renderer contracts. Ten distinct reviewed decision cases are required.
 
+Know the limit of that authority. Dashboard Basic Auth is one shared credential, so
+every signed record carries the same `authenticated_principal` and the decision owner
+beside it is a typed name. The gate separates an authenticated operator from an
+unprotected dashboard; it does not distinguish two people who share the password.
+
 Annual Simulation accepts one or more SolarTAC years from 2011 through the current
 year. Supported minute intervals are the whole-minute divisors of a day from 1
 through 60 (including 1, 5, 15, 30, 45, and 60 minutes), or exactly 1 hour.

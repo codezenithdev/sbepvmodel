@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import importlib
 import json
 import logging
 from pathlib import Path
@@ -47,7 +48,6 @@ from sbepv.api.autonomy_schemas import (
     EvidenceReviewRequest,
 )
 from sbepv.autonomy import comparison as comparison_service
-from sbepv.autonomy import decision_agent as decision_agent_module
 from sbepv.autonomy import evidence, lifecycle, readiness, scenarios, serializers
 from sbepv.autonomy import recommendation as recommendation_service
 from sbepv.autonomy import reporting as decision_reporting
@@ -64,6 +64,22 @@ from sbepv.store import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/autonomy", tags=["autonomy"])
+
+# The Decision Agent is the one optional part of the dashboard: it needs the
+# openai-agents SDK, and a plain `from ... import` above meant a missing install took
+# Calibration, Annual Simulation, and TEA down with it at import time. Readiness
+# already knows how to report agents_sdk_unavailable and keep manual workflows
+# reachable, but the process never got far enough to say so. Resolved through
+# importlib so the fallback does not rebind an imported name, which
+# test_no_module_import_is_shadowed forbids.
+try:
+    decision_agent_module = importlib.import_module("sbepv.autonomy.decision_agent")
+except ImportError:  # pragma: no cover - exercised only without the Agents SDK
+    logger.warning(
+        "The Decision Agent SDK is unavailable; Autonomy conversation is disabled "
+        "and deterministic readiness remains available."
+    )
+    decision_agent_module = None
 
 _CASE_ID_RE = re.compile(r"^case_[A-Za-z0-9]+$")
 _TURN_ID_RE = re.compile(r"^dturn_[A-Za-z0-9]+$")
@@ -1090,19 +1106,9 @@ def _expire_due_scenario_drafts(case_record: dict[str, Any]) -> None:
 def _scenario_response_context(case_id: str) -> dict[str, Any]:
     case_record = _case_or_404(case_id)
     readiness_record = _readiness_or_503(case_id)
+    # Shadow mode is applied inside readiness so that this response, the bare
+    # readiness route, and the Decision Agent's read_readiness tool all agree.
     allowed_actions = list(readiness_record.get("allowed_case_actions") or [])
-    if getattr(config, "DECISION_AGENT_SHADOW_MODE", False):
-        shadow_blocked = {"confirm_scenarios", "retry_failed_execution"}
-        allowed_actions = [
-            {
-                **item,
-                "enabled": False,
-                "disabled_reason": "Shadow mode blocks execution authority.",
-            }
-            if isinstance(item, dict) and item.get("id") in shadow_blocked
-            else item
-            for item in allowed_actions
-        ]
     return {
         "case": serializers.public_decision_case(case_record),
         "readiness": readiness_record,
@@ -3324,6 +3330,8 @@ async def _execute_claimed_turn(
     user_message = turn.get("user_message") or {}
     message_text = str(user_message.get("content_text") or "")
     try:
+        if decision_agent_module is None:
+            raise RuntimeError("the Decision Agent SDK is not installed")
         result = await asyncio.wait_for(
             decision_agent_module.run_decision_agent_turn(
                 case_id,
@@ -3349,7 +3357,7 @@ async def _execute_claimed_turn(
         )
     except asyncio.CancelledError:
         raise
-    except TimeoutError as exc:
+    except TimeoutError:
         code, detail, assistant_message = _safe_failure("timeout")
         try:
             state.AGENT_STORE.fail_decision_turn(

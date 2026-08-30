@@ -41,7 +41,7 @@ uv venv --python 3.13 && uv pip install -r requirements.txt
 ```
 
 ```bash
-python -m unittest discover -v          # 628 tests; run from the repo root
+python -m unittest discover -v          # 966 tests; run from the repo root
 ```
 
 The suite writes into a repo-root `analysis/` directory that it does not create;
@@ -251,5 +251,5 @@ Pre-existing, deliberately not fixed because each changes behaviour:
   `analysis/` directory that it does not create and that `.gitignore` excludes, so
   `test_analysis_directory_supports_the_temporary_csv_workflow` errors with
   `FileNotFoundError` on any fresh checkout. `mkdir analysis` clears it; with the
-  directory present the suite is 628 tests green. Unrelated to Python version — it
+  directory present the suite is 966 tests green. Unrelated to Python version — it
   reproduces identically on 3.11 and 3.13.
