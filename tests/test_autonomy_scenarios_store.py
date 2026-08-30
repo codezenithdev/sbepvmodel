@@ -451,8 +451,8 @@ class AutonomyScenarioStoreTests(unittest.TestCase):
 
         reopened = AgentStore(self.db_path, now=self.clock)
 
-        self.assertEqual(7, SCHEMA_VERSION)
-        self.assertEqual(7, reopened.schema_version)
+        self.assertEqual(8, SCHEMA_VERSION)
+        self.assertEqual(8, reopened.schema_version)
         self.assertEqual(case_id, reopened.get_decision_case(case_id)["id"])
         self.assertEqual(source_id, reopened.get_job(source_id)["id"])
         expected_tables = {
@@ -487,7 +487,10 @@ class AutonomyScenarioStoreTests(unittest.TestCase):
                 )
             }
         self.assertEqual(expected_tables, actual_tables)
-        self.assertEqual([(1,), (2,), (3,), (4,), (5,), (6,), (7,)], migrations)
+        self.assertEqual(
+            [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)],
+            migrations,
+        )
         self.assertTrue(
             {
                 "scenario_revision_id",

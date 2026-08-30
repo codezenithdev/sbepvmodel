@@ -2,8 +2,9 @@
 
 The model may explain these rules, but it never supplies or changes them.  The
 complete approved state vocabulary is retained so durable rows remain forwards
-compatible. Scenario construction and execution are deterministic human-owned
-actions; recommendation, sign-off, and report generation remain unavailable.
+compatible. Scenario construction, execution, verified comparison, and unsigned
+brief revisioning are deterministic services; recommendation classification,
+sign-off, and report generation remain unavailable until separately contracted.
 """
 
 from __future__ import annotations
@@ -51,8 +52,9 @@ PROVISIONAL_EVIDENCE_CLASSES = frozenset(
 )
 EVIDENCE_REVIEW_STATES = frozenset({"pending", "accepted", "rejected", "deleted"})
 
-# These are the only case actions exposed through the Scenarios + Execution phase.
-# There is intentionally no recommendation, sign, or report action.
+# These are the investigation/execution actions. Exact Decision Brief actions are
+# added by the API only after it inspects an immutable confirmation/bundle snapshot.
+# There is intentionally no recommendation, sign, or report action here.
 _PHASE_ACTIONS_BY_STATE: dict[str, tuple[str, ...]] = {
     "draft": (
         "edit_case",

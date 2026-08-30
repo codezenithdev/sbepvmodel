@@ -59,12 +59,14 @@ The Autonomy frontend is assembled from:
 
 - `html/55-autonomy-workspace.html` — the shared case shell, five-stage
   Investigation Workspace, evidence/readiness rail, live scenario and execution
-  surfaces, and fixture-only Decision Brief and sign-off previews;
+  surfaces, server-backed unsigned Decision Brief, and isolated fixture sign-off
+  preview;
 - `css/16-autonomy-workspace.css` — namespaced desktop, tablet, mobile,
   reduced-motion, and forced-colors behavior; and
-- `js/07-autonomy-workspace.js` — authenticated live case, evidence, scenario, and
-  execution clients plus deterministic fixture previews and the shared view, tab,
-  drawer, dialog, focus, keyboard, reconnect, and polling behavior.
+- `js/07-autonomy-workspace.js` — authenticated live case, evidence, scenario,
+  execution, deterministic comparison-bundle, and immutable Decision Brief clients
+  plus deterministic fixture previews and the shared view, tab, drawer, dialog,
+  focus, keyboard, reconnect, and polling behavior.
 
 Live Ask, Verify, Compare, and Run content comes only from authenticated Autonomy
 APIs. Scenario cards expose server-owned allowed actions and canonical request
@@ -74,18 +76,38 @@ polling links to the existing TEA job contract and exposes only the server-permi
 cancel and retry controls. Browser state never grants mutation or execution
 authority.
 
+Live Decide is enabled only by the server-returned `open_decision_brief` allowed
+action. The browser reads or creates exact comparison snapshots through
+`/api/autonomy/cases/{case_id}/comparison-bundles` and reads or creates unsigned
+immutable brief revisions through `/api/autonomy/cases/{case_id}/decision-briefs`.
+Bundle creation sends only the expected case revision, immutable confirmation ID,
+and named operator. Brief creation sends only the expected case revision, bundle
+ID, canonical bundle SHA-256, named operator, and idempotency key. The browser never
+submits result values, picks an attempt, recalculates TEA, derives recommendation
+thresholds, or grants an allowed action.
+
+Every live metric retains its server-supplied unit, percentile definition, null or
+missing state, selected scenario revision, TEA job and attempt, source snapshot,
+and provenance. Partial Results retain every selected non-complete status and never
+produce a final recommendation. Until a versioned contract authorizes deterministic
+winner and confidence thresholds, the complete live brief displays
+`classification_pending_contract`. Ask why reveals only the bundle's recorded
+evidence, drivers, uncertainty, gaps, and limitations; it never invokes the
+Decision Agent.
+
 The fixture selector remains an explicit, offline preview catalog for the stable
 case identity `case_sbe_hybrid_001`. Fixture mode may change local presentation
 state, but must not call `fetch`, an OpenAI client, a decision endpoint, a TEA
 mutation endpoint, or an existing model execution control. It must not write
 evidence, scenarios, jobs, sign-offs, reports, baselines, or agent messages.
 
-The fixture Investigation and Decision Brief roots share the same case header,
-source lock, basis lock, revision, and fixture results. In live mode, Decide and
-Decision Brief remain visibly unavailable: no recommendation, result
-interpretation, sign-off, or report is synthesized. In fixture mode, grouped
-confirmation previews queue state and creates no job; fixture sign-off transitions
-only to the local signed preview state.
+The live and fixture Decision Brief roots share the same case header and view switch
+but remain separate descendants of the shared tabpanel. Live mode renders only
+server-sanitized bundle and brief records, including partial, classification-pending,
+stale, superseded, verification-failure, agent-unavailable, and API-unavailable
+states. It exposes no sign-off, disposition, PDF, or report-generation control. In
+fixture mode, grouped confirmation previews queue state and creates no job; fixture
+sign-off transitions only to the clearly labeled local signed preview state.
 
 The existing Solar Agent is removed from the visual and accessibility trees only
 while Autonomy mode is active. Calibration, Annual Simulation, the existing TEA,

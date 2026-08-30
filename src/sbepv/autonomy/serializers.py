@@ -112,6 +112,71 @@ def safe_public_value(value: Any, *, depth: int = 0) -> Any:
     return _safe_text(value)
 
 
+def exact_public_value(value: Any) -> Any:
+    """Return a lossless public JSON projection without depth/list truncation.
+
+    Decision comparison snapshots are hashed after this projection and must be
+    returned byte-for-byte (under canonical JSON) by every later consumer.  The
+    ordinary ``safe_public_value`` remains deliberately bounded for untrusted UI
+    payloads; using it after a snapshot is hashed would silently truncate long CDF
+    arrays or deep convergence provenance and invalidate the advertised digest.
+    """
+
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return _safe_text(value)
+    if isinstance(value, Mapping):
+        result: dict[str, Any] = {}
+        for raw_key, item in value.items():
+            key = _safe_text(raw_key, limit=128)
+            if not key:
+                continue
+            normalized = _normalized_public_key(key)
+            if any(part in normalized for part in _PRIVATE_KEY_PARTS):
+                continue
+            result[key] = exact_public_value(item)
+        return result
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        return [exact_public_value(item) for item in value]
+    return _safe_text(value)
+
+
+def exact_public_comparison_bundle(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one full comparison bundle before its canonical hash is computed."""
+
+    projected = exact_public_value(deepcopy(dict(value)))
+    if not isinstance(projected, dict):  # pragma: no cover - mapping guarantees it
+        raise ValueError("comparison bundle public projection must be an object")
+    return projected
+
+
+def _stored_public_comparison_bundle(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Fail closed if a stored hashed bundle would change during publication."""
+
+    source = deepcopy(dict(value))
+    projected = exact_public_comparison_bundle(source)
+    if projected != source:
+        raise ValueError(
+            "stored comparison bundle is not the canonical public projection"
+        )
+    return source
+
+
+def _stored_exact_public_value(value: Any, *, field: str) -> Any:
+    """Return immutable public data unchanged, or reject a lossy projection."""
+
+    source = deepcopy(value)
+    projected = exact_public_value(source)
+    if projected != source:
+        raise ValueError(f"stored {field} is not the canonical public projection")
+    return source
+
+
 def _pick(record: Mapping[str, Any], *keys: str) -> Any:
     for key in keys:
         if key in record:
@@ -523,4 +588,125 @@ def public_scenario_confirmation(record: Mapping[str, Any]) -> dict[str, Any]:
         "receipt_sha256": _safe_text(record.get("receipt_sha256"), limit=64),
         "confirmed_at": _safe_text(record.get("confirmed_at"), limit=64),
         "items": items,
+    }
+
+
+def public_decision_comparison_bundle(
+    record: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project one immutable comparison snapshot without durable private fields."""
+
+    bundle = record.get("bundle")
+    if not isinstance(bundle, Mapping):
+        bundle = record.get("comparison_bundle")
+    if not isinstance(bundle, Mapping):
+        bundle = {}
+    stale_reason = record.get("stale_reason")
+    if stale_reason is None:
+        stale_reason = record.get("stale_reason_json")
+    return {
+        "comparison_bundle_id": _safe_text(
+            _pick(record, "comparison_bundle_id", "id"), limit=128
+        ),
+        "case_id": _safe_text(record.get("case_id"), limit=128),
+        "source_confirmation_id": _safe_text(
+            _pick(record, "source_confirmation_id", "confirmation_id"), limit=128
+        ),
+        "expected_case_revision": int(
+            _pick(record, "expected_case_revision", "case_revision") or 0
+        ),
+        "case_revision_after": int(
+            record.get("case_revision_after")
+            or int(_pick(record, "expected_case_revision", "case_revision") or 0)
+            + 1
+        ),
+        "schema_version": _safe_text(
+            _pick(record, "bundle_schema_version", "schema_version"), limit=100
+        ),
+        "bundle_sha256": _safe_text(record.get("bundle_sha256"), limit=64),
+        "is_complete": bool(record.get("is_complete")),
+        "recommendation_eligible": bool(record.get("recommendation_eligible")),
+        "bundle": _stored_public_comparison_bundle(bundle),
+        "created_by": _safe_text(record.get("created_by"), limit=300),
+        "created_at": _safe_text(record.get("created_at"), limit=64),
+        "stale": bool(record.get("stale_at")),
+        "stale_at": _safe_text(record.get("stale_at"), limit=64),
+        "stale_reason": safe_public_value(deepcopy(stale_reason)),
+        "superseded_by_bundle_id": _safe_text(
+            record.get("superseded_by_bundle_id"), limit=128
+        ),
+        "superseded_at": _safe_text(record.get("superseded_at"), limit=64),
+        "is_current": bool(record.get("is_current")),
+    }
+
+
+def public_decision_brief(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Project an immutable unsigned Decision Brief revision."""
+
+    bundle = record.get("comparison_bundle")
+    if not isinstance(bundle, Mapping):
+        bundle = record.get("bundle")
+    if not isinstance(bundle, Mapping):
+        bundle = {}
+    stale_reason = record.get("stale_reason")
+    if stale_reason is None:
+        stale_reason = record.get("stale_reason_json")
+    return {
+        "brief_id": _safe_text(record.get("brief_id"), limit=128),
+        "brief_revision_id": _safe_text(
+            _pick(record, "brief_revision_id", "id"), limit=128
+        ),
+        "revision": int(record.get("revision") or 0),
+        "case_id": _safe_text(record.get("case_id"), limit=128),
+        "parent_revision_id": _safe_text(
+            record.get("parent_revision_id"), limit=128
+        ),
+        "superseded_by_revision_id": _safe_text(
+            record.get("superseded_by_revision_id"), limit=128
+        ),
+        "source_confirmation_id": _safe_text(
+            record.get("source_confirmation_id"), limit=128
+        ),
+        "comparison_bundle_id": _safe_text(
+            record.get("comparison_bundle_id"), limit=128
+        ),
+        "comparison_bundle_sha256": _safe_text(
+            _pick(
+                record,
+                "comparison_bundle_sha256",
+                "bundle_sha256",
+            ),
+            limit=64,
+        ),
+        "comparison_bundle": _stored_public_comparison_bundle(bundle),
+        "expected_case_revision": int(
+            _pick(record, "expected_case_revision", "case_revision_before") or 0
+        ),
+        "case_revision_after": int(record.get("case_revision_after") or 0),
+        "recommendation_classification": _safe_text(
+            record.get("recommendation_classification"), limit=64
+        ),
+        "confidence_state": _safe_text(record.get("confidence_state"), limit=64),
+        "caveats": _stored_exact_public_value(
+            record.get("caveats") or [], field="Decision Brief caveats"
+        ),
+        "reversal_conditions": _stored_exact_public_value(
+            record.get("reversal_conditions") or [],
+            field="Decision Brief reversal conditions",
+        ),
+        "provenance": _stored_exact_public_value(
+            record.get("provenance") or {}, field="Decision Brief provenance"
+        ),
+        "provenance_sha256": _safe_text(
+            record.get("provenance_sha256"), limit=64
+        ),
+        "created_by": _safe_text(record.get("created_by"), limit=300),
+        "created_at": _safe_text(record.get("created_at"), limit=64),
+        "stale": bool(record.get("stale_at")),
+        "stale_at": _safe_text(record.get("stale_at"), limit=64),
+        "stale_reason": safe_public_value(deepcopy(stale_reason)),
+        "superseded": bool(record.get("superseded_by_revision_id")),
+        "superseded_at": _safe_text(record.get("superseded_at"), limit=64),
+        "is_current": bool(record.get("is_current")),
+        "signed": False,
     }

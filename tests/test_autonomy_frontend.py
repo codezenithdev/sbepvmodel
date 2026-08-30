@@ -216,7 +216,8 @@ class AutonomyFrontendSources(unittest.TestCase):
             self.assertNotIn("dataset.autonomyCaseRevision", block)
             self.assertNotRegex(block, r"fixture\.(?:caseState|stage)\s*=")
         self.assertIn("autonomyContentMode === 'live'", stage_navigation)
-        self.assertIn("!AUTONOMY_LIVE_STAGES.includes(stage)", stage_navigation)
+        self.assertIn("!autonomyCanSelectLiveStage(stage)", stage_navigation)
+        self.assertIn("open_decision_brief", stage_navigation)
         self.assertNotIn("autonomySelectFixture", stage_navigation)
         self.assertNotIn("dataset.autonomyCaseId", stage_navigation)
         self.assertNotIn("dataset.autonomyCaseRevision", stage_navigation)
@@ -349,6 +350,8 @@ class AutonomyFrontendSources(unittest.TestCase):
             "/scenarios/compare",
             "/scenarios/confirm",
             "/execution",
+            "/comparison-bundles",
+            "/decision-briefs",
         ):
             with self.subTest(endpoint=endpoint):
                 self.assertIn(endpoint, self.script)
@@ -729,6 +732,10 @@ class AutonomyFrontendSources(unittest.TestCase):
             (["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "validate"], True),
             (["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "expire"], True),
             (["autonomy", "cases", "case_abc123", "execution"], True),
+            (["autonomy", "cases", "case_abc123", "comparison-bundles"], True),
+            (["autonomy", "cases", "case_abc123", "comparison-bundles", "dcmp_abc123"], True),
+            (["autonomy", "cases", "case_abc123", "decision-briefs"], True),
+            (["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_abc123"], True),
             (["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "cancel"], True),
             (["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "retry"], True),
             (["autonomy", "cases", "case_abc123", "readiness", "evaluate"], True),
@@ -743,6 +750,11 @@ class AutonomyFrontendSources(unittest.TestCase):
             (["autonomy", "cases", "case_abc123", "confirm"], False),
             (["autonomy", "cases", "case_abc123", "signoff"], False),
             (["autonomy", "cases", "case_abc123", "reports"], False),
+            (["autonomy", "cases", "case_abc123", "comparison-bundles", "dcmp_bad-id"], False),
+            (["autonomy", "cases", "case_abc123", "comparison-bundles", "dbr_abc123"], False),
+            (["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_bad-id"], False),
+            (["autonomy", "cases", "case_abc123", "decision-briefs", "dcmp_abc123"], False),
+            (["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_abc123", "signoff"], False),
             (["autonomy", "cases", "case_abc123", "scenarios", "dsc_bad-id", "validate"], False),
             (["autonomy", "cases", "case_abc123", "scenarios", "..", "expire"], False),
             (["autonomy", "cases", "case_abc123", "execution", "job_abc123", "retry"], False),
@@ -874,6 +886,350 @@ for (const [path, expected] of cases) {{
         ):
             with self.subTest(label=label):
                 self.assertIn(label, copy)
+
+    def test_live_and_fixture_decision_briefs_are_strictly_separated(self):
+        shared_tag = re.search(
+            r'<section[^>]+id="autonomyDecisionBrief"[^>]*>',
+            self.markup,
+        )
+        self.assertIsNotNone(shared_tag)
+        self.assertNotIn("data-autonomy-fixture-only", shared_tag.group(0))
+        self.assertEqual(self.markup.count('id="autonomyLiveDecisionBrief"'), 1)
+        self.assertEqual(self.markup.count('id="autonomyFixtureDecisionBrief"'), 1)
+        live_brief = self.markup.split('id="autonomyLiveDecisionBrief"', 1)[1].split(
+            'id="autonomyFixtureDecisionBrief"', 1
+        )[0]
+        for forbidden in (
+            "autonomyPrepareSignoffBtn",
+            "autonomySignoffDialog",
+            "Accept recommendation",
+            "Reject recommendation",
+            "Defer decision",
+            "PDF",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, live_brief)
+        signoff_tag = re.search(
+            r'<dialog[^>]+id="autonomySignoffDialog"[^>]*>',
+            self.markup,
+        )
+        self.assertIsNotNone(signoff_tag)
+        self.assertIn("data-autonomy-fixture-only", signoff_tag.group(0))
+        ids = re.findall(r'\bid="([^"]+)"', self.markup)
+        self.assertEqual(len(ids), len(set(ids)), "Autonomy markup IDs must remain unique")
+
+    def test_live_decide_is_gated_only_by_the_server_open_action(self):
+        gate = self.script.split("function autonomyCanOpenLiveBrief", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        selector_gate = self.script.split("function autonomyCanSelectLiveStage", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        self.assertIn("autonomyDecisionActionIsAllowed('open_decision_brief')", gate)
+        for forbidden_inference in (
+            "all_successful",
+            "partial_results",
+            "latestOnly",
+            "autonomyExecutionJobs",
+            "is_complete",
+        ):
+            self.assertNotIn(forbidden_inference, gate)
+        self.assertIn("autonomyCanOpenLiveBrief()", selector_gate)
+        self.assertIn("decision_allowed_actions", self.script)
+        self.assertIn("The server has not returned the open_decision_brief", self.script)
+
+    def test_live_bundle_and_brief_posts_send_only_authoritative_identities(self):
+        build = self.script.split("async function autonomyBuildComparisonBundle", 1)[1].split(
+            "\n        async function autonomyCreateDecisionBrief", 1
+        )[0]
+        create = self.script.split("async function autonomyCreateDecisionBrief", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        self.assertIn("method: 'POST'", build)
+        for field in ("expected_case_revision", "confirmation_id", "operator_name"):
+            self.assertIn(field, build)
+        self.assertIn("autonomyLiveConfirmationSelect", self.script)
+        self.assertIn("actionConfirmationIds.length === 1", self.script)
+        for forbidden_field in ("metrics:", "result:", "recommendation:", "confidence:"):
+            self.assertNotIn(forbidden_field, build)
+
+        self.assertIn("method: 'POST'", create)
+        for field in (
+            "expected_case_revision",
+            "comparison_bundle_id",
+            "bundle_sha256",
+            "operator_name",
+            "idempotency_key",
+        ):
+            self.assertIn(field, create)
+        for forbidden_field in (
+            "recommendation_classification:",
+            "confidence_state:",
+            "caveats:",
+            "reversal_conditions:",
+            "metrics:",
+        ):
+            self.assertNotIn(forbidden_field, create)
+        self.assertIn("autonomyBriefCreationSignature", create)
+        self.assertIn("autonomyBriefCreationIdempotencyKey", create)
+
+    def test_live_brief_creation_is_scoped_to_the_server_bundle_identity(self):
+        identity_gate = self.script.split(
+            "function autonomySelectedBundleMatchesCreateAction", 1
+        )[1].split("\n        function ", 1)[0]
+        render_actions = self.script.split(
+            "function autonomyRenderDecisionActions", 1
+        )[1].split("\n        function ", 1)[0]
+        create = self.script.split("async function autonomyCreateDecisionBrief", 1)[
+            1
+        ].split("\n        function ", 1)[0]
+        self.assertIn("autonomyDecisionEnabledAction(AUTONOMY_DECISION_CREATE_ACTIONS)", identity_gate)
+        self.assertIn("action?.comparison_bundle_id", identity_gate)
+        self.assertIn("action?.bundle_sha256", identity_gate)
+        self.assertIn("selectedBundleId === actionBundleId", identity_gate)
+        self.assertIn("selectedBundleHash === actionBundleHash", identity_gate)
+        self.assertIn("autonomySelectedBundleMatchesCreateAction()", render_actions)
+        self.assertIn("autonomySelectedBundleMatchesCreateAction()", create)
+
+    def test_live_brief_renders_all_states_and_exact_metric_traceability(self):
+        self.assertIn('id="autonomyLiveBriefAgentNotice"', self.markup)
+        self.assertIn(
+            "autonomyLiveBriefAgentNotice.hidden = autonomyLiveAgentAvailable",
+            self.script,
+        )
+        for state_name in (
+            "partial-results",
+            "classification-pending",
+            "stale",
+            "superseded",
+            "verification-failure",
+            "agent-unavailable",
+            "api-unavailable",
+        ):
+            with self.subTest(state=state_name):
+                self.assertIn(state_name, self.script)
+                self.assertIn(state_name, self.combined)
+        for field in (
+            "scenario_revision_id",
+            "tea_job_id",
+            "attempt_number",
+            "source_snapshot_sha256",
+            "request_sha256",
+            "percentile_definition",
+            "population_semantics",
+            "reporting_tie_outs",
+            "kernel_numerics",
+            "reporting_checks",
+            "common_cost_audit",
+            "per_weather_year",
+            "bundle_sha256",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, self.script)
+        for status in (
+            "queued",
+            "running",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "stale",
+            "missing",
+            "verification-failed",
+        ):
+            self.assertIn(status, self.combined.lower())
+        self.assertIn("Object.prototype.hasOwnProperty.call", self.script)
+        self.assertIn("Null — explicitly reported", self.script)
+        self.assertIn("Missing — not reported", self.script)
+        self.assertIn("Object.entries(metrics)", self.script)
+        self.assertIn("/exports/", self.script)
+        self.assertIn("Download existing CSV data", self.script)
+        self.assertIn("Download existing XLSX data", self.script)
+        self.assertIn("cross-case identity", self.script)
+        self.assertNotIn("technoeconomicRenderDecision", self.script)
+        self.assertNotIn("technoeconomicFormatMetric", self.script)
+
+    def test_live_quality_rows_trace_reporting_cost_and_weather_records(self):
+        quality = self.script.split("function autonomyDecisionQualityEntries", 1)[
+            1
+        ].split("\n        function ", 1)[0]
+        for exact_path in (
+            "quality.reporting_checks",
+            "quality.reporting_tie_outs",
+            "quality.numerical_provenance",
+            "result.common_cost_audit",
+            "result.per_weather_year",
+        ):
+            with self.subTest(path=exact_path):
+                self.assertIn(exact_path, quality)
+        for trace_field in (
+            "scenario_revision_id",
+            "tea_job_id",
+            "attempt_number",
+            "source_snapshot_sha256",
+        ):
+            with self.subTest(trace_field=trace_field):
+                self.assertIn(trace_field, quality)
+        self.assertIn("tracedDetail", quality)
+
+    def test_live_joint_outcomes_flatten_each_probability_class_with_counts(self):
+        flatten = self.script.split("function autonomyDecisionFlattenOutcomes", 1)[
+            1
+        ].split("\n        function ", 1)[0]
+        render = self.script.split("function autonomyRenderDecisionJointOutcomes", 1)[
+            1
+        ].split("\n        function ", 1)[0]
+
+        for contract_field in (
+            "group.probabilities",
+            "group.counts",
+            "group.denominator",
+            "Object.keys(probabilities)",
+            "Object.keys(counts)",
+            "classIds.forEach",
+        ):
+            with self.subTest(contract_field=contract_field):
+                self.assertIn(contract_field, flatten)
+        for displayed_semantic in (
+            "outcome.probability",
+            "outcome.count",
+            "outcome.denominator",
+        ):
+            with self.subTest(displayed_semantic=displayed_semantic):
+                self.assertIn(displayed_semantic, render)
+        self.assertNotIn("Object.entries(values)", flatten)
+        self.assertIn("Probability / count / denominator", self.markup)
+
+    def test_live_sensitivity_preserves_response_step_order_and_exact_metrics(self):
+        flatten = self.script.split("function autonomyDecisionFlattenSensitivity", 1)[
+            1
+        ].split("\n        function ", 1)[0]
+        render = self.script.split("function autonomyRenderDecisionSensitivity", 1)[
+            1
+        ].split("\n        function ", 1)[0]
+
+        self.assertIn("Object.entries(autonomyPlainObject(sensitivity))", flatten)
+        self.assertIn("Array.isArray(model.steps)", flatten)
+        self.assertIn("steps.forEach", flatten)
+        self.assertNotIn(".sort(", flatten)
+        self.assertNotIn("index + 1", flatten)
+        for exact_field in (
+            "responseId",
+            "predictor_id",
+            "entry_order",
+            "sign",
+            "incremental_r_squared",
+            "cumulative_r_squared",
+            "standardized_beta",
+        ):
+            with self.subTest(exact_field=exact_field):
+                self.assertIn(exact_field, render)
+        self.assertIn("Response / predictor", self.markup)
+        self.assertIn("Entry order / sign", self.markup)
+
+    def test_live_brief_state_changes_use_the_existing_polite_live_region(self):
+        announce_state = self.script.split("function autonomyAnnounceDecisionState", 1)[
+            1
+        ].split("\n        function ", 1)[0]
+        render = self.script.split("function autonomyRenderLiveDecisionWorkspace", 1)[
+            1
+        ].split("\n        function ", 1)[0]
+        select_bundle = self.script.split("async function autonomySelectComparisonBundle", 1)[
+            1
+        ].split("\n        async function ", 1)[0]
+        select_brief = self.script.split("async function autonomySelectDecisionBrief", 1)[
+            1
+        ].split("\n        async function ", 1)[0]
+
+        self.assertIn("announcementKey", announce_state)
+        self.assertIn("stateName", announce_state)
+        self.assertIn("presentation[0]", announce_state)
+        self.assertIn("presentation[1]", announce_state)
+        self.assertIn("autonomyAnnounce(", announce_state)
+        self.assertIn("autonomyAnnounceDecisionState(stateName, presentation)", render)
+        self.assertIn("autonomyDecisionStatePresentation(stateName)", select_bundle)
+        self.assertIn("autonomyDecisionStatePresentation(stateName)", select_brief)
+        self.assertEqual(self.markup.count('aria-live="polite"'), 1)
+
+    def test_return_to_compare_rejects_hidden_disabled_and_non_tabbable_focus(self):
+        focus_gate = self.script.split("function autonomyDecisionFocusTargetIsUsable", 1)[
+            1
+        ].split("\n        function ", 1)[0]
+        return_to_compare = self.script.split(
+            "function autonomyReturnFromLiveBrief", 1
+        )[1].split("\n        function ", 1)[0]
+
+        for focus_guard in (
+            "element.isConnected",
+            "element.closest('[hidden], [inert]')",
+            "element.matches(':disabled')",
+            "aria-disabled",
+            "element.tabIndex < 0",
+            "style.display !== 'none'",
+            "style.visibility !== 'hidden'",
+        ):
+            with self.subTest(focus_guard=focus_guard):
+                self.assertIn(focus_guard, focus_gate)
+        self.assertIn("autonomyDecisionFocusTargetIsUsable(contextTrigger)", return_to_compare)
+        self.assertIn("[data-autonomy-stage=\"compare\"]:not(:disabled)", return_to_compare)
+
+    def test_partial_and_contract_pending_states_never_invent_a_winner(self):
+        state = self.script.split("function autonomyDecisionStateName", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        recommendation = self.script.split(
+            "function autonomyRenderDecisionRecommendation", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("completeness.status === 'partial'", state)
+        self.assertIn("classification_pending_contract", state)
+        self.assertIn("'partial-results'", recommendation)
+        self.assertIn("autonomyLiveRecommendation.hidden = partial", recommendation)
+        self.assertIn("no winner or confidence state is authorized", recommendation)
+        self.assertIn("['Strong', 'Mixed', 'Provisional']", recommendation)
+        self.assertNotRegex(recommendation, r"(?:>=|<=|>|<)\s*0?\.\d+")
+
+    def test_live_ask_why_is_deterministic_and_return_preserves_compare_context(self):
+        ask_why = self.script.split("function autonomyToggleLiveWhy", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        return_to_compare = self.script.split(
+            "function autonomyReturnFromLiveBrief", 1
+        )[1].split("\n        function ", 1)[0]
+        for forbidden in ("fetch(", "autonomyJsonRequest", "autonomySendLiveMessage", "/messages"):
+            self.assertNotIn(forbidden, ask_why)
+        self.assertIn("autonomyLiveWhyPanel.hidden", ask_why)
+        self.assertIn("autonomySelectedStage = 'compare'", return_to_compare)
+        self.assertIn("autonomyBriefReturnContext", return_to_compare)
+        self.assertNotIn("autonomyLiveScenarios =", return_to_compare)
+        self.assertNotIn("autonomySelectedScenarioRevisions.clear", return_to_compare)
+        live_case_render = self.script.split("function autonomyRenderLiveCase", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        self.assertNotIn("autonomySetView('investigation')", live_case_render)
+
+    def test_live_brief_responsive_and_high_contrast_hooks_are_present(self):
+        compact = re.sub(r"\s+", " ", self.styles)
+        for selector in (
+            ".autonomy-live-decision-brief",
+            ".autonomy-live-brief-selectors",
+            ".autonomy-live-analysis-grid",
+            ".autonomy-live-brief-lower-grid",
+            ".autonomy-live-request-matrix",
+            ".autonomy-live-brief-state[data-status=\"verification-failure\"]",
+        ):
+            self.assertIn(selector, compact)
+        self.assertRegex(
+            compact,
+            r"\.autonomy-live-decide-actions \.autonomy-button,\s*"
+            r"\.autonomy-live-brief-actions \.autonomy-button,[^{]*"
+            r"\{[^}]*min-height:\s*44px",
+        )
+        self.assertRegex(
+            compact,
+            r"\.autonomy-live-brief-selectors select\s*\{[^}]*font-size:\s*16px",
+        )
+        forced_colors = compact.split("@media (forced-colors: active)", 1)[1]
+        self.assertIn(".autonomy-live-brief-state", forced_colors)
+        self.assertIn(".autonomy-live-recommendation", forced_colors)
 
     def test_fixture_selector_and_live_status_are_accessibly_described(self):
         self.assertRegex(

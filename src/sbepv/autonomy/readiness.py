@@ -1039,9 +1039,9 @@ def evaluate_decision_case_readiness(
             "phase_boundary",
             "Phase boundary",
             "passed",
-            "Deterministic scenarios and named-human TEA confirmation are available; Decision Brief, sign-off, and reporting remain unavailable.",
+            "Deterministic scenarios, named-human TEA confirmation, verified comparison bundles, and unsigned Decision Brief revisions are available; sign-off and reporting remain unavailable.",
             rule_id="AUT-PHASE-2",
-            exact_rule="Only authenticated deterministic services and explicit named-human confirmation may mutate scenarios or create TEA jobs; the Decision Agent remains read-only.",
+            exact_rule="Only authenticated deterministic services and explicit named-human confirmation may mutate scenarios or create TEA jobs; comparison and Decision Brief services are read-only over immutable results, and the Decision Agent remains result-blind and read-only.",
         )
     )
 
@@ -1104,12 +1104,14 @@ def evaluate_decision_case_readiness(
         "supported_analysis_bases": list(SUPPORTED_ANALYSIS_BASES),
         "case": serializers.public_decision_case(case_record),
         "phase_boundary": {
-            "current_phase": "scenarios_and_execution",
+            "current_phase": "autonomy_decision_brief",
             "non_runnable_suggestions_only": True,
             "scenario_execution_available": True,
             "tea_confirmation_available": True,
             "pre_run_values_label": "inputs_or_hypotheses",
-            "decision_brief_available": False,
+            "decision_brief_available": True,
+            "decision_brief_result_interpretation": "deterministic_server_only",
+            "recommendation_contract_state": "classification_pending_contract",
             "decision_signoff_available": False,
             "report_generation_available": False,
         },

@@ -1,4 +1,4 @@
-"""Narrow live APIs for durable Autonomy cases, readiness, evidence, and chat."""
+"""Live APIs for durable Autonomy investigation and unsigned Decision Briefs."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import logging
 from pathlib import Path
 import re
+import secrets
 from urllib.parse import quote
 import uuid
 from typing import Any
@@ -27,9 +28,11 @@ from sbepv.api import config, state
 from sbepv.api import serializers as api_serializers
 from sbepv.api import technoeconomic as technoeconomic_api
 from sbepv.api.autonomy_schemas import (
+    DecisionBriefCreateRequest,
     DecisionCaseArchiveRequest,
     DecisionCaseCreateRequest,
     DecisionCaseUpdateRequest,
+    DecisionComparisonBundleCreateRequest,
     DecisionMessageCreateRequest,
     DecisionScenarioConfirmRequest,
     DecisionScenarioCreateRequest,
@@ -40,8 +43,10 @@ from sbepv.api.autonomy_schemas import (
     EvidenceDeleteRequest,
     EvidenceReviewRequest,
 )
+from sbepv.autonomy import comparison as comparison_service
 from sbepv.autonomy import decision_agent as decision_agent_module
 from sbepv.autonomy import evidence, lifecycle, readiness, scenarios, serializers
+from sbepv.autonomy import result_verification
 from sbepv.store import (
     AgentStoreError,
     EvidenceLimitExceeded,
@@ -61,6 +66,8 @@ _EVIDENCE_ID_RE = re.compile(r"^evi_[A-Za-z0-9]+$")
 _CANDIDATE_ID_RE = re.compile(r"^evc_[A-Za-z0-9]+$")
 _SCENARIO_ID_RE = re.compile(r"^dsc_[A-Za-z0-9]+$")
 _TEA_JOB_ID_RE = re.compile(r"^tea_[A-Za-z0-9_-]+$")
+_COMPARISON_BUNDLE_ID_RE = re.compile(r"^dcmp_[A-Za-z0-9]+$")
+_DECISION_BRIEF_REVISION_ID_RE = re.compile(r"^dbr_[A-Za-z0-9]+$")
 _GROUPED_TEA_ACKNOWLEDGEMENT = (
     "I confirm the selected scenarios, source and basis lock, evidence status, "
     "realization count, seed, and exact request hashes shown here. I understand "
@@ -137,6 +144,349 @@ def _evidence_snapshot_loader(
         case_id,
         evidence_asset_id,
     )
+
+
+def _decision_confirmation_or_404(
+    case_id: str,
+    confirmation_id: str,
+) -> dict[str, Any]:
+    confirmation = state.AGENT_STORE.get_decision_scenario_confirmation(
+        str(confirmation_id)
+    )
+    if confirmation is None or str(confirmation.get("case_id") or "") != case_id:
+        raise _not_found()
+    return confirmation
+
+
+def _comparison_source_records(
+    case_id: str,
+    confirmation: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Resolve only the scenario revisions named by one immutable receipt."""
+
+    records: list[dict[str, Any]] = []
+    for item in confirmation.get("items") or []:
+        if not isinstance(item, dict):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "confirmation_receipt_invalid",
+                    "message": "The immutable confirmation item is malformed.",
+                },
+            )
+        revision_id = str(item.get("scenario_revision_id") or "")
+        scenario_record = state.AGENT_STORE.get_decision_scenario(revision_id)
+        # Schema v7 creates the confirmed scenario, root TEA attempt, immutable
+        # confirmation item, and scenario/job link in one transaction.  Restrictive
+        # foreign keys plus retained-row triggers then make a durable "missing"
+        # member impossible.  Treat an absent lookup as storage corruption and fail
+        # closed; synthesizing a partial row would discard the immutable linkage the
+        # comparison bundle is required to prove.
+        if (
+            scenario_record is None
+            or str(scenario_record.get("case_id") or "") != case_id
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "confirmed_scenario_missing",
+                    "message": (
+                        "A scenario revision named by the immutable confirmation "
+                        "receipt is unavailable."
+                    ),
+                },
+            )
+        records.append(scenario_record)
+    return records
+
+
+def _build_verified_comparison_snapshot(
+    case_record: dict[str, Any],
+    confirmation: dict[str, Any],
+    *,
+    snapshot_case_revision: int | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Re-verify and compare one exact confirmation without running TEA."""
+
+    case_id = str(case_record["id"])
+    scenario_records = _comparison_source_records(case_id, confirmation)
+    selections = comparison_service.select_confirmation_attempts(
+        confirmation_record=confirmation,
+        scenario_records=scenario_records,
+    )
+    outcomes: dict[str, result_verification.ResultVerificationOutcome] = {}
+    for selection in selections:
+        if (
+            selection.get("selection_status") != "selected"
+            or selection.get("display_status") != "done"
+        ):
+            continue
+        selected_job = selection.get("selected_job")
+        scenario_record = selection.get("scenario_record")
+        confirmation_item = selection.get("confirmation_item")
+        if not all(
+            isinstance(value, dict)
+            for value in (selected_job, scenario_record, confirmation_item)
+        ):
+            continue
+        tea_job_id = str(selection.get("selected_job_id") or "")
+        outcomes[tea_job_id] = (
+            result_verification.verify_completed_technoeconomic_result(
+                case_record=case_record,
+                confirmation_record=confirmation,
+                confirmation_item=confirmation_item,
+                scenario_record=scenario_record,
+                job_record=selected_job,
+                evidence_receipt_loader=(
+                    state.AGENT_STORE.get_decision_evidence_receipt
+                ),
+                evidence_snapshot_loader=_evidence_snapshot_loader,
+            )
+        )
+    bundle_case_record = dict(case_record)
+    if snapshot_case_revision is not None:
+        if (
+            isinstance(snapshot_case_revision, bool)
+            or not isinstance(snapshot_case_revision, int)
+            or snapshot_case_revision <= 0
+        ):
+            raise ValueError("snapshot_case_revision must be a positive integer")
+        bundle_case_record["revision"] = snapshot_case_revision
+    bundle = comparison_service.build_comparison_bundle(
+        case_record=bundle_case_record,
+        confirmation_record=confirmation,
+        scenario_records=scenario_records,
+        verification_outcomes=outcomes,
+    )
+    bundle_sha256 = comparison_service.canonical_comparison_bundle_sha256(bundle)
+    return bundle, bundle_sha256
+
+
+def _decision_brief_caveats(bundle: dict[str, Any]) -> list[Any]:
+    """Copy deterministic bundle and scenario warnings with durable identities."""
+
+    caveats: list[Any] = []
+    bundle_caveats = bundle.get("caveats")
+    if isinstance(bundle_caveats, list):
+        caveats.extend(bundle_caveats)
+    else:
+        bundle_warnings = bundle.get("warnings")
+        if isinstance(bundle_warnings, list):
+            caveats.extend(bundle_warnings)
+    scenarios_payload = bundle.get("scenarios")
+    if isinstance(scenarios_payload, list):
+        for scenario in scenarios_payload:
+            if not isinstance(scenario, dict):
+                continue
+            result = scenario.get("result")
+            if not isinstance(result, dict):
+                continue
+            warnings = result.get("warnings")
+            if not isinstance(warnings, list):
+                continue
+            attempt = scenario.get("attempt")
+            if not isinstance(attempt, dict):
+                attempt = {}
+            for warning in warnings:
+                caveats.append(
+                    {
+                        "source": "scenario_result_warning",
+                        "scenario_id": scenario.get("scenario_id"),
+                        "scenario_revision_id": scenario.get(
+                            "scenario_revision_id"
+                        ),
+                        "tea_job_id": attempt.get("tea_job_id"),
+                        "attempt_number": attempt.get("attempt_number"),
+                        "warning": warning,
+                    }
+                )
+    public_caveats = serializers.exact_public_value(caveats)
+    return public_caveats if isinstance(public_caveats, list) else []
+
+
+def _decision_action_context(case_id: str) -> dict[str, Any]:
+    """Return the server-owned gates for the unsigned Decision Brief phase."""
+
+    try:
+        links = state.AGENT_STORE.list_decision_scenario_jobs(
+            case_id,
+            latest_attempts_only=False,
+            limit=1_000,
+        )
+        bundles = state.AGENT_STORE.list_decision_comparison_bundles(
+            case_id,
+            include_stale=True,
+            limit=100,
+        )
+        briefs = state.AGENT_STORE.list_decision_briefs(
+            case_id,
+            include_superseded=True,
+            limit=100,
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    # Read the case after its related histories so the returned revision is a
+    # usable response fence for clients. Store methods own separate transactions,
+    # so a later write can still require the normal expected-revision retry.
+    case_record = _case_or_404(case_id)
+
+    confirmation_ids: list[str] = []
+    for link in links:
+        confirmation_id = str(
+            link.get("confirmation_id")
+            or link.get("scenario_confirmation_id")
+            or ""
+        )
+        if confirmation_id and confirmation_id not in confirmation_ids:
+            confirmation_ids.append(confirmation_id)
+    current_bundle = next(
+        (
+            item
+            for item in bundles
+            if item.get("is_current", True) and not item.get("stale_at")
+        ),
+        None,
+    )
+    current_brief = next(
+        (
+            item
+            for item in briefs
+            if item.get("is_current", True)
+            and not item.get("stale_at")
+            and not item.get("superseded_by_revision_id")
+        ),
+        None,
+    )
+    stale_bundle = next(
+        (item for item in bundles if item.get("stale_at")),
+        None,
+    )
+    case_mutable = str(case_record.get("status") or "") not in {
+        "signed",
+        "archived",
+    }
+    can_open = bool(confirmation_ids or bundles or briefs)
+    can_build = bool(confirmation_ids and case_mutable and current_bundle is None)
+    current_bundle_id = (
+        current_bundle.get("comparison_bundle_id") if current_bundle else None
+    )
+    current_brief_bundle_id = (
+        current_brief.get("comparison_bundle_id") if current_brief else None
+    )
+    can_create_brief = bool(
+        current_bundle
+        and current_bundle.get("is_complete")
+        and not current_bundle.get("stale_at")
+        and current_brief_bundle_id != current_bundle_id
+        and case_mutable
+    )
+    brief_create_disabled_reason = (
+        "This exact comparison snapshot already has an immutable brief revision."
+        if current_bundle_id
+        and current_brief_bundle_id == current_bundle_id
+        else "A current, complete, verified comparison bundle is required."
+    )
+    comparison_build_disabled_reason = (
+        "A current immutable comparison snapshot already exists."
+        if current_bundle is not None
+        else "An immutable confirmation is required for comparison."
+    )
+    blockers: list[dict[str, Any]] = []
+    if not confirmation_ids:
+        blockers.append(
+            {
+                "code": "comparison_confirmation_missing",
+                "blocking": True,
+                "message": "Confirm at least one immutable scenario batch first.",
+            }
+        )
+    if current_bundle is not None and not current_bundle.get("is_complete"):
+        blockers.append(
+            {
+                "code": "comparison_incomplete",
+                "blocking": True,
+                "message": (
+                    "Partial results remain visible, but an incomplete comparison "
+                    "cannot create a final Decision Brief revision."
+                ),
+            }
+        )
+    if current_bundle is None and stale_bundle is not None:
+        blockers.append(
+            {
+                "code": "comparison_stale",
+                "blocking": True,
+                "comparison_bundle_id": stale_bundle.get(
+                    "comparison_bundle_id"
+                ),
+                "message": "Build a new comparison snapshot from current durable inputs.",
+            }
+        )
+    if current_bundle is not None and current_bundle.get("is_complete"):
+        blockers.append(
+            {
+                "code": "classification_pending_contract",
+                "blocking": True,
+                "message": (
+                    "No approved deterministic recommendation or confidence "
+                    "threshold contract exists for this phase."
+                ),
+            }
+        )
+
+    def action(
+        action_id: str,
+        enabled: bool,
+        disabled_reason: str | None,
+        **metadata: Any,
+    ) -> dict[str, Any]:
+        return {
+            "id": action_id,
+            "enabled": enabled,
+            "disabled_reason": None if enabled else disabled_reason,
+            **metadata,
+        }
+
+    return {
+        "case": serializers.public_decision_case(case_record),
+        "case_revision": int(case_record.get("revision") or 0),
+        "decision_allowed_actions": [
+            action(
+                "open_decision_brief",
+                can_open,
+                "No immutable scenario confirmation is available yet.",
+            ),
+            action(
+                "build_comparison_bundle",
+                can_build,
+                comparison_build_disabled_reason,
+                confirmation_ids=confirmation_ids,
+            ),
+            action(
+                "create_decision_brief",
+                can_create_brief,
+                brief_create_disabled_reason,
+                comparison_bundle_id=(
+                    current_bundle_id
+                ),
+                bundle_sha256=(
+                    current_bundle.get("bundle_sha256")
+                    if current_bundle
+                    else None
+                ),
+            ),
+        ],
+        "decision_blockers": serializers.safe_public_value(blockers),
+        "current_comparison_bundle_id": (
+            current_bundle_id
+        ),
+        "current_decision_brief_revision_id": (
+            current_brief.get("brief_revision_id") if current_brief else None
+        ),
+        "recommendation_contract_state": "classification_pending_contract",
+        "signoff_available": False,
+        "report_generation_available": False,
+    }
 
 
 def _current_scenarios(case_id: str) -> list[dict[str, Any]]:
@@ -227,6 +577,7 @@ def _scenario_response_context(case_id: str) -> dict[str, Any]:
         "readiness": readiness_record,
         "allowed_actions": readiness_record.get("allowed_case_actions") or [],
         "blockers": readiness_record.get("blockers") or [],
+        **_decision_action_context(case_id),
     }
 
 
@@ -489,7 +840,9 @@ def _scenario_execution_payload(case_id: str) -> dict[str, Any]:
         ],
         "confirmations": confirmations,
         "case_transitioned": bool(execution.get("case_transitioned")),
-        "decision_brief_available": False,
+        "decision_brief_available": bool(confirmations),
+        "decision_brief_semantics": "verified_comparison_or_partial_results",
+        "recommendation_contract_state": "classification_pending_contract",
         "recommendation_available": False,
         "signoff_available": False,
         "report_generation_available": False,
@@ -616,6 +969,7 @@ def get_decision_case(case_id: str) -> dict[str, Any]:
     return {
         "case": serializers.public_decision_case(case_record),
         "readiness": _readiness_or_503(str(case_record["id"])),
+        **_decision_action_context(str(case_record["id"])),
     }
 
 
@@ -1442,6 +1796,366 @@ def retry_case_execution_job(
         "idempotent_replay": bool(result.get("idempotent_replay")),
         "execution": _scenario_execution_payload(canonical_case),
         **_scenario_response_context(canonical_case),
+    }
+
+
+@router.get("/cases/{case_id}/comparison-bundles")
+def list_case_comparison_bundles(
+    case_id: str,
+    include_stale: bool = Query(default=True),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    _case_or_404(canonical_case)
+    try:
+        records = state.AGENT_STORE.list_decision_comparison_bundles(
+            canonical_case,
+            include_stale=include_stale,
+            limit=limit,
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    return {
+        "comparison_bundles": [
+            serializers.public_decision_comparison_bundle(item)
+            for item in records
+        ],
+        **_decision_action_context(canonical_case),
+    }
+
+
+@router.post("/cases/{case_id}/comparison-bundles", status_code=201)
+def create_case_comparison_bundle(
+    case_id: str,
+    request_payload: DecisionComparisonBundleCreateRequest,
+) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    _case_or_404(canonical_case)
+    try:
+        state.AGENT_STORE.reconcile_decision_case_execution(canonical_case)
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    case_record = _case_or_404(canonical_case)
+    if int(case_record.get("revision") or 0) != request_payload.expected_case_revision:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "stale_case_revision",
+                "message": "The case changed before comparison verification began.",
+            },
+        )
+    try:
+        confirmation = _decision_confirmation_or_404(
+            canonical_case,
+            request_payload.confirmation_id,
+        )
+        bundle, bundle_sha256 = _build_verified_comparison_snapshot(
+            case_record,
+            confirmation,
+        )
+        attempt_proofs = bundle.get("attempt_proofs")
+        if not isinstance(attempt_proofs, list):
+            raise ValueError("comparison service omitted durable attempt proofs")
+        created = state.AGENT_STORE.create_decision_comparison_bundle(
+            canonical_case,
+            expected_case_revision=request_payload.expected_case_revision,
+            source_confirmation_id=request_payload.confirmation_id,
+            bundle=bundle,
+            bundle_sha256=bundle_sha256,
+            attempt_proofs=attempt_proofs,
+            created_by=request_payload.operator_name,
+        )
+    except HTTPException:
+        raise
+    except comparison_service.ComparisonContractError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    except (AgentStoreError, OSError, TypeError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    return {
+        "comparison_bundle": (
+            serializers.public_decision_comparison_bundle(created)
+        ),
+        "idempotent_replay": bool(created.get("idempotent_replay")),
+        **_decision_action_context(canonical_case),
+    }
+
+
+@router.get(
+    "/cases/{case_id}/comparison-bundles/{comparison_bundle_id}"
+)
+def get_case_comparison_bundle(
+    case_id: str,
+    comparison_bundle_id: str,
+) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    canonical_bundle = _validate_identifier(
+        comparison_bundle_id,
+        _COMPARISON_BUNDLE_ID_RE,
+    )
+    _case_or_404(canonical_case)
+    try:
+        record = state.AGENT_STORE.get_decision_comparison_bundle(
+            canonical_bundle
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    if record is None or str(record.get("case_id") or "") != canonical_case:
+        raise _not_found()
+    return {
+        "comparison_bundle": (
+            serializers.public_decision_comparison_bundle(record)
+        ),
+        **_decision_action_context(canonical_case),
+    }
+
+
+@router.get("/cases/{case_id}/decision-briefs")
+def list_case_decision_briefs(
+    case_id: str,
+    include_superseded: bool = Query(default=True),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    _case_or_404(canonical_case)
+    try:
+        records = state.AGENT_STORE.list_decision_briefs(
+            canonical_case,
+            include_superseded=include_superseded,
+            limit=limit,
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    return {
+        "decision_briefs": [
+            serializers.public_decision_brief(item) for item in records
+        ],
+        **_decision_action_context(canonical_case),
+    }
+
+
+@router.post("/cases/{case_id}/decision-briefs", status_code=201)
+def create_case_decision_brief(
+    case_id: str,
+    request_payload: DecisionBriefCreateRequest,
+) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    case_record = _case_or_404(canonical_case)
+    try:
+        bundle_record = state.AGENT_STORE.get_decision_comparison_bundle(
+            request_payload.comparison_bundle_id
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    if (
+        bundle_record is None
+        or str(bundle_record.get("case_id") or "") != canonical_case
+    ):
+        raise _not_found()
+    if str(bundle_record.get("bundle_sha256") or "") != request_payload.bundle_sha256:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "comparison_bundle_hash_mismatch",
+                "message": "The comparison snapshot changed or was tampered with.",
+            },
+        )
+    if not bundle_record.get("is_complete"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "comparison_incomplete",
+                "message": (
+                    "Partial results may be reviewed, but every selected attempt "
+                    "must be complete and verified before a brief is created."
+                ),
+            },
+        )
+    bundle = bundle_record.get("bundle")
+    if not isinstance(bundle, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "comparison_bundle_invalid",
+                "message": "The stored comparison snapshot is invalid.",
+            },
+        )
+    recommendation = bundle.get("recommendation")
+    if not isinstance(recommendation, dict):
+        recommendation = {}
+    classification = str(
+        recommendation.get("state") or "classification_pending_contract"
+    )
+    if classification != "classification_pending_contract":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "recommendation_contract_unsupported",
+                "message": (
+                    "This phase only permits the explicit pending-contract "
+                    "classification; no winner threshold is approved."
+                ),
+            },
+        )
+    caveats = _decision_brief_caveats(bundle)
+    reversal_conditions = recommendation.get("reversal_conditions")
+    if not isinstance(reversal_conditions, list):
+        reversal_conditions = []
+    reversal_conditions = serializers.exact_public_value(reversal_conditions)
+    if not isinstance(reversal_conditions, list):
+        reversal_conditions = []
+    provenance = {
+        "schema_version": "autonomy-decision-brief-provenance-v1",
+        "case_id": canonical_case,
+        "source_confirmation_id": bundle_record.get("source_confirmation_id"),
+        "comparison_bundle_id": bundle_record.get("comparison_bundle_id"),
+        "comparison_bundle_sha256": bundle_record.get("bundle_sha256"),
+        "comparison_schema_version": bundle_record.get(
+            "bundle_schema_version"
+        ),
+        "recommendation_contract_state": "classification_pending_contract",
+        "result_interpretation": "deterministic_server_only",
+        "decision_agent_result_access": False,
+        "signoff_available": False,
+        "report_generation_available": False,
+    }
+    public_provenance = serializers.exact_public_value(provenance)
+    if not isinstance(public_provenance, dict):  # pragma: no cover - fixed shape
+        raise RuntimeError("Decision Brief provenance projection is invalid")
+    provenance = public_provenance
+    try:
+        existing_snapshot = state.AGENT_STORE.get_decision_brief_for_snapshot(
+            canonical_case,
+            comparison_bundle_id=request_payload.comparison_bundle_id,
+            expected_case_revision=request_payload.expected_case_revision,
+            comparison_bundle_sha256=request_payload.bundle_sha256,
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    existing_same_snapshot = existing_snapshot is not None
+    if bundle_record.get("stale_at") and not existing_same_snapshot:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "comparison_bundle_stale",
+                "message": "A stale comparison cannot create a new brief revision.",
+            },
+        )
+    if not existing_same_snapshot:
+        if (
+            int(case_record.get("revision") or 0)
+            != request_payload.expected_case_revision
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "stale_case_revision",
+                    "message": "The case changed before brief verification began.",
+                },
+            )
+        source_confirmation_id = str(
+            bundle_record.get("source_confirmation_id") or ""
+        )
+        try:
+            confirmation = _decision_confirmation_or_404(
+                canonical_case,
+                source_confirmation_id,
+            )
+            fresh_bundle, fresh_sha256 = _build_verified_comparison_snapshot(
+                case_record,
+                confirmation,
+                snapshot_case_revision=int(
+                    bundle_record.get("expected_case_revision") or 0
+                ),
+            )
+        except HTTPException:
+            raise
+        except comparison_service.ComparisonContractError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
+        except (AgentStoreError, OSError, TypeError, ValueError) as exc:
+            raise _store_failure(exc) from exc
+        if (
+            not fresh_bundle.get("is_complete")
+            or not secrets.compare_digest(
+                fresh_sha256,
+                request_payload.bundle_sha256,
+            )
+        ):
+            try:
+                state.AGENT_STORE.mark_decision_comparison_bundle_stale(
+                    request_payload.comparison_bundle_id,
+                    reason={
+                        "code": "brief_admission_reverification_failed",
+                        "fresh_bundle_sha256": fresh_sha256,
+                    },
+                )
+            except (AgentStoreError, ValueError):
+                logger.warning(
+                    "Could not mark comparison %s stale after failed brief admission",
+                    request_payload.comparison_bundle_id,
+                    exc_info=True,
+                )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "brief_admission_reverification_failed",
+                    "message": (
+                        "The exact completed results no longer reverify against "
+                        "this immutable comparison snapshot."
+                    ),
+                },
+            )
+    try:
+        created = state.AGENT_STORE.create_decision_brief(
+            canonical_case,
+            expected_case_revision=request_payload.expected_case_revision,
+            comparison_bundle_id=request_payload.comparison_bundle_id,
+            recommendation_classification=classification,
+            confidence_state="classification_pending_contract",
+            caveats=caveats,
+            reversal_conditions=reversal_conditions,
+            provenance=provenance,
+            created_by=request_payload.operator_name,
+            idempotency_key=request_payload.idempotency_key,
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    response_case = created.get("case")
+    if not isinstance(response_case, dict):
+        response_case = _case_or_404(canonical_case)
+    return {
+        "decision_brief": serializers.public_decision_brief(created),
+        "case": serializers.public_decision_case(response_case),
+        "idempotent_replay": bool(created.get("idempotent_replay")),
+        **_decision_action_context(canonical_case),
+    }
+
+
+@router.get("/cases/{case_id}/decision-briefs/{brief_revision_id}")
+def get_case_decision_brief(
+    case_id: str,
+    brief_revision_id: str,
+) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    canonical_brief = _validate_identifier(
+        brief_revision_id,
+        _DECISION_BRIEF_REVISION_ID_RE,
+    )
+    _case_or_404(canonical_case)
+    try:
+        record = state.AGENT_STORE.get_decision_brief(canonical_brief)
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    if record is None or str(record.get("case_id") or "") != canonical_case:
+        raise _not_found()
+    return {
+        "decision_brief": serializers.public_decision_brief(record),
+        **_decision_action_context(canonical_case),
     }
 
 

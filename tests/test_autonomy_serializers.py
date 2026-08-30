@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from sbepv.autonomy import serializers
+from sbepv.autonomy import comparison, serializers
 
 
 class AutonomySerializerTests(unittest.TestCase):
@@ -104,6 +104,139 @@ class AutonomySerializerTests(unittest.TestCase):
         self.assertEqual(
             confirmation["receipt"], {"note": "[redacted credential]"}
         )
+
+    def test_comparison_and_brief_projections_are_traceable_and_sanitized(self) -> None:
+        bundle = {
+            "schema_version": "autonomy-comparison-bundle-v1",
+            "scenarios": [
+                {
+                    "scenario_revision_id": "dsr_exact",
+                    "result": {
+                        "metrics": {
+                            "cost": {
+                                "unit": "USD/Wdc",
+                                "percentiles": {
+                                    "p5": None,
+                                    "p50": 1.25,
+                                    "p95": 2.5,
+                                },
+                                "serverPath": r"C:\private\sealed.npz",
+                            }
+                        }
+                    },
+                }
+            ],
+        }
+        bundle = serializers.exact_public_comparison_bundle(bundle)
+        bundle["bundle_hash"] = comparison.canonical_comparison_bundle_sha256(
+            bundle
+        )
+        public_bundle = serializers.public_decision_comparison_bundle(
+            {
+                "comparison_bundle_id": "dcmp_exact",
+                "case_id": "case_exact",
+                "source_confirmation_id": "dconf_exact",
+                "expected_case_revision": 7,
+                "bundle_schema_version": "autonomy-comparison-bundle-v1",
+                "bundle_sha256": bundle["bundle_hash"],
+                "is_complete": True,
+                "recommendation_eligible": False,
+                "bundle": bundle,
+            }
+        )
+        metric = public_bundle["bundle"]["scenarios"][0]["result"]["metrics"][
+            "cost"
+        ]
+        self.assertEqual("USD/Wdc", metric["unit"])
+        self.assertIsNone(metric["percentiles"]["p5"])
+        self.assertNotIn("serverPath", metric)
+
+        public_brief = serializers.public_decision_brief(
+            {
+                "brief_id": "dbf_exact",
+                "brief_revision_id": "dbr_exact",
+                "revision": 1,
+                "case_id": "case_exact",
+                "source_confirmation_id": "dconf_exact",
+                "comparison_bundle_id": "dcmp_exact",
+                "comparison_bundle_sha256": bundle["bundle_hash"],
+                "comparison_bundle": bundle,
+                "recommendation_classification": (
+                    "classification_pending_contract"
+                ),
+                "confidence_state": "classification_pending_contract",
+                "provenance": {},
+            }
+        )
+        self.assertFalse(public_brief["signed"])
+        self.assertEqual({}, public_brief["provenance"])
+        self.assertEqual(
+            "classification_pending_contract",
+            public_brief["recommendation_classification"],
+        )
+
+    def test_hashed_comparison_publication_is_exact_and_never_truncated(self) -> None:
+        deep: dict = {"leaf": "kept"}
+        for index in range(12):
+            deep = {f"level_{index}": deep}
+        bundle = serializers.exact_public_comparison_bundle(
+            {
+                "schema_version": "autonomy-comparison-bundle-v1",
+                "is_complete": True,
+                "recommendation_eligible": False,
+                "scenarios": [
+                    {
+                        "scenario_revision_id": "dsr_exact",
+                        "result": {
+                            "metrics": {
+                                "cost": {
+                                    "cdf": list(range(1_205)),
+                                }
+                            },
+                            "convergence": deep,
+                        },
+                    }
+                ],
+            }
+        )
+        bundle["bundle_hash"] = comparison.canonical_comparison_bundle_sha256(
+            bundle
+        )
+        public = serializers.public_decision_comparison_bundle(
+            {
+                "comparison_bundle_id": "dcmp_exact",
+                "bundle_sha256": bundle["bundle_hash"],
+                "bundle": bundle,
+            }
+        )
+
+        self.assertEqual(bundle, public["bundle"])
+        self.assertEqual(
+            public["bundle_sha256"],
+            comparison.canonical_comparison_bundle_sha256(public["bundle"]),
+        )
+        self.assertEqual(1_205, len(public["bundle"]["scenarios"][0]["result"]["metrics"]["cost"]["cdf"]))
+
+    def test_non_public_hashed_bundle_fails_closed_instead_of_changing_digest(self) -> None:
+        with self.assertRaisesRegex(ValueError, "canonical public projection"):
+            serializers.public_decision_comparison_bundle(
+                {
+                    "comparison_bundle_id": "dcmp_private",
+                    "bundle_sha256": "a" * 64,
+                    "bundle": {
+                        "schema_version": "autonomy-comparison-bundle-v1",
+                        "storage_key": "private/source.csv",
+                    },
+                }
+            )
+        with self.assertRaisesRegex(ValueError, "canonical public projection"):
+            serializers.public_decision_brief(
+                {
+                    "brief_revision_id": "dbr_private",
+                    "comparison_bundle": {"schema_version": "safe"},
+                    "provenance": {"lease_token": "never-public"},
+                }
+            )
 
 
 if __name__ == "__main__":

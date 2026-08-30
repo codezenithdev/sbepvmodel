@@ -4,7 +4,10 @@
         const AUTONOMY_TEA_BASIS = 'SolarTAC site · tea-calculation-v3';
         const AUTONOMY_STAGES = Object.freeze(['ask', 'verify', 'compare', 'run', 'decide']);
         const AUTONOMY_READINESS_KEYS = Object.freeze(['calibration', 'annual', 'weather', 'evidence', 'agent']);
-        const AUTONOMY_LIVE_STAGES = Object.freeze(['ask', 'verify', 'compare', 'run']);
+        const AUTONOMY_LIVE_STAGES = Object.freeze(['ask', 'verify', 'compare', 'run', 'decide']);
+        const AUTONOMY_DECISION_BUILD_ACTIONS = Object.freeze(['build_comparison_bundle']);
+        const AUTONOMY_DECISION_CREATE_ACTIONS = Object.freeze(['create_decision_brief']);
+        const AUTONOMY_DECISION_REVERSAL_ACTIONS = Object.freeze(['test_reversal']);
         const AUTONOMY_TERMINAL_TEA_STATES = Object.freeze(['done', 'error', 'cancelled', 'interrupted']);
         const AUTONOMY_ACTIVE_TEA_STATES = Object.freeze(['queued', 'leased', 'running']);
         const AUTONOMY_GROUPED_TEA_ACKNOWLEDGEMENT = 'I confirm the selected scenarios, source and basis lock, evidence status, realization count, seed, and exact request hashes shown here. I understand the production action would create immutable TEA jobs for sequential worker execution.';
@@ -440,6 +443,45 @@
         const autonomyScenarioError = document.getElementById('autonomyScenarioError');
         const autonomyScenarioCancelBtn = document.getElementById('autonomyScenarioCancelBtn');
         const autonomyScenarioSubmitBtn = document.getElementById('autonomyScenarioSubmitBtn');
+        const autonomyFixtureDecisionBrief = document.getElementById('autonomyFixtureDecisionBrief');
+        const autonomyLiveDecisionBrief = document.getElementById('autonomyLiveDecisionBrief');
+        const autonomyLiveBriefHeading = document.getElementById('autonomyLiveBriefHeading');
+        const autonomyLiveBriefSummary = document.getElementById('autonomyLiveBriefSummary');
+        const autonomyLiveBriefState = document.getElementById('autonomyLiveBriefState');
+        const autonomyLiveBriefStateHeading = document.getElementById('autonomyLiveBriefStateHeading');
+        const autonomyLiveBriefStateCopy = document.getElementById('autonomyLiveBriefStateCopy');
+        const autonomyLiveBriefAgentNotice = document.getElementById('autonomyLiveBriefAgentNotice');
+        const autonomyLiveBriefBlockers = document.getElementById('autonomyLiveBriefBlockers');
+        const autonomyLiveBundleSelect = document.getElementById('autonomyLiveBundleSelect');
+        const autonomyLiveConfirmationSelect = document.getElementById('autonomyLiveConfirmationSelect');
+        const autonomyLiveBriefSelect = document.getElementById('autonomyLiveBriefSelect');
+        const autonomyLiveBuildComparisonBtn = document.getElementById('autonomyLiveBuildComparisonBtn');
+        const autonomyLiveCreateBriefBtn = document.getElementById('autonomyLiveCreateBriefBtn');
+        const autonomyLiveReturnToCompareBtn = document.getElementById('autonomyLiveReturnToCompareBtn');
+        const autonomyLiveDecideBuildBtn = document.getElementById('autonomyLiveDecideBuildBtn');
+        const autonomyLiveDecideOpenBtn = document.getElementById('autonomyLiveDecideOpenBtn');
+        const autonomyLiveDecideSummary = document.getElementById('autonomyLiveDecideSummary');
+        const autonomyLiveRecommendation = document.getElementById('autonomyLiveRecommendation');
+        const autonomyLiveRecommendationHeading = document.getElementById('autonomyLiveRecommendationHeading');
+        const autonomyLiveRecommendationConfidence = document.getElementById('autonomyLiveRecommendationConfidence');
+        const autonomyLiveRecommendationCopy = document.getElementById('autonomyLiveRecommendationCopy');
+        const autonomyLiveAskWhyBtn = document.getElementById('autonomyLiveAskWhyBtn');
+        const autonomyLiveTestReversalBtn = document.getElementById('autonomyLiveTestReversalBtn');
+        const autonomyLiveWhyPanel = document.getElementById('autonomyLiveWhyPanel');
+        const autonomyLiveDecisiveEvidence = document.getElementById('autonomyLiveDecisiveEvidence');
+        const autonomyLiveMajorDrivers = document.getElementById('autonomyLiveMajorDrivers');
+        const autonomyLiveImportantUncertainty = document.getElementById('autonomyLiveImportantUncertainty');
+        const autonomyLiveModelLimits = document.getElementById('autonomyLiveModelLimits');
+        const autonomyLiveBriefScenarioRows = document.getElementById('autonomyLiveBriefScenarioRows');
+        const autonomyLiveRequestMatrix = document.getElementById('autonomyLiveRequestMatrix');
+        const autonomyLiveMetricRows = document.getElementById('autonomyLiveMetricRows');
+        const autonomyLiveJointOutcomeRows = document.getElementById('autonomyLiveJointOutcomeRows');
+        const autonomyLiveSensitivityRows = document.getElementById('autonomyLiveSensitivityRows');
+        const autonomyLiveQualityRows = document.getElementById('autonomyLiveQualityRows');
+        const autonomyLiveEvidenceCaveats = document.getElementById('autonomyLiveEvidenceCaveats');
+        const autonomyLiveReversalRows = document.getElementById('autonomyLiveReversalRows');
+        const autonomyLiveBriefProvenance = document.getElementById('autonomyLiveBriefProvenance');
+        const autonomyLiveBriefTimeline = document.getElementById('autonomyLiveBriefTimeline');
 
         let autonomyFixtureId = 'evidence-needed';
         let autonomySelectedStage = AUTONOMY_FIXTURE_CATALOG[autonomyFixtureId].stage;
@@ -460,6 +502,21 @@
         let autonomyLiveComparison = null;
         let autonomyLiveExecution = null;
         let autonomyLiveAllowedActions = [];
+        let autonomyDecisionAllowedActions = [];
+        let autonomyDecisionBlockers = [];
+        let autonomyLiveComparisonBundles = [];
+        let autonomyLiveComparisonBundle = null;
+        let autonomyLiveBriefs = [];
+        let autonomyLiveBrief = null;
+        let autonomyDecisionLoadRevision = 0;
+        let autonomyDecisionAbortController = null;
+        let autonomyDecisionLoadError = null;
+        let autonomyDecisionBuildInFlight = false;
+        let autonomyBriefCreateInFlight = false;
+        let autonomyBriefCreationIdempotencyKey = null;
+        let autonomyBriefCreationSignature = '';
+        let autonomyBriefReturnContext = null;
+        let autonomyLastAnnouncedDecisionState = '';
         let autonomyEligibleAnnualSources = [];
         let autonomySupportedAnalysisBases = [];
         let autonomyWorkspaceOpenPromise = null;
@@ -502,6 +559,9 @@
                 autonomyScenarioLoadRevision += 1;
                 if (autonomyScenarioAbortController) autonomyScenarioAbortController.abort();
                 autonomyScenarioAbortController = null;
+                autonomyDecisionLoadRevision += 1;
+                if (autonomyDecisionAbortController) autonomyDecisionAbortController.abort();
+                autonomyDecisionAbortController = null;
             } else if (autonomyLiveStatus) {
                 // Fixture announcements must never survive into a restored live case.
                 autonomyLiveStatus.textContent = '';
@@ -708,6 +768,21 @@
             return /^tea_[A-Za-z0-9_-]+$/.test(textValue) && textValue.length <= 128 ? textValue : '';
         }
 
+        function autonomyConfirmationId(value) {
+            const textValue = String(value || '');
+            return /^dconf_[A-Za-z0-9]+$/.test(textValue) ? textValue : '';
+        }
+
+        function autonomyComparisonBundleId(value) {
+            const textValue = String(value || '');
+            return /^dcmp_[A-Za-z0-9]+$/.test(textValue) ? textValue : '';
+        }
+
+        function autonomyBriefRevisionId(value) {
+            const textValue = String(value || '');
+            return /^dbr_[A-Za-z0-9]+$/.test(textValue) ? textValue : '';
+        }
+
         function autonomyExpectedCaseRevision() {
             const revision = Number(autonomyLiveCase?.revision);
             return Number.isInteger(revision) && revision >= 1 ? revision : null;
@@ -760,6 +835,110 @@
                 if (next.length) entries = next;
             });
             autonomyLiveAllowedActions = entries;
+        }
+
+        function autonomyCollectDecisionAllowedActions(...payloads) {
+            const byId = new Map();
+            let authoritativePayloadSeen = false;
+            payloads.forEach((payload) => {
+                if (!payload || !Object.prototype.hasOwnProperty.call(payload, 'decision_allowed_actions')) return;
+                authoritativePayloadSeen = true;
+                autonomyActionEntries(payload?.decision_allowed_actions).forEach((action) => {
+                    const id = typeof action === 'string' ? action : action.id;
+                    if (id) byId.set(id, action);
+                });
+            });
+            if (authoritativePayloadSeen) autonomyDecisionAllowedActions = Array.from(byId.values());
+        }
+
+        function autonomyDecisionActionIsAllowed(actionIds) {
+            const expected = new Set(Array.isArray(actionIds) ? actionIds : [actionIds]);
+            return autonomyActionEntries(autonomyDecisionAllowedActions).some((action) => {
+                const id = typeof action === 'string' ? action : action.id;
+                return expected.has(id) && action?.enabled !== false;
+            });
+        }
+
+        function autonomyDecisionActionDisabledReason(actionIds) {
+            const expected = new Set(Array.isArray(actionIds) ? actionIds : [actionIds]);
+            const action = autonomyActionEntries(autonomyDecisionAllowedActions).find((entry) => (
+                typeof entry === 'object' && expected.has(entry.id) && entry.enabled === false
+            ));
+            return String(action?.disabled_reason || action?.reason || '');
+        }
+
+        function autonomyDecisionEnabledAction(actionIds) {
+            const expected = new Set(Array.isArray(actionIds) ? actionIds : [actionIds]);
+            return autonomyActionEntries(autonomyDecisionAllowedActions).find((entry) => (
+                entry && typeof entry === 'object' && expected.has(entry.id) && entry.enabled !== false
+            )) || null;
+        }
+
+        function autonomySelectedBundleMatchesCreateAction() {
+            const action = autonomyDecisionEnabledAction(AUTONOMY_DECISION_CREATE_ACTIONS);
+            const actionBundleId = autonomyComparisonBundleId(action?.comparison_bundle_id);
+            const actionBundleHash = String(action?.bundle_sha256 || '');
+            const selectedBundleId = autonomyDecisionBundleRecordId(autonomyLiveComparisonBundle);
+            const selectedBundleHash = String(autonomyLiveComparisonBundle?.bundle_sha256 || '');
+            return Boolean(
+                actionBundleId
+                && /^[0-9a-f]{64}$/.test(actionBundleHash)
+                && selectedBundleId === actionBundleId
+                && selectedBundleHash === actionBundleHash
+            );
+        }
+
+        function autonomyCanOpenLiveBrief() {
+            return autonomyDecisionActionIsAllowed('open_decision_brief');
+        }
+
+        function autonomyCanSelectLiveStage(stage) {
+            return AUTONOMY_LIVE_STAGES.includes(stage)
+                && (stage !== 'decide' || autonomyCanOpenLiveBrief());
+        }
+
+        function autonomyExecutionConfirmationId() {
+            const selectedConfirmationId = autonomyConfirmationId(autonomyLiveConfirmationSelect?.value);
+            if (selectedConfirmationId) return selectedConfirmationId;
+            const buildAction = autonomyActionEntries(autonomyDecisionAllowedActions).find((action) => (
+                typeof action === 'object' && action.id === 'build_comparison_bundle'
+            ));
+            const actionConfirmationIds = Array.isArray(buildAction?.confirmation_ids)
+                ? buildAction.confirmation_ids.map(autonomyConfirmationId).filter(Boolean)
+                : [];
+            const actionConfirmation = actionConfirmationIds.length === 1
+                ? actionConfirmationIds[0]
+                : '';
+            if (actionConfirmation) return actionConfirmation;
+            const confirmation = autonomyPlainObject(
+                autonomyLiveExecution?.confirmation || autonomyLiveExecution?.confirmation_receipt
+            );
+            return autonomyConfirmationId(
+                confirmation.confirmation_id
+                || confirmation.id
+                || autonomyLiveExecution?.confirmation_id
+            );
+        }
+
+        function autonomyResetDecisionWorkspace() {
+            autonomyDecisionLoadRevision += 1;
+            if (autonomyDecisionAbortController) autonomyDecisionAbortController.abort();
+            autonomyDecisionAbortController = null;
+            autonomyDecisionLoadError = null;
+            autonomyDecisionAllowedActions = [];
+            autonomyDecisionBlockers = [];
+            autonomyLiveComparisonBundles = [];
+            autonomyLiveComparisonBundle = null;
+            autonomyLiveBriefs = [];
+            autonomyLiveBrief = null;
+            autonomyDecisionBuildInFlight = false;
+            autonomyBriefCreateInFlight = false;
+            autonomyBriefCreationIdempotencyKey = null;
+            autonomyBriefCreationSignature = '';
+            autonomyBriefReturnContext = null;
+            autonomyLastAnnouncedDecisionState = '';
+            if (autonomyLiveWhyPanel) autonomyLiveWhyPanel.hidden = true;
+            if (autonomyLiveAskWhyBtn) autonomyLiveAskWhyBtn.setAttribute('aria-expanded', 'false');
         }
 
         function autonomyScenarioValidation(scenario) {
@@ -920,6 +1099,7 @@
 
         function autonomyLiveDefaultStage() {
             if (!autonomyLiveCase) return 'ask';
+            if (autonomyCanOpenLiveBrief()) return 'decide';
             const jobs = autonomyExecutionJobs({latestOnly: true});
             if (jobs.length || autonomyLiveExecution?.confirmation || autonomyLiveExecution?.confirmation_receipt) return 'run';
             if (autonomyLiveScenarios.length) return 'compare';
@@ -1105,7 +1285,7 @@
                 : 'Not locked';
             if (autonomyCaseRevision) autonomyCaseRevision.textContent = 'Revision ' + String(caseRecord.revision ?? 'not recorded');
             if (autonomyUpdatedAt) autonomyUpdatedAt.textContent = autonomyFormatTimestamp(caseRecord.updated_at);
-            autonomySelectedStage = AUTONOMY_LIVE_STAGES.includes(autonomySelectedStage)
+            autonomySelectedStage = autonomyCanSelectLiveStage(autonomySelectedStage)
                 ? autonomySelectedStage
                 : autonomyLiveDefaultStage();
             const liveStageState = autonomyNormalizeReadinessStatus(autonomyLiveReadiness?.overall_status);
@@ -1114,16 +1294,6 @@
                 stageState: liveStageState === 'passed' ? 'current' : liveStageState,
                 signed: false,
             });
-            const liveDecideButton = autonomyPanel.querySelector('[data-autonomy-stage="decide"]');
-            if (liveDecideButton) {
-                liveDecideButton.disabled = true;
-                liveDecideButton.setAttribute('aria-disabled', 'true');
-                const status = liveDecideButton.querySelector('small');
-                if (status) status.textContent = 'Next phase';
-            }
-            const liveDecideOption = autonomyStageSelect?.querySelector('option[value="decide"]');
-            if (liveDecideOption) liveDecideOption.disabled = true;
-            autonomySetView('investigation');
         }
 
         function autonomyReadinessChecks() {
@@ -1549,6 +1719,7 @@
                 autonomyEvidenceFileInput.value = '';
                 autonomyEvidenceUploadStatus.textContent = 'Evidence uploaded. Review extracted candidates before acceptance.';
                 await autonomyRefreshLiveCase({readiness: true, evidence: true, events: true});
+                await autonomyLoadDecisionWorkspace();
                 autonomyAnnounce('Evidence uploaded and deterministic readiness refreshed.');
             } catch (error) {
                 autonomyEvidenceUploadStatus.textContent = error.message || 'Evidence upload failed.';
@@ -1575,6 +1746,7 @@
                     }
                 );
                 await autonomyRefreshLiveCase({readiness: true, evidence: true, events: true});
+                await autonomyLoadDecisionWorkspace();
                 autonomyAnnounce('Unreferenced evidence removed and readiness refreshed.');
             } catch (error) {
                 autonomyEvidenceUploadStatus.textContent = error.message || 'Referenced evidence cannot be removed.';
@@ -2370,6 +2542,1181 @@
             }
         }
 
+        async function autonomyFetchComparisonBundles(caseId, signal) {
+            try {
+                return await autonomyJsonRequest(
+                    '/api/autonomy/cases/' + encodeURIComponent(caseId) + '/comparison-bundles',
+                    {cache: 'no-store', signal}
+                );
+            } catch (error) {
+                if (error.status === 404) return {comparison_bundles: [], decision_allowed_actions: []};
+                throw error;
+            }
+        }
+
+        async function autonomyFetchComparisonBundle(caseId, bundleId, signal = undefined) {
+            const safeBundleId = autonomyComparisonBundleId(bundleId);
+            if (!safeBundleId) throw new Error('The comparison-bundle identifier is invalid.');
+            return autonomyJsonRequest(
+                '/api/autonomy/cases/' + encodeURIComponent(caseId)
+                    + '/comparison-bundles/' + encodeURIComponent(safeBundleId),
+                {cache: 'no-store', signal}
+            );
+        }
+
+        async function autonomyFetchDecisionBriefs(caseId, signal) {
+            try {
+                return await autonomyJsonRequest(
+                    '/api/autonomy/cases/' + encodeURIComponent(caseId) + '/decision-briefs',
+                    {cache: 'no-store', signal}
+                );
+            } catch (error) {
+                if (error.status === 404) return {decision_briefs: [], decision_allowed_actions: []};
+                throw error;
+            }
+        }
+
+        async function autonomyFetchDecisionBrief(caseId, briefRevisionId, signal = undefined) {
+            const safeBriefRevisionId = autonomyBriefRevisionId(briefRevisionId);
+            if (!safeBriefRevisionId) throw new Error('The Decision Brief revision identifier is invalid.');
+            return autonomyJsonRequest(
+                '/api/autonomy/cases/' + encodeURIComponent(caseId)
+                    + '/decision-briefs/' + encodeURIComponent(safeBriefRevisionId),
+                {cache: 'no-store', signal}
+            );
+        }
+
+        function autonomyDecisionRecords(payload, pluralKey, singularKey, idReader) {
+            const records = Array.isArray(payload?.[pluralKey])
+                ? payload[pluralKey]
+                : (payload?.[singularKey] ? [payload[singularKey]] : []);
+            return records.filter((record) => record && typeof record === 'object' && idReader(record));
+        }
+
+        function autonomyDecisionBundleRecordId(record) {
+            return autonomyComparisonBundleId(record?.comparison_bundle_id || record?.id);
+        }
+
+        function autonomyDecisionBriefRecordId(record) {
+            return autonomyBriefRevisionId(record?.brief_revision_id || record?.id);
+        }
+
+        function autonomyDecisionBundleSnapshot() {
+            const briefBundle = autonomyPlainObject(autonomyLiveBrief?.comparison_bundle);
+            if (Object.keys(briefBundle).length) return briefBundle;
+            return autonomyPlainObject(autonomyLiveComparisonBundle?.bundle || autonomyLiveComparisonBundle?.comparison_bundle);
+        }
+
+        function autonomyDecisionRecommendation() {
+            const bundleRecommendation = autonomyPlainObject(autonomyDecisionBundleSnapshot().recommendation);
+            const classification = autonomyLiveBrief?.recommendation_classification;
+            const confidence = autonomyLiveBrief?.confidence_state;
+            return {
+                ...bundleRecommendation,
+                ...(classification ? {classification: String(classification)} : {}),
+                ...(confidence ? {confidence: String(confidence)} : {}),
+            };
+        }
+
+        function autonomyDecisionHasOwn(record, key) {
+            return record !== null && record !== undefined
+                && Object.prototype.hasOwnProperty.call(Object(record), key);
+        }
+
+        function autonomyDecisionScalar(value) {
+            if (value === undefined) return 'Missing — not reported';
+            if (value === null) return 'Null — explicitly reported';
+            if (typeof value === 'string') return value;
+            if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+            return autonomyDecisionStructuredText(value);
+        }
+
+        function autonomyDecisionStructuredText(value) {
+            if (value === undefined) return 'Missing — not reported';
+            if (value === null) return 'Null — explicitly reported';
+            try {
+                return JSON.stringify(value, null, 2);
+            } catch (_) {
+                return 'Value could not be displayed safely.';
+            }
+        }
+
+        function autonomyDecisionValue(record, key) {
+            return autonomyDecisionHasOwn(record, key)
+                ? autonomyDecisionScalar(record[key])
+                : 'Missing — not reported';
+        }
+
+        function autonomyDecisionDisplayValue(record, key) {
+            const displayKey = 'display_' + key;
+            if (autonomyDecisionHasOwn(record, displayKey)) return autonomyDecisionScalar(record[displayKey]);
+            return autonomyDecisionValue(record, key);
+        }
+
+        function autonomyDecisionAppendCell(row, value, options = {}) {
+            const cell = autonomyNode(options.header ? 'th' : 'td', {text: value});
+            if (options.header) cell.scope = 'row';
+            if (options.code) cell.className = 'autonomy-live-code-cell';
+            row.appendChild(cell);
+            return cell;
+        }
+
+        function autonomyDecisionAppendExportLinks(cell, teaJobId) {
+            const safeTeaJobId = autonomyTeaJobId(teaJobId);
+            if (!cell || !safeTeaJobId) return;
+            const links = autonomyNode('span', {className: 'autonomy-live-export-links'});
+            [['csv', 'Download existing CSV data'], ['xlsx', 'Download existing XLSX data']].forEach(([format, label]) => {
+                const link = autonomyNode('a', {text: label});
+                link.href = '/api/technoeconomic/jobs/' + encodeURIComponent(safeTeaJobId) + '/exports/' + format;
+                link.setAttribute('aria-label', label + ' for ' + safeTeaJobId);
+                link.dataset.autonomyDecisionFocus = safeTeaJobId + ':' + format;
+                links.appendChild(link);
+            });
+            cell.appendChild(links);
+        }
+
+        function autonomyDecisionAppendEmptyRow(body, columnCount, message) {
+            if (!body) return;
+            const row = autonomyNode('tr');
+            const cell = autonomyNode('td', {text: message});
+            cell.colSpan = columnCount;
+            row.appendChild(cell);
+            body.appendChild(row);
+        }
+
+        function autonomyDecisionListValues(value) {
+            if (Array.isArray(value)) return value;
+            if (value && typeof value === 'object') {
+                return Object.entries(value).map(([key, item]) => ({key, value: item}));
+            }
+            return value === undefined || value === null ? [] : [value];
+        }
+
+        function autonomyDecisionAppendList(list, values, emptyCopy) {
+            if (!list) return;
+            list.replaceChildren();
+            const records = autonomyDecisionListValues(values);
+            if (!records.length) {
+                list.appendChild(autonomyNode('li', {text: emptyCopy}));
+                return;
+            }
+            records.forEach((record) => {
+                let textValue;
+                if (record && typeof record === 'object' && autonomyDecisionHasOwn(record, 'message')) {
+                    textValue = (record.code ? String(record.code) + ': ' : '') + autonomyDecisionScalar(record.message);
+                } else if (record && typeof record === 'object' && autonomyDecisionHasOwn(record, 'value')) {
+                    textValue = (record.key ? String(record.key) + ': ' : '') + autonomyDecisionScalar(record.value);
+                } else {
+                    textValue = autonomyDecisionScalar(record);
+                }
+                list.appendChild(autonomyNode('li', {text: textValue}));
+            });
+        }
+
+        function autonomyDecisionScenarioLabel(scenario) {
+            return autonomyDecisionScalar(
+                autonomyDecisionHasOwn(scenario, 'label') ? scenario.label : scenario.scenario_id
+            );
+        }
+
+        function autonomyDecisionScenarioStatus(scenario) {
+            const attempt = autonomyPlainObject(scenario?.attempt);
+            return autonomyDecisionScalar(
+                autonomyDecisionHasOwn(attempt, 'display_status')
+                    ? attempt.display_status
+                    : (autonomyDecisionHasOwn(attempt, 'durable_state') ? attempt.durable_state : 'missing')
+            );
+        }
+
+        function autonomyDecisionSourceSnapshot(scenario, metric = null) {
+            const source = autonomyPlainObject(scenario?.source);
+            const traceability = autonomyPlainObject(metric?.traceability);
+            const provenance = autonomyPlainObject(scenario?.provenance);
+            if (autonomyDecisionHasOwn(traceability, 'source_snapshot_sha256')) {
+                return autonomyDecisionScalar(traceability.source_snapshot_sha256);
+            }
+            if (autonomyDecisionHasOwn(source, 'source_snapshot_sha256')) {
+                return autonomyDecisionScalar(source.source_snapshot_sha256);
+            }
+            if (autonomyDecisionHasOwn(provenance, 'source_snapshot_sha256')) {
+                return autonomyDecisionScalar(provenance.source_snapshot_sha256);
+            }
+            return 'Missing — not reported';
+        }
+
+        function autonomyDecisionBundleScenarios() {
+            const scenarios = autonomyDecisionBundleSnapshot().scenarios;
+            return Array.isArray(scenarios) ? scenarios.filter((item) => item && typeof item === 'object') : [];
+        }
+
+        function autonomyDecisionMetricPercentile(metric, percentile) {
+            const displayPercentiles = autonomyPlainObject(metric?.display_percentiles);
+            if (autonomyDecisionHasOwn(displayPercentiles, percentile)) {
+                return autonomyDecisionScalar(displayPercentiles[percentile]);
+            }
+            const percentiles = autonomyPlainObject(metric?.percentiles);
+            return autonomyDecisionHasOwn(percentiles, percentile)
+                ? autonomyDecisionScalar(percentiles[percentile])
+                : 'Missing — not reported';
+        }
+
+        function autonomyDecisionFlattenOutcomes(outcomes) {
+            const rows = [];
+            Object.entries(autonomyPlainObject(outcomes)).forEach(([groupName, rawGroup]) => {
+                const group = autonomyPlainObject(rawGroup);
+                const probabilities = autonomyPlainObject(group.probabilities);
+                const counts = autonomyPlainObject(group.counts);
+                const classIds = [...Object.keys(probabilities)];
+                Object.keys(counts).forEach((classId) => {
+                    if (!classIds.includes(classId)) classIds.push(classId);
+                });
+                classIds.forEach((classId) => rows.push({
+                    label: groupName + ' · ' + classId,
+                    probability: autonomyDecisionHasOwn(probabilities, classId) ? probabilities[classId] : undefined,
+                    count: autonomyDecisionHasOwn(counts, classId) ? counts[classId] : undefined,
+                    denominator: autonomyDecisionHasOwn(group, 'denominator') ? group.denominator : undefined,
+                }));
+            });
+            return rows;
+        }
+
+        function autonomyDecisionFlattenSensitivity(sensitivity) {
+            const rows = [];
+            Object.entries(autonomyPlainObject(sensitivity)).forEach(([responseId, rawModel]) => {
+                const model = autonomyPlainObject(rawModel);
+                const steps = Array.isArray(model.steps) ? model.steps : [];
+                steps.forEach((rawStep) => {
+                    const step = autonomyPlainObject(rawStep);
+                    rows.push({responseId, step});
+                });
+            });
+            return rows;
+        }
+
+        function autonomyDecisionStateName() {
+            if (autonomyDecisionLoadError) return 'api-unavailable';
+            const bundleRecord = autonomyLiveComparisonBundle;
+            const brief = autonomyLiveBrief;
+            const bundle = autonomyDecisionBundleSnapshot();
+            if (!bundleRecord && !Object.keys(bundle).length) return 'empty';
+            if (brief?.superseded || brief?.superseded_by_revision_id || bundleRecord?.superseded_by_bundle_id) return 'superseded';
+            if (brief?.stale || brief?.stale_at || bundleRecord?.stale || bundleRecord?.stale_at) return 'stale';
+            const scenarios = autonomyDecisionBundleScenarios();
+            if (scenarios.some((scenario) => (
+                String(scenario?.verification?.status || '') === 'failed'
+                || String(scenario?.attempt?.display_status || '') === 'verification_failed'
+            ))) return 'verification-failure';
+            const completeness = autonomyPlainObject(bundle.completeness);
+            if (completeness.status === 'partial' || bundleRecord?.is_complete === false) return 'partial-results';
+            const recommendation = autonomyDecisionRecommendation();
+            if (recommendation.state === 'classification_pending_contract' || !recommendation.classification) {
+                return 'classification-pending';
+            }
+            if (!autonomyLiveAgentAvailable) return 'agent-unavailable';
+            return brief ? 'recommendation' : 'comparison-ready';
+        }
+
+        function autonomyDecisionStatePresentation(stateName) {
+            const disabledReason = autonomyDecisionActionDisabledReason('open_decision_brief');
+            return {
+                loading: ['Loading verified comparison', 'No displayed metric is admitted until server re-verification succeeds.'],
+                empty: ['No comparison snapshot yet', disabledReason || 'The server has not authorized a deterministic comparison for this case.'],
+                'partial-results': ['Partial Results · no final recommendation', 'Completed selected scenarios are shown beside every incomplete, failed, cancelled, interrupted, stale, or missing selection.'],
+                'classification-pending': ['Classification pending contract', 'The verified comparison is complete, but the approved contracts do not authorize a deterministic winner or confidence threshold.'],
+                stale: ['Stale Decision Brief revision', 'This immutable revision remains reviewable, but a qualifying case, result, source, scenario, or evidence change requires a new snapshot.'],
+                superseded: ['Superseded comparison or Decision Brief revision', 'This immutable revision remains reviewable and points to a newer immutable snapshot.'],
+                'verification-failure': ['Result verification failure', 'At least one explicitly selected attempt failed request, source, evidence, numerical provenance, terminal-state, or reporting tie-out verification.'],
+                'agent-unavailable': ['Decision Agent unavailable · deterministic brief remains usable', 'This verified brief does not depend on the Decision Agent and remains fully traceable.'],
+                'api-unavailable': ['Decision Brief service unavailable', autonomyDecisionLoadError?.message || 'The durable case is unchanged. Retry the read before relying on this view.'],
+                'comparison-ready': ['Verified comparison ready', 'Create an immutable Decision Brief revision from this exact bundle hash when the server authorizes that action.'],
+                recommendation: ['Conditional deterministic recommendation', 'Review the decisive evidence, uncertainty, caveats, reversals, and full provenance before any later human disposition phase.'],
+            }[stateName] || ['Decision Brief state unavailable', 'Refresh the durable case before relying on this view.'];
+        }
+
+        function autonomyAnnounceDecisionState(stateName, presentation, prefix = '') {
+            const announcementKey = autonomyCaseId() + '|' + stateName;
+            if (!prefix && announcementKey === autonomyLastAnnouncedDecisionState) return;
+            autonomyLastAnnouncedDecisionState = announcementKey;
+            const stateCopy = presentation[0] + '. ' + presentation[1];
+            autonomyAnnounce(prefix ? prefix + ' ' + stateCopy : stateCopy);
+        }
+
+        function autonomyDecisionStageLabel() {
+            return {
+                empty: 'Ready to build',
+                'partial-results': 'Partial results',
+                'classification-pending': 'Contract pending',
+                stale: 'Stale revision',
+                superseded: 'Superseded',
+                'verification-failure': 'Verification failed',
+                'agent-unavailable': 'Agent unavailable',
+                'api-unavailable': 'Reconnecting',
+                'comparison-ready': 'Comparison ready',
+                recommendation: 'Brief ready',
+            }[autonomyDecisionStateName()] || 'Available';
+        }
+
+        function autonomyDecisionBlockerValues() {
+            const bundle = autonomyDecisionBundleSnapshot();
+            const recommendation = autonomyDecisionRecommendation();
+            const values = [];
+            [
+                autonomyDecisionBlockers,
+                autonomyPlainObject(bundle.completeness).blockers,
+                recommendation.blockers,
+            ].forEach((records) => {
+                autonomyDecisionListValues(records).forEach((record) => values.push(record));
+            });
+            autonomyDecisionBundleScenarios().forEach((scenario) => {
+                if (String(scenario?.verification?.status || '') !== 'failed') return;
+                autonomyDecisionListValues(scenario?.verification?.failures).forEach((failure) => {
+                    values.push(autonomyDecisionScenarioLabel(scenario) + ': ' + autonomyDecisionScalar(failure));
+                });
+            });
+            return values;
+        }
+
+        function autonomyRenderDecisionSelectors() {
+            const buildAction = autonomyActionEntries(autonomyDecisionAllowedActions).find((action) => (
+                typeof action === 'object' && action.id === 'build_comparison_bundle'
+            ));
+            const confirmationIds = Array.isArray(buildAction?.confirmation_ids)
+                ? buildAction.confirmation_ids.map(autonomyConfirmationId).filter(Boolean)
+                : [];
+            if (autonomyLiveConfirmationSelect) {
+                const priorConfirmationId = autonomyConfirmationId(autonomyLiveConfirmationSelect.value);
+                autonomyLiveConfirmationSelect.replaceChildren();
+                const empty = autonomyNode('option', {text: confirmationIds.length ? 'Select an immutable confirmation receipt' : 'No confirmation available'});
+                empty.value = '';
+                autonomyLiveConfirmationSelect.appendChild(empty);
+                confirmationIds.forEach((confirmationId) => {
+                    const option = autonomyNode('option', {text: confirmationId});
+                    option.value = confirmationId;
+                    autonomyLiveConfirmationSelect.appendChild(option);
+                });
+                const executionConfirmationId = (() => {
+                    const confirmation = autonomyPlainObject(
+                        autonomyLiveExecution?.confirmation || autonomyLiveExecution?.confirmation_receipt
+                    );
+                    return autonomyConfirmationId(confirmation.confirmation_id || confirmation.id || autonomyLiveExecution?.confirmation_id);
+                })();
+                const preferredConfirmationId = confirmationIds.includes(priorConfirmationId)
+                    ? priorConfirmationId
+                    : (confirmationIds.includes(executionConfirmationId)
+                        ? executionConfirmationId
+                        : (confirmationIds.length === 1 ? confirmationIds[0] : ''));
+                autonomyLiveConfirmationSelect.value = preferredConfirmationId;
+                autonomyLiveConfirmationSelect.disabled = confirmationIds.length === 0 || autonomyDecisionBuildInFlight;
+            }
+            const selectedBundleId = autonomyDecisionBundleRecordId(autonomyLiveComparisonBundle);
+            if (autonomyLiveBundleSelect) {
+                autonomyLiveBundleSelect.replaceChildren();
+                const empty = autonomyNode('option', {text: 'No verified comparison snapshot'});
+                empty.value = '';
+                autonomyLiveBundleSelect.appendChild(empty);
+                autonomyLiveComparisonBundles.forEach((record) => {
+                    const bundleId = autonomyDecisionBundleRecordId(record);
+                    if (!bundleId) return;
+                    const state = record.superseded_by_bundle_id ? 'superseded' : (record.stale || record.stale_at ? 'stale' : (record.is_complete ? 'complete' : 'partial'));
+                    const option = autonomyNode('option', {
+                        text: bundleId + ' · ' + state + ' · SHA ' + autonomyDecisionScalar(record.bundle_sha256),
+                    });
+                    option.value = bundleId;
+                    option.selected = bundleId === selectedBundleId;
+                    autonomyLiveBundleSelect.appendChild(option);
+                });
+                autonomyLiveBundleSelect.value = selectedBundleId;
+                autonomyLiveBundleSelect.disabled = autonomyLiveComparisonBundles.length === 0 || autonomyDecisionBuildInFlight;
+            }
+
+            const selectedBriefId = autonomyDecisionBriefRecordId(autonomyLiveBrief);
+            if (autonomyLiveBriefSelect) {
+                autonomyLiveBriefSelect.replaceChildren();
+                const empty = autonomyNode('option', {text: 'No immutable brief revision'});
+                empty.value = '';
+                autonomyLiveBriefSelect.appendChild(empty);
+                autonomyLiveBriefs.forEach((record) => {
+                    const briefId = autonomyDecisionBriefRecordId(record);
+                    if (!briefId) return;
+                    const state = record.superseded || record.superseded_by_revision_id ? 'superseded' : (record.stale || record.stale_at ? 'stale' : 'current');
+                    const option = autonomyNode('option', {
+                        text: briefId + ' · revision ' + autonomyDecisionScalar(record.revision) + ' · ' + state,
+                    });
+                    option.value = briefId;
+                    option.selected = briefId === selectedBriefId;
+                    autonomyLiveBriefSelect.appendChild(option);
+                });
+                autonomyLiveBriefSelect.value = selectedBriefId;
+                autonomyLiveBriefSelect.disabled = autonomyLiveBriefs.length === 0 || autonomyBriefCreateInFlight;
+            }
+        }
+
+        function autonomyRenderDecisionScenarioRows() {
+            if (!autonomyLiveBriefScenarioRows) return;
+            autonomyLiveBriefScenarioRows.replaceChildren();
+            const scenarios = autonomyDecisionBundleScenarios();
+            scenarios.forEach((scenario) => {
+                const attempt = autonomyPlainObject(scenario.attempt);
+                const verification = autonomyPlainObject(scenario.verification);
+                const row = autonomyNode('tr');
+                row.dataset.status = String(attempt.display_status || attempt.durable_state || 'missing');
+                autonomyDecisionAppendCell(row, autonomyDecisionScenarioLabel(scenario), {header: true});
+                autonomyDecisionAppendCell(row, autonomyDecisionScenarioStatus(scenario));
+                autonomyDecisionAppendCell(row, autonomyDecisionValue(scenario, 'request_sha256'), {code: true});
+                const attemptCell = autonomyDecisionAppendCell(
+                    row,
+                    autonomyDecisionValue(attempt, 'tea_job_id') + ' / attempt '
+                        + autonomyDecisionValue(attempt, 'attempt_number')
+                        + ' / retry of ' + autonomyDecisionValue(attempt, 'retry_of_job_id')
+                        + ' / explicit link ' + autonomyDecisionValue(attempt, 'selected_by_explicit_link'),
+                    {code: true}
+                );
+                autonomyDecisionAppendExportLinks(attemptCell, attempt.tea_job_id);
+                autonomyDecisionAppendCell(
+                    row,
+                    autonomyDecisionValue(verification, 'status')
+                        + (verification.failures ? ' · ' + autonomyDecisionStructuredText(verification.failures) : '')
+                );
+                autonomyDecisionAppendCell(row, autonomyDecisionSourceSnapshot(scenario), {code: true});
+                autonomyLiveBriefScenarioRows.appendChild(row);
+            });
+            if (!scenarios.length) autonomyDecisionAppendEmptyRow(
+                autonomyLiveBriefScenarioRows, 6, 'No selected scenario records are available.'
+            );
+        }
+
+        function autonomyRenderDecisionMetricRows() {
+            if (!autonomyLiveMetricRows) return;
+            autonomyLiveMetricRows.replaceChildren();
+            let rowCount = 0;
+            autonomyDecisionBundleScenarios().forEach((scenario) => {
+                const metrics = autonomyPlainObject(scenario?.result?.metrics);
+                Object.entries(metrics).forEach(([metricId, rawMetric]) => {
+                    const metric = autonomyPlainObject(rawMetric);
+                    const traceability = autonomyPlainObject(metric.traceability);
+                    const attempt = autonomyPlainObject(scenario.attempt);
+                    const row = autonomyNode('tr');
+                    autonomyDecisionAppendCell(
+                        row,
+                        autonomyDecisionScenarioLabel(scenario) + ' · '
+                            + autonomyDecisionScalar(metric.metric_id === undefined ? metricId : metric.metric_id),
+                        {header: true}
+                    );
+                    const statusCell = autonomyDecisionAppendCell(
+                        row,
+                        autonomyDecisionValue(metric, 'status') + ' · count '
+                            + autonomyDecisionValue(metric, 'count') + ' · '
+                            + autonomyDecisionValue(metric, 'reason')
+                    );
+                    if (autonomyDecisionHasOwn(metric, 'cdf') && metric.cdf !== null) {
+                        const details = autonomyNode('details', {className: 'autonomy-live-cdf-details'});
+                        const summary = autonomyNode('summary', {text: 'Open exact CDF distribution'});
+                        summary.dataset.autonomyDecisionFocus = autonomyDecisionScalar(scenario.scenario_revision_id)
+                            + ':' + metricId + ':cdf';
+                        details.appendChild(summary);
+                        details.appendChild(autonomyNode('pre', {text: autonomyDecisionStructuredText(metric.cdf)}));
+                        statusCell.appendChild(details);
+                    }
+                    autonomyDecisionAppendCell(row, autonomyDecisionValue(metric, 'unit'));
+                    autonomyDecisionAppendCell(row, autonomyDecisionMetricPercentile(metric, 'p5'));
+                    autonomyDecisionAppendCell(row, autonomyDecisionMetricPercentile(metric, 'p50'));
+                    autonomyDecisionAppendCell(row, autonomyDecisionMetricPercentile(metric, 'p95'));
+                    autonomyDecisionAppendCell(
+                        row,
+                        autonomyDecisionValue(metric, 'percentile_definition') + ' · '
+                            + autonomyDecisionValue(metric, 'population_semantics')
+                    );
+                    autonomyDecisionAppendCell(
+                        row,
+                        autonomyDecisionValue(traceability, 'scenario_revision_id') + ' · '
+                            + autonomyDecisionScalar(traceability.tea_job_id === undefined ? attempt.tea_job_id : traceability.tea_job_id)
+                            + ' · attempt ' + autonomyDecisionScalar(traceability.attempt_number === undefined ? attempt.attempt_number : traceability.attempt_number)
+                            + ' · source ' + autonomyDecisionSourceSnapshot(scenario, metric),
+                        {code: true}
+                    );
+                    autonomyLiveMetricRows.appendChild(row);
+                    rowCount += 1;
+                });
+            });
+            if (!rowCount) autonomyDecisionAppendEmptyRow(
+                autonomyLiveMetricRows, 8, 'No verified metric distribution is available for the selected records.'
+            );
+        }
+
+        function autonomyRenderDecisionJointOutcomes() {
+            if (!autonomyLiveJointOutcomeRows) return;
+            autonomyLiveJointOutcomeRows.replaceChildren();
+            let rowCount = 0;
+            autonomyDecisionBundleScenarios().forEach((scenario) => {
+                const outcomes = scenario?.result?.joint_outcomes;
+                autonomyDecisionFlattenOutcomes(outcomes).forEach((outcome) => {
+                    const row = autonomyNode('tr');
+                    const attempt = autonomyPlainObject(scenario.attempt);
+                    autonomyDecisionAppendCell(row, autonomyDecisionScenarioLabel(scenario), {header: true});
+                    autonomyDecisionAppendCell(row, outcome.label);
+                    autonomyDecisionAppendCell(
+                        row,
+                        'probability ' + autonomyDecisionScalar(outcome.probability)
+                            + ' · count ' + autonomyDecisionScalar(outcome.count)
+                            + ' · denominator ' + autonomyDecisionScalar(outcome.denominator)
+                    );
+                    autonomyDecisionAppendCell(
+                        row,
+                        autonomyDecisionValue(attempt, 'tea_job_id') + ' · attempt '
+                            + autonomyDecisionValue(attempt, 'attempt_number'),
+                        {code: true}
+                    );
+                    autonomyLiveJointOutcomeRows.appendChild(row);
+                    rowCount += 1;
+                });
+            });
+            if (!rowCount) autonomyDecisionAppendEmptyRow(
+                autonomyLiveJointOutcomeRows, 4, 'No verified joint outcome probabilities are available.'
+            );
+        }
+
+        function autonomyRenderDecisionSensitivity() {
+            if (!autonomyLiveSensitivityRows) return;
+            autonomyLiveSensitivityRows.replaceChildren();
+            let rowCount = 0;
+            autonomyDecisionBundleScenarios().forEach((scenario) => {
+                autonomyDecisionFlattenSensitivity(scenario?.result?.sensitivity).forEach((driver) => {
+                    const step = driver.step;
+                    const row = autonomyNode('tr');
+                    autonomyDecisionAppendCell(row, autonomyDecisionScenarioLabel(scenario), {header: true});
+                    autonomyDecisionAppendCell(
+                        row,
+                        autonomyDecisionScalar(driver.responseId) + ' · '
+                            + autonomyDecisionValue(step, 'predictor_id')
+                    );
+                    autonomyDecisionAppendCell(
+                        row,
+                        'entry order ' + autonomyDecisionValue(step, 'entry_order')
+                            + ' · sign ' + autonomyDecisionValue(step, 'sign')
+                    );
+                    autonomyDecisionAppendCell(
+                        row,
+                        'incremental R² ' + autonomyDecisionValue(step, 'incremental_r_squared')
+                            + ' · cumulative R² ' + autonomyDecisionValue(step, 'cumulative_r_squared')
+                            + ' · standardized beta ' + autonomyDecisionValue(step, 'standardized_beta')
+                    );
+                    autonomyLiveSensitivityRows.appendChild(row);
+                    rowCount += 1;
+                });
+            });
+            if (!rowCount) autonomyDecisionAppendEmptyRow(
+                autonomyLiveSensitivityRows, 4, 'No validated sensitivity drivers are available.'
+            );
+        }
+
+        function autonomyDecisionQualityEntries(scenario) {
+            const rows = [];
+            const verification = autonomyPlainObject(scenario.verification);
+            const result = autonomyPlainObject(scenario.result);
+            const quality = autonomyPlainObject(result.quality);
+            const attempt = autonomyPlainObject(scenario.attempt);
+            const traceability = {
+                scenario_revision_id: scenario.scenario_revision_id,
+                tea_job_id: attempt.tea_job_id,
+                attempt_number: attempt.attempt_number,
+                source_snapshot_sha256: autonomyDecisionSourceSnapshot(scenario),
+            };
+            const tracedDetail = (value) => ({traceability, value});
+            autonomyDecisionListValues(verification.checks).forEach((check, index) => {
+                const record = autonomyPlainObject(check);
+                rows.push({
+                    check: record.check || record.name || record.id || record.key || 'Verification check ' + String(index + 1),
+                    status: record.status === undefined ? verification.status : record.status,
+                    detail: tracedDetail(record.detail === undefined ? check : record.detail),
+                });
+            });
+            if (verification.failures) rows.push({
+                check: 'Verification failures', status: verification.status, detail: tracedDetail(verification.failures),
+            });
+            if (autonomyDecisionHasOwn(result, 'convergence')) rows.push({
+                check: 'Convergence', status: 'reported', detail: tracedDetail(result.convergence),
+            });
+            autonomyDecisionListValues(quality.reporting_checks).forEach((check, index) => {
+                const record = autonomyPlainObject(check);
+                rows.push({
+                    check: record.check_id || record.id || record.check || record.name
+                        || 'Reporting check ' + String(index + 1),
+                    status: record.status === undefined ? 'reported' : record.status,
+                    detail: tracedDetail(check),
+                });
+            });
+            if (autonomyDecisionHasOwn(quality, 'reporting_tie_outs')) rows.push({
+                check: 'Result reporting tie-outs',
+                status: 'reported',
+                detail: tracedDetail(quality.reporting_tie_outs),
+            });
+            if (autonomyDecisionHasOwn(quality, 'numerical_provenance')) rows.push({
+                check: 'Result numerical provenance',
+                status: 'reported',
+                detail: tracedDetail(quality.numerical_provenance),
+            });
+            autonomyDecisionListValues(result.common_cost_audit).forEach((audit, index) => {
+                const record = autonomyPlainObject(audit);
+                rows.push({
+                    check: record.check_id || record.id || record.name || record.key
+                        || 'Common-cost audit ' + String(index + 1),
+                    status: record.status === undefined ? 'reported' : record.status,
+                    detail: tracedDetail(audit),
+                });
+            });
+            autonomyDecisionListValues(result.per_weather_year).forEach((weatherYear, index) => {
+                const record = autonomyPlainObject(weatherYear);
+                const year = record.weather_year || record.year || record.label || record.key || String(index + 1);
+                rows.push({
+                    check: 'Weather year ' + autonomyDecisionScalar(year),
+                    status: record.status === undefined ? 'reported' : record.status,
+                    detail: tracedDetail(weatherYear),
+                });
+            });
+            const provenance = autonomyPlainObject(scenario.provenance);
+            if (autonomyDecisionHasOwn(provenance, 'reporting_tie_outs')) rows.push({
+                check: 'Reporting tie-outs', status: 'reported', detail: tracedDetail(provenance.reporting_tie_outs),
+            });
+            if (autonomyDecisionHasOwn(provenance, 'kernel_numerics')) rows.push({
+                check: 'Numerical provenance', status: 'reported', detail: tracedDetail(provenance.kernel_numerics),
+            });
+            return rows;
+        }
+
+        function autonomyRenderDecisionQuality() {
+            if (!autonomyLiveQualityRows) return;
+            autonomyLiveQualityRows.replaceChildren();
+            let rowCount = 0;
+            autonomyDecisionBundleScenarios().forEach((scenario) => {
+                autonomyDecisionQualityEntries(scenario).forEach((quality) => {
+                    const row = autonomyNode('tr');
+                    autonomyDecisionAppendCell(row, autonomyDecisionScenarioLabel(scenario), {header: true});
+                    autonomyDecisionAppendCell(row, autonomyDecisionScalar(quality.check));
+                    autonomyDecisionAppendCell(row, autonomyDecisionScalar(quality.status));
+                    autonomyDecisionAppendCell(row, autonomyDecisionStructuredText(quality.detail), {code: true});
+                    autonomyLiveQualityRows.appendChild(row);
+                    rowCount += 1;
+                });
+            });
+            if (!rowCount) autonomyDecisionAppendEmptyRow(
+                autonomyLiveQualityRows, 4, 'No convergence, verification, or reporting tie-out record is available.'
+            );
+        }
+
+        function autonomyRenderDecisionEvidence() {
+            if (!autonomyLiveEvidenceCaveats) return;
+            const recommendation = autonomyDecisionRecommendation();
+            const entries = [];
+            autonomyDecisionBundleScenarios().forEach((scenario) => {
+                entries.push(autonomyDecisionScenarioLabel(scenario) + ' evidence: '
+                    + autonomyDecisionStructuredText(scenario.evidence));
+                autonomyDecisionListValues(scenario?.result?.warnings).forEach((warning) => {
+                    entries.push(autonomyDecisionScenarioLabel(scenario) + ' warning: ' + autonomyDecisionScalar(warning));
+                });
+            });
+            autonomyDecisionListValues(autonomyLiveBrief?.caveats).forEach((item) => entries.push('Caveat: ' + autonomyDecisionScalar(item)));
+            autonomyDecisionListValues(recommendation.evidence_gaps).forEach((item) => entries.push('Evidence gap: ' + autonomyDecisionScalar(item)));
+            autonomyDecisionListValues(recommendation.model_limitations).forEach((item) => entries.push('Model limitation: ' + autonomyDecisionScalar(item)));
+            autonomyDecisionAppendList(autonomyLiveEvidenceCaveats, entries, 'No evidence completeness or caveat record is available.');
+        }
+
+        function autonomyRenderDecisionRecommendation(stateName) {
+            const recommendation = autonomyDecisionRecommendation();
+            const partial = ['partial-results', 'verification-failure', 'empty', 'api-unavailable'].includes(stateName);
+            if (autonomyLiveRecommendation) autonomyLiveRecommendation.hidden = partial;
+            if (partial) return;
+            const pending = stateName === 'classification-pending' || recommendation.state === 'classification_pending_contract';
+            const classification = pending
+                ? 'Classification pending contract'
+                : autonomyDecisionScalar(recommendation.classification);
+            if (autonomyLiveRecommendationHeading) autonomyLiveRecommendationHeading.textContent = classification;
+            const confidence = autonomyLiveBrief?.confidence_state || recommendation.confidence;
+            const authorizedConfidence = ['Strong', 'Mixed', 'Provisional'].includes(String(confidence));
+            if (autonomyLiveRecommendationConfidence) {
+                autonomyLiveRecommendationConfidence.hidden = pending || !authorizedConfidence;
+                autonomyLiveRecommendationConfidence.textContent = authorizedConfidence ? String(confidence) + ' confidence' : '';
+            }
+            if (autonomyLiveRecommendationCopy) {
+                autonomyLiveRecommendationCopy.textContent = pending
+                    ? 'The exact comparison is available, but no winner or confidence state is authorized until the versioned contract defines the deterministic classification rule.'
+                    : autonomyDecisionScalar(
+                        recommendation.conditional_statement === undefined
+                            ? recommendation.summary
+                            : recommendation.conditional_statement
+                    );
+            }
+            autonomyDecisionAppendList(autonomyLiveDecisiveEvidence, recommendation.decisive_evidence, 'No decisive evidence was classified by the server.');
+            autonomyDecisionAppendList(autonomyLiveMajorDrivers, recommendation.major_drivers, 'No major drivers were classified by the server.');
+            autonomyDecisionAppendList(autonomyLiveImportantUncertainty, recommendation.important_uncertainty, 'No important uncertainty was classified by the server.');
+            const limits = [
+                ...autonomyDecisionListValues(recommendation.evidence_gaps),
+                ...autonomyDecisionListValues(recommendation.model_limitations),
+            ];
+            autonomyDecisionAppendList(autonomyLiveModelLimits, limits, 'No evidence gap or model limitation was classified by the server.');
+        }
+
+        function autonomyDecisionReversals() {
+            if (Array.isArray(autonomyLiveBrief?.reversal_conditions)) return autonomyLiveBrief.reversal_conditions;
+            const reversalConditions = autonomyDecisionRecommendation().reversal_conditions;
+            return Array.isArray(reversalConditions) ? reversalConditions : [];
+        }
+
+        function autonomyRenderDecisionReversals() {
+            if (!autonomyLiveReversalRows) return;
+            autonomyLiveReversalRows.replaceChildren();
+            const reversals = autonomyDecisionReversals();
+            reversals.forEach((rawReversal, index) => {
+                const reversal = autonomyPlainObject(rawReversal);
+                const row = autonomyNode('tr');
+                autonomyDecisionAppendCell(
+                    row,
+                    autonomyDecisionScalar(reversal.condition || reversal.assumption || reversal.driver || 'Condition ' + String(index + 1)),
+                    {header: true}
+                );
+                autonomyDecisionAppendCell(row, autonomyDecisionDisplayValue(reversal, 'direction'));
+                autonomyDecisionAppendCell(
+                    row,
+                    autonomyDecisionScalar(reversal.scenario_revision_id || reversal.calculated_in || reversal.source || 'Missing — not reported')
+                );
+                autonomyDecisionAppendCell(
+                    row,
+                    autonomyDecisionScalar(reversal.evidence_needed || reversal.evidence || 'Missing — not reported')
+                );
+                autonomyLiveReversalRows.appendChild(row);
+            });
+            if (!reversals.length) autonomyDecisionAppendEmptyRow(
+                autonomyLiveReversalRows, 4, 'No calculated reversal condition is available; no break-even threshold has been invented.'
+            );
+        }
+
+        function autonomyRenderDecisionProvenance() {
+            if (!autonomyLiveBriefProvenance) return;
+            autonomyLiveBriefProvenance.replaceChildren();
+            const bundleRecord = autonomyPlainObject(autonomyLiveComparisonBundle);
+            const bundle = autonomyDecisionBundleSnapshot();
+            const entries = [
+                ['Comparison bundle ID', autonomyDecisionBundleRecordId(bundleRecord)],
+                ['Comparison bundle SHA-256', bundleRecord.bundle_sha256 || autonomyLiveBrief?.comparison_bundle_sha256 || bundle.bundle_hash],
+                ['Bundle schema version', bundle.schema_version || bundleRecord.schema_version],
+                ['Source confirmation', bundleRecord.source_confirmation_id || bundle?.confirmation?.confirmation_id],
+                ['Expected case revision', bundleRecord.expected_case_revision || autonomyLiveBrief?.expected_case_revision],
+                ['Brief revision ID', autonomyDecisionBriefRecordId(autonomyLiveBrief)],
+                ['Brief revision', autonomyLiveBrief?.revision],
+                ['Brief provenance SHA-256', autonomyLiveBrief?.provenance_sha256],
+                ['Bundle canonicalization', bundle.canonicalization],
+                ['Brief provenance', autonomyLiveBrief?.provenance],
+            ];
+            entries.forEach(([term, value]) => {
+                const wrapper = autonomyNode('div');
+                wrapper.appendChild(autonomyNode('dt', {text: term}));
+                wrapper.appendChild(autonomyNode('dd', {text: autonomyDecisionScalar(value)}));
+                autonomyLiveBriefProvenance.appendChild(wrapper);
+            });
+        }
+
+        function autonomyRenderDecisionTimeline() {
+            if (!autonomyLiveBriefTimeline) return;
+            autonomyLiveBriefTimeline.replaceChildren();
+            autonomyLiveComparisonBundles.forEach((bundle) => {
+                const item = autonomyNode('li');
+                item.appendChild(autonomyNode('span', {text: autonomyDecisionScalar(bundle.created_at)}));
+                item.appendChild(autonomyNode('strong', {text: 'Comparison ' + autonomyDecisionBundleRecordId(bundle)}));
+                item.appendChild(autonomyNode('small', {
+                    text: bundle.stale || bundle.stale_at ? 'Stale immutable snapshot' : (bundle.is_complete ? 'Complete verified snapshot' : 'Partial Results snapshot'),
+                }));
+                autonomyLiveBriefTimeline.appendChild(item);
+            });
+            autonomyLiveBriefs.forEach((brief) => {
+                const item = autonomyNode('li');
+                item.appendChild(autonomyNode('span', {text: autonomyDecisionScalar(brief.created_at)}));
+                item.appendChild(autonomyNode('strong', {text: 'Brief ' + autonomyDecisionBriefRecordId(brief)}));
+                item.appendChild(autonomyNode('small', {
+                    text: brief.superseded || brief.superseded_by_revision_id ? 'Superseded immutable revision' : (brief.stale || brief.stale_at ? 'Stale immutable revision' : 'Immutable brief revision'),
+                }));
+                autonomyLiveBriefTimeline.appendChild(item);
+            });
+            if (!autonomyLiveBriefTimeline.children.length) {
+                const item = autonomyNode('li');
+                item.appendChild(autonomyNode('strong', {text: 'No comparison or brief revision recorded'}));
+                autonomyLiveBriefTimeline.appendChild(item);
+            }
+        }
+
+        function autonomyRenderDecisionActions(stateName) {
+            const expectedCaseRevision = autonomyExpectedCaseRevision();
+            const confirmationId = autonomyExecutionConfirmationId();
+            const operatorName = autonomyOperator();
+            const bundleId = autonomyDecisionBundleRecordId(autonomyLiveComparisonBundle);
+            const bundleHash = String(autonomyLiveComparisonBundle?.bundle_sha256 || '');
+            const canBuild = autonomyDecisionActionIsAllowed(AUTONOMY_DECISION_BUILD_ACTIONS)
+                && Boolean(expectedCaseRevision && confirmationId && operatorName) && !autonomyDecisionBuildInFlight;
+            const canCreate = autonomySelectedBundleMatchesCreateAction()
+                && Boolean(expectedCaseRevision && bundleId && /^[0-9a-f]{64}$/.test(bundleHash) && operatorName)
+                && !['partial-results', 'verification-failure', 'stale', 'superseded'].includes(stateName)
+                && !autonomyBriefCreateInFlight;
+            [autonomyLiveBuildComparisonBtn, autonomyLiveDecideBuildBtn].filter(Boolean).forEach((button) => {
+                button.disabled = !canBuild;
+                button.setAttribute('aria-disabled', String(!canBuild));
+                button.textContent = autonomyDecisionBuildInFlight ? 'Building verified comparison…' : 'Build verified comparison';
+                button.title = canBuild ? '' : (autonomyDecisionActionDisabledReason(AUTONOMY_DECISION_BUILD_ACTIONS)
+                    || (!operatorName ? 'Enter the named operator.' : (!confirmationId ? 'No immutable confirmation is linked.' : 'The server has not allowed this action.')));
+            });
+            if (autonomyLiveCreateBriefBtn) {
+                autonomyLiveCreateBriefBtn.disabled = !canCreate;
+                autonomyLiveCreateBriefBtn.setAttribute('aria-disabled', String(!canCreate));
+                autonomyLiveCreateBriefBtn.textContent = autonomyBriefCreateInFlight
+                    ? 'Creating immutable brief…' : 'Create immutable brief revision';
+                autonomyLiveCreateBriefBtn.title = canCreate ? '' : (autonomyDecisionActionDisabledReason(AUTONOMY_DECISION_CREATE_ACTIONS)
+                    || 'A complete current verified comparison and named operator are required.');
+            }
+            const canOpen = autonomyCanOpenLiveBrief();
+            if (autonomyLiveDecideOpenBtn) {
+                autonomyLiveDecideOpenBtn.disabled = !canOpen;
+                autonomyLiveDecideOpenBtn.setAttribute('aria-disabled', String(!canOpen));
+            }
+            if (autonomyLiveTestReversalBtn) {
+                autonomyLiveTestReversalBtn.hidden = !autonomyDecisionActionIsAllowed(AUTONOMY_DECISION_REVERSAL_ACTIONS);
+            }
+        }
+
+        function autonomyRenderLiveDecisionWorkspace() {
+            if (!autonomyLiveDecisionBrief || autonomyContentMode !== 'live') return;
+            const activeElement = document.activeElement instanceof HTMLElement
+                && autonomyLiveDecisionBrief.contains(document.activeElement)
+                ? document.activeElement
+                : null;
+            const activeElementId = activeElement?.id || '';
+            const activeFocusKey = activeElement?.dataset.autonomyDecisionFocus || '';
+            const stateName = autonomyDecisionStateName();
+            const presentation = autonomyDecisionStatePresentation(stateName);
+            autonomyLiveDecisionBrief.dataset.briefState = stateName;
+            autonomyLiveDecisionBrief.dataset.agentState = autonomyLiveAgentAvailable ? 'available' : 'unavailable';
+            autonomyLiveDecisionBrief.setAttribute('aria-busy', String(stateName === 'loading'));
+            if (autonomyLiveBriefHeading) autonomyLiveBriefHeading.textContent = autonomyLiveBrief
+                ? 'Decision Brief revision ' + autonomyDecisionScalar(autonomyLiveBrief.revision)
+                : 'Verified scenario comparison';
+            if (autonomyLiveBriefSummary) {
+                autonomyLiveBriefSummary.textContent = presentation[1]
+                    + (!autonomyLiveAgentAvailable && stateName !== 'agent-unavailable'
+                        ? ' The Decision Agent is unavailable; deterministic comparison remains usable.' : '');
+            }
+            if (autonomyLiveBriefState) autonomyLiveBriefState.dataset.status = stateName;
+            if (autonomyLiveBriefStateHeading) autonomyLiveBriefStateHeading.textContent = presentation[0];
+            if (autonomyLiveBriefStateCopy) autonomyLiveBriefStateCopy.textContent = presentation[1];
+            if (autonomyLiveBriefAgentNotice) autonomyLiveBriefAgentNotice.hidden = autonomyLiveAgentAvailable;
+            autonomyDecisionAppendList(autonomyLiveBriefBlockers, autonomyDecisionBlockerValues(), 'No server blocker is recorded for this snapshot.');
+            if (autonomyLiveDecideSummary) autonomyLiveDecideSummary.textContent = presentation[1];
+            const bundle = autonomyDecisionBundleSnapshot();
+            if (autonomyLiveRequestMatrix) {
+                autonomyLiveRequestMatrix.textContent = autonomyDecisionStructuredText(
+                    autonomyPlainObject(bundle.comparison).request_matrix
+                );
+            }
+            autonomyRenderDecisionSelectors();
+            autonomyRenderDecisionScenarioRows();
+            autonomyRenderDecisionMetricRows();
+            autonomyRenderDecisionJointOutcomes();
+            autonomyRenderDecisionSensitivity();
+            autonomyRenderDecisionQuality();
+            autonomyRenderDecisionEvidence();
+            autonomyRenderDecisionRecommendation(stateName);
+            autonomyRenderDecisionReversals();
+            autonomyRenderDecisionProvenance();
+            autonomyRenderDecisionTimeline();
+            autonomyRenderDecisionActions(stateName);
+            if (autonomySelectedView === 'decision-brief' && !autonomyDecisionBrief?.hidden) {
+                autonomyAnnounceDecisionState(stateName, presentation);
+            }
+            if (activeElement && !activeElement.isConnected) {
+                window.requestAnimationFrame(() => {
+                    const idTarget = activeElementId ? document.getElementById(activeElementId) : null;
+                    const keyedTarget = activeFocusKey
+                        ? Array.from(autonomyLiveDecisionBrief.querySelectorAll('[data-autonomy-decision-focus]'))
+                            .find((element) => element.dataset.autonomyDecisionFocus === activeFocusKey)
+                        : null;
+                    (idTarget || keyedTarget)?.focus({preventScroll: true});
+                });
+            }
+        }
+
+        function autonomyDecisionPayloadCaseRevision(payload) {
+            const revision = payload?.case?.revision ?? payload?.case_revision ?? payload?.expected_case_revision;
+            return Number.isInteger(Number(revision)) && Number(revision) >= 1 ? Number(revision) : null;
+        }
+
+        function autonomyAdoptDecisionPayloads(bundlePayload, briefPayload, options = {}) {
+            const currentBundleId = options.bundleId
+                || autonomyComparisonBundleId(bundlePayload?.current_comparison_bundle_id)
+                || autonomyComparisonBundleId(briefPayload?.current_comparison_bundle_id)
+                || autonomyDecisionBundleRecordId(autonomyLiveComparisonBundle);
+            const currentBriefId = options.briefId
+                || autonomyBriefRevisionId(briefPayload?.current_decision_brief_revision_id)
+                || autonomyBriefRevisionId(bundlePayload?.current_decision_brief_revision_id)
+                || autonomyDecisionBriefRecordId(autonomyLiveBrief);
+            const comparisonBundleRecords = autonomyDecisionRecords(
+                bundlePayload, 'comparison_bundles', 'comparison_bundle', autonomyDecisionBundleRecordId
+            );
+            const decisionBriefRecords = autonomyDecisionRecords(
+                briefPayload, 'decision_briefs', 'decision_brief', autonomyDecisionBriefRecordId
+            );
+            if (comparisonBundleRecords.some((record) => record.case_id !== autonomyCaseId())
+                || decisionBriefRecords.some((record) => record.case_id !== autonomyCaseId())) {
+                const identityError = new Error('The Decision Brief response contained a cross-case identity and was rejected.');
+                identityError.code = 'cross_case_identity';
+                throw identityError;
+            }
+            autonomyLiveComparisonBundles = comparisonBundleRecords;
+            autonomyLiveBriefs = decisionBriefRecords;
+            autonomyLiveComparisonBundle = autonomyLiveComparisonBundles.find((record) => (
+                autonomyDecisionBundleRecordId(record) === currentBundleId
+            )) || autonomyLiveComparisonBundles.find((record) => !record.stale && !record.superseded_by_bundle_id)
+                || autonomyLiveComparisonBundles[0] || null;
+            autonomyLiveBrief = autonomyLiveBriefs.find((record) => (
+                autonomyDecisionBriefRecordId(record) === currentBriefId
+            )) || autonomyLiveBriefs.find((record) => !record.stale && !record.superseded && !record.superseded_by_revision_id)
+                || autonomyLiveBriefs[0] || null;
+            const briefBundleId = autonomyComparisonBundleId(autonomyLiveBrief?.comparison_bundle_id);
+            if (briefBundleId) {
+                autonomyLiveComparisonBundle = autonomyLiveComparisonBundles.find((record) => (
+                    autonomyDecisionBundleRecordId(record) === briefBundleId
+                )) || autonomyLiveComparisonBundle;
+            }
+            autonomyCollectDecisionAllowedActions(
+                autonomyLiveReadiness, autonomyLiveExecution, bundlePayload, briefPayload
+            );
+            autonomyDecisionBlockers = [
+                ...autonomyDecisionListValues(bundlePayload?.decision_blockers),
+                ...autonomyDecisionListValues(briefPayload?.decision_blockers),
+            ];
+        }
+
+        async function autonomyLoadDecisionWorkspace(options = {}) {
+            const caseId = autonomyCaseId();
+            if (!caseId || autonomyContentMode !== 'live') return;
+            const revision = ++autonomyDecisionLoadRevision;
+            if (autonomyDecisionAbortController) autonomyDecisionAbortController.abort();
+            const controller = new AbortController();
+            autonomyDecisionAbortController = controller;
+            autonomyDecisionLoadError = null;
+            if (autonomyLiveDecisionBrief) {
+                autonomyLiveDecisionBrief.dataset.briefState = 'loading';
+                autonomyLiveDecisionBrief.setAttribute('aria-busy', 'true');
+            }
+            try {
+                const [bundlePayload, briefPayload] = await Promise.all([
+                    autonomyFetchComparisonBundles(caseId, controller.signal),
+                    autonomyFetchDecisionBriefs(caseId, controller.signal),
+                ]);
+                if (revision !== autonomyDecisionLoadRevision || controller.signal.aborted || caseId !== autonomyCaseId()) return;
+                const snapshotRevisions = [
+                    autonomyDecisionPayloadCaseRevision(bundlePayload),
+                    autonomyDecisionPayloadCaseRevision(briefPayload),
+                ].filter((value) => value !== null);
+                if (snapshotRevisions.length && new Set(snapshotRevisions).size !== 1) {
+                    const snapshotError = new Error('The case changed while Decision Brief records were loading. Refresh before relying on this view.');
+                    snapshotError.code = 'mixed_case_revision';
+                    throw snapshotError;
+                }
+                const snapshotRevision = snapshotRevisions[0];
+                if (snapshotRevision && snapshotRevision < Number(autonomyLiveCase?.revision || 0)) {
+                    const snapshotError = new Error('An older Decision Brief snapshot was returned. Refresh before relying on this view.');
+                    snapshotError.code = 'mixed_case_revision';
+                    throw snapshotError;
+                }
+                autonomyAdoptLiveCaseFromPayload(bundlePayload, briefPayload);
+                autonomyAdoptDecisionPayloads(bundlePayload, briefPayload, options);
+                autonomyDecisionLoadError = null;
+                autonomyRenderLiveCase();
+                autonomyRenderLiveDecisionWorkspace();
+                autonomyRenderStepper(autonomyCurrentFixture());
+                autonomySetView(autonomySelectedView, {syncMobile: true});
+                if (options.announce) {
+                    const stateName = autonomyDecisionStateName();
+                    autonomyAnnounceDecisionState(
+                        stateName,
+                        autonomyDecisionStatePresentation(stateName),
+                        'Decision Brief records refreshed from one server-owned comparison snapshot.'
+                    );
+                }
+            } catch (error) {
+                if (error?.name === 'AbortError' || revision !== autonomyDecisionLoadRevision) return;
+                autonomyDecisionLoadError = {
+                    message: error.message || 'The Decision Brief service could not be loaded.',
+                    status: error.status,
+                    code: error.code,
+                };
+                autonomyDecisionBlockers = [autonomyDecisionLoadError.message];
+                autonomyRenderLiveDecisionWorkspace();
+                autonomySetConnectionStatus('Decision Brief service unavailable. Existing case and scenario data remain unchanged.', 'error');
+            } finally {
+                if (autonomyDecisionAbortController === controller) autonomyDecisionAbortController = null;
+                if (revision === autonomyDecisionLoadRevision && autonomyLiveDecisionBrief) {
+                    autonomyLiveDecisionBrief.setAttribute('aria-busy', 'false');
+                }
+            }
+        }
+
+        async function autonomySelectComparisonBundle(bundleId) {
+            const caseId = autonomyCaseId();
+            const safeBundleId = autonomyComparisonBundleId(bundleId);
+            if (!caseId || !safeBundleId || autonomyContentMode !== 'live') return;
+            try {
+                const payload = await autonomyFetchComparisonBundle(caseId, safeBundleId);
+                const record = autonomyDecisionRecords(
+                    payload, 'comparison_bundles', 'comparison_bundle', autonomyDecisionBundleRecordId
+                )[0];
+                if (!record || record.case_id !== caseId) throw new Error('The comparison snapshot does not belong to this case.');
+                autonomyLiveComparisonBundles = autonomyLiveComparisonBundles.map((item) => (
+                    autonomyDecisionBundleRecordId(item) === safeBundleId ? record : item
+                ));
+                autonomyLiveComparisonBundle = record;
+                autonomyLiveBrief = autonomyLiveBriefs.find((brief) => brief.comparison_bundle_id === safeBundleId) || null;
+                autonomyCollectDecisionAllowedActions(payload);
+                autonomyDecisionBlockers = autonomyDecisionListValues(payload.decision_blockers);
+                autonomyRenderLiveDecisionWorkspace();
+                const stateName = autonomyDecisionStateName();
+                autonomyAnnounceDecisionState(
+                    stateName,
+                    autonomyDecisionStatePresentation(stateName),
+                    'Opened immutable comparison snapshot ' + safeBundleId + '.'
+                );
+            } catch (error) {
+                autonomyDecisionLoadError = {message: error.message || 'The comparison snapshot could not be opened.'};
+                autonomyRenderLiveDecisionWorkspace();
+            }
+        }
+
+        async function autonomySelectDecisionBrief(briefRevisionId) {
+            const caseId = autonomyCaseId();
+            const safeBriefRevisionId = autonomyBriefRevisionId(briefRevisionId);
+            if (!caseId || !safeBriefRevisionId || autonomyContentMode !== 'live') return;
+            try {
+                const payload = await autonomyFetchDecisionBrief(caseId, safeBriefRevisionId);
+                const record = autonomyDecisionRecords(
+                    payload, 'decision_briefs', 'decision_brief', autonomyDecisionBriefRecordId
+                )[0];
+                if (!record || record.case_id !== caseId) throw new Error('The Decision Brief revision does not belong to this case.');
+                autonomyLiveBriefs = autonomyLiveBriefs.map((item) => (
+                    autonomyDecisionBriefRecordId(item) === safeBriefRevisionId ? record : item
+                ));
+                autonomyLiveBrief = record;
+                const bundleId = autonomyComparisonBundleId(record.comparison_bundle_id);
+                if (bundleId) autonomyLiveComparisonBundle = autonomyLiveComparisonBundles.find((item) => (
+                    autonomyDecisionBundleRecordId(item) === bundleId
+                )) || autonomyLiveComparisonBundle;
+                autonomyCollectDecisionAllowedActions(payload);
+                autonomyDecisionBlockers = autonomyDecisionListValues(payload.decision_blockers);
+                autonomyRenderLiveDecisionWorkspace();
+                const stateName = autonomyDecisionStateName();
+                autonomyAnnounceDecisionState(
+                    stateName,
+                    autonomyDecisionStatePresentation(stateName),
+                    'Opened immutable Decision Brief revision ' + safeBriefRevisionId + '.'
+                );
+            } catch (error) {
+                autonomyDecisionLoadError = {message: error.message || 'The Decision Brief revision could not be opened.'};
+                autonomyRenderLiveDecisionWorkspace();
+            }
+        }
+
+        async function autonomyBuildComparisonBundle() {
+            const caseId = autonomyCaseId();
+            const expectedCaseRevision = autonomyExpectedCaseRevision();
+            const confirmationId = autonomyExecutionConfirmationId();
+            const operatorName = autonomyOperator();
+            if (!caseId || !autonomyDecisionActionIsAllowed(AUTONOMY_DECISION_BUILD_ACTIONS)
+                || !expectedCaseRevision || !confirmationId || !operatorName || autonomyDecisionBuildInFlight) return;
+            autonomyDecisionBuildInFlight = true;
+            autonomyDecisionLoadError = null;
+            autonomyRenderLiveDecisionWorkspace();
+            try {
+                const payload = await autonomyJsonRequest(
+                    '/api/autonomy/cases/' + encodeURIComponent(caseId) + '/comparison-bundles',
+                    {
+                        method: 'POST',
+                        body: {
+                            expected_case_revision: expectedCaseRevision,
+                            confirmation_id: confirmationId,
+                            operator_name: operatorName,
+                        },
+                    }
+                );
+                const bundleId = autonomyDecisionBundleRecordId(payload.comparison_bundle);
+                autonomyCollectDecisionAllowedActions(payload);
+                await autonomyLoadDecisionWorkspace({bundleId, announce: true});
+            } catch (error) {
+                autonomyDecisionLoadError = {
+                    message: error.status === 409
+                        ? 'The case changed before comparison creation. Refresh the case and review the exact confirmation again.'
+                        : (error.message || 'The verified comparison could not be created.'),
+                    status: error.status,
+                    code: error.code,
+                };
+                autonomyDecisionBlockers = [
+                    ...autonomyDecisionListValues(error.blockers),
+                    autonomyDecisionLoadError.message,
+                ];
+                autonomyRenderLiveDecisionWorkspace();
+            } finally {
+                autonomyDecisionBuildInFlight = false;
+                autonomyRenderLiveDecisionWorkspace();
+            }
+        }
+
+        async function autonomyCreateDecisionBrief() {
+            const caseId = autonomyCaseId();
+            const expectedCaseRevision = autonomyExpectedCaseRevision();
+            const comparisonBundleId = autonomyDecisionBundleRecordId(autonomyLiveComparisonBundle);
+            const bundleSha256 = String(autonomyLiveComparisonBundle?.bundle_sha256 || '');
+            const operatorName = autonomyOperator();
+            if (!caseId || !autonomySelectedBundleMatchesCreateAction()
+                || !expectedCaseRevision || !comparisonBundleId || !/^[0-9a-f]{64}$/.test(bundleSha256)
+                || !operatorName || autonomyBriefCreateInFlight) return;
+            const signature = String(expectedCaseRevision) + '|' + comparisonBundleId + '|' + bundleSha256;
+            if (signature !== autonomyBriefCreationSignature || !autonomyBriefCreationIdempotencyKey) {
+                autonomyBriefCreationSignature = signature;
+                autonomyBriefCreationIdempotencyKey = autonomyClientMessageId();
+            }
+            autonomyBriefCreateInFlight = true;
+            autonomyDecisionLoadError = null;
+            autonomyRenderLiveDecisionWorkspace();
+            try {
+                const payload = await autonomyJsonRequest(
+                    '/api/autonomy/cases/' + encodeURIComponent(caseId) + '/decision-briefs',
+                    {
+                        method: 'POST',
+                        body: {
+                            expected_case_revision: expectedCaseRevision,
+                            comparison_bundle_id: comparisonBundleId,
+                            bundle_sha256: bundleSha256,
+                            operator_name: operatorName,
+                            idempotency_key: autonomyBriefCreationIdempotencyKey,
+                        },
+                    }
+                );
+                const briefRevisionId = autonomyDecisionBriefRecordId(payload.decision_brief);
+                autonomyAdoptLiveCaseFromPayload(payload);
+                autonomyCollectDecisionAllowedActions(payload);
+                await autonomyLoadDecisionWorkspace({briefId: briefRevisionId, bundleId: comparisonBundleId, announce: true});
+            } catch (error) {
+                autonomyDecisionLoadError = {
+                    message: error.status === 409
+                        ? 'The case or comparison snapshot changed before brief creation. Refresh without changing this immutable bundle.'
+                        : (error.message || 'The immutable Decision Brief revision could not be created.'),
+                    status: error.status,
+                    code: error.code,
+                };
+                autonomyDecisionBlockers = [
+                    ...autonomyDecisionListValues(error.blockers),
+                    autonomyDecisionLoadError.message,
+                ];
+                autonomyRenderLiveDecisionWorkspace();
+            } finally {
+                autonomyBriefCreateInFlight = false;
+                autonomyRenderLiveDecisionWorkspace();
+            }
+        }
+
         function autonomyAdoptLiveCaseFromPayload(...payloads) {
             payloads.forEach((payload) => {
                 const incomingCase = autonomyPlainObject(payload?.case);
@@ -2469,10 +3816,18 @@
                     executionPayload,
                     autonomyLiveExecution
                 );
+                autonomyCollectDecisionAllowedActions(
+                    autonomyLiveReadiness,
+                    scenarioPayload,
+                    comparisonPayload,
+                    executionPayload,
+                    autonomyLiveExecution
+                );
                 autonomyExecutionPollFailures = 0;
                 autonomyRenderLiveCase();
                 autonomyRenderLiveScenarios();
                 autonomyRenderLiveExecution({announce: options.announce === true});
+                await autonomyLoadDecisionWorkspace();
                 autonomySetScenarioWorkspaceBusy(false);
                 autonomyScheduleExecutionPoll();
             } catch (error) {
@@ -2529,12 +3884,14 @@
                 autonomyAdoptLiveCaseFromPayload(payload);
                 autonomyLiveExecution = payload.execution || payload.execution_status || null;
                 autonomyCollectAllowedActions(autonomyLiveReadiness, payload, autonomyLiveExecution);
+                autonomyCollectDecisionAllowedActions(autonomyLiveReadiness, payload, autonomyLiveExecution);
                 autonomyExecutionPollFailures = 0;
                 const nextStates = autonomyExecutionJobs({latestOnly: true})
                     .map((job) => job.tea_job_id + ':' + job.state).join('|');
                 autonomyRenderLiveCase();
                 autonomyRenderLiveReadiness();
                 autonomyRenderLiveExecution({announce: priorStates !== nextStates});
+                autonomyRenderLiveDecisionWorkspace();
                 if (autonomyExpectedCaseRevision() !== priorCaseRevision) {
                     autonomyLoadScenarioWorkspace().catch(() => {});
                     return;
@@ -3121,6 +4478,7 @@
             autonomyRenderSourceSelection();
             autonomyRenderLiveScenarios();
             autonomyRenderLiveExecution();
+            autonomyRenderLiveDecisionWorkspace();
             autonomySyncMobileTabs(autonomyMobileSectionForStage(autonomySelectedStage));
         }
 
@@ -3221,6 +4579,7 @@
             await Promise.all(requests);
             if (!stillCurrent()) return false;
             autonomyCollectAllowedActions(autonomyLiveReadiness);
+            autonomyCollectDecisionAllowedActions(autonomyLiveReadiness);
             autonomyRenderLiveWorkspace();
             return true;
         }
@@ -3250,6 +4609,7 @@
             autonomyLiveComparison = null;
             autonomyLiveExecution = null;
             autonomyLiveAllowedActions = [];
+            autonomyResetDecisionWorkspace();
             autonomySelectedScenarioRevisions.clear();
             autonomyResetConfirmationReview();
             autonomySelectedStage = 'ask';
@@ -3311,6 +4671,7 @@
                 autonomyLiveComparison = null;
                 autonomyLiveExecution = null;
                 autonomyLiveAllowedActions = [];
+                autonomyResetDecisionWorkspace();
                 autonomySelectedScenarioRevisions.clear();
                 autonomyInvalidateExecutionPoll();
                 autonomyRenderLiveWorkspace();
@@ -3822,7 +5183,7 @@
             const statuses = autonomyStageStatuses(stepperState);
             autonomyPanel.querySelectorAll('[data-autonomy-stage]').forEach((button) => {
                 const stage = button.dataset.autonomyStage;
-                const liveUnavailable = autonomyContentMode === 'live' && stage === 'decide';
+                const liveUnavailable = autonomyContentMode === 'live' && !autonomyCanSelectLiveStage(stage);
                 button.disabled = liveUnavailable;
                 button.setAttribute('aria-disabled', String(liveUnavailable));
                 const index = AUTONOMY_STAGES.indexOf(stage);
@@ -3838,10 +5199,12 @@
                 else button.removeAttribute('aria-current');
                 const status = button.querySelector('small');
                 if (status) {
-                    status.textContent = {
+                    status.textContent = autonomyContentMode === 'live' && stage === 'decide'
+                        ? (autonomyCanOpenLiveBrief() ? autonomyDecisionStageLabel() : 'Server action required')
+                        : ({
                         complete: 'Complete', current: 'Current', blocked: 'Blocked',
                         'needs-attention': 'Needs attention', 'not-started': 'Not started',
-                    }[statusValue] || 'Not started';
+                    }[statusValue] || 'Not started');
                 }
             });
             autonomyPanel.querySelectorAll('[data-autonomy-stage-panel]').forEach((panel) => {
@@ -3850,7 +5213,7 @@
             if (autonomyStageSelect) {
                 autonomyStageSelect.value = autonomySelectedStage;
                 Array.from(autonomyStageSelect.options).forEach((option) => {
-                    option.disabled = autonomyContentMode === 'live' && option.value === 'decide';
+                    option.disabled = autonomyContentMode === 'live' && !autonomyCanSelectLiveStage(option.value);
                 });
             }
         }
@@ -3915,7 +5278,9 @@
         }
 
         function autonomyCanOpenBrief(fixture) {
-            return autonomyContentMode === 'fixture' && fixture.briefState !== 'unavailable';
+            return autonomyContentMode === 'live'
+                ? autonomyCanOpenLiveBrief()
+                : fixture.briefState !== 'unavailable';
         }
 
         function autonomyMobileSectionForStage(stage, fixture = autonomyCurrentFixture()) {
@@ -3926,12 +5291,13 @@
         }
 
         function autonomySyncMobileTabs(section) {
-            autonomyMobileSection = section;
-            autonomyPanel.dataset.mobileSection = section;
             const briefAvailable = autonomyCanOpenBrief(autonomyCurrentFixture());
+            const safeSection = section === 'decision' && !briefAvailable ? 'scenarios' : section;
+            autonomyMobileSection = safeSection;
+            autonomyPanel.dataset.mobileSection = safeSection;
             autonomyPanel.querySelectorAll('[data-autonomy-mobile-tab]').forEach((button) => {
                 const isDecision = button.dataset.autonomyMobileTab === 'decision';
-                const selected = button.dataset.autonomyMobileTab === section;
+                const selected = button.dataset.autonomyMobileTab === safeSection;
                 button.disabled = isDecision && !briefAvailable;
                 button.setAttribute('aria-disabled', String(isDecision && !briefAvailable));
                 button.setAttribute('aria-selected', String(selected));
@@ -3942,8 +5308,15 @@
 
         function autonomySetView(view, options = {}) {
             const fixture = autonomyCurrentFixture();
-            const caseExists = autonomyContentMode === 'live' ? !!autonomyLiveCase : fixture.caseExists;
-            const requestedBrief = autonomyContentMode === 'fixture' && view === 'decision-brief';
+            const caseExists = autonomyContentMode === 'live' ? !!autonomyCaseId() : fixture.caseExists;
+            const requestedBrief = view === 'decision-brief';
+            if (autonomyContentMode === 'live' && requestedBrief && autonomySelectedView !== 'decision-brief') {
+                autonomyBriefReturnContext = {
+                    stage: autonomySelectedStage,
+                    mobileSection: autonomyMobileSection,
+                    trigger: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+                };
+            }
             autonomySelectedView = requestedBrief && autonomyCanOpenBrief(fixture) ? 'decision-brief' : 'investigation';
             const brief = autonomySelectedView === 'decision-brief';
             if (autonomyInvestigationView) autonomyInvestigationView.hidden = !caseExists || brief;
@@ -3971,18 +5344,29 @@
                 target?.focus({preventScroll: false});
             }
             if (options.announce) {
-                autonomyAnnounce(brief ? 'Decision Brief opened for the current case.' : 'Investigation Workspace opened for the current case.');
+                if (brief && autonomyContentMode === 'live') {
+                    const stateName = autonomyDecisionStateName();
+                    autonomyAnnounceDecisionState(
+                        stateName,
+                        autonomyDecisionStatePresentation(stateName),
+                        'Decision Brief opened for the current case.'
+                    );
+                } else {
+                    autonomyAnnounce(brief
+                        ? 'Decision Brief opened for the current case.'
+                        : 'Investigation Workspace opened for the current case.');
+                }
             }
         }
 
         function autonomyRenderBrief(fixture) {
-            if (!autonomyDecisionBrief) return;
+            if (!autonomyFixtureDecisionBrief) return;
             autonomyDecisionBrief.dataset.briefState = fixture.briefState;
             if (autonomyBriefPartialWarning) autonomyBriefPartialWarning.hidden = fixture.briefState !== 'partial';
-            autonomyDecisionBrief.querySelectorAll('[data-autonomy-partial-only]').forEach((element) => {
+            autonomyFixtureDecisionBrief.querySelectorAll('[data-autonomy-partial-only]').forEach((element) => {
                 element.hidden = fixture.briefState !== 'partial';
             });
-            autonomyDecisionBrief.querySelectorAll('[data-autonomy-complete-results]').forEach((element) => {
+            autonomyFixtureDecisionBrief.querySelectorAll('[data-autonomy-complete-results]').forEach((element) => {
                 element.hidden = fixture.briefState === 'partial';
             });
             if (autonomyRecommendationTitle) {
@@ -4004,11 +5388,11 @@
                 autonomyPrepareSignoffBtn.disabled = !fixture.signoffAllowed;
                 autonomyPrepareSignoffBtn.hidden = fixture.signed;
             }
-            autonomyDecisionBrief.querySelectorAll('[data-autonomy-prepare-signoff]').forEach((button) => {
+            autonomyFixtureDecisionBrief.querySelectorAll('[data-autonomy-prepare-signoff]').forEach((button) => {
                 button.disabled = !fixture.signoffAllowed;
                 button.hidden = fixture.signed;
             });
-            autonomyDecisionBrief.querySelectorAll('[data-autonomy-signoff-status]').forEach((status) => {
+            autonomyFixtureDecisionBrief.querySelectorAll('[data-autonomy-signoff-status]').forEach((status) => {
                 status.textContent = fixture.signed
                     ? 'Signed fixture · ' + autonomySignedDecision.disposition
                     : 'Unsigned fixture';
@@ -4016,10 +5400,10 @@
             });
             if (autonomySignedSummary) autonomySignedSummary.textContent = autonomySignedDecisionSummary();
             if (autonomySignedRationale) autonomySignedRationale.textContent = 'Recorded fixture rationale: ' + autonomySignedDecision.rationale;
-            autonomyDecisionBrief.querySelectorAll('[data-autonomy-signed-only]').forEach((element) => {
+            autonomyFixtureDecisionBrief.querySelectorAll('[data-autonomy-signed-only]').forEach((element) => {
                 element.hidden = !fixture.signed;
             });
-            autonomyDecisionBrief.querySelectorAll('[data-autonomy-superseded-only]').forEach((element) => {
+            autonomyFixtureDecisionBrief.querySelectorAll('[data-autonomy-superseded-only]').forEach((element) => {
                 element.hidden = !fixture.superseded;
             });
         }
@@ -4114,8 +5498,8 @@
 
         function autonomySelectStage(stage, options = {}) {
             if (!AUTONOMY_STAGES.includes(stage)) return;
-            if (autonomyContentMode === 'live' && !AUTONOMY_LIVE_STAGES.includes(stage)) {
-                autonomyAnnounce('Decision Brief, recommendation, sign-off, and reporting are unavailable for live cases until the next phase.');
+            if (autonomyContentMode === 'live' && !autonomyCanSelectLiveStage(stage)) {
+                autonomyAnnounce('The server has not returned the open_decision_brief allowed action for this case revision.');
                 return;
             }
             autonomySelectedStage = stage;
@@ -4145,7 +5529,9 @@
         function autonomySetMobileSection(section, options = {}) {
             if (!['ask', 'scenarios', 'evidence', 'decision'].includes(section)) return;
             if (section === 'decision' && !autonomyCanOpenBrief(autonomyCurrentFixture())) {
-                autonomyAnnounce('Decision Brief is unavailable until fixture results are ready.');
+                autonomyAnnounce(autonomyContentMode === 'live'
+                    ? 'The server has not returned the open_decision_brief allowed action for this case revision.'
+                    : 'Decision Brief is unavailable until fixture results are ready.');
                 return;
             }
             autonomySyncMobileTabs(section);
@@ -4155,6 +5541,46 @@
             if (section === 'decision') autonomySetView('decision-brief', {syncMobile: false});
             else autonomySetView('investigation', {syncMobile: false});
             if (options.announce !== false) autonomyAnnounce('Opened ' + section + ' mobile workspace tab.');
+        }
+
+        function autonomyDecisionFocusTargetIsUsable(element) {
+            if (!(element instanceof HTMLElement) || !element.isConnected) return false;
+            if (element.closest('[hidden], [inert]')) return false;
+            if (element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return false;
+            if (element.tabIndex < 0) return false;
+            const style = window.getComputedStyle(element);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+        }
+
+        function autonomyReturnFromLiveBrief(options = {}) {
+            if (autonomyContentMode !== 'live') return;
+            const returnContext = autonomyBriefReturnContext;
+            autonomySelectedStage = 'compare';
+            autonomySelectedView = 'investigation';
+            autonomySyncMobileTabs('scenarios');
+            autonomyRenderStepper(autonomyCurrentFixture());
+            autonomySetView('investigation', {syncMobile: false, announce: options.announce !== false});
+            const contextTrigger = returnContext?.trigger;
+            const restoreTarget = autonomyDecisionFocusTargetIsUsable(contextTrigger)
+                && !autonomyDecisionBrief?.contains(contextTrigger)
+                ? contextTrigger
+                : autonomyPanel.querySelector('[data-autonomy-stage="compare"]:not(:disabled)');
+            window.requestAnimationFrame(() => restoreTarget?.focus({preventScroll: true}));
+            autonomyBriefReturnContext = null;
+        }
+
+        function autonomyToggleLiveWhy() {
+            if (!autonomyLiveWhyPanel || !autonomyLiveAskWhyBtn || autonomyContentMode !== 'live') return;
+            const expanded = autonomyLiveWhyPanel.hidden;
+            autonomyLiveWhyPanel.hidden = !expanded;
+            autonomyLiveAskWhyBtn.setAttribute('aria-expanded', String(expanded));
+            autonomyLiveAskWhyBtn.textContent = expanded
+                ? 'Hide decisive evidence and uncertainty'
+                : 'Show decisive evidence and uncertainty';
+            if (expanded) autonomyLiveWhyPanel.focus?.({preventScroll: true});
+            autonomyAnnounce(expanded
+                ? 'Deterministic decisive evidence, drivers, uncertainty, gaps, and limitations shown.'
+                : 'Deterministic recommendation basis collapsed.');
         }
 
         function autonomyFocusable(container) {
@@ -4352,6 +5778,12 @@
             });
             autonomyQuestion?.addEventListener('change', () => {
                 if (autonomyContentMode === 'live') autonomyUpdateLiveCase();
+            });
+            autonomyOperatorName?.addEventListener('input', () => {
+                if (autonomyContentMode === 'live') autonomyRenderLiveDecisionWorkspace();
+            });
+            autonomyLiveConfirmationSelect?.addEventListener('change', () => {
+                if (autonomyContentMode === 'live') autonomyRenderDecisionActions(autonomyDecisionStateName());
             });
             autonomyInvestigationViewBtn?.addEventListener('click', () => autonomySetView('investigation', {focus: true, announce: true}));
             autonomyBriefViewBtn?.addEventListener('click', () => autonomySetView('decision-brief', {focus: true, announce: true}));
@@ -4608,6 +6040,31 @@
             });
             autonomyOpenPartialBriefBtn?.addEventListener('click', () => autonomySetView('decision-brief', {focus: true, announce: true}));
             autonomyOpenBriefBtn?.addEventListener('click', () => autonomySetView('decision-brief', {focus: true, announce: true}));
+            [autonomyLiveBuildComparisonBtn, autonomyLiveDecideBuildBtn].filter(Boolean).forEach((button) => {
+                button.addEventListener('click', () => autonomyBuildComparisonBundle());
+            });
+            autonomyLiveCreateBriefBtn?.addEventListener('click', () => autonomyCreateDecisionBrief());
+            autonomyLiveDecideOpenBtn?.addEventListener('click', () => {
+                autonomySetView('decision-brief', {focus: true, announce: true});
+            });
+            autonomyLiveReturnToCompareBtn?.addEventListener('click', () => autonomyReturnFromLiveBrief());
+            autonomyLiveBundleSelect?.addEventListener('change', () => {
+                if (autonomyContentMode === 'live' && autonomyLiveBundleSelect.value) {
+                    autonomySelectComparisonBundle(autonomyLiveBundleSelect.value);
+                }
+            });
+            autonomyLiveBriefSelect?.addEventListener('change', () => {
+                if (autonomyContentMode === 'live' && autonomyLiveBriefSelect.value) {
+                    autonomySelectDecisionBrief(autonomyLiveBriefSelect.value);
+                }
+            });
+            autonomyLiveAskWhyBtn?.addEventListener('click', () => autonomyToggleLiveWhy());
+            autonomyLiveTestReversalBtn?.addEventListener('click', () => {
+                if (!autonomyDecisionActionIsAllowed(AUTONOMY_DECISION_REVERSAL_ACTIONS)) return;
+                autonomyReturnFromLiveBrief({announce: false});
+                window.requestAnimationFrame(() => autonomyCreateAlternativeBtn?.focus({preventScroll: false}));
+                autonomyAnnounce('Compare scenarios opened. No scenario was created or executed.');
+            });
             autonomyPanel.querySelectorAll('[data-autonomy-open-brief]').forEach((button) => {
                 button.addEventListener('click', () => autonomySetView('decision-brief', {focus: true, announce: true}));
             });

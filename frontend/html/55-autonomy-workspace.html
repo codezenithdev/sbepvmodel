@@ -491,10 +491,10 @@
                                         <div class="autonomy-job-list" id="autonomyLiveJobList" role="list" aria-label="Linked TEA jobs"></div>
                                     </section>
                                     <section class="autonomy-transition-banner" id="autonomyLivePartialResultsBanner" data-status="partial" hidden>
-                                        <div><strong>Partial results are available</strong><p>Completed TEA results remain available while another linked job is active or failed. Decision Brief and recommendation remain unavailable until the next phase.</p></div>
+                                        <div><strong>Partial results are available</strong><p>Completed TEA results remain reviewable while another selected scenario is active, failed, interrupted, cancelled, stale, or missing. A final recommendation is never produced from this incomplete comparison.</p></div>
                                     </section>
                                     <section class="autonomy-transition-banner" id="autonomyLiveResultsReadyBanner" data-status="complete" hidden>
-                                        <div><strong>Selected TEA runs completed</strong><p>Durable results are linked to this case. Decision Brief, recommendation, sign-off, and report generation are intentionally unavailable in this phase.</p></div>
+                                        <div><strong>Selected TEA runs completed</strong><p>Durable results are linked to this case. The server will expose Decide only after it can build or revisit an exact verified comparison snapshot.</p></div>
                                     </section>
                                     </div>
                                     <div data-autonomy-fixture-only>
@@ -544,10 +544,14 @@
                                 </section>
 
                                 <section class="autonomy-stage-panel" id="autonomyStageDecidePanel" role="tabpanel" aria-labelledby="autonomyStageDecideBtn" data-autonomy-stage-panel="decide" tabindex="-1" hidden>
-                                    <section class="autonomy-unavailable-panel" data-autonomy-live-only aria-labelledby="autonomyLiveDecideHeading">
+                                    <section class="autonomy-live-decide-panel" data-autonomy-live-only aria-labelledby="autonomyLiveDecideHeading">
                                         <p class="autonomy-eyebrow">Stage 5 · Decide</p>
-                                        <h3 id="autonomyLiveDecideHeading">Decision Brief is not available in this phase</h3>
-                                        <p>Completed scenario results remain durable and reviewable in Run TEA. No recommendation, interpretation, sign-off, PDF, or report is generated here.</p>
+                                        <h3 id="autonomyLiveDecideHeading">Build or revisit an exact Decision Brief snapshot</h3>
+                                        <p id="autonomyLiveDecideSummary">The server is checking immutable confirmation, attempt, result, evidence, source, and reporting provenance.</p>
+                                        <div class="autonomy-live-decide-actions">
+                                            <button class="autonomy-button autonomy-button-primary" id="autonomyLiveDecideBuildBtn" type="button" disabled aria-disabled="true">Build verified comparison</button>
+                                            <button class="autonomy-button autonomy-button-secondary" id="autonomyLiveDecideOpenBtn" type="button" disabled aria-disabled="true">Open Decision Brief</button>
+                                        </div>
                                     </section>
                                     <div data-autonomy-fixture-only>
                                     <header class="autonomy-section-heading">
@@ -655,7 +659,93 @@
                         </div>
                     </section>
 
-                    <section class="autonomy-decision-brief" id="autonomyDecisionBrief" role="tabpanel" aria-labelledby="autonomyBriefViewBtn" tabindex="-1" data-autonomy-case-workspace data-autonomy-fixture-only hidden>
+                    <section class="autonomy-decision-brief" id="autonomyDecisionBrief" role="tabpanel" aria-labelledby="autonomyBriefViewBtn" tabindex="-1" data-autonomy-case-workspace hidden>
+                        <section class="autonomy-live-decision-brief" id="autonomyLiveDecisionBrief" data-autonomy-live-only data-brief-state="loading" aria-labelledby="autonomyLiveBriefHeading" aria-busy="false">
+                            <header class="autonomy-live-brief-header">
+                                <div>
+                                    <p class="autonomy-eyebrow">Immutable Decision Brief revision</p>
+                                    <h2 id="autonomyLiveBriefHeading">Verified scenario comparison</h2>
+                                    <p id="autonomyLiveBriefSummary">Loading exact server-owned comparison and brief records.</p>
+                                </div>
+                                <div class="autonomy-live-brief-actions">
+                                    <button class="autonomy-button autonomy-button-primary" id="autonomyLiveBuildComparisonBtn" type="button" disabled aria-disabled="true">Build verified comparison</button>
+                                    <button class="autonomy-button autonomy-button-primary" id="autonomyLiveCreateBriefBtn" type="button" disabled aria-disabled="true">Create immutable brief revision</button>
+                                    <button class="autonomy-button autonomy-button-secondary" id="autonomyLiveReturnToCompareBtn" type="button">Return to Compare</button>
+                                </div>
+                            </header>
+
+                            <div class="autonomy-live-brief-selectors">
+                                <label class="autonomy-field" for="autonomyLiveConfirmationSelect"><span>Immutable confirmation receipt</span><select id="autonomyLiveConfirmationSelect" aria-describedby="autonomyLiveConfirmationHelp"><option value="">No confirmation available</option></select><small id="autonomyLiveConfirmationHelp">Choose the exact confirmed scenario batch; the browser never substitutes another receipt.</small></label>
+                                <label class="autonomy-field" for="autonomyLiveBundleSelect"><span>Comparison snapshot</span><select id="autonomyLiveBundleSelect" aria-describedby="autonomyLiveBundleHelp"><option value="">No verified comparison snapshot</option></select><small id="autonomyLiveBundleHelp">Every option is an immutable bundle hash tied to one confirmation and selected attempt set.</small></label>
+                                <label class="autonomy-field" for="autonomyLiveBriefSelect"><span>Decision Brief revision</span><select id="autonomyLiveBriefSelect" aria-describedby="autonomyLiveBriefSelectHelp"><option value="">No immutable brief revision</option></select><small id="autonomyLiveBriefSelectHelp">Older revisions remain reviewable with their stale or superseded state.</small></label>
+                            </div>
+
+                            <section class="autonomy-live-brief-state" id="autonomyLiveBriefState" aria-labelledby="autonomyLiveBriefStateHeading">
+                                <h3 id="autonomyLiveBriefStateHeading">Loading verified comparison</h3>
+                                <p id="autonomyLiveBriefStateCopy">No displayed metric is admitted until server re-verification succeeds.</p>
+                                <ul id="autonomyLiveBriefBlockers"></ul>
+                            </section>
+                            <section class="autonomy-live-brief-state" id="autonomyLiveBriefAgentNotice" data-status="agent-unavailable" aria-labelledby="autonomyLiveBriefAgentNoticeHeading" hidden>
+                                <h3 id="autonomyLiveBriefAgentNoticeHeading">Decision Agent unavailable</h3>
+                                <p>The deterministic comparison, caveats, and provenance remain usable. This brief does not expose TEA results to the Decision Agent.</p>
+                            </section>
+
+                            <section class="autonomy-live-recommendation" id="autonomyLiveRecommendation" aria-labelledby="autonomyLiveRecommendationHeading" hidden>
+                                <p class="autonomy-eyebrow">Conditional deterministic classification</p>
+                                <div class="autonomy-recommendation-heading">
+                                    <h3 id="autonomyLiveRecommendationHeading">Classification pending contract</h3>
+                                    <span class="autonomy-confidence" id="autonomyLiveRecommendationConfidence" hidden></span>
+                                </div>
+                                <p id="autonomyLiveRecommendationCopy">The approved contracts do not yet authorize a deterministic winner or confidence classification.</p>
+                                <div class="autonomy-live-recommendation-actions">
+                                    <button class="autonomy-button autonomy-button-secondary" id="autonomyLiveAskWhyBtn" type="button" aria-expanded="false" aria-controls="autonomyLiveWhyPanel">Show decisive evidence and uncertainty</button>
+                                    <button class="autonomy-button autonomy-button-secondary" id="autonomyLiveTestReversalBtn" type="button" hidden>Return to Compare to test a reversal</button>
+                                </div>
+                                <section class="autonomy-live-why" id="autonomyLiveWhyPanel" aria-labelledby="autonomyLiveWhyHeading" tabindex="-1" hidden>
+                                    <h4 id="autonomyLiveWhyHeading">Deterministic basis from this snapshot</h4>
+                                    <div class="autonomy-live-why-grid">
+                                        <div><h5>Decisive evidence</h5><ul id="autonomyLiveDecisiveEvidence"></ul></div>
+                                        <div><h5>Major drivers</h5><ul id="autonomyLiveMajorDrivers"></ul></div>
+                                        <div><h5>Important uncertainty</h5><ul id="autonomyLiveImportantUncertainty"></ul></div>
+                                        <div><h5>Evidence gaps and model limitations</h5><ul id="autonomyLiveModelLimits"></ul></div>
+                                    </div>
+                                </section>
+                            </section>
+
+                            <section class="autonomy-live-brief-section" aria-labelledby="autonomyLiveScenarioComparisonHeading">
+                                <header class="autonomy-section-heading"><div><p class="autonomy-eyebrow">Selected immutable records</p><h3 id="autonomyLiveScenarioComparisonHeading">Exact scenario comparison and status</h3><p>Queued, running, failed, cancelled, interrupted, stale, missing, and verification-failed selections remain explicit.</p></div></header>
+                                <div class="autonomy-table-wrap" tabindex="0" role="region" aria-label="Selected scenario status and provenance"><table><caption>Selected scenario revisions and explicitly linked TEA attempts</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Status</th><th scope="col">Request SHA-256</th><th scope="col">TEA job / attempt</th><th scope="col">Verification</th><th scope="col">Source snapshot</th></tr></thead><tbody id="autonomyLiveBriefScenarioRows"></tbody></table></div>
+                            </section>
+
+                            <section class="autonomy-live-brief-section" aria-labelledby="autonomyLiveRequestDifferenceHeading">
+                                <header class="autonomy-section-heading"><div><p class="autonomy-eyebrow">Frozen request matrix</p><h3 id="autonomyLiveRequestDifferenceHeading">Exact request differences</h3><p>No input or hypothesis is inferred in the browser.</p></div></header>
+                                <pre class="autonomy-live-request-matrix" id="autonomyLiveRequestMatrix" tabindex="0">No request matrix is available.</pre>
+                            </section>
+
+                            <section class="autonomy-live-brief-section" aria-labelledby="autonomyLiveMetricHeading">
+                                <header class="autonomy-section-heading"><div><p class="autonomy-eyebrow">P5 · P50 · P95</p><h3 id="autonomyLiveMetricHeading">Lifecycle cost, energy, and approved economic metrics</h3><p>Values retain the server unit, percentile definition, precision, null, and missing state.</p></div></header>
+                                <div class="autonomy-table-wrap" tabindex="0" role="region" aria-label="Metric distributions and source traceability"><table><caption>Verified metric percentiles with exact traceability</caption><thead><tr><th scope="col">Scenario / metric</th><th scope="col">Status / count</th><th scope="col">Unit</th><th scope="col">P5</th><th scope="col">P50</th><th scope="col">P95</th><th scope="col">Percentile meaning</th><th scope="col">Attempt and source provenance</th></tr></thead><tbody id="autonomyLiveMetricRows"></tbody></table></div>
+                            </section>
+
+                            <section class="autonomy-live-analysis-grid" aria-label="Decision Brief analysis with accessible table equivalents">
+                                <article class="autonomy-analysis-panel" aria-labelledby="autonomyLiveJointOutcomeHeading"><h3 id="autonomyLiveJointOutcomeHeading">Joint outcome probabilities</h3><div class="autonomy-table-wrap"><table><caption>Verified joint outcomes by selected scenario</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Class</th><th scope="col">Probability / count / denominator</th><th scope="col">Source attempt</th></tr></thead><tbody id="autonomyLiveJointOutcomeRows"></tbody></table></div></article>
+                                <article class="autonomy-analysis-panel" aria-labelledby="autonomyLiveSensitivityHeading"><h3 id="autonomyLiveSensitivityHeading">Sensitivity drivers</h3><div class="autonomy-table-wrap"><table><caption>Server-ordered validated sensitivity drivers</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Response / predictor</th><th scope="col">Entry order / sign</th><th scope="col">Exact sensitivity metrics</th></tr></thead><tbody id="autonomyLiveSensitivityRows"></tbody></table></div></article>
+                                <article class="autonomy-analysis-panel" aria-labelledby="autonomyLiveQualityHeading"><h3 id="autonomyLiveQualityHeading">Convergence and quality</h3><div class="autonomy-table-wrap"><table><caption>Verification, convergence, and reporting tie-out status</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Check</th><th scope="col">Status</th><th scope="col">Exact detail</th></tr></thead><tbody id="autonomyLiveQualityRows"></tbody></table></div></article>
+                                <article class="autonomy-analysis-panel" aria-labelledby="autonomyLiveEvidenceHeading"><h3 id="autonomyLiveEvidenceHeading">Evidence completeness and caveats</h3><ul id="autonomyLiveEvidenceCaveats"></ul></article>
+                            </section>
+
+                            <section class="autonomy-live-brief-section" aria-labelledby="autonomyLiveReversalHeading">
+                                <header class="autonomy-section-heading"><div><p class="autonomy-eyebrow">Calculated conditions only</p><h3 id="autonomyLiveReversalHeading">Reversal conditions</h3><p>Only completed scenario comparisons or validated sensitivity records appear here; the browser never invents a break-even threshold.</p></div></header>
+                                <div class="autonomy-table-wrap"><table><caption>Recorded conditions that could reverse the classification</caption><thead><tr><th scope="col">Condition</th><th scope="col">Direction</th><th scope="col">Calculated in</th><th scope="col">Evidence needed</th></tr></thead><tbody id="autonomyLiveReversalRows"></tbody></table></div>
+                            </section>
+
+                            <section class="autonomy-live-brief-lower-grid">
+                                <section class="autonomy-analysis-panel" aria-labelledby="autonomyLiveProvenanceHeading"><h3 id="autonomyLiveProvenanceHeading">Bundle and result provenance</h3><dl class="autonomy-provenance-list" id="autonomyLiveBriefProvenance"></dl></section>
+                                <aside class="autonomy-timeline" aria-labelledby="autonomyLiveTimelineHeading"><h3 id="autonomyLiveTimelineHeading">Decision timeline</h3><ol id="autonomyLiveBriefTimeline"></ol></aside>
+                            </section>
+                        </section>
+
+                        <div id="autonomyFixtureDecisionBrief" data-autonomy-fixture-only>
                         <section class="autonomy-partial-warning" id="autonomyBriefPartialWarning" role="status" hidden>
                             <strong>Partial results preview — not a final recommendation.</strong>
                             <p>Some fixture scenarios are incomplete or failed. Sign-off remains unavailable.</p>
@@ -802,6 +892,7 @@
                             <div><p class="autonomy-eyebrow">Human authority required</p><h3 id="autonomySignoffBarHeading">Accept, reject, or defer only after reviewing the complete fixture brief.</h3><p>Production sign-off would freeze a new immutable report revision. Phase 1 changes only local fixture state.</p></div>
                             <div><span class="autonomy-status-badge" data-autonomy-signoff-status>Unsigned fixture</span><button class="autonomy-button autonomy-button-primary" type="button" data-autonomy-prepare-signoff disabled>Review sign-off</button></div>
                         </section>
+                        </div>
                     </section>
 
                     <dialog class="autonomy-dialog autonomy-confirm-dialog" id="autonomyConfirmDialog" aria-labelledby="autonomyConfirmHeading" aria-describedby="autonomyConfirmDescription">
@@ -859,7 +950,7 @@
                         </form>
                     </dialog>
 
-                    <dialog class="autonomy-dialog autonomy-signoff-dialog" id="autonomySignoffDialog" aria-labelledby="autonomySignoffHeading" aria-describedby="autonomySignoffDescription">
+                    <dialog class="autonomy-dialog autonomy-signoff-dialog" id="autonomySignoffDialog" aria-labelledby="autonomySignoffHeading" aria-describedby="autonomySignoffDescription" data-autonomy-fixture-only>
                         <div class="autonomy-dialog-content">
                             <header>
                                 <div><p class="autonomy-eyebrow">Decision sign-off · fixture only</p><h2 id="autonomySignoffHeading">Review the immutable decision snapshot</h2></div>
@@ -890,4 +981,4 @@
                 </section>
             </div>
 
-            <!-- Live Autonomy owns authenticated case/evidence/scenario actions and grouped execution confirmation only. Fixture previews are explicit; Decision Brief, sign-off, reporting, and TEA-kernel authority remain unavailable. -->
+            <!-- Live Autonomy owns authenticated case/evidence/scenario actions, grouped execution confirmation, deterministic comparison bundles, and unsigned immutable Decision Brief revisions. Fixture previews remain explicit; sign-off, reporting, and TEA-kernel authority remain unavailable. -->

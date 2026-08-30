@@ -1816,6 +1816,264 @@
             gap: 14px;
         }
 
+        #autonomyFixtureDecisionBrief,
+        .autonomy-live-decision-brief {
+            display: grid;
+            min-width: 0;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 14px;
+        }
+
+        .autonomy-live-decide-panel {
+            display: grid;
+            gap: 9px;
+            padding: 18px;
+            border: 1px solid var(--border-strong);
+            border-top: 4px solid var(--accent);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .autonomy-live-decide-panel > p:not(.autonomy-eyebrow) {
+            max-width: 760px;
+            color: var(--muted-strong);
+            line-height: 1.5;
+        }
+
+        .autonomy-live-decide-actions,
+        .autonomy-live-brief-actions,
+        .autonomy-live-recommendation-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .autonomy-live-brief-header,
+        .autonomy-live-brief-section,
+        .autonomy-live-recommendation,
+        .autonomy-live-brief-state {
+            min-width: 0;
+            padding: 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .autonomy-live-brief-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+            border-top: 4px solid var(--accent);
+            box-shadow: 0 10px 24px rgba(22, 34, 29, 0.06);
+        }
+
+        .autonomy-live-brief-header h2 {
+            margin: 3px 0 6px;
+            font-size: clamp(22px, 3vw, 32px);
+        }
+
+        .autonomy-live-brief-header p:not(.autonomy-eyebrow) {
+            max-width: 800px;
+            color: var(--muted-strong);
+            line-height: 1.5;
+        }
+
+        .autonomy-live-brief-actions {
+            flex: 0 1 520px;
+            justify-content: flex-end;
+        }
+
+        .autonomy-live-brief-selectors {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            min-width: 0;
+        }
+
+        .autonomy-live-brief-state {
+            border-left: 4px solid var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .autonomy-live-brief-state[data-status="partial-results"],
+        .autonomy-live-brief-state[data-status="classification-pending"],
+        .autonomy-live-brief-state[data-status="stale"],
+        .autonomy-live-brief-state[data-status="superseded"],
+        .autonomy-live-brief-state[data-status="agent-unavailable"] {
+            border-left-color: var(--warning);
+            background: var(--warning-soft);
+        }
+
+        .autonomy-live-brief-state[data-status="verification-failure"],
+        .autonomy-live-brief-state[data-status="api-unavailable"] {
+            border-left-color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        .autonomy-live-brief-state h3 {
+            margin-bottom: 4px;
+            font-size: 17px;
+        }
+
+        .autonomy-live-brief-state > p,
+        .autonomy-live-brief-state li {
+            color: var(--muted-strong);
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .autonomy-live-brief-state ul {
+            display: grid;
+            gap: 4px;
+            margin-top: 8px;
+            padding-left: 18px;
+        }
+
+        .autonomy-live-recommendation {
+            display: grid;
+            gap: 12px;
+            border-top: 4px solid var(--accent);
+        }
+
+        .autonomy-live-recommendation .autonomy-recommendation-heading h3 {
+            font-size: clamp(22px, 3vw, 30px);
+            line-height: 1.18;
+        }
+
+        #autonomyLiveRecommendationCopy {
+            max-width: 920px;
+            color: var(--muted-strong);
+            font-size: 14px;
+            line-height: 1.55;
+        }
+
+        .autonomy-live-why {
+            min-width: 0;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-live-why h4 {
+            margin-bottom: 10px;
+            font-size: 15px;
+        }
+
+        .autonomy-live-why-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .autonomy-live-why-grid > div {
+            min-width: 0;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+        }
+
+        .autonomy-live-why-grid h5 {
+            font-size: 12px;
+        }
+
+        .autonomy-live-why-grid ul,
+        .autonomy-analysis-panel #autonomyLiveEvidenceCaveats {
+            display: grid;
+            gap: 5px;
+            margin-top: 7px;
+            padding-left: 17px;
+            color: var(--muted-strong);
+            font-size: 11px;
+        }
+
+        .autonomy-live-brief-section .autonomy-table-wrap {
+            margin-top: 12px;
+        }
+
+        .autonomy-live-request-matrix {
+            width: 100%;
+            max-width: 100%;
+            max-height: 360px;
+            margin-top: 12px;
+            padding: 12px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+            font-size: 11px;
+            line-height: 1.45;
+            white-space: pre;
+        }
+
+        .autonomy-live-code-cell {
+            max-width: 340px;
+            overflow-wrap: anywhere;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            font-size: 10px;
+            white-space: pre-wrap;
+        }
+
+        .autonomy-live-export-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px 9px;
+            margin-top: 6px;
+            font-family: inherit;
+        }
+
+        .autonomy-live-export-links a {
+            color: var(--accent-strong);
+            font-weight: 750;
+            text-underline-offset: 2px;
+        }
+
+        .autonomy-live-cdf-details {
+            margin-top: 7px;
+        }
+
+        .autonomy-live-cdf-details summary {
+            min-height: 32px;
+            color: var(--accent-strong);
+            cursor: pointer;
+            font-weight: 750;
+        }
+
+        .autonomy-live-cdf-details summary:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.25);
+            outline-offset: 2px;
+        }
+
+        .autonomy-live-cdf-details pre {
+            width: min(480px, 70vw);
+            max-height: 280px;
+            margin-top: 6px;
+            padding: 8px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            background: var(--surface-muted);
+            white-space: pre;
+        }
+
+        .autonomy-live-analysis-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            min-width: 0;
+        }
+
+        .autonomy-live-brief-lower-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 320px;
+            gap: 10px;
+            min-width: 0;
+            align-items: start;
+        }
+
         .autonomy-partial-warning,
         .autonomy-immutable-banner,
         .autonomy-superseded-banner {
@@ -2282,6 +2540,20 @@
                 grid-template-columns: 1fr;
             }
 
+            .autonomy-live-brief-header {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .autonomy-live-brief-actions {
+                flex: 0 1 auto;
+                justify-content: flex-start;
+            }
+
+            .autonomy-live-brief-lower-grid {
+                grid-template-columns: minmax(0, 1fr) 260px;
+            }
+
             .autonomy-hero-actions {
                 width: auto;
                 flex-direction: row;
@@ -2599,7 +2871,14 @@
             .autonomy-reversal-panel,
             .autonomy-evidence-caveats,
             .autonomy-timeline,
-            .autonomy-compact-agent {
+            .autonomy-compact-agent,
+            .autonomy-live-decision-brief,
+            .autonomy-live-brief-header,
+            .autonomy-live-brief-state,
+            .autonomy-live-recommendation,
+            .autonomy-live-brief-section,
+            .autonomy-live-why,
+            .autonomy-live-decide-panel {
                 width: 100%;
                 min-width: 0;
                 max-width: 100%;
@@ -2622,8 +2901,50 @@
             .autonomy-reason-grid,
             .autonomy-outcome-grid,
             .autonomy-analysis-grid,
-            .autonomy-brief-lower-grid {
+            .autonomy-brief-lower-grid,
+            .autonomy-live-brief-selectors,
+            .autonomy-live-why-grid,
+            .autonomy-live-analysis-grid,
+            .autonomy-live-brief-lower-grid {
                 grid-template-columns: minmax(0, 1fr);
+            }
+
+            .autonomy-live-decide-actions,
+            .autonomy-live-brief-actions,
+            .autonomy-live-recommendation-actions {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr);
+                width: 100%;
+            }
+
+            .autonomy-live-decide-actions .autonomy-button,
+            .autonomy-live-brief-actions .autonomy-button,
+            .autonomy-live-recommendation-actions .autonomy-button,
+            .autonomy-live-export-links a {
+                display: inline-flex;
+                align-items: center;
+                width: 100%;
+                min-height: 44px;
+            }
+
+            .autonomy-live-brief-selectors select {
+                min-height: 44px;
+                max-width: 100%;
+                font-size: 16px;
+            }
+
+            .autonomy-live-request-matrix,
+            .autonomy-live-cdf-details pre,
+            .autonomy-live-brief-section .autonomy-table-wrap,
+            .autonomy-live-analysis-grid .autonomy-table-wrap {
+                width: 100%;
+                min-width: 0;
+                max-width: 100%;
+                overflow-x: auto;
+            }
+
+            .autonomy-live-cdf-details summary {
+                min-height: 44px;
             }
 
             .autonomy-hero-actions {
@@ -2787,6 +3108,12 @@
             .autonomy-execution-summary > div,
             .autonomy-scenario-empty,
             .autonomy-unavailable-panel,
+            .autonomy-live-decide-panel,
+            .autonomy-live-brief-header,
+            .autonomy-live-brief-state,
+            .autonomy-live-recommendation,
+            .autonomy-live-brief-section,
+            .autonomy-live-why,
             .autonomy-recommendation-hero,
             .autonomy-outcomes,
             .autonomy-analysis-panel,

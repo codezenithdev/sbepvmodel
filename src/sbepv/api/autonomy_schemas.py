@@ -189,3 +189,35 @@ class DecisionScenarioJobActionRequest(StrictAutonomyRequest):
     expected_case_revision: Annotated[StrictInt, Field(ge=1)]
     operator_name: OperatorText
     rationale: RationaleText
+
+
+class DecisionComparisonBundleCreateRequest(StrictAutonomyRequest):
+    """Request an exact, confirmation-scoped comparison snapshot.
+
+    Result values, selected attempts, and recommendation fields are deliberately
+    absent.  The server resolves them only through immutable confirmation and retry
+    links, then re-verifies every admitted completed result.
+    """
+
+    expected_case_revision: Annotated[StrictInt, Field(ge=1)]
+    confirmation_id: Annotated[
+        str,
+        Field(min_length=6, max_length=128, pattern=r"^dconf_[A-Za-z0-9]+$"),
+    ]
+    operator_name: OperatorText
+
+
+class DecisionBriefCreateRequest(StrictAutonomyRequest):
+    """Create or replay an immutable brief from one exact bundle identity."""
+
+    expected_case_revision: Annotated[StrictInt, Field(ge=1)]
+    comparison_bundle_id: Annotated[
+        str,
+        Field(min_length=6, max_length=128, pattern=r"^dcmp_[A-Za-z0-9]+$"),
+    ]
+    bundle_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    operator_name: OperatorText
+    idempotency_key: Annotated[
+        str,
+        Field(min_length=8, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
+    ]

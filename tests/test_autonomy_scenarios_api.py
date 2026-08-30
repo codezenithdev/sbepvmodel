@@ -17,7 +17,9 @@ from sbepv.api import autonomy as autonomy_api
 from sbepv.api import config, state
 from sbepv.api import main as app
 from sbepv.api import technoeconomic as technoeconomic_api
+from sbepv.autonomy import comparison as comparison_service
 from sbepv.store import AgentStore
+from tests.test_autonomy_comparison import _verified_outcome
 from tests.test_autonomy_scenarios import _request
 
 
@@ -734,7 +736,11 @@ class AutonomyScenarioExecutionApiTests(unittest.TestCase):
         execution = reconnect.json()["execution"]
         self.assertEqual("queued", execution["state"])
         self.assertEqual([job_id], execution["cancellable_job_ids"])
-        self.assertFalse(execution["decision_brief_available"])
+        self.assertTrue(execution["decision_brief_available"])
+        self.assertEqual(
+            "classification_pending_contract",
+            execution["recommendation_contract_state"],
+        )
         self.assertFalse(execution["recommendation_available"])
         self.assertFalse(execution["signoff_available"])
         self.assertFalse(execution["report_generation_available"])
@@ -783,6 +789,610 @@ class AutonomyScenarioExecutionApiTests(unittest.TestCase):
             technoeconomic_api.canonical_json_sha256(retry_link["job"]["request"]),
         )
         self.assertTrue(state._WORKER_WAKE.set.called)
+
+    def test_partial_decision_comparison_is_live_but_cannot_create_brief(self) -> None:
+        baseline = self._validated_baseline()
+        confirmation_payload = self._confirmation_payload(
+            [baseline],
+            idempotency_key="decision-brief-partial-confirmation",
+        )
+        with patch.object(
+            autonomy_api.scenarios,
+            "prepare_technoeconomic_bundle",
+            side_effect=self._fake_prepare_bundle,
+        ):
+            confirmed = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/scenarios/confirm",
+                json=confirmation_payload,
+            )
+        self.assertEqual(202, confirmed.status_code, confirmed.text)
+        confirmation_id = confirmed.json()["confirmation"]["confirmation_id"]
+        case_revision = self._current_case()["revision"]
+
+        stale = self.client.post(
+            f"/api/autonomy/cases/{self.case['id']}/comparison-bundles",
+            json={
+                "expected_case_revision": case_revision - 1,
+                "confirmation_id": confirmation_id,
+                "operator_name": "Alex Operator",
+            },
+        )
+        self.assertEqual(409, stale.status_code, stale.text)
+        self.assertEqual("stale_case_revision", stale.json()["detail"]["code"])
+
+        injected_result = self.client.post(
+            f"/api/autonomy/cases/{self.case['id']}/comparison-bundles",
+            json={
+                "expected_case_revision": case_revision,
+                "confirmation_id": confirmation_id,
+                "operator_name": "Alex Operator",
+                "result": {"winner": "client-controlled"},
+            },
+        )
+        self.assertEqual(422, injected_result.status_code, injected_result.text)
+
+        created = self.client.post(
+            f"/api/autonomy/cases/{self.case['id']}/comparison-bundles",
+            json={
+                "expected_case_revision": case_revision,
+                "confirmation_id": confirmation_id,
+                "operator_name": "Alex Operator",
+            },
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        comparison_record = created.json()["comparison_bundle"]
+        self.assertFalse(comparison_record["is_complete"])
+        self.assertFalse(comparison_record["recommendation_eligible"])
+        self.assertEqual(
+            "classification_pending_contract",
+            comparison_record["bundle"]["recommendation"]["state"],
+        )
+        self.assertEqual(
+            "queued",
+            comparison_record["bundle"]["scenarios"][0]["attempt"][
+                "display_status"
+            ],
+        )
+        self.assertNotIn("source_artifact_storage_key", created.text)
+        actions = {
+            item["id"]: item for item in created.json()["decision_allowed_actions"]
+        }
+        self.assertTrue(actions["open_decision_brief"]["enabled"])
+        self.assertFalse(actions["create_decision_brief"]["enabled"])
+
+        listed = self.client.get(
+            f"/api/autonomy/cases/{self.case['id']}/comparison-bundles"
+        )
+        self.assertEqual(200, listed.status_code, listed.text)
+        listed_payload = listed.json()
+        self.assertEqual(self.case["id"], listed_payload["case"]["case_id"])
+        self.assertEqual(
+            self._current_case()["revision"],
+            listed_payload["case_revision"],
+        )
+        self.assertEqual(
+            listed_payload["case"]["revision"],
+            listed_payload["case_revision"],
+        )
+        self.assertEqual(
+            [comparison_record["comparison_bundle_id"]],
+            [
+                item["comparison_bundle_id"]
+                for item in listed_payload["comparison_bundles"]
+            ],
+        )
+        listed_briefs = self.client.get(
+            f"/api/autonomy/cases/{self.case['id']}/decision-briefs"
+        )
+        self.assertEqual(200, listed_briefs.status_code, listed_briefs.text)
+        self.assertEqual([], listed_briefs.json()["decision_briefs"])
+        self.assertEqual(
+            listed_briefs.json()["case"]["revision"],
+            listed_briefs.json()["case_revision"],
+        )
+        fetched = self.client.get(
+            f"/api/autonomy/cases/{self.case['id']}/comparison-bundles/"
+            f"{comparison_record['comparison_bundle_id']}"
+        )
+        self.assertEqual(200, fetched.status_code, fetched.text)
+        self.assertEqual(
+            comparison_record["bundle_sha256"],
+            fetched.json()["comparison_bundle"]["bundle_sha256"],
+        )
+
+        brief = self.client.post(
+            f"/api/autonomy/cases/{self.case['id']}/decision-briefs",
+            json={
+                "expected_case_revision": case_revision,
+                "comparison_bundle_id": comparison_record[
+                    "comparison_bundle_id"
+                ],
+                "bundle_sha256": comparison_record["bundle_sha256"],
+                "operator_name": "Alex Operator",
+                "idempotency_key": "partial-brief-must-not-finalize",
+            },
+        )
+        self.assertEqual(409, brief.status_code, brief.text)
+        self.assertEqual("comparison_incomplete", brief.json()["detail"]["code"])
+
+        state.AGENT_STORE.mark_decision_comparison_bundle_stale(
+            comparison_record["comparison_bundle_id"],
+            reason={"code": "focused_api_stale_history"},
+        )
+        stale_history = self.client.get(
+            f"/api/autonomy/cases/{self.case['id']}/comparison-bundles"
+        )
+        self.assertEqual(200, stale_history.status_code, stale_history.text)
+        stale_actions = {
+            item["id"]: item
+            for item in stale_history.json()["decision_allowed_actions"]
+        }
+        self.assertTrue(stale_actions["build_comparison_bundle"]["enabled"])
+        self.assertIn(
+            "comparison_stale",
+            {
+                item["code"]
+                for item in stale_history.json()["decision_blockers"]
+            },
+        )
+
+    def test_missing_confirmed_scenario_fails_closed_without_persistence(self) -> None:
+        baseline = self._validated_baseline()
+        with patch.object(
+            autonomy_api.scenarios,
+            "prepare_technoeconomic_bundle",
+            side_effect=self._fake_prepare_bundle,
+        ):
+            confirmed = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/scenarios/confirm",
+                json=self._confirmation_payload(
+                    [baseline],
+                    idempotency_key="missing-confirmed-scenario-corruption",
+                ),
+            )
+        self.assertEqual(202, confirmed.status_code, confirmed.text)
+        confirmation_id = confirmed.json()["confirmation"]["confirmation_id"]
+
+        with (
+            patch.object(
+                state.AGENT_STORE,
+                "get_decision_scenario",
+                return_value=None,
+            ),
+            patch.object(
+                state.AGENT_STORE,
+                "create_decision_comparison_bundle",
+            ) as create_bundle,
+        ):
+            response = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/comparison-bundles",
+                json={
+                    "expected_case_revision": self._current_case()["revision"],
+                    "confirmation_id": confirmation_id,
+                    "operator_name": "Alex Operator",
+                },
+            )
+
+        self.assertEqual(409, response.status_code, response.text)
+        self.assertEqual(
+            "confirmed_scenario_missing",
+            response.json()["detail"]["code"],
+        )
+        create_bundle.assert_not_called()
+        self.assertEqual(
+            [],
+            state.AGENT_STORE.list_decision_comparison_bundles(self.case["id"]),
+        )
+
+    def test_decision_brief_routes_are_authenticated_and_cross_case_safe(self) -> None:
+        path = f"/api/autonomy/cases/{self.case['id']}/comparison-bundles"
+        credentials = {
+            "DASHBOARD_BASIC_USER": "dashboard-user",
+            "DASHBOARD_BASIC_PASSWORD": "secret",
+        }
+        with patch.dict("os.environ", credentials):
+            unauthorized = self.client.get(path)
+            token = base64.b64encode(b"dashboard-user:secret").decode("ascii")
+            authorized = self.client.get(
+                path,
+                headers={"Authorization": f"Basic {token}"},
+            )
+        self.assertEqual(401, unauthorized.status_code)
+        self.assertEqual(200, authorized.status_code, authorized.text)
+
+        baseline = self._validated_baseline()
+        with patch.object(
+            autonomy_api.scenarios,
+            "prepare_technoeconomic_bundle",
+            side_effect=self._fake_prepare_bundle,
+        ):
+            confirmed = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/scenarios/confirm",
+                json=self._confirmation_payload(
+                    [baseline],
+                    idempotency_key="cross-case-comparison-confirmation",
+                ),
+            )
+        self.assertEqual(202, confirmed.status_code, confirmed.text)
+        other_case = self._locked_case(
+            "Another exact decision case",
+            analysis_basis="solartac_site",
+        )
+        cross_case = self.client.post(
+            f"/api/autonomy/cases/{other_case['id']}/comparison-bundles",
+            json={
+                "expected_case_revision": other_case["revision"],
+                "confirmation_id": confirmed.json()["confirmation"][
+                    "confirmation_id"
+                ],
+                "operator_name": "Alex Operator",
+            },
+        )
+        self.assertEqual(404, cross_case.status_code, cross_case.text)
+        self.assertEqual("Not found.", cross_case.json()["detail"])
+
+    def test_complete_bundle_creates_only_unsigned_pending_idempotent_brief(self) -> None:
+        baseline = self._validated_baseline()
+        with patch.object(
+            autonomy_api.scenarios,
+            "prepare_technoeconomic_bundle",
+            side_effect=self._fake_prepare_bundle,
+        ):
+            confirmed = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/scenarios/confirm",
+                json=self._confirmation_payload(
+                    [baseline],
+                    idempotency_key="complete-brief-confirmation",
+                ),
+            )
+        self.assertEqual(202, confirmed.status_code, confirmed.text)
+        confirmation = state.AGENT_STORE.get_decision_scenario_confirmation(
+            confirmed.json()["confirmation"]["confirmation_id"]
+        )
+        self.assertIsNotNone(confirmation)
+        job_id = confirmed.json()["jobs"][0]["job_id"]
+        claimed = state.AGENT_STORE.claim_next_queued_work(
+            worker_id="decision-brief-api-test"
+        )
+        self.assertIsNotNone(claimed)
+        self.assertEqual(job_id, claimed["id"])
+        result_payload = {"schema_version": 3, "verified_fixture": True}
+        result_provenance = {
+            "schema_version": 1,
+            "fixture": "store-authority-only",
+        }
+        state.AGENT_STORE.update_technoeconomic_job(
+            job_id,
+            expected_worker_id="decision-brief-api-test",
+            expected_lease_token=claimed["lease_token"],
+            state="done",
+            stage="Done",
+            result=result_payload,
+            result_provenance=result_provenance,
+            artifacts={},
+        )
+        execution = state.AGENT_STORE.reconcile_decision_case_execution(
+            self.case["id"]
+        )
+        self.assertTrue(execution["all_successful"])
+        current_case = self._current_case()
+        self.assertEqual("results_ready", current_case["status"])
+        scenario_record = state.AGENT_STORE.get_decision_scenario(
+            confirmation["items"][0]["scenario_revision_id"]
+        )
+        completed_job = scenario_record["jobs"][0]
+        attempt_proof = {
+            "item_index": 0,
+            "scenario_revision_id": scenario_record["scenario_revision_id"],
+            "scenario_id": scenario_record["scenario_id"],
+            "scenario_revision": scenario_record["revision"],
+            "attempt_number": 1,
+            "tea_job_id": job_id,
+            "retry_of_job_id": None,
+            "selected_for_comparison": True,
+            "state": "done",
+            "verification_status": "verified",
+            "request_sha256": scenario_record["request_sha256"],
+            "source_snapshot_sha256": completed_job[
+                "source_snapshot_sha256"
+            ],
+            "result_sha256": technoeconomic_api.canonical_json_sha256(
+                result_payload
+            ),
+            "result_provenance_sha256": (
+                technoeconomic_api.canonical_json_sha256(result_provenance)
+            ),
+            "evidence_set_sha256": technoeconomic_api.canonical_json_sha256([]),
+            "reporting_tieout_sha256": "9" * 64,
+        }
+        bundle = {
+            "schema_version": "autonomy-comparison-bundle-v1",
+            "is_complete": True,
+            "recommendation_eligible": False,
+            "case": {
+                "case_id": self.case["id"],
+                "expected_case_revision": current_case["revision"],
+            },
+            "confirmation": {
+                "confirmation_id": confirmation["id"],
+            },
+            "completeness": {
+                "status": "complete",
+                "selected_count": 1,
+                "verified_done_count": 1,
+                "blockers": [],
+            },
+            "attempt_proofs": [attempt_proof],
+            "scenarios": [
+                {
+                    "scenario_id": scenario_record["scenario_id"],
+                    "scenario_revision_id": scenario_record[
+                        "scenario_revision_id"
+                    ],
+                    "request_sha256": scenario_record["request_sha256"],
+                    "attempt": {
+                        "tea_job_id": job_id,
+                        "attempt_number": 1,
+                        "display_status": "done",
+                    },
+                    "verification": {"status": "verified"},
+                    "result": {
+                        "metrics": {},
+                        "warnings": [
+                            {
+                                "code": "provisional_inputs",
+                                "source": "evidence",
+                            }
+                        ],
+                    },
+                }
+            ],
+            "recommendation": {
+                "state": "classification_pending_contract",
+                "classification": None,
+                "confidence": None,
+                "reversal_conditions": [],
+            },
+            "canonicalization": {
+                "version": "canonical-json-sha256-v1",
+                "excluded_fields": ["bundle_hash"],
+            },
+            "warnings": [
+                {
+                    "code": "classification_pending_contract",
+                    "message": "No deterministic winner threshold is approved.",
+                }
+            ],
+        }
+        bundle["bundle_hash"] = (
+            comparison_service.canonical_comparison_bundle_sha256(bundle)
+        )
+        bundle_record = state.AGENT_STORE.create_decision_comparison_bundle(
+            self.case["id"],
+            expected_case_revision=current_case["revision"],
+            source_confirmation_id=confirmation["id"],
+            bundle=bundle,
+            bundle_sha256=bundle["bundle_hash"],
+            attempt_proofs=[attempt_proof],
+            created_by="Alex Operator",
+        )
+
+        request_payload = {
+            "expected_case_revision": bundle_record["case_revision_after"],
+            "comparison_bundle_id": bundle_record["comparison_bundle_id"],
+            "bundle_sha256": bundle_record["bundle_sha256"],
+            "operator_name": "Alex Operator",
+            "idempotency_key": "complete-pending-brief-create",
+        }
+        with (
+            patch.object(
+                autonomy_api,
+                "_build_verified_comparison_snapshot",
+                return_value=({"is_complete": False}, "0" * 64),
+            ),
+            patch.object(
+                state.AGENT_STORE,
+                "mark_decision_comparison_bundle_stale",
+            ) as mark_stale,
+        ):
+            failed_admission = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/decision-briefs",
+                json=request_payload,
+            )
+        self.assertEqual(409, failed_admission.status_code, failed_admission.text)
+        self.assertEqual(
+            "brief_admission_reverification_failed",
+            failed_admission.json()["detail"]["code"],
+        )
+        mark_stale.assert_called_once()
+
+        with patch.object(
+            autonomy_api,
+            "_build_verified_comparison_snapshot",
+            return_value=(bundle, bundle["bundle_hash"]),
+        ):
+            created = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/decision-briefs",
+                json=request_payload,
+            )
+        self.assertEqual(201, created.status_code, created.text)
+        brief = created.json()["decision_brief"]
+        self.assertFalse(brief["signed"])
+        self.assertEqual(
+            "classification_pending_contract",
+            brief["recommendation_classification"],
+        )
+        self.assertEqual(
+            "classification_pending_contract",
+            brief["confidence_state"],
+        )
+        self.assertEqual(
+            "classification_pending_contract",
+            brief["caveats"][0]["code"],
+        )
+        self.assertEqual(
+            {
+                "source": "scenario_result_warning",
+                "scenario_id": scenario_record["scenario_id"],
+                "scenario_revision_id": scenario_record[
+                    "scenario_revision_id"
+                ],
+                "tea_job_id": job_id,
+                "attempt_number": 1,
+                "warning": {
+                    "code": "provisional_inputs",
+                    "source": "evidence",
+                },
+            },
+            brief["caveats"][1],
+        )
+        self.assertFalse(created.json()["idempotent_replay"])
+        self.assertEqual("results_ready", created.json()["case"]["status"])
+        self.assertNotEqual("decision_ready", created.json()["case"]["status"])
+
+        listed_briefs = self.client.get(
+            f"/api/autonomy/cases/{self.case['id']}/decision-briefs"
+        )
+        self.assertEqual(200, listed_briefs.status_code, listed_briefs.text)
+        self.assertEqual(
+            listed_briefs.json()["case"]["revision"],
+            listed_briefs.json()["case_revision"],
+        )
+        self.assertEqual(
+            brief["brief_revision_id"],
+            listed_briefs.json()["decision_briefs"][0]["brief_revision_id"],
+        )
+
+        replay = self.client.post(
+            f"/api/autonomy/cases/{self.case['id']}/decision-briefs",
+            json=request_payload,
+        )
+        self.assertEqual(201, replay.status_code, replay.text)
+        self.assertTrue(replay.json()["idempotent_replay"])
+        self.assertEqual(
+            brief["brief_revision_id"],
+            replay.json()["decision_brief"]["brief_revision_id"],
+        )
+
+        state.AGENT_STORE.mark_decision_comparison_bundle_stale(
+            bundle_record["comparison_bundle_id"],
+            reason={"code": "qualifying_result_changed_after_commit"},
+        )
+        stale_replay = self.client.post(
+            f"/api/autonomy/cases/{self.case['id']}/decision-briefs",
+            json=request_payload,
+        )
+        self.assertEqual(201, stale_replay.status_code, stale_replay.text)
+        self.assertTrue(stale_replay.json()["idempotent_replay"])
+        self.assertEqual(
+            brief["brief_revision_id"],
+            stale_replay.json()["decision_brief"]["brief_revision_id"],
+        )
+
+        tampered = deepcopy(request_payload)
+        tampered["bundle_sha256"] = "0" * 64
+        rejected = self.client.post(
+            f"/api/autonomy/cases/{self.case['id']}/decision-briefs",
+            json=tampered,
+        )
+        self.assertEqual(409, rejected.status_code, rejected.text)
+        self.assertEqual(
+            "comparison_bundle_hash_mismatch",
+            rejected.json()["detail"]["code"],
+        )
+
+    def test_live_build_then_brief_reverification_freezes_bundle_revision(self) -> None:
+        baseline = self._validated_baseline()
+        with patch.object(
+            autonomy_api.scenarios,
+            "prepare_technoeconomic_bundle",
+            side_effect=self._fake_prepare_bundle,
+        ):
+            confirmed = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/scenarios/confirm",
+                json=self._confirmation_payload(
+                    [baseline],
+                    idempotency_key="revision-frozen-brief-confirmation",
+                ),
+            )
+        self.assertEqual(202, confirmed.status_code, confirmed.text)
+        job_id = confirmed.json()["jobs"][0]["job_id"]
+        claimed = state.AGENT_STORE.claim_next_queued_work(
+            worker_id="revision-frozen-brief-worker"
+        )
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        stored_job = state.AGENT_STORE.get_technoeconomic_job(job_id)
+        self.assertIsNotNone(stored_job)
+        assert stored_job is not None
+        outcome = _verified_outcome(
+            job_id,
+            source_snapshot_sha256=stored_job["source_snapshot_sha256"],
+        )
+        self.assertIsNotNone(outcome.verified_result)
+        assert outcome.verified_result is not None
+        state.AGENT_STORE.update_technoeconomic_job(
+            job_id,
+            expected_worker_id="revision-frozen-brief-worker",
+            expected_lease_token=claimed["lease_token"],
+            state="done",
+            stage="Done",
+            result=outcome.verified_result.result,
+            result_provenance=outcome.verified_result.result_provenance,
+            artifacts={},
+        )
+        state.AGENT_STORE.reconcile_decision_case_execution(self.case["id"])
+        comparison_revision = self._current_case()["revision"]
+        confirmation_id = confirmed.json()["confirmation"]["confirmation_id"]
+
+        with patch.object(
+            autonomy_api.result_verification,
+            "verify_completed_technoeconomic_result",
+            return_value=outcome,
+        ):
+            built = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/comparison-bundles",
+                json={
+                    "expected_case_revision": comparison_revision,
+                    "confirmation_id": confirmation_id,
+                    "operator_name": "Alex Operator",
+                },
+            )
+        self.assertEqual(201, built.status_code, built.text)
+        comparison_bundle = built.json()["comparison_bundle"]
+        self.assertEqual(
+            comparison_revision,
+            comparison_bundle["expected_case_revision"],
+        )
+        self.assertEqual(
+            comparison_revision + 1,
+            comparison_bundle["case_revision_after"],
+        )
+
+        with patch.object(
+            autonomy_api.result_verification,
+            "verify_completed_technoeconomic_result",
+            return_value=outcome,
+        ):
+            brief = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/decision-briefs",
+                json={
+                    "expected_case_revision": comparison_bundle[
+                        "case_revision_after"
+                    ],
+                    "comparison_bundle_id": comparison_bundle[
+                        "comparison_bundle_id"
+                    ],
+                    "bundle_sha256": comparison_bundle["bundle_sha256"],
+                    "operator_name": "Alex Operator",
+                    "idempotency_key": "revision-frozen-brief-create",
+                },
+            )
+        self.assertEqual(201, brief.status_code, brief.text)
+        self.assertEqual(
+            "classification_pending_contract",
+            brief.json()["decision_brief"]["recommendation_classification"],
+        )
 
 
 if __name__ == "__main__":

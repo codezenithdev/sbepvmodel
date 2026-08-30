@@ -16,6 +16,10 @@ const allowedAutonomyRoutes = [
   ["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "validate"],
   ["autonomy", "cases", "case_abc123", "scenarios", "dsc_abc123", "expire"],
   ["autonomy", "cases", "case_abc123", "execution"],
+  ["autonomy", "cases", "case_abc123", "comparison-bundles"],
+  ["autonomy", "cases", "case_abc123", "comparison-bundles", "dcmp_abc123"],
+  ["autonomy", "cases", "case_abc123", "decision-briefs"],
+  ["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_abc123"],
   ["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "cancel"],
   ["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "retry"],
   ["autonomy", "cases", "case_abc123", "readiness", "evaluate"],
@@ -43,6 +47,11 @@ const rejectedAutonomyRoutes = [
   ["autonomy", "cases", "case_abc123", "confirm"],
   ["autonomy", "cases", "case_abc123", "signoff"],
   ["autonomy", "cases", "case_abc123", "reports"],
+  ["autonomy", "cases", "case_abc123", "comparison-bundles", "dcmp_bad-id"],
+  ["autonomy", "cases", "case_abc123", "comparison-bundles", "dbr_abc123"],
+  ["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_bad-id"],
+  ["autonomy", "cases", "case_abc123", "decision-briefs", "dcmp_abc123"],
+  ["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_abc123", "signoff"],
   ["autonomy", "cases", "case_abc123", "scenarios", "confirm", "extra"],
   ["autonomy", "cases", "case_abc123", "scenarios", "dsc_bad-id", "validate"],
   ["autonomy", "cases", "case_abc123", "scenarios", "..", "expire"],
@@ -62,7 +71,7 @@ const rejectedAutonomyRoutes = [
   ],
 ];
 
-test("allows only the Autonomy evidence, scenario, and execution routes", () => {
+test("allows only the Autonomy evidence, scenario, execution, comparison, and brief routes", () => {
   for (const path of allowedAutonomyRoutes) {
     assert.equal(isAllowedApiPath(path), true, `expected allowed: ${path.join("/")}`);
   }

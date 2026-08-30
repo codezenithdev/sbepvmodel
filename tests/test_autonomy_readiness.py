@@ -195,6 +195,12 @@ class AutonomyReadinessTests(unittest.TestCase):
         )
         self.assertTrue(result["phase_boundary"]["non_runnable_suggestions_only"])
         self.assertTrue(result["phase_boundary"]["scenario_execution_available"])
+        self.assertTrue(result["phase_boundary"]["decision_brief_available"])
+        self.assertEqual(
+            "classification_pending_contract",
+            result["phase_boundary"]["recommendation_contract_state"],
+        )
+        self.assertFalse(result["phase_boundary"]["decision_signoff_available"])
 
     def test_verified_locked_foundation_and_validated_baseline_are_ready_to_run(self):
         source = _source()

@@ -58,6 +58,8 @@ export function isAllowedApiPath(path: string[]): boolean {
   const isScenarioId = (value: string) => /^dsc_[a-zA-Z0-9]+$/.test(value);
   const isTeaJobId = (value: string) => /^tea_[a-zA-Z0-9_-]+$/.test(value);
   const isTurnId = (value: string) => /^(?:turn_|dturn_)[a-zA-Z0-9_-]+$/.test(value);
+  const isComparisonBundleId = (value: string) => /^dcmp_[a-zA-Z0-9]+$/.test(value);
+  const isDecisionBriefRevisionId = (value: string) => /^dbr_[a-zA-Z0-9]+$/.test(value);
   if (path.length === 2) {
     return (
       (path[0] === "status" && isSafeId(path[1])) ||
@@ -119,7 +121,15 @@ export function isAllowedApiPath(path: string[]): boolean {
         path[0] === "autonomy" &&
         path[1] === "cases" &&
         isCaseId(path[2]) &&
-        ["events", "messages", "evidence", "scenarios", "execution"].includes(path[3])
+        [
+          "events",
+          "messages",
+          "evidence",
+          "scenarios",
+          "execution",
+          "comparison-bundles",
+          "decision-briefs",
+        ].includes(path[3])
       )
     );
   }
@@ -151,7 +161,9 @@ export function isAllowedApiPath(path: string[]): boolean {
         (path[3] === "readiness" && path[4] === "evaluate") ||
         (path[3] === "message-stream" && isTurnId(path[4])) ||
         (path[3] === "evidence" && isEvidenceId(path[4])) ||
-        (path[3] === "scenarios" && ["compare", "confirm"].includes(path[4]))
+        (path[3] === "scenarios" && ["compare", "confirm"].includes(path[4])) ||
+        (path[3] === "comparison-bundles" && isComparisonBundleId(path[4])) ||
+        (path[3] === "decision-briefs" && isDecisionBriefRevisionId(path[4]))
       )
     );
   }

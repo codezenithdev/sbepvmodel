@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 SAVED_RESULTS_LIMIT = 10
 PROPOSAL_STATES = frozenset(
     {"pending", "confirmed", "superseded", "dismissed", "expired"}
@@ -78,6 +78,17 @@ DECISION_SCENARIO_COMPARISONS = frozenset(
     {"baseline", "controlled", "structural"}
 )
 DECISION_SCENARIO_DRAFT_LIFETIME = timedelta(days=7)
+DECISION_RECOMMENDATION_CLASSIFICATIONS = frozenset(
+    {
+        "solaredge",
+        "solectria",
+        "no_decisive_winner",
+        "classification_pending_contract",
+    }
+)
+DECISION_CONFIDENCE_STATES = frozenset(
+    {"strong", "mixed", "provisional", "classification_pending_contract"}
+)
 DECISION_EVIDENCE_MAX_FILE_BYTES = 10 * 1024 * 1024
 DECISION_EVIDENCE_MAX_FILES_PER_CASE = 10
 DECISION_EVIDENCE_MAX_CASE_BYTES = 50 * 1024 * 1024
@@ -166,6 +177,25 @@ def _new_id(prefix: str) -> str:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _verified_decision_bundle_json(
+    bundle_json: str,
+    bundle_sha256: str,
+) -> dict[str, Any]:
+    payload = _json_load(bundle_json)
+    if not isinstance(payload, Mapping):
+        raise StoreConflict("stored comparison bundle is not an object")
+    canonical = dict(payload)
+    embedded_hash = canonical.pop("bundle_hash", None)
+    if (
+        embedded_hash != bundle_sha256
+        or not secrets.compare_digest(
+            str(bundle_sha256), _sha256_text(_json_dump(canonical))
+        )
+    ):
+        raise StoreConflict("stored comparison bundle digest is invalid")
+    return dict(payload)
 
 
 def _bounded_text(value: Any, *, field: str, maximum: int) -> str:
@@ -271,6 +301,9 @@ class AgentStore:
                     version = 6
                 if version < 7:
                     self._migrate_v7(connection)
+                    version = 7
+                if version < 8:
+                    self._migrate_v8(connection)
             finally:
                 connection.close()
 
@@ -2236,6 +2269,670 @@ class AgentStore:
         connection.execute("PRAGMA user_version = 7")
         connection.commit()
 
+    def _migrate_v8(self, connection: sqlite3.Connection) -> None:
+        """Add immutable comparison snapshots and Decision Brief revisions."""
+
+        applied_at = _timestamp(self._current_time())
+        connection.executescript(
+            """
+            BEGIN IMMEDIATE;
+
+            CREATE TABLE IF NOT EXISTS decision_comparison_bundles (
+                comparison_bundle_id TEXT PRIMARY KEY CHECK (
+                    comparison_bundle_id GLOB 'dcmp_*'
+                    AND length(comparison_bundle_id) > 5
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                source_confirmation_id TEXT NOT NULL,
+                expected_case_revision INTEGER NOT NULL CHECK (
+                    expected_case_revision > 0
+                ),
+                bundle_schema_version TEXT NOT NULL CHECK (
+                    bundle_schema_version = trim(bundle_schema_version)
+                    AND length(bundle_schema_version) BETWEEN 1 AND 100
+                ),
+                bundle_json TEXT NOT NULL CHECK (
+                    json_valid(bundle_json)
+                    AND json_type(bundle_json) = 'object'
+                ),
+                bundle_sha256 TEXT NOT NULL CHECK (
+                    length(bundle_sha256) = 64
+                    AND bundle_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                is_complete INTEGER NOT NULL CHECK (is_complete IN (0,1)),
+                recommendation_eligible INTEGER NOT NULL CHECK (
+                    recommendation_eligible IN (0,1)
+                    AND recommendation_eligible <= is_complete
+                    AND recommendation_eligible = 0
+                ),
+                created_by TEXT NOT NULL CHECK (
+                    created_by = trim(created_by)
+                    AND length(created_by) BETWEEN 1 AND 200
+                ),
+                created_at TEXT NOT NULL,
+                stale_at TEXT,
+                stale_reason_json TEXT CHECK (
+                    stale_reason_json IS NULL OR (
+                        json_valid(stale_reason_json)
+                        AND json_type(stale_reason_json) = 'object'
+                    )
+                ),
+                superseded_by_bundle_id TEXT UNIQUE
+                    REFERENCES decision_comparison_bundles(comparison_bundle_id)
+                    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+                superseded_at TEXT,
+                UNIQUE(comparison_bundle_id, case_id),
+                UNIQUE(case_id, source_confirmation_id, bundle_sha256),
+                FOREIGN KEY(source_confirmation_id, case_id)
+                    REFERENCES decision_scenario_confirmations(
+                        confirmation_id, case_id
+                    ) ON DELETE RESTRICT,
+                CHECK (
+                    json_type(bundle_json, '$.is_complete')
+                        IN ('true','false')
+                    AND json_extract(bundle_json, '$.is_complete') = is_complete
+                    AND json_type(bundle_json, '$.recommendation_eligible')
+                        IN ('true','false')
+                    AND json_extract(
+                        bundle_json, '$.recommendation_eligible'
+                    ) = recommendation_eligible
+                    AND CAST(
+                        json_extract(bundle_json, '$.schema_version') AS TEXT
+                    ) = bundle_schema_version
+                    AND json_type(bundle_json, '$.attempt_proofs') = 'array'
+                ),
+                CHECK (
+                    (stale_at IS NULL AND stale_reason_json IS NULL)
+                    OR (stale_at IS NOT NULL AND stale_reason_json IS NOT NULL)
+                ),
+                CHECK (
+                    superseded_at IS NULL
+                    OR superseded_by_bundle_id IS NOT NULL
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_comparison_bundle_attempts (
+                comparison_bundle_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                item_index INTEGER NOT NULL CHECK (item_index BETWEEN 0 AND 3),
+                scenario_revision_id TEXT NOT NULL,
+                scenario_id TEXT NOT NULL,
+                scenario_revision INTEGER NOT NULL CHECK (scenario_revision > 0),
+                attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+                tea_job_id TEXT NOT NULL
+                    REFERENCES technoeconomic_jobs(tea_job_id) ON DELETE RESTRICT,
+                retry_of_job_id TEXT
+                    REFERENCES technoeconomic_jobs(tea_job_id) ON DELETE RESTRICT,
+                selected_for_comparison INTEGER NOT NULL CHECK (
+                    selected_for_comparison IN (0,1)
+                ),
+                state TEXT NOT NULL CHECK (
+                    state IN (
+                        'queued','running','done','error','cancelled','interrupted'
+                    )
+                ),
+                verification_status TEXT NOT NULL CHECK (
+                    verification_status IN (
+                        'verified','verification_failed','pending','not_applicable'
+                    )
+                ),
+                request_sha256 TEXT NOT NULL CHECK (
+                    length(request_sha256) = 64
+                    AND request_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                source_snapshot_sha256 TEXT NOT NULL CHECK (
+                    length(source_snapshot_sha256) = 64
+                    AND source_snapshot_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                result_sha256 TEXT CHECK (
+                    result_sha256 IS NULL OR (
+                        length(result_sha256) = 64
+                        AND result_sha256 NOT GLOB '*[^0-9a-f]*'
+                    )
+                ),
+                result_provenance_sha256 TEXT CHECK (
+                    result_provenance_sha256 IS NULL OR (
+                        length(result_provenance_sha256) = 64
+                        AND result_provenance_sha256 NOT GLOB '*[^0-9a-f]*'
+                    )
+                ),
+                evidence_set_sha256 TEXT NOT NULL CHECK (
+                    length(evidence_set_sha256) = 64
+                    AND evidence_set_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                reporting_tieout_sha256 TEXT CHECK (
+                    reporting_tieout_sha256 IS NULL OR (
+                        length(reporting_tieout_sha256) = 64
+                        AND reporting_tieout_sha256 NOT GLOB '*[^0-9a-f]*'
+                    )
+                ),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(comparison_bundle_id, item_index, attempt_number),
+                UNIQUE(comparison_bundle_id, tea_job_id),
+                FOREIGN KEY(comparison_bundle_id, case_id)
+                    REFERENCES decision_comparison_bundles(
+                        comparison_bundle_id, case_id
+                    ) ON DELETE RESTRICT,
+                FOREIGN KEY(scenario_revision_id, case_id)
+                    REFERENCES decision_scenarios(scenario_revision_id, case_id)
+                    ON DELETE RESTRICT,
+                CHECK (
+                    verification_status <> 'verified'
+                    OR (
+                        state = 'done'
+                        AND result_sha256 IS NOT NULL
+                        AND result_provenance_sha256 IS NOT NULL
+                        AND reporting_tieout_sha256 IS NOT NULL
+                    )
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_briefs (
+                brief_revision_id TEXT PRIMARY KEY CHECK (
+                    brief_revision_id GLOB 'dbr_*'
+                    AND length(brief_revision_id) > 4
+                ),
+                brief_id TEXT NOT NULL CHECK (
+                    brief_id GLOB 'dbf_*' AND length(brief_id) > 4
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                revision INTEGER NOT NULL CHECK (revision > 0),
+                parent_revision_id TEXT UNIQUE
+                    REFERENCES decision_briefs(brief_revision_id)
+                    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+                superseded_by_revision_id TEXT UNIQUE
+                    REFERENCES decision_briefs(brief_revision_id)
+                    ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+                source_confirmation_id TEXT NOT NULL,
+                comparison_bundle_id TEXT NOT NULL,
+                expected_case_revision INTEGER NOT NULL CHECK (
+                    expected_case_revision > 0
+                ),
+                case_revision_after INTEGER NOT NULL CHECK (
+                    case_revision_after = expected_case_revision + 1
+                ),
+                comparison_bundle_json TEXT NOT NULL CHECK (
+                    json_valid(comparison_bundle_json)
+                    AND json_type(comparison_bundle_json) = 'object'
+                ),
+                comparison_bundle_sha256 TEXT NOT NULL CHECK (
+                    length(comparison_bundle_sha256) = 64
+                    AND comparison_bundle_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                recommendation_classification TEXT NOT NULL CHECK (
+                    recommendation_classification IN (
+                        'solaredge','solectria','no_decisive_winner',
+                        'classification_pending_contract'
+                    )
+                ),
+                confidence_state TEXT NOT NULL CHECK (
+                    confidence_state IN (
+                        'strong','mixed','provisional',
+                        'classification_pending_contract'
+                    )
+                ),
+                caveats_json TEXT NOT NULL CHECK (
+                    json_valid(caveats_json) AND json_type(caveats_json) = 'array'
+                ),
+                reversal_conditions_json TEXT NOT NULL CHECK (
+                    json_valid(reversal_conditions_json)
+                    AND json_type(reversal_conditions_json) = 'array'
+                ),
+                provenance_json TEXT NOT NULL CHECK (
+                    json_valid(provenance_json)
+                    AND json_type(provenance_json) = 'object'
+                ),
+                provenance_sha256 TEXT NOT NULL CHECK (
+                    length(provenance_sha256) = 64
+                    AND provenance_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                created_by TEXT NOT NULL CHECK (
+                    created_by = trim(created_by)
+                    AND length(created_by) BETWEEN 1 AND 200
+                ),
+                created_at TEXT NOT NULL,
+                stale_at TEXT,
+                stale_reason_json TEXT CHECK (
+                    stale_reason_json IS NULL OR (
+                        json_valid(stale_reason_json)
+                        AND json_type(stale_reason_json) = 'object'
+                    )
+                ),
+                superseded_at TEXT,
+                UNIQUE(brief_id, revision),
+                UNIQUE(brief_revision_id, case_id),
+                UNIQUE(
+                    case_id, expected_case_revision,
+                    comparison_bundle_sha256
+                ),
+                FOREIGN KEY(source_confirmation_id, case_id)
+                    REFERENCES decision_scenario_confirmations(
+                        confirmation_id, case_id
+                    ) ON DELETE RESTRICT,
+                FOREIGN KEY(comparison_bundle_id, case_id)
+                    REFERENCES decision_comparison_bundles(
+                        comparison_bundle_id, case_id
+                    ) ON DELETE RESTRICT,
+                CHECK (
+                    (revision = 1 AND parent_revision_id IS NULL)
+                    OR (revision > 1 AND parent_revision_id IS NOT NULL)
+                ),
+                CHECK (
+                    (
+                        recommendation_classification =
+                            'classification_pending_contract'
+                        AND confidence_state = 'classification_pending_contract'
+                    ) OR (
+                        recommendation_classification <>
+                            'classification_pending_contract'
+                        AND confidence_state IN ('strong','mixed','provisional')
+                    )
+                ),
+                CHECK (
+                    recommendation_classification =
+                        'classification_pending_contract'
+                    AND confidence_state = 'classification_pending_contract'
+                ),
+                CHECK (
+                    (stale_at IS NULL AND stale_reason_json IS NULL)
+                    OR (stale_at IS NOT NULL AND stale_reason_json IS NOT NULL)
+                ),
+                CHECK (
+                    superseded_at IS NULL
+                    OR superseded_by_revision_id IS NOT NULL
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_brief_idempotency (
+                case_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL CHECK (
+                    idempotency_key = trim(idempotency_key)
+                    AND length(idempotency_key) BETWEEN 1 AND 200
+                ),
+                creation_request_sha256 TEXT NOT NULL CHECK (
+                    length(creation_request_sha256) = 64
+                    AND creation_request_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                brief_revision_id TEXT NOT NULL
+                    REFERENCES decision_briefs(brief_revision_id)
+                    ON DELETE RESTRICT,
+                response_json TEXT NOT NULL CHECK (json_valid(response_json)),
+                response_sha256 TEXT NOT NULL CHECK (
+                    length(response_sha256) = 64
+                    AND response_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(case_id, idempotency_key),
+                FOREIGN KEY(brief_revision_id, case_id)
+                    REFERENCES decision_briefs(brief_revision_id, case_id)
+                    ON DELETE RESTRICT
+            );
+
+            CREATE INDEX IF NOT EXISTS decision_comparison_bundles_case_idx
+                ON decision_comparison_bundles(
+                    case_id, created_at DESC, comparison_bundle_id DESC
+                );
+            CREATE UNIQUE INDEX IF NOT EXISTS decision_comparison_bundle_live_idx
+                ON decision_comparison_bundles(case_id)
+                WHERE superseded_by_bundle_id IS NULL;
+            CREATE INDEX IF NOT EXISTS decision_comparison_attempts_scenario_idx
+                ON decision_comparison_bundle_attempts(
+                    scenario_revision_id, attempt_number
+                );
+            CREATE INDEX IF NOT EXISTS decision_briefs_case_revision_idx
+                ON decision_briefs(case_id, revision DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS decision_brief_live_idx
+                ON decision_briefs(case_id)
+                WHERE superseded_by_revision_id IS NULL;
+
+            CREATE TRIGGER IF NOT EXISTS decision_comparison_bundle_insert_guard
+            BEFORE INSERT ON decision_comparison_bundles
+            WHEN NOT EXISTS (
+                SELECT 1 FROM decision_scenario_confirmations c
+                 WHERE c.confirmation_id = NEW.source_confirmation_id
+                   AND c.case_id = NEW.case_id
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'comparison bundle confirmation does not match its case');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_comparison_bundle_identity_is_immutable
+            BEFORE UPDATE OF
+                comparison_bundle_id, case_id, source_confirmation_id,
+                expected_case_revision, bundle_schema_version, bundle_json,
+                bundle_sha256, is_complete, recommendation_eligible,
+                created_by, created_at
+            ON decision_comparison_bundles
+            BEGIN
+                SELECT RAISE(ABORT, 'decision comparison bundle payload is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_comparison_bundle_stale_is_one_way
+            BEFORE UPDATE OF stale_at, stale_reason_json
+            ON decision_comparison_bundles
+            WHEN NOT (
+                (OLD.stale_at IS NULL AND OLD.stale_reason_json IS NULL
+                    AND NEW.stale_at IS NOT NULL
+                    AND NEW.stale_reason_json IS NOT NULL)
+                OR (NEW.stale_at IS OLD.stale_at
+                    AND NEW.stale_reason_json IS OLD.stale_reason_json)
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'comparison bundle staleness is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_comparison_bundle_supersession_is_one_way
+            BEFORE UPDATE OF superseded_by_bundle_id, superseded_at
+            ON decision_comparison_bundles
+            WHEN NOT (
+                (OLD.superseded_by_bundle_id IS NULL AND OLD.superseded_at IS NULL
+                    AND NEW.superseded_by_bundle_id IS NOT NULL
+                    AND NEW.superseded_at IS NOT NULL)
+                OR (
+                    OLD.superseded_by_bundle_id GLOB 'dcmp_pending_*'
+                    AND NEW.superseded_by_bundle_id IS NULL
+                    AND OLD.superseded_at IS NULL
+                    AND NEW.superseded_at IS NULL
+                    AND EXISTS (
+                        SELECT 1 FROM decision_comparison_bundles p
+                         WHERE p.superseded_by_bundle_id =
+                            OLD.comparison_bundle_id
+                           AND p.case_id = OLD.case_id
+                    )
+                )
+                OR (NEW.superseded_by_bundle_id IS OLD.superseded_by_bundle_id
+                    AND NEW.superseded_at IS OLD.superseded_at)
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'comparison bundle supersession is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_comparison_bundle_supersession_target_guard
+            BEFORE UPDATE OF superseded_by_bundle_id
+            ON decision_comparison_bundles
+            WHEN OLD.superseded_by_bundle_id IS NULL
+                 AND NEW.superseded_by_bundle_id IS NOT NULL
+                 AND NOT EXISTS (
+                    SELECT 1 FROM decision_comparison_bundles n
+                     WHERE n.comparison_bundle_id = NEW.superseded_by_bundle_id
+                       AND n.case_id = OLD.case_id
+                       AND n.comparison_bundle_id <> OLD.comparison_bundle_id
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'comparison bundle supersession target is invalid');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_comparison_bundle_delete_guard
+            BEFORE DELETE ON decision_comparison_bundles
+            BEGIN
+                SELECT RAISE(ABORT, 'decision comparison bundles are retained');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_comparison_attempt_insert_guard
+            BEFORE INSERT ON decision_comparison_bundle_attempts
+            WHEN NOT EXISTS (
+                SELECT 1
+                  FROM decision_comparison_bundles b
+                  JOIN decision_scenario_confirmation_items i
+                    ON i.confirmation_id = b.source_confirmation_id
+                   AND i.case_id = b.case_id
+                  JOIN decision_scenarios s
+                    ON s.scenario_revision_id = i.scenario_revision_id
+                   AND s.case_id = i.case_id
+                  JOIN decision_scenario_jobs l
+                    ON l.scenario_revision_id = s.scenario_revision_id
+                   AND l.case_id = s.case_id
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE b.comparison_bundle_id = NEW.comparison_bundle_id
+                   AND b.case_id = NEW.case_id
+                   AND i.item_index = NEW.item_index
+                   AND i.scenario_revision_id = NEW.scenario_revision_id
+                   AND i.scenario_id = NEW.scenario_id
+                   AND i.scenario_revision = NEW.scenario_revision
+                   AND l.attempt_number = NEW.attempt_number
+                   AND l.tea_job_id = NEW.tea_job_id
+                   AND l.retry_of_job_id IS NEW.retry_of_job_id
+                   AND j.state = NEW.state
+                   AND s.request_sha256 = NEW.request_sha256
+                   AND j.request_json = s.request_json
+                   AND j.source_annual_job_id = s.source_annual_job_id
+                   AND j.source_snapshot_sha256 = NEW.source_snapshot_sha256
+                   AND j.source_snapshot_sha256 = s.source_snapshot_sha256
+                   AND NEW.selected_for_comparison = CASE WHEN EXISTS (
+                        SELECT 1 FROM decision_scenario_jobs newer
+                         WHERE newer.scenario_revision_id = l.scenario_revision_id
+                           AND newer.attempt_number > l.attempt_number
+                   ) THEN 0 ELSE 1 END
+                   AND EXISTS (
+                        SELECT 1
+                          FROM json_each(b.bundle_json, '$.attempt_proofs') p
+                         WHERE json_type(p.value) = 'object'
+                           AND json_extract(p.value, '$.item_index') =
+                                NEW.item_index
+                           AND json_extract(
+                                p.value, '$.scenario_revision_id'
+                           ) = NEW.scenario_revision_id
+                           AND json_extract(p.value, '$.scenario_id') =
+                                NEW.scenario_id
+                           AND json_extract(p.value, '$.scenario_revision') =
+                                NEW.scenario_revision
+                           AND json_extract(p.value, '$.attempt_number') =
+                                NEW.attempt_number
+                           AND json_extract(p.value, '$.tea_job_id') =
+                                NEW.tea_job_id
+                           AND json_extract(p.value, '$.retry_of_job_id') IS
+                                NEW.retry_of_job_id
+                           AND json_type(
+                                p.value, '$.selected_for_comparison'
+                           ) IN ('true','false')
+                           AND json_extract(
+                                p.value, '$.selected_for_comparison'
+                           ) = NEW.selected_for_comparison
+                           AND json_extract(p.value, '$.state') = NEW.state
+                           AND json_extract(
+                                p.value, '$.verification_status'
+                           ) = NEW.verification_status
+                           AND json_extract(p.value, '$.request_sha256') =
+                                NEW.request_sha256
+                           AND json_extract(
+                                p.value, '$.source_snapshot_sha256'
+                           ) = NEW.source_snapshot_sha256
+                           AND json_extract(p.value, '$.result_sha256') IS
+                                NEW.result_sha256
+                           AND json_extract(
+                                p.value, '$.result_provenance_sha256'
+                           ) IS NEW.result_provenance_sha256
+                           AND json_extract(
+                                p.value, '$.evidence_set_sha256'
+                           ) = NEW.evidence_set_sha256
+                           AND json_extract(
+                                p.value, '$.reporting_tieout_sha256'
+                           ) IS NEW.reporting_tieout_sha256
+                   )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'comparison attempt does not match immutable execution history');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_comparison_attempt_update_guard
+            BEFORE UPDATE ON decision_comparison_bundle_attempts
+            BEGIN
+                SELECT RAISE(ABORT, 'decision comparison attempt proofs are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_comparison_attempt_delete_guard
+            BEFORE DELETE ON decision_comparison_bundle_attempts
+            BEGIN
+                SELECT RAISE(ABORT, 'decision comparison attempt proofs are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_insert_guard
+            BEFORE INSERT ON decision_briefs
+            WHEN (NEW.revision = 1 AND NEW.superseded_by_revision_id IS NOT NULL)
+                 OR (NEW.revision > 1 AND NOT (
+                    NEW.superseded_by_revision_id GLOB 'dbr_pending_*'
+                 ))
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief revision insertion is invalid');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_bundle_snapshot_guard
+            BEFORE INSERT ON decision_briefs
+            WHEN NOT EXISTS (
+                SELECT 1 FROM decision_comparison_bundles b
+                 WHERE b.comparison_bundle_id = NEW.comparison_bundle_id
+                   AND b.case_id = NEW.case_id
+                   AND b.source_confirmation_id = NEW.source_confirmation_id
+                   AND b.expected_case_revision + 1 =
+                        NEW.expected_case_revision
+                   AND b.bundle_json = NEW.comparison_bundle_json
+                   AND b.bundle_sha256 = NEW.comparison_bundle_sha256
+                   AND b.is_complete = 1
+                   AND json_array_length(
+                        b.bundle_json, '$.attempt_proofs'
+                   ) = (
+                        SELECT COUNT(*)
+                          FROM decision_comparison_bundle_attempts a
+                         WHERE a.comparison_bundle_id =
+                            b.comparison_bundle_id
+                   )
+                   AND (
+                        NEW.recommendation_classification =
+                            'classification_pending_contract'
+                        OR b.recommendation_eligible = 1
+                   )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief does not match its immutable comparison bundle');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_lineage_guard
+            BEFORE INSERT ON decision_briefs
+            WHEN NEW.revision > 1 AND NOT EXISTS (
+                SELECT 1 FROM decision_briefs p
+                 WHERE p.brief_revision_id = NEW.parent_revision_id
+                   AND p.brief_id = NEW.brief_id
+                   AND p.case_id = NEW.case_id
+                   AND p.revision = NEW.revision - 1
+                   AND p.superseded_by_revision_id IS NULL
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief revision lineage is invalid');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_identity_is_immutable
+            BEFORE UPDATE OF
+                brief_revision_id, brief_id, case_id, revision,
+                parent_revision_id, source_confirmation_id,
+                comparison_bundle_id, expected_case_revision,
+                case_revision_after, comparison_bundle_json,
+                comparison_bundle_sha256, recommendation_classification,
+                confidence_state, caveats_json, reversal_conditions_json,
+                provenance_json, provenance_sha256, created_by, created_at
+            ON decision_briefs
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief revision payload is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_stale_is_one_way
+            BEFORE UPDATE OF stale_at, stale_reason_json
+            ON decision_briefs
+            WHEN NOT (
+                (OLD.stale_at IS NULL AND OLD.stale_reason_json IS NULL
+                    AND NEW.stale_at IS NOT NULL
+                    AND NEW.stale_reason_json IS NOT NULL)
+                OR (NEW.stale_at IS OLD.stale_at
+                    AND NEW.stale_reason_json IS OLD.stale_reason_json)
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief staleness is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_supersession_is_one_way
+            BEFORE UPDATE OF superseded_by_revision_id, superseded_at
+            ON decision_briefs
+            WHEN NOT (
+                (OLD.superseded_by_revision_id IS NULL AND OLD.superseded_at IS NULL
+                    AND NEW.superseded_by_revision_id IS NOT NULL
+                    AND NEW.superseded_at IS NOT NULL)
+                OR (
+                    OLD.superseded_by_revision_id GLOB 'dbr_pending_*'
+                    AND NEW.superseded_by_revision_id IS NULL
+                    AND OLD.superseded_at IS NULL
+                    AND NEW.superseded_at IS NULL
+                    AND OLD.revision > 1
+                    AND EXISTS (
+                        SELECT 1 FROM decision_briefs p
+                         WHERE p.brief_revision_id = OLD.parent_revision_id
+                           AND p.brief_id = OLD.brief_id
+                           AND p.case_id = OLD.case_id
+                           AND p.superseded_by_revision_id = OLD.brief_revision_id
+                    )
+                )
+                OR (
+                    NEW.superseded_by_revision_id IS OLD.superseded_by_revision_id
+                    AND NEW.superseded_at IS OLD.superseded_at
+                )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief supersession is immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_supersession_target_guard
+            BEFORE UPDATE OF superseded_by_revision_id ON decision_briefs
+            WHEN OLD.superseded_by_revision_id IS NULL
+                 AND NEW.superseded_by_revision_id IS NOT NULL
+                 AND NOT EXISTS (
+                    SELECT 1 FROM decision_briefs n
+                     WHERE n.brief_revision_id = NEW.superseded_by_revision_id
+                       AND n.brief_id = OLD.brief_id
+                       AND n.case_id = OLD.case_id
+                       AND n.parent_revision_id = OLD.brief_revision_id
+                       AND n.revision = OLD.revision + 1
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief supersession target is invalid');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_delete_guard
+            BEFORE DELETE ON decision_briefs
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief revisions are retained');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_idempotency_insert_guard
+            BEFORE INSERT ON decision_brief_idempotency
+            WHEN NOT EXISTS (
+                SELECT 1 FROM decision_briefs b
+                 WHERE b.brief_revision_id = NEW.brief_revision_id
+                   AND b.case_id = NEW.case_id
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'brief idempotency receipt does not match its revision');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_idempotency_update_guard
+            BEFORE UPDATE ON decision_brief_idempotency
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief idempotency receipts are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_brief_idempotency_delete_guard
+            BEFORE DELETE ON decision_brief_idempotency
+            BEGIN
+                SELECT RAISE(ABORT, 'decision brief idempotency receipts are immutable');
+            END;
+            """
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (8, applied_at),
+        )
+        connection.execute("PRAGMA user_version = 8")
+        connection.commit()
+
     def _current_time(self) -> datetime:
         return _as_utc(self._now())
 
@@ -2418,6 +3115,78 @@ class AgentStore:
             result.pop("confirmation_request_json")
         )
         result["receipt"] = _json_load(result.pop("receipt_json"))
+        return result
+
+    @staticmethod
+    def _decision_comparison_bundle_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = str(result["comparison_bundle_id"])
+        bundle_json = str(result.pop("bundle_json"))
+        result["bundle"] = _verified_decision_bundle_json(
+            bundle_json, str(result["bundle_sha256"])
+        )
+        result["stale_reason"] = _json_load(result.pop("stale_reason_json"))
+        result["is_complete"] = bool(result["is_complete"])
+        result["recommendation_eligible"] = bool(
+            result["recommendation_eligible"]
+        )
+        result["case_revision_after"] = int(
+            result["expected_case_revision"]
+        ) + 1
+        result["is_current"] = (
+            result["stale_at"] is None
+            and result["superseded_by_bundle_id"] is None
+        )
+        return result
+
+    @staticmethod
+    def _decision_comparison_attempt_from_row(
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        result = dict(row)
+        result.pop("created_at", None)
+        result.pop("case_id", None)
+        result.pop("comparison_bundle_id", None)
+        result["item_index"] = int(result["item_index"])
+        result["scenario_revision"] = int(result["scenario_revision"])
+        result["attempt_number"] = int(result["attempt_number"])
+        result["selected_for_comparison"] = bool(
+            result["selected_for_comparison"]
+        )
+        return result
+
+    @staticmethod
+    def _decision_brief_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = str(result["brief_revision_id"])
+        comparison_bundle_json = str(result.pop("comparison_bundle_json"))
+        result["comparison_bundle"] = _verified_decision_bundle_json(
+            comparison_bundle_json,
+            str(result["comparison_bundle_sha256"]),
+        )
+        result["caveats"] = _json_load(result.pop("caveats_json"))
+        result["reversal_conditions"] = _json_load(
+            result.pop("reversal_conditions_json")
+        )
+        provenance_json = str(result.pop("provenance_json"))
+        if not secrets.compare_digest(
+            str(result["provenance_sha256"]), _sha256_text(provenance_json)
+        ):
+            raise StoreConflict("stored decision brief provenance digest is invalid")
+        result["provenance"] = _json_load(provenance_json)
+        result["stale_reason"] = _json_load(result.pop("stale_reason_json"))
+        result["is_current"] = (
+            result["stale_at"] is None
+            and result["superseded_by_revision_id"] is None
+        )
         return result
 
     @staticmethod
@@ -2651,6 +3420,405 @@ class AgentStore:
         result["items"] = items
         result["jobs"] = [item["job"] for item in items]
         return result
+
+    def _decision_comparison_bundle_record(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        result = self._decision_comparison_bundle_from_row(row)
+        assert result is not None
+        attempt_rows = connection.execute(
+            """
+            SELECT * FROM decision_comparison_bundle_attempts
+             WHERE comparison_bundle_id = ?
+             ORDER BY item_index ASC, attempt_number ASC
+            """,
+            (row["comparison_bundle_id"],),
+        ).fetchall()
+        result["attempt_proofs"] = [
+            self._decision_comparison_attempt_from_row(attempt_row)
+            for attempt_row in attempt_rows
+        ]
+        embedded_attempts = result["bundle"].get("attempt_proofs")
+        if not isinstance(embedded_attempts, list) or not secrets.compare_digest(
+            _json_dump(embedded_attempts), _json_dump(result["attempt_proofs"])
+        ):
+            raise StoreConflict("stored comparison attempt proofs are invalid")
+        return result
+
+    def _decision_brief_record(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        result = self._decision_brief_from_row(row)
+        assert result is not None
+        source = connection.execute(
+            """
+            SELECT *
+              FROM decision_comparison_bundles
+             WHERE comparison_bundle_id = ? AND case_id = ?
+            """,
+            (row["comparison_bundle_id"], row["case_id"]),
+        ).fetchone()
+        if source is None:
+            raise StoreConflict(
+                "stored decision brief comparison snapshot is invalid"
+            )
+        verified_source = self._decision_comparison_bundle_record(
+            connection, source
+        )
+        if any(
+            (
+                str(verified_source["bundle_sha256"])
+                != str(row["comparison_bundle_sha256"]),
+                str(source["bundle_json"])
+                != str(row["comparison_bundle_json"]),
+            )
+        ):
+            raise StoreConflict(
+                "stored decision brief comparison snapshot is invalid"
+            )
+        return result
+
+    @staticmethod
+    def _normalize_decision_event_actor(
+        actor_kind: str,
+        operator_name: str | None,
+    ) -> tuple[str, str | None]:
+        actor = str(actor_kind).strip()
+        if actor not in {"operator", "decision_agent", "system"}:
+            raise ValueError("actor_kind must be operator, decision_agent, or system")
+        if actor == "operator":
+            return actor, _bounded_text(
+                operator_name, field="operator_name", maximum=200
+            )
+        if operator_name is not None:
+            raise ValueError("operator_name is only valid for operator events")
+        return actor, None
+
+    @staticmethod
+    def _validate_decision_record_id(
+        value: str | None,
+        *,
+        prefix: str,
+        field: str,
+    ) -> str:
+        normalized = str(value or _new_id(prefix)).strip()
+        expected = f"{prefix}_"
+        if not normalized.startswith(expected) or len(normalized) <= len(expected):
+            raise ValueError(f"{field} must use the {expected!r} prefix")
+        return normalized
+
+    def _verified_decision_comparison_attempts(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        case_id: str,
+        source_confirmation_id: str,
+        attempt_proofs: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Rebuild and prove the exact confirmation-bound attempt history."""
+
+        confirmation = connection.execute(
+            """
+            SELECT * FROM decision_scenario_confirmations
+             WHERE confirmation_id = ? AND case_id = ?
+            """,
+            (source_confirmation_id, case_id),
+        ).fetchone()
+        if confirmation is None:
+            raise RecordNotFound(
+                f"unknown decision scenario confirmation: {source_confirmation_id}"
+            )
+        for payload_field, digest_field in (
+            ("confirmation_request_json", "confirmation_request_sha256"),
+            ("receipt_json", "receipt_sha256"),
+        ):
+            payload_json = str(confirmation[payload_field])
+            if not secrets.compare_digest(
+                str(confirmation[digest_field]), _sha256_text(payload_json)
+            ):
+                raise StoreConflict("scenario confirmation digest is invalid")
+        receipt = _json_load(str(confirmation["receipt_json"]))
+        if not isinstance(receipt, Mapping) or any(
+            (
+                receipt.get("confirmation_id") != source_confirmation_id,
+                receipt.get("case_id") != case_id,
+                receipt.get("case_revision_after")
+                != int(confirmation["case_revision_after"]),
+            )
+        ):
+            raise StoreConflict("scenario confirmation receipt identity is invalid")
+
+        supplied_by_identity: dict[tuple[int, int], Mapping[str, Any]] = {}
+        if isinstance(attempt_proofs, (str, bytes)):
+            raise ValueError("attempt_proofs must be an array")
+        for raw in attempt_proofs:
+            if not isinstance(raw, Mapping):
+                raise ValueError("attempt proof entries must be objects")
+            item_index = raw.get("item_index")
+            attempt_number = raw.get("attempt_number")
+            if (
+                isinstance(item_index, bool)
+                or not isinstance(item_index, int)
+                or item_index < 0
+                or isinstance(attempt_number, bool)
+                or not isinstance(attempt_number, int)
+                or attempt_number <= 0
+            ):
+                raise ValueError(
+                    "attempt proof item_index and attempt_number must be integers"
+                )
+            identity = (item_index, attempt_number)
+            if identity in supplied_by_identity:
+                raise ValueError("attempt_proofs contain duplicate attempt identities")
+            supplied_by_identity[identity] = raw
+
+        item_rows = connection.execute(
+            """
+            SELECT i.item_index, i.scenario_revision_id, i.scenario_id,
+                   i.scenario_revision, i.request_sha256, i.tea_job_id,
+                   s.request_json, s.source_annual_job_id,
+                   s.source_snapshot_sha256
+              FROM decision_scenario_confirmation_items i
+              JOIN decision_scenarios s
+                ON s.scenario_revision_id = i.scenario_revision_id
+               AND s.case_id = i.case_id
+             WHERE i.confirmation_id = ? AND i.case_id = ?
+             ORDER BY i.item_index ASC
+            """,
+            (source_confirmation_id, case_id),
+        ).fetchall()
+        receipt_scenarios = receipt.get("scenarios")
+        if (
+            not item_rows
+            or not isinstance(receipt_scenarios, list)
+            or len(receipt_scenarios) != len(item_rows)
+        ):
+            raise StoreConflict("scenario confirmation membership is invalid")
+
+        derived: list[dict[str, Any]] = []
+        for item_row, receipt_item in zip(item_rows, receipt_scenarios, strict=True):
+            if not isinstance(receipt_item, Mapping) or any(
+                (
+                    receipt_item.get("scenario_revision_id")
+                    != item_row["scenario_revision_id"],
+                    receipt_item.get("scenario_id") != item_row["scenario_id"],
+                    receipt_item.get("scenario_revision")
+                    != int(item_row["scenario_revision"]),
+                    receipt_item.get("request_sha256")
+                    != item_row["request_sha256"],
+                    receipt_item.get("tea_job_id") != item_row["tea_job_id"],
+                )
+            ):
+                raise StoreConflict("scenario confirmation item receipt is invalid")
+            request_json = str(item_row["request_json"])
+            if not secrets.compare_digest(
+                str(item_row["request_sha256"]), _sha256_text(request_json)
+            ):
+                raise StoreConflict("scenario request digest is invalid")
+
+            evidence_rows = connection.execute(
+                """
+                SELECT e.request_path, e.evidence_receipt_id,
+                       r.receipt_sha256, r.asset_sha256
+                  FROM decision_scenario_evidence e
+                  JOIN decision_evidence_receipts r
+                    ON r.evidence_receipt_id = e.evidence_receipt_id
+                 WHERE e.scenario_revision_id = ?
+                 ORDER BY e.request_path ASC
+                """,
+                (item_row["scenario_revision_id"],),
+            ).fetchall()
+            evidence_refs = [
+                {
+                    "request_path": str(evidence_row["request_path"]),
+                    "evidence_receipt_id": str(
+                        evidence_row["evidence_receipt_id"]
+                    ),
+                }
+                for evidence_row in evidence_rows
+            ]
+            if receipt_item.get("evidence_receipt_refs") != evidence_refs:
+                raise StoreConflict(
+                    "scenario evidence links do not match confirmation receipt"
+                )
+            self._verify_decision_scenario_evidence_refs(
+                connection, case_id, evidence_refs
+            )
+            evidence_identity = [
+                {
+                    "request_path": str(evidence_row["request_path"]),
+                    "evidence_receipt_id": str(
+                        evidence_row["evidence_receipt_id"]
+                    ),
+                    "receipt_sha256": str(evidence_row["receipt_sha256"]),
+                    "content_sha256": str(evidence_row["asset_sha256"]),
+                }
+                for evidence_row in evidence_rows
+            ]
+            evidence_set_sha256 = _sha256_text(_json_dump(evidence_identity))
+
+            job_rows = connection.execute(
+                """
+                SELECT l.attempt_number, l.retry_of_job_id, l.confirmation_id,
+                       j.*
+                  FROM decision_scenario_jobs l
+                  JOIN technoeconomic_jobs j ON j.tea_job_id = l.tea_job_id
+                 WHERE l.case_id = ? AND l.scenario_revision_id = ?
+                 ORDER BY l.attempt_number ASC
+                """,
+                (case_id, item_row["scenario_revision_id"]),
+            ).fetchall()
+            if not job_rows:
+                raise StoreConflict("confirmed scenario has no TEA attempt history")
+            previous_job_id: str | None = None
+            for offset, job_row in enumerate(job_rows, start=1):
+                attempt_number = int(job_row["attempt_number"])
+                if attempt_number != offset:
+                    raise StoreConflict("scenario attempt history is not contiguous")
+                if offset == 1:
+                    if any(
+                        (
+                            job_row["retry_of_job_id"] is not None,
+                            job_row["confirmation_id"] != source_confirmation_id,
+                            job_row["tea_job_id"] != item_row["tea_job_id"],
+                        )
+                    ):
+                        raise StoreConflict("initial scenario attempt linkage is invalid")
+                elif any(
+                    (
+                        job_row["retry_of_job_id"] != previous_job_id,
+                        job_row["confirmation_id"] is not None,
+                    )
+                ):
+                    raise StoreConflict("scenario retry linkage is invalid")
+                if any(
+                    (
+                        str(job_row["request_json"]) != request_json,
+                        job_row["source_annual_job_id"]
+                        != item_row["source_annual_job_id"],
+                        job_row["source_snapshot_sha256"]
+                        != item_row["source_snapshot_sha256"],
+                        _sha256_text(str(job_row["source_snapshot_json"]))
+                        != job_row["source_snapshot_sha256"],
+                    )
+                ):
+                    raise StoreConflict("scenario attempt request or source is invalid")
+
+                result_sha256 = (
+                    None
+                    if job_row["result_json"] is None
+                    else _sha256_text(str(job_row["result_json"]))
+                )
+                result_provenance_sha256 = (
+                    None
+                    if job_row["result_provenance_json"] is None
+                    else _sha256_text(str(job_row["result_provenance_json"]))
+                )
+                identity = (int(item_row["item_index"]), attempt_number)
+                supplied = supplied_by_identity.pop(identity, None)
+                if supplied is None:
+                    raise StoreConflict("attempt_proofs omit durable attempt history")
+                verification_status = str(
+                    supplied.get("verification_status") or ""
+                ).strip()
+                if verification_status not in {
+                    "verified",
+                    "verification_failed",
+                    "pending",
+                    "not_applicable",
+                }:
+                    raise ValueError("unsupported attempt verification_status")
+                reporting_tieout = supplied.get("reporting_tieout_sha256")
+                normalized_tieout = (
+                    None
+                    if reporting_tieout is None
+                    else self._validate_sha256(
+                        str(reporting_tieout),
+                        field="reporting_tieout_sha256",
+                    )
+                )
+                proof = {
+                    "item_index": int(item_row["item_index"]),
+                    "scenario_revision_id": str(
+                        item_row["scenario_revision_id"]
+                    ),
+                    "scenario_id": str(item_row["scenario_id"]),
+                    "scenario_revision": int(item_row["scenario_revision"]),
+                    "attempt_number": attempt_number,
+                    "tea_job_id": str(job_row["tea_job_id"]),
+                    "retry_of_job_id": job_row["retry_of_job_id"],
+                    "selected_for_comparison": offset == len(job_rows),
+                    "state": str(job_row["state"]),
+                    "verification_status": verification_status,
+                    "request_sha256": str(item_row["request_sha256"]),
+                    "source_snapshot_sha256": str(
+                        job_row["source_snapshot_sha256"]
+                    ),
+                    "result_sha256": result_sha256,
+                    "result_provenance_sha256": result_provenance_sha256,
+                    "evidence_set_sha256": evidence_set_sha256,
+                    "reporting_tieout_sha256": normalized_tieout,
+                }
+                for field, expected_value in proof.items():
+                    supplied_value = supplied.get(field)
+                    if field == "selected_for_comparison":
+                        if type(supplied_value) is not bool:
+                            raise ValueError(
+                                "selected_for_comparison must be a boolean"
+                            )
+                    if supplied_value != expected_value:
+                        raise StoreConflict(
+                            f"attempt proof {field} does not match durable history"
+                        )
+                if verification_status == "verified" and any(
+                    (
+                        proof["state"] != "done",
+                        result_sha256 is None,
+                        result_provenance_sha256 is None,
+                        normalized_tieout is None,
+                    )
+                ):
+                    raise StoreConflict(
+                        "verified attempts require completed results and tie-out"
+                    )
+                derived.append(proof)
+                previous_job_id = str(job_row["tea_job_id"])
+
+        if supplied_by_identity:
+            raise StoreConflict("attempt_proofs contain unrelated attempt history")
+        return derived
+
+    def _decision_comparison_bundle_still_matches_history(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> bool:
+        stored_rows = connection.execute(
+            """
+            SELECT * FROM decision_comparison_bundle_attempts
+             WHERE comparison_bundle_id = ?
+             ORDER BY item_index, attempt_number
+            """,
+            (row["comparison_bundle_id"],),
+        ).fetchall()
+        supplied = [
+            self._decision_comparison_attempt_from_row(stored_row)
+            for stored_row in stored_rows
+        ]
+        try:
+            current = self._verified_decision_comparison_attempts(
+                connection,
+                case_id=str(row["case_id"]),
+                source_confirmation_id=str(row["source_confirmation_id"]),
+                attempt_proofs=supplied,
+            )
+        except (AgentStoreError, ValueError):
+            return False
+        return secrets.compare_digest(_json_dump(supplied), _json_dump(current))
 
     def _prepare_decision_scenario_revision(
         self,
@@ -3026,6 +4194,83 @@ class AgentStore:
         ).fetchone()
         assert row is not None
         return row
+
+    def _mark_current_decision_outputs_stale(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        case_id: str,
+        reason: Mapping[str, Any],
+        created_at: str,
+    ) -> dict[str, int]:
+        """Invalidate live derived snapshots in the caller's mutation transaction."""
+
+        reason_payload = dict(reason)
+        reason_json = _json_dump(reason_payload)
+        bundle_rows = connection.execute(
+            """
+            SELECT comparison_bundle_id, bundle_sha256
+              FROM decision_comparison_bundles
+             WHERE case_id = ? AND stale_at IS NULL
+               AND superseded_by_bundle_id IS NULL
+            """,
+            (case_id,),
+        ).fetchall()
+        brief_rows = connection.execute(
+            """
+            SELECT brief_id, brief_revision_id, comparison_bundle_sha256
+              FROM decision_briefs
+             WHERE case_id = ? AND stale_at IS NULL
+               AND superseded_by_revision_id IS NULL
+            """,
+            (case_id,),
+        ).fetchall()
+        for row in bundle_rows:
+            connection.execute(
+                """
+                UPDATE decision_comparison_bundles
+                   SET stale_at = ?, stale_reason_json = ?
+                 WHERE comparison_bundle_id = ? AND stale_at IS NULL
+                """,
+                (created_at, reason_json, row["comparison_bundle_id"]),
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=case_id,
+                event_type="decision_comparison_bundle_stale",
+                actor_kind="system",
+                payload={
+                    "comparison_bundle_id": row["comparison_bundle_id"],
+                    "bundle_sha256": row["bundle_sha256"],
+                    "reason": reason_payload,
+                },
+                created_at=created_at,
+            )
+        for row in brief_rows:
+            connection.execute(
+                """
+                UPDATE decision_briefs
+                   SET stale_at = ?, stale_reason_json = ?
+                 WHERE brief_revision_id = ? AND stale_at IS NULL
+                """,
+                (created_at, reason_json, row["brief_revision_id"]),
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=case_id,
+                event_type="decision_brief_stale",
+                actor_kind="system",
+                payload={
+                    "brief_id": row["brief_id"],
+                    "brief_revision_id": row["brief_revision_id"],
+                    "comparison_bundle_sha256": row[
+                        "comparison_bundle_sha256"
+                    ],
+                    "reason": reason_payload,
+                },
+                created_at=created_at,
+            )
+        return {"bundles": len(bundle_rows), "briefs": len(brief_rows)}
 
     def _decision_turn_bundle(
         self,
@@ -4209,6 +5454,30 @@ class AgentStore:
         ).fetchone()
         if row is None:
             return None
+        if workflow == "technoeconomic":
+            decision_link = connection.execute(
+                """
+                SELECT case_id, scenario_revision_id, attempt_number
+                  FROM decision_scenario_jobs WHERE tea_job_id = ?
+                """,
+                (work_id,),
+            ).fetchone()
+            if decision_link is not None:
+                self._mark_current_decision_outputs_stale(
+                    connection,
+                    case_id=str(decision_link["case_id"]),
+                    reason={
+                        "code": "decision_scenario_attempt_changed",
+                        "tea_job_id": work_id,
+                        "scenario_revision_id": decision_link[
+                            "scenario_revision_id"
+                        ],
+                        "attempt_number": int(decision_link["attempt_number"]),
+                        "previous_state": "queued",
+                        "state": "running",
+                    },
+                    created_at=now_text,
+                )
         return workflow, row
 
     def claim_next_queued_work(
@@ -4539,6 +5808,36 @@ class AgentStore:
                 "WHERE tea_job_id = ?",
                 values,
             )
+            if (
+                (state is not None and state != row["state"])
+                or result is not _UNSET
+                or result_provenance is not _UNSET
+            ):
+                decision_link = connection.execute(
+                    """
+                    SELECT case_id, scenario_revision_id, attempt_number
+                      FROM decision_scenario_jobs WHERE tea_job_id = ?
+                    """,
+                    (job_id,),
+                ).fetchone()
+                if decision_link is not None:
+                    self._mark_current_decision_outputs_stale(
+                        connection,
+                        case_id=str(decision_link["case_id"]),
+                        reason={
+                            "code": "decision_scenario_attempt_changed",
+                            "tea_job_id": str(job_id),
+                            "scenario_revision_id": decision_link[
+                                "scenario_revision_id"
+                            ],
+                            "attempt_number": int(
+                                decision_link["attempt_number"]
+                            ),
+                            "previous_state": row["state"],
+                            "state": state or row["state"],
+                        },
+                        created_at=now_text,
+                    )
             updated = connection.execute(
                 "SELECT * FROM technoeconomic_jobs WHERE tea_job_id = ?", (job_id,)
             ).fetchone()
@@ -4654,6 +5953,20 @@ class AgentStore:
             clauses.append("COALESCE(heartbeat_at, started_at, updated_at) <= ?")
             parameters.append(_timestamp(before))
         with self._transaction(write=True) as connection:
+            decision_cases = connection.execute(
+                """
+                SELECT DISTINCT l.case_id
+                 FROM technoeconomic_jobs j
+                  JOIN decision_scenario_jobs l ON l.tea_job_id = j.tea_job_id
+                 WHERE """
+                + "j.state = 'running'"
+                + (
+                    " AND COALESCE(j.heartbeat_at, j.started_at, j.updated_at) <= ?"
+                    if before is not None
+                    else ""
+                ),
+                parameters[3:],
+            ).fetchall()
             cursor = connection.execute(
                 """
                 UPDATE technoeconomic_jobs
@@ -4665,6 +5978,16 @@ class AgentStore:
                 + " AND ".join(clauses),
                 parameters,
             )
+            for decision_case in decision_cases:
+                self._mark_current_decision_outputs_stale(
+                    connection,
+                    case_id=str(decision_case["case_id"]),
+                    reason={
+                        "code": "decision_scenario_attempts_interrupted",
+                        "cause": "stale_worker_lease",
+                    },
+                    created_at=now_text,
+                )
             return int(cursor.rowcount)
 
     def retry_technoeconomic_job(
@@ -6717,6 +8040,15 @@ class AgentStore:
                 raise InvalidStateTransition(
                     "decision evidence cannot be removed"
                 ) from exc
+            self._mark_current_decision_outputs_stale(
+                connection,
+                case_id=str(row["case_id"]),
+                reason={
+                    "code": "decision_evidence_removed",
+                    "evidence_asset_id": str(evidence_asset_id),
+                },
+                created_at=now_text,
+            )
             updated_case = self._touch_decision_case(
                 connection,
                 case,
@@ -6931,6 +8263,17 @@ class AgentStore:
                 )
             except sqlite3.IntegrityError as exc:
                 raise StoreConflict("could not record evidence review") from exc
+            self._mark_current_decision_outputs_stale(
+                connection,
+                case_id=str(joined["case_id"]),
+                reason={
+                    "code": "decision_evidence_receipt_created",
+                    "evidence_receipt_id": receipt_id,
+                    "evidence_asset_id": str(joined["evidence_asset_id"]),
+                    "decision": decision,
+                },
+                created_at=now_text,
+            )
             updated_case = self._touch_decision_case(
                 connection,
                 case,
@@ -7082,6 +8425,17 @@ class AgentStore:
                     )
             except sqlite3.IntegrityError as exc:
                 raise StoreConflict("could not create decision scenario draft") from exc
+            self._mark_current_decision_outputs_stale(
+                connection,
+                case_id=str(case_id),
+                reason={
+                    "code": "decision_scenario_revision_created",
+                    "scenario_id": stable_id,
+                    "scenario_revision_id": revision_id,
+                    "scenario_revision": 1,
+                },
+                created_at=prepared["now_text"],
+            )
             updated_case = self._touch_decision_case(
                 connection,
                 case,
@@ -7266,6 +8620,20 @@ class AgentStore:
                     )
             except sqlite3.IntegrityError as exc:
                 raise StoreConflict("could not revise decision scenario") from exc
+            self._mark_current_decision_outputs_stale(
+                connection,
+                case_id=str(parent["case_id"]),
+                reason={
+                    "code": "decision_scenario_revision_created",
+                    "scenario_id": stable_id,
+                    "scenario_revision_id": revision_id,
+                    "scenario_revision": next_revision,
+                    "parent_scenario_revision_id": parent[
+                        "scenario_revision_id"
+                    ],
+                },
+                created_at=prepared["now_text"],
+            )
             updated_case = self._touch_decision_case(
                 connection,
                 case,
@@ -8320,6 +9688,18 @@ class AgentStore:
                         now_text,
                     ),
                 )
+                self._mark_current_decision_outputs_stale(
+                    connection,
+                    case_id=str(case_id),
+                    reason={
+                        "code": "decision_scenario_retry_created",
+                        "scenario_revision_id": str(scenario_revision_id),
+                        "retry_of_job_id": str(job_id),
+                        "tea_job_id": retry_id,
+                        "attempt_number": next_attempt,
+                    },
+                    created_at=now_text,
+                )
                 next_status = "running"
                 cursor = connection.execute(
                     """
@@ -8445,6 +9825,16 @@ class AgentStore:
                 )
                 changed = cursor.rowcount == 1
             if changed:
+                self._mark_current_decision_outputs_stale(
+                    connection,
+                    case_id=str(case_id),
+                    reason={
+                        "code": "decision_scenario_attempt_cancelled",
+                        "scenario_revision_id": row["scenario_revision_id"],
+                        "tea_job_id": str(job_id),
+                    },
+                    created_at=now_text,
+                )
                 execution = self._decision_case_execution_summary(
                     connection, str(case_id)
                 )
@@ -8615,6 +10005,1090 @@ class AgentStore:
                 "case": self._decision_case_from_row(case),
             }
 
+    def create_decision_comparison_bundle(
+        self,
+        case_id: str,
+        *,
+        expected_case_revision: int,
+        source_confirmation_id: str,
+        bundle: Mapping[str, Any],
+        bundle_sha256: str,
+        attempt_proofs: Sequence[Mapping[str, Any]],
+        created_by: str,
+        comparison_bundle_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist one exact, verified comparison snapshot without recalculation."""
+
+        if not isinstance(bundle, Mapping):
+            raise ValueError("bundle must be an object")
+        if (
+            isinstance(expected_case_revision, bool)
+            or not isinstance(expected_case_revision, int)
+            or expected_case_revision <= 0
+        ):
+            raise ValueError("expected_case_revision must be a positive integer")
+        normalized_id = self._validate_decision_record_id(
+            comparison_bundle_id,
+            prefix="dcmp",
+            field="comparison_bundle_id",
+        )
+        confirmation_id = self._validate_decision_record_id(
+            source_confirmation_id,
+            prefix="dconf",
+            field="source_confirmation_id",
+        )
+        creator = _bounded_text(created_by, field="created_by", maximum=200)
+        bundle_json = _json_dump(dict(bundle))
+        normalized_hash = self._validate_sha256(
+            bundle_sha256, field="bundle_sha256"
+        )
+        canonical_bundle = dict(bundle)
+        embedded_hash = canonical_bundle.pop("bundle_hash", None)
+        if (
+            embedded_hash != normalized_hash
+            or not secrets.compare_digest(
+                normalized_hash,
+                _sha256_text(_json_dump(canonical_bundle)),
+            )
+        ):
+            raise StoreConflict("comparison bundle SHA-256 is not canonical")
+        schema_version_value = bundle.get("schema_version")
+        if schema_version_value is None:
+            raise ValueError("bundle schema_version is required")
+        bundle_schema_version = _bounded_text(
+            str(schema_version_value), field="bundle.schema_version", maximum=100
+        )
+        is_complete_value = bundle.get("is_complete")
+        recommendation_eligible_value = bundle.get("recommendation_eligible")
+        if type(is_complete_value) is not bool:
+            raise ValueError("bundle is_complete must be a boolean")
+        if type(recommendation_eligible_value) is not bool:
+            raise ValueError("bundle recommendation_eligible must be a boolean")
+        is_complete = bool(is_complete_value)
+        recommendation_eligible = bool(recommendation_eligible_value)
+        if recommendation_eligible:
+            raise InvalidStateTransition(
+                "recommendation eligibility remains pending a versioned contract"
+            )
+
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            existing = connection.execute(
+                """
+                SELECT * FROM decision_comparison_bundles
+                 WHERE case_id = ? AND source_confirmation_id = ?
+                   AND bundle_sha256 = ?
+                """,
+                (str(case_id), confirmation_id, normalized_hash),
+            ).fetchone()
+            if existing is not None:
+                existing_record = self._decision_comparison_bundle_record(
+                    connection, existing
+                )
+                supplied_json = _json_dump([dict(item) for item in attempt_proofs])
+                if any(
+                    (
+                        int(existing["expected_case_revision"])
+                        != expected_case_revision,
+                        str(existing["bundle_json"]) != bundle_json,
+                        str(existing["created_by"]) != creator,
+                        _json_dump(existing_record["attempt_proofs"])
+                        != supplied_json,
+                    )
+                ):
+                    raise StoreConflict(
+                        "comparison snapshot already exists with different inputs"
+                    )
+                existing_record["idempotent_replay"] = True
+                return existing_record
+
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            if case["status"] not in {"running", "results_ready", "decision_ready"}:
+                raise InvalidStateTransition(
+                    "comparison bundles require an executed decision case"
+                )
+            proofs = self._verified_decision_comparison_attempts(
+                connection,
+                case_id=str(case_id),
+                source_confirmation_id=confirmation_id,
+                attempt_proofs=attempt_proofs,
+            )
+            selected = [
+                proof for proof in proofs if proof["selected_for_comparison"]
+            ]
+            derived_complete = bool(selected) and all(
+                proof["state"] == "done"
+                and proof["verification_status"] == "verified"
+                for proof in selected
+            )
+            if is_complete != derived_complete:
+                raise StoreConflict(
+                    "bundle completeness does not match selected attempt verification"
+                )
+            embedded_proofs = bundle.get("attempt_proofs")
+            if not isinstance(embedded_proofs, list) or _json_dump(
+                embedded_proofs
+            ) != _json_dump(proofs):
+                raise StoreConflict(
+                    "bundle attempt_proofs do not match durable attempt history"
+                )
+
+            prior = connection.execute(
+                """
+                SELECT * FROM decision_comparison_bundles
+                 WHERE case_id = ? AND superseded_by_bundle_id IS NULL
+                """,
+                (str(case_id),),
+            ).fetchone()
+            pending_supersession = (
+                f"dcmp_pending_{uuid.uuid4().hex}" if prior is not None else None
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_comparison_bundles (
+                        comparison_bundle_id, case_id, source_confirmation_id,
+                        expected_case_revision, bundle_schema_version,
+                        bundle_json, bundle_sha256, is_complete,
+                        recommendation_eligible, created_by, created_at,
+                        superseded_by_bundle_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_id,
+                        str(case_id),
+                        confirmation_id,
+                        expected_case_revision,
+                        bundle_schema_version,
+                        bundle_json,
+                        normalized_hash,
+                        int(is_complete),
+                        int(recommendation_eligible),
+                        creator,
+                        now_text,
+                        pending_supersession,
+                    ),
+                )
+                for proof in proofs:
+                    connection.execute(
+                        """
+                        INSERT INTO decision_comparison_bundle_attempts (
+                            comparison_bundle_id, case_id, item_index,
+                            scenario_revision_id, scenario_id,
+                            scenario_revision, attempt_number, tea_job_id,
+                            retry_of_job_id, selected_for_comparison, state,
+                            verification_status, request_sha256,
+                            source_snapshot_sha256, result_sha256,
+                            result_provenance_sha256, evidence_set_sha256,
+                            reporting_tieout_sha256, created_at
+                        ) VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        )
+                        """,
+                        (
+                            normalized_id,
+                            str(case_id),
+                            proof["item_index"],
+                            proof["scenario_revision_id"],
+                            proof["scenario_id"],
+                            proof["scenario_revision"],
+                            proof["attempt_number"],
+                            proof["tea_job_id"],
+                            proof["retry_of_job_id"],
+                            int(proof["selected_for_comparison"]),
+                            proof["state"],
+                            proof["verification_status"],
+                            proof["request_sha256"],
+                            proof["source_snapshot_sha256"],
+                            proof["result_sha256"],
+                            proof["result_provenance_sha256"],
+                            proof["evidence_set_sha256"],
+                            proof["reporting_tieout_sha256"],
+                            now_text,
+                        ),
+                    )
+                if prior is not None:
+                    stale_reason_json = _json_dump(
+                        {
+                            "code": "superseded_by_comparison_bundle",
+                            "superseded_by_bundle_id": normalized_id,
+                        }
+                    )
+                    connection.execute(
+                        """
+                        UPDATE decision_comparison_bundles
+                           SET stale_at = COALESCE(stale_at, ?),
+                               stale_reason_json = COALESCE(
+                                   stale_reason_json, ?
+                               ),
+                               superseded_by_bundle_id = ?, superseded_at = ?
+                         WHERE comparison_bundle_id = ?
+                           AND superseded_by_bundle_id IS NULL
+                        """,
+                        (
+                            now_text,
+                            stale_reason_json,
+                            normalized_id,
+                            now_text,
+                            prior["comparison_bundle_id"],
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE decision_comparison_bundles
+                           SET superseded_by_bundle_id = NULL
+                         WHERE comparison_bundle_id = ?
+                           AND superseded_by_bundle_id = ?
+                        """,
+                        (normalized_id, pending_supersession),
+                    )
+                    self._insert_decision_event(
+                        connection,
+                        case_id=str(case_id),
+                        event_type="decision_comparison_bundle_superseded",
+                        actor_kind="system",
+                        payload={
+                            "comparison_bundle_id": prior[
+                                "comparison_bundle_id"
+                            ],
+                            "superseded_by_bundle_id": normalized_id,
+                            "bundle_sha256": prior["bundle_sha256"],
+                        },
+                        created_at=now_text,
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict(
+                    "could not persist immutable decision comparison bundle"
+                ) from exc
+
+            cursor = connection.execute(
+                """
+                UPDATE decision_cases
+                   SET revision = revision + 1, updated_at = ?, updated_by = ?
+                 WHERE case_id = ? AND revision = ?
+                """,
+                (
+                    now_text,
+                    creator,
+                    str(case_id),
+                    expected_case_revision,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise StoreConflict(
+                    "decision case changed during comparison creation"
+                )
+
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_comparison_bundle_built",
+                actor_kind="system",
+                payload={
+                    "comparison_bundle_id": normalized_id,
+                    "source_confirmation_id": confirmation_id,
+                    "bundle_sha256": normalized_hash,
+                    "is_complete": is_complete,
+                    "recommendation_eligible": recommendation_eligible,
+                    "attempt_count": len(proofs),
+                    "case_revision": expected_case_revision + 1,
+                },
+                created_at=now_text,
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM decision_comparison_bundles
+                 WHERE comparison_bundle_id = ?
+                """,
+                (normalized_id,),
+            ).fetchone()
+            assert row is not None
+            result = self._decision_comparison_bundle_record(connection, row)
+            result["idempotent_replay"] = False
+            return result
+
+    def get_decision_comparison_bundle(
+        self, comparison_bundle_id: str
+    ) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM decision_comparison_bundles
+                 WHERE comparison_bundle_id = ?
+                """,
+                (str(comparison_bundle_id),),
+            ).fetchone()
+            return (
+                None
+                if row is None
+                else self._decision_comparison_bundle_record(connection, row)
+            )
+
+    def list_decision_comparison_bundles(
+        self,
+        case_id: str,
+        *,
+        include_stale: bool = True,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        bounded_limit = max(0, min(int(limit), 500))
+        current_clause = "" if include_stale else (
+            " AND stale_at IS NULL AND superseded_by_bundle_id IS NULL"
+        )
+        with self._transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM decision_comparison_bundles
+                 WHERE case_id = ?
+                """
+                + current_clause
+                + " ORDER BY created_at DESC, comparison_bundle_id DESC LIMIT ?",
+                (str(case_id), bounded_limit),
+            ).fetchall()
+            return [
+                self._decision_comparison_bundle_record(connection, row)
+                for row in rows
+            ]
+
+    def mark_decision_comparison_bundle_stale(
+        self,
+        comparison_bundle_id: str,
+        *,
+        reason: Mapping[str, Any],
+        actor_kind: str = "system",
+        operator_name: str | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(reason, Mapping) or not reason:
+            raise ValueError("reason must be a non-empty object")
+        reason_json = _json_dump(dict(reason))
+        actor, operator = self._normalize_decision_event_actor(
+            actor_kind, operator_name
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM decision_comparison_bundles
+                 WHERE comparison_bundle_id = ?
+                """,
+                (str(comparison_bundle_id),),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(
+                    f"unknown decision comparison bundle: {comparison_bundle_id}"
+                )
+            if row["stale_at"] is None:
+                connection.execute(
+                    """
+                    UPDATE decision_comparison_bundles
+                       SET stale_at = ?, stale_reason_json = ?
+                     WHERE comparison_bundle_id = ? AND stale_at IS NULL
+                    """,
+                    (now_text, reason_json, str(comparison_bundle_id)),
+                )
+                self._insert_decision_event(
+                    connection,
+                    case_id=str(row["case_id"]),
+                    event_type="decision_comparison_bundle_stale",
+                    actor_kind=actor,
+                    operator_name=operator,
+                    payload={
+                        "comparison_bundle_id": str(comparison_bundle_id),
+                        "bundle_sha256": row["bundle_sha256"],
+                        "reason": dict(reason),
+                    },
+                    created_at=now_text,
+                )
+            elif str(row["stale_reason_json"]) != reason_json:
+                raise StoreConflict("comparison bundle is already stale")
+            updated = connection.execute(
+                """
+                SELECT * FROM decision_comparison_bundles
+                 WHERE comparison_bundle_id = ?
+                """,
+                (str(comparison_bundle_id),),
+            ).fetchone()
+            assert updated is not None
+            return self._decision_comparison_bundle_record(connection, updated)
+
+    def create_decision_brief(
+        self,
+        case_id: str,
+        *,
+        expected_case_revision: int,
+        comparison_bundle_id: str,
+        recommendation_classification: str,
+        confidence_state: str,
+        caveats: Sequence[Any],
+        reversal_conditions: Sequence[Any],
+        provenance: Mapping[str, Any],
+        created_by: str,
+        idempotency_key: str,
+        brief_id: str | None = None,
+        brief_revision_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create one immutable brief revision and atomically supersede its parent."""
+
+        if (
+            isinstance(expected_case_revision, bool)
+            or not isinstance(expected_case_revision, int)
+            or expected_case_revision <= 0
+        ):
+            raise ValueError("expected_case_revision must be a positive integer")
+        classification = str(recommendation_classification).strip()
+        if classification not in DECISION_RECOMMENDATION_CLASSIFICATIONS:
+            raise ValueError("unsupported recommendation_classification")
+        confidence = str(confidence_state).strip()
+        if confidence not in DECISION_CONFIDENCE_STATES:
+            raise ValueError("unsupported confidence_state")
+        pending_classification = classification == "classification_pending_contract"
+        if pending_classification != (
+            confidence == "classification_pending_contract"
+        ):
+            raise ValueError(
+                "classification-pending recommendation and confidence must match"
+            )
+        if not pending_classification:
+            raise InvalidStateTransition(
+                "final recommendation classifications remain pending a "
+                "versioned contract"
+            )
+        if isinstance(caveats, (str, bytes)):
+            raise ValueError("caveats must be an array")
+        if isinstance(reversal_conditions, (str, bytes)):
+            raise ValueError("reversal_conditions must be an array")
+        if not isinstance(provenance, Mapping):
+            raise ValueError("provenance must be an object")
+        caveats_json = _json_dump(list(caveats))
+        reversal_json = _json_dump(list(reversal_conditions))
+        provenance_json = _json_dump(dict(provenance))
+        provenance_sha256 = _sha256_text(provenance_json)
+        creator = _bounded_text(created_by, field="created_by", maximum=200)
+        key = _bounded_text(
+            idempotency_key, field="idempotency_key", maximum=200
+        )
+        normalized_bundle_id = self._validate_decision_record_id(
+            comparison_bundle_id,
+            prefix="dcmp",
+            field="comparison_bundle_id",
+        )
+        requested_brief_id = (
+            None
+            if brief_id is None
+            else self._validate_decision_record_id(
+                brief_id, prefix="dbf", field="brief_id"
+            )
+        )
+        requested_revision_id = (
+            None
+            if brief_revision_id is None
+            else self._validate_decision_record_id(
+                brief_revision_id,
+                prefix="dbr",
+                field="brief_revision_id",
+            )
+        )
+        creation_request = {
+            "schema_version": 1,
+            "case_id": str(case_id),
+            "expected_case_revision": expected_case_revision,
+            "comparison_bundle_id": normalized_bundle_id,
+            "recommendation_classification": classification,
+            "confidence_state": confidence,
+            "caveats": list(caveats),
+            "reversal_conditions": list(reversal_conditions),
+            "provenance": dict(provenance),
+            "created_by": creator,
+            "brief_id": requested_brief_id,
+            "brief_revision_id": requested_revision_id,
+        }
+        creation_request_json = _json_dump(creation_request)
+        creation_request_sha256 = _sha256_text(creation_request_json)
+        now_text = _timestamp(self._current_time())
+
+        with self._transaction(write=True) as connection:
+            replay = connection.execute(
+                """
+                SELECT * FROM decision_brief_idempotency
+                 WHERE case_id = ? AND idempotency_key = ?
+                """,
+                (str(case_id), key),
+            ).fetchone()
+            if replay is not None:
+                if not secrets.compare_digest(
+                    str(replay["creation_request_sha256"]),
+                    creation_request_sha256,
+                ):
+                    raise StoreConflict(
+                        "idempotency key was already used for another brief request"
+                    )
+                response_json = str(replay["response_json"])
+                if not secrets.compare_digest(
+                    str(replay["response_sha256"]), _sha256_text(response_json)
+                ):
+                    raise StoreConflict("decision brief replay receipt is invalid")
+                response = _json_load(response_json)
+                if (
+                    not isinstance(response, Mapping)
+                    or response.get("brief_revision_id")
+                    != replay["brief_revision_id"]
+                ):
+                    raise StoreConflict("decision brief replay identity is invalid")
+                row = connection.execute(
+                    """
+                    SELECT * FROM decision_briefs WHERE brief_revision_id = ?
+                    """,
+                    (replay["brief_revision_id"],),
+                ).fetchone()
+                if row is None:
+                    raise StoreConflict("decision brief replay revision is missing")
+                case = self._require_decision_case_row(connection, str(case_id))
+                result = self._decision_brief_record(connection, row)
+                result["case"] = self._decision_case_from_row(case)
+                result["idempotent_replay"] = True
+                return result
+
+            bundle_row = connection.execute(
+                """
+                SELECT * FROM decision_comparison_bundles
+                 WHERE comparison_bundle_id = ?
+                """,
+                (normalized_bundle_id,),
+            ).fetchone()
+            if bundle_row is None:
+                raise RecordNotFound(
+                    f"unknown decision comparison bundle: {normalized_bundle_id}"
+                )
+            _verified_decision_bundle_json(
+                str(bundle_row["bundle_json"]), str(bundle_row["bundle_sha256"])
+            )
+            if bundle_row["case_id"] != str(case_id):
+                raise StoreConflict("comparison bundle belongs to a different case")
+
+            natural = connection.execute(
+                """
+                SELECT * FROM decision_briefs
+                 WHERE case_id = ? AND expected_case_revision = ?
+                   AND comparison_bundle_sha256 = ?
+                """,
+                (
+                    str(case_id),
+                    expected_case_revision,
+                    bundle_row["bundle_sha256"],
+                ),
+            ).fetchone()
+            if natural is not None:
+                if any(
+                    (
+                        natural["comparison_bundle_id"] != normalized_bundle_id,
+                        natural["recommendation_classification"] != classification,
+                        natural["confidence_state"] != confidence,
+                        str(natural["caveats_json"]) != caveats_json,
+                        str(natural["reversal_conditions_json"]) != reversal_json,
+                        str(natural["provenance_json"]) != provenance_json,
+                        natural["created_by"] != creator,
+                        requested_brief_id is not None
+                        and natural["brief_id"] != requested_brief_id,
+                        requested_revision_id is not None
+                        and natural["brief_revision_id"] != requested_revision_id,
+                    )
+                ):
+                    raise StoreConflict(
+                        "brief snapshot already exists with different inputs"
+                    )
+                stored_response = {
+                    "schema_version": 1,
+                    "brief_id": natural["brief_id"],
+                    "brief_revision_id": natural["brief_revision_id"],
+                    "case_id": str(case_id),
+                    "case_revision_after": int(natural["case_revision_after"]),
+                    "comparison_bundle_sha256": natural[
+                        "comparison_bundle_sha256"
+                    ],
+                }
+                response_json = _json_dump(stored_response)
+                connection.execute(
+                    """
+                    INSERT INTO decision_brief_idempotency (
+                        case_id, idempotency_key, creation_request_sha256,
+                        brief_revision_id, response_json, response_sha256,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(case_id),
+                        key,
+                        creation_request_sha256,
+                        natural["brief_revision_id"],
+                        response_json,
+                        _sha256_text(response_json),
+                        now_text,
+                    ),
+                )
+                case = self._require_decision_case_row(connection, str(case_id))
+                result = self._decision_brief_record(connection, natural)
+                result["case"] = self._decision_case_from_row(case)
+                result["idempotent_replay"] = True
+                return result
+
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            if (
+                int(bundle_row["expected_case_revision"]) + 1
+                != expected_case_revision
+            ):
+                raise StoreConflict(
+                    "comparison bundle was built for another case revision"
+                )
+            if any(
+                (
+                    bundle_row["stale_at"] is not None,
+                    bundle_row["superseded_by_bundle_id"] is not None,
+                    not self._decision_comparison_bundle_still_matches_history(
+                        connection, bundle_row
+                    ),
+                )
+            ):
+                raise StoreConflict(
+                    "comparison bundle is stale or no longer verifies"
+                )
+            if not bool(bundle_row["is_complete"]):
+                raise InvalidStateTransition(
+                    "incomplete comparisons cannot be finalized as decision briefs"
+                )
+            if case["status"] not in {"running", "results_ready"}:
+                raise InvalidStateTransition(
+                    "classification-pending briefs require running or ready results"
+                )
+
+            parent = connection.execute(
+                """
+                SELECT * FROM decision_briefs
+                 WHERE case_id = ? AND superseded_by_revision_id IS NULL
+                """,
+                (str(case_id),),
+            ).fetchone()
+            if parent is None:
+                stable_brief_id = requested_brief_id or _new_id("dbf")
+                revision = 1
+                parent_revision_id = None
+            else:
+                stable_brief_id = str(parent["brief_id"])
+                if (
+                    requested_brief_id is not None
+                    and requested_brief_id != stable_brief_id
+                ):
+                    raise StoreConflict("brief_id does not match existing lineage")
+                revision = int(parent["revision"]) + 1
+                parent_revision_id = str(parent["brief_revision_id"])
+            normalized_revision_id = requested_revision_id or _new_id("dbr")
+            pending_supersession = (
+                f"dbr_pending_{uuid.uuid4().hex}" if parent is not None else None
+            )
+            bundle_json = str(bundle_row["bundle_json"])
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_briefs (
+                        brief_revision_id, brief_id, case_id, revision,
+                        parent_revision_id, superseded_by_revision_id,
+                        source_confirmation_id, comparison_bundle_id,
+                        expected_case_revision, case_revision_after,
+                        comparison_bundle_json, comparison_bundle_sha256,
+                        recommendation_classification, confidence_state,
+                        caveats_json, reversal_conditions_json,
+                        provenance_json, provenance_sha256, created_by,
+                        created_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        normalized_revision_id,
+                        stable_brief_id,
+                        str(case_id),
+                        revision,
+                        parent_revision_id,
+                        pending_supersession,
+                        bundle_row["source_confirmation_id"],
+                        normalized_bundle_id,
+                        expected_case_revision,
+                        expected_case_revision + 1,
+                        bundle_json,
+                        bundle_row["bundle_sha256"],
+                        classification,
+                        confidence,
+                        caveats_json,
+                        reversal_json,
+                        provenance_json,
+                        provenance_sha256,
+                        creator,
+                        now_text,
+                    ),
+                )
+                if parent is not None:
+                    stale_reason_json = _json_dump(
+                        {
+                            "code": "superseded_by_decision_brief_revision",
+                            "superseded_by_revision_id": normalized_revision_id,
+                        }
+                    )
+                    connection.execute(
+                        """
+                        UPDATE decision_briefs
+                           SET stale_at = COALESCE(stale_at, ?),
+                               stale_reason_json = COALESCE(
+                                   stale_reason_json, ?
+                               ),
+                               superseded_by_revision_id = ?, superseded_at = ?
+                         WHERE brief_revision_id = ?
+                           AND superseded_by_revision_id IS NULL
+                        """,
+                        (
+                            now_text,
+                            stale_reason_json,
+                            normalized_revision_id,
+                            now_text,
+                            parent_revision_id,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE decision_briefs
+                           SET superseded_by_revision_id = NULL
+                         WHERE brief_revision_id = ?
+                           AND superseded_by_revision_id = ?
+                        """,
+                        (normalized_revision_id, pending_supersession),
+                    )
+                    self._insert_decision_event(
+                        connection,
+                        case_id=str(case_id),
+                        event_type="decision_brief_superseded",
+                        actor_kind="system",
+                        payload={
+                            "brief_id": stable_brief_id,
+                            "brief_revision_id": parent_revision_id,
+                            "superseded_by_revision_id": normalized_revision_id,
+                            "comparison_bundle_sha256": parent[
+                                "comparison_bundle_sha256"
+                            ],
+                        },
+                        created_at=now_text,
+                    )
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_cases
+                       SET status = ?, active_recommendation_revision = ?,
+                           revision = revision + 1, updated_at = ?, updated_by = ?
+                     WHERE case_id = ? AND revision = ?
+                    """,
+                    (
+                        case["status"],
+                        case["active_recommendation_revision"],
+                        now_text,
+                        creator,
+                        str(case_id),
+                        expected_case_revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreConflict("decision case changed during brief creation")
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict(
+                    "could not persist immutable decision brief revision"
+                ) from exc
+
+            updated_case = self._require_decision_case_row(connection, str(case_id))
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_brief_created",
+                actor_kind="system",
+                payload={
+                    "brief_id": stable_brief_id,
+                    "brief_revision_id": normalized_revision_id,
+                    "revision": revision,
+                    "comparison_bundle_id": normalized_bundle_id,
+                    "comparison_bundle_sha256": bundle_row["bundle_sha256"],
+                    "recommendation_classification": classification,
+                    "confidence_state": confidence,
+                    "case_status": updated_case["status"],
+                    "case_revision": int(updated_case["revision"]),
+                },
+                created_at=now_text,
+            )
+            stored_response = {
+                "schema_version": 1,
+                "brief_id": stable_brief_id,
+                "brief_revision_id": normalized_revision_id,
+                "case_id": str(case_id),
+                "case_revision_after": int(updated_case["revision"]),
+                "comparison_bundle_sha256": bundle_row["bundle_sha256"],
+            }
+            response_json = _json_dump(stored_response)
+            connection.execute(
+                """
+                INSERT INTO decision_brief_idempotency (
+                    case_id, idempotency_key, creation_request_sha256,
+                    brief_revision_id, response_json, response_sha256,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(case_id),
+                    key,
+                    creation_request_sha256,
+                    normalized_revision_id,
+                    response_json,
+                    _sha256_text(response_json),
+                    now_text,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM decision_briefs WHERE brief_revision_id = ?
+                """,
+                (normalized_revision_id,),
+            ).fetchone()
+            assert row is not None
+            result = self._decision_brief_record(connection, row)
+            result["case"] = self._decision_case_from_row(updated_case)
+            result["idempotent_replay"] = False
+            return result
+
+    def get_decision_brief(
+        self, brief_revision_id: str
+    ) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                """SELECT * FROM decision_briefs WHERE brief_revision_id = ?""",
+                (str(brief_revision_id),),
+            ).fetchone()
+            return None if row is None else self._decision_brief_record(connection, row)
+
+    def get_decision_brief_for_snapshot(
+        self,
+        case_id: str,
+        *,
+        comparison_bundle_id: str,
+        expected_case_revision: int,
+        comparison_bundle_sha256: str,
+    ) -> dict[str, Any] | None:
+        """Read the exact immutable brief snapshot without a bounded history scan."""
+
+        if (
+            isinstance(expected_case_revision, bool)
+            or not isinstance(expected_case_revision, int)
+            or expected_case_revision <= 0
+        ):
+            raise ValueError("expected_case_revision must be a positive integer")
+        normalized_bundle_id = self._validate_decision_record_id(
+            comparison_bundle_id,
+            prefix="dcmp",
+            field="comparison_bundle_id",
+        )
+        normalized_hash = self._validate_sha256(
+            comparison_bundle_sha256,
+            field="comparison_bundle_sha256",
+        )
+        with self._transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM decision_briefs
+                 WHERE case_id = ? AND comparison_bundle_id = ?
+                   AND expected_case_revision = ?
+                   AND comparison_bundle_sha256 = ?
+                """,
+                (
+                    str(case_id),
+                    normalized_bundle_id,
+                    expected_case_revision,
+                    normalized_hash,
+                ),
+            ).fetchone()
+            return (
+                None
+                if row is None
+                else self._decision_brief_record(connection, row)
+            )
+
+    def list_decision_briefs(
+        self,
+        case_id: str,
+        *,
+        include_superseded: bool = True,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        bounded_limit = max(0, min(int(limit), 500))
+        current_clause = (
+            "" if include_superseded else " AND superseded_by_revision_id IS NULL"
+        )
+        with self._transaction() as connection:
+            rows = connection.execute(
+                "SELECT * FROM decision_briefs WHERE case_id = ?"
+                + current_clause
+                + " ORDER BY revision DESC, created_at DESC LIMIT ?",
+                (str(case_id), bounded_limit),
+            ).fetchall()
+            return [self._decision_brief_record(connection, row) for row in rows]
+
+    def mark_decision_brief_stale(
+        self,
+        brief_revision_id: str,
+        *,
+        reason: Mapping[str, Any],
+        actor_kind: str = "system",
+        operator_name: str | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(reason, Mapping) or not reason:
+            raise ValueError("reason must be a non-empty object")
+        reason_json = _json_dump(dict(reason))
+        actor, operator = self._normalize_decision_event_actor(
+            actor_kind, operator_name
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                """SELECT * FROM decision_briefs WHERE brief_revision_id = ?""",
+                (str(brief_revision_id),),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(
+                    f"unknown decision brief revision: {brief_revision_id}"
+                )
+            if row["stale_at"] is None:
+                connection.execute(
+                    """
+                    UPDATE decision_briefs
+                       SET stale_at = ?, stale_reason_json = ?
+                     WHERE brief_revision_id = ? AND stale_at IS NULL
+                    """,
+                    (now_text, reason_json, str(brief_revision_id)),
+                )
+                self._insert_decision_event(
+                    connection,
+                    case_id=str(row["case_id"]),
+                    event_type="decision_brief_stale",
+                    actor_kind=actor,
+                    operator_name=operator,
+                    payload={
+                        "brief_id": row["brief_id"],
+                        "brief_revision_id": str(brief_revision_id),
+                        "comparison_bundle_sha256": row[
+                            "comparison_bundle_sha256"
+                        ],
+                        "reason": dict(reason),
+                    },
+                    created_at=now_text,
+                )
+            elif str(row["stale_reason_json"]) != reason_json:
+                raise StoreConflict("decision brief is already stale")
+            updated = connection.execute(
+                """SELECT * FROM decision_briefs WHERE brief_revision_id = ?""",
+                (str(brief_revision_id),),
+            ).fetchone()
+            assert updated is not None
+            return self._decision_brief_record(connection, updated)
+
+    def supersede_decision_brief(
+        self,
+        brief_revision_id: str,
+        *,
+        superseded_by_revision_id: str,
+        actor_kind: str = "system",
+        operator_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Record an already-created direct child as a one-way supersession."""
+
+        actor, operator = self._normalize_decision_event_actor(
+            actor_kind, operator_name
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            row = connection.execute(
+                """SELECT * FROM decision_briefs WHERE brief_revision_id = ?""",
+                (str(brief_revision_id),),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFound(
+                    f"unknown decision brief revision: {brief_revision_id}"
+                )
+            if row["superseded_by_revision_id"] is not None:
+                if row["superseded_by_revision_id"] != superseded_by_revision_id:
+                    raise StoreConflict(
+                        "decision brief already has another superseding revision"
+                    )
+                return self._decision_brief_record(connection, row)
+            target = connection.execute(
+                """SELECT * FROM decision_briefs WHERE brief_revision_id = ?""",
+                (str(superseded_by_revision_id),),
+            ).fetchone()
+            if target is None:
+                raise RecordNotFound(
+                    "unknown superseding decision brief revision: "
+                    f"{superseded_by_revision_id}"
+                )
+            if any(
+                (
+                    target["case_id"] != row["case_id"],
+                    target["brief_id"] != row["brief_id"],
+                    target["parent_revision_id"] != row["brief_revision_id"],
+                    int(target["revision"]) != int(row["revision"]) + 1,
+                )
+            ):
+                raise StoreConflict("superseding brief is not the direct child")
+            reason = {
+                "code": "superseded_by_decision_brief_revision",
+                "superseded_by_revision_id": str(superseded_by_revision_id),
+            }
+            connection.execute(
+                """
+                UPDATE decision_briefs
+                   SET stale_at = COALESCE(stale_at, ?),
+                       stale_reason_json = COALESCE(stale_reason_json, ?),
+                       superseded_by_revision_id = ?, superseded_at = ?
+                 WHERE brief_revision_id = ?
+                   AND superseded_by_revision_id IS NULL
+                """,
+                (
+                    now_text,
+                    _json_dump(reason),
+                    str(superseded_by_revision_id),
+                    now_text,
+                    str(brief_revision_id),
+                ),
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(row["case_id"]),
+                event_type="decision_brief_superseded",
+                actor_kind=actor,
+                operator_name=operator,
+                payload={
+                    "brief_id": row["brief_id"],
+                    "brief_revision_id": str(brief_revision_id),
+                    "superseded_by_revision_id": str(
+                        superseded_by_revision_id
+                    ),
+                    "comparison_bundle_sha256": row[
+                        "comparison_bundle_sha256"
+                    ],
+                },
+                created_at=now_text,
+            )
+            updated = connection.execute(
+                """SELECT * FROM decision_briefs WHERE brief_revision_id = ?""",
+                (str(brief_revision_id),),
+            ).fetchone()
+            assert updated is not None
+            return self._decision_brief_record(connection, updated)
+
     def snapshot_state(
         self, *, mode: str | None = None, recent_limit: int = 10
     ) -> dict[str, Any]:
@@ -8689,6 +11163,8 @@ __all__ = [
     "DECISION_EVIDENCE_MAX_CASE_BYTES",
     "DECISION_EVIDENCE_MAX_FILE_BYTES",
     "DECISION_EVIDENCE_MAX_FILES_PER_CASE",
+    "DECISION_CONFIDENCE_STATES",
+    "DECISION_RECOMMENDATION_CLASSIFICATIONS",
     "DECISION_TURN_STATES",
     "EvidenceLimitExceeded",
     "InvalidStateTransition",
