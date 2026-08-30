@@ -1,6 +1,12 @@
 const DEFAULT_RENDER_ORIGIN = "https://sbepvmodel.onrender.com";
 
-const REQUEST_HEADERS = ["accept", "content-type", "last-event-id", "range"] as const;
+const REQUEST_HEADERS = [
+  "accept",
+  "content-type",
+  "last-event-id",
+  "range",
+  "x-autonomy-human-action",
+] as const;
 const RESPONSE_HEADERS = [
   "accept-ranges",
   "cache-control",
@@ -39,6 +45,24 @@ function safePath(path: string[]): string {
   return path.map((segment) => encodeURIComponent(segment)).join("/");
 }
 
+function isHumanAuthorityMutation(path: string[], method: string): boolean {
+  if (method !== "POST" || path[0] !== "autonomy") return false;
+  return (
+    (
+      path.length === 6 &&
+      path[1] === "cases" &&
+      path[3] === "decision-briefs" &&
+      path[5] === "signoffs"
+    ) ||
+    (
+      path.length === 4 &&
+      path[1] === "cases" &&
+      path[3] === "reports"
+    ) ||
+    (path.length === 2 && path[1] === "shadow-reviews")
+  );
+}
+
 export function isAllowedApiPath(path: string[]): boolean {
   if (path.length === 1) {
     return [
@@ -60,6 +84,7 @@ export function isAllowedApiPath(path: string[]): boolean {
   const isTurnId = (value: string) => /^(?:turn_|dturn_)[a-zA-Z0-9_-]+$/.test(value);
   const isComparisonBundleId = (value: string) => /^dcmp_[a-zA-Z0-9]+$/.test(value);
   const isDecisionBriefRevisionId = (value: string) => /^dbr_[a-zA-Z0-9]+$/.test(value);
+  const isDecisionReportId = (value: string) => /^drpt_[a-zA-Z0-9]+$/.test(value);
   if (path.length === 2) {
     return (
       (path[0] === "status" && isSafeId(path[1])) ||
@@ -69,7 +94,10 @@ export function isAllowedApiPath(path: string[]): boolean {
         path[0] === "technoeconomic" &&
         ["sources", "jobs"].includes(path[1])
       ) ||
-      (path[0] === "autonomy" && ["cases", "sources"].includes(path[1]))
+      (
+        path[0] === "autonomy" &&
+        ["cases", "sources", "release-readiness", "shadow-reviews"].includes(path[1])
+      )
     );
   }
 
@@ -129,6 +157,7 @@ export function isAllowedApiPath(path: string[]): boolean {
           "execution",
           "comparison-bundles",
           "decision-briefs",
+          "reports",
         ].includes(path[3])
       )
     );
@@ -163,7 +192,8 @@ export function isAllowedApiPath(path: string[]): boolean {
         (path[3] === "evidence" && isEvidenceId(path[4])) ||
         (path[3] === "scenarios" && ["compare", "confirm"].includes(path[4])) ||
         (path[3] === "comparison-bundles" && isComparisonBundleId(path[4])) ||
-        (path[3] === "decision-briefs" && isDecisionBriefRevisionId(path[4]))
+        (path[3] === "decision-briefs" && isDecisionBriefRevisionId(path[4])) ||
+        (path[3] === "reports" && isDecisionReportId(path[4]))
       )
     );
   }
@@ -188,6 +218,16 @@ export function isAllowedApiPath(path: string[]): boolean {
           path[3] === "execution" &&
           isTeaJobId(path[4]) &&
           ["cancel", "retry"].includes(path[5])
+        ) ||
+        (
+          path[3] === "decision-briefs" &&
+          isDecisionBriefRevisionId(path[4]) &&
+          path[5] === "signoffs"
+        ) ||
+        (
+          path[3] === "reports" &&
+          isDecisionReportId(path[4]) &&
+          ["verify", "download"].includes(path[5])
         )
       )
     );
@@ -223,6 +263,13 @@ export async function proxyRenderRequest(
   if (prefix === "api" && !isAllowedApiPath(path || [])) {
     return jsonError("Unknown dashboard endpoint.", 404);
   }
+  const method = request.method.toUpperCase();
+  if (prefix === "api" && isHumanAuthorityMutation(path || [], method)) {
+    return jsonError(
+      "Human-authority actions require the directly authenticated backend dashboard; proxy service credentials cannot authorize them.",
+      403,
+    );
+  }
   const incomingUrl = new URL(request.url);
   const targetUrl = new URL(
     `/${prefix}/${safePath(path || [])}${incomingUrl.search}`,
@@ -236,7 +283,6 @@ export async function proxyRenderRequest(
   }
   headers.set("authorization", authorization);
 
-  const method = request.method.toUpperCase();
   const init: RequestInit = {
     method,
     headers,

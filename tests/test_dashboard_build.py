@@ -27,6 +27,18 @@ class DashboardBuildTests(unittest.TestCase):
         for slot in ("{{CSS}}", "{{MARKUP}}", "{{JS}}"):
             self.assertNotIn(slot, first)
 
+    def test_vite_slot_replacement_keeps_dollar_sequences_literal(self):
+        """String.replace tokens must not corrupt inline dashboard JavaScript."""
+
+        assembler = (PROJECT_ROOT / "frontend" / "dashboard.ts").read_text(
+            encoding="utf-8"
+        )
+        assembled = dashboard.assemble_dashboard_html(PROJECT_ROOT)
+
+        self.assertIn("document.replace(slot, () => content)", assembler)
+        self.assertNotIn("document.replace(slot, content)", assembler)
+        self.assertIn("'[A-Za-z0-9_-]+$'", assembled)
+
     def test_every_source_group_uses_lexical_filename_order(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

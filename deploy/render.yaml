@@ -32,6 +32,13 @@ services:
       - key: PV_DASHBOARD_OUTPUT_DIR
         value: /var/data/outputs
 
+      # Keep human authority disabled until automated and live-shadow evidence is
+      # reviewed. Disabling shadow mode is a deliberate post-checklist change.
+      - key: DECISION_AGENT_SHADOW_MODE
+        value: "true"
+      - key: DECISION_AGENT_BEHAVIOR_EVAL_CASES
+        value: "0"
+
       # Secrets: set in the Render dashboard.
       - key: BAZEFIELD_API_KEY
         sync: false

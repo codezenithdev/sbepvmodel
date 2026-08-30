@@ -115,6 +115,7 @@ class AutonomyStoreTests(unittest.TestCase):
     def test_schema_v6_migrates_v5_and_preserves_existing_jobs(self) -> None:
         source = self._completed_annual()
         with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("PRAGMA foreign_keys = OFF")
             trigger_rows = connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'trigger' AND ("
                 "name LIKE 'decision_%' OR name LIKE '%decision_case%' OR "
@@ -123,24 +124,20 @@ class AutonomyStoreTests(unittest.TestCase):
             ).fetchall()
             for (trigger_name,) in trigger_rows:
                 connection.execute(f'DROP TRIGGER "{trigger_name}"')
-            for table_name in (
-                "decision_events",
-                "decision_evidence_receipts",
-                "decision_evidence_candidates",
-                "decision_evidence_assets",
-                "decision_messages",
-                "decision_agent_turns",
-                "decision_cases",
-            ):
+            decision_tables = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name LIKE 'decision_%'"
+            ).fetchall()
+            for (table_name,) in decision_tables:
                 connection.execute(f'DROP TABLE "{table_name}"')
-            connection.execute("DELETE FROM schema_migrations WHERE version = 6")
+            connection.execute("DELETE FROM schema_migrations WHERE version >= 6")
             connection.execute("PRAGMA user_version = 5")
             connection.commit()
 
         reopened = AgentStore(self.db_path, now=self.clock)
 
-        self.assertEqual(8, SCHEMA_VERSION)
-        self.assertEqual(8, reopened.schema_version)
+        self.assertEqual(9, SCHEMA_VERSION)
+        self.assertEqual(9, reopened.schema_version)
         self.assertEqual(source["id"], reopened.get_job(source["id"])["id"])
         with closing(sqlite3.connect(self.db_path)) as connection:
             tables = {
@@ -172,11 +169,17 @@ class AutonomyStoreTests(unittest.TestCase):
                 "decision_comparison_bundle_attempts",
                 "decision_briefs",
                 "decision_brief_idempotency",
+                "decision_recommendations",
+                "decision_signoffs",
+                "decision_signoff_idempotency",
+                "decision_reports",
+                "decision_report_idempotency",
+                "decision_shadow_reviews",
             },
             tables,
         )
         self.assertEqual(
-            [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)],
+            [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,)],
             migrations,
         )
 
@@ -314,27 +317,36 @@ class AutonomyStoreTests(unittest.TestCase):
             status="decision_ready",
             operator_name="Alex Operator",
         )
-        signed = self.store.transition_decision_case(
-            case["id"],
-            expected_revision=decision["revision"],
-            status="signed",
-            operator_name="Alex Operator",
-        )
+        with self.assertRaises(InvalidStateTransition):
+            self.store.transition_decision_case(
+                case["id"],
+                expected_revision=decision["revision"],
+                status="signed",
+                operator_name="Alex Operator",
+            )
+        archive_candidate = self._case(title="Archive-only lifecycle fixture")
         archived = self.store.archive_decision_case(
-            case["id"],
-            expected_revision=signed["revision"],
+            archive_candidate["id"],
+            expected_revision=archive_candidate["revision"],
             operator_name="Alex Operator",
         )
 
         self.assertEqual("archived", archived["status"])
         self.assertIsNotNone(archived["archived_at"])
-        self.assertEqual([], self.store.list_decision_cases())
         self.assertEqual(
-            [archived], self.store.list_decision_cases(include_archived=True)
+            [decision["id"]],
+            [row["id"] for row in self.store.list_decision_cases()],
+        )
+        self.assertEqual(
+            {decision["id"], archived["id"]},
+            {
+                row["id"]
+                for row in self.store.list_decision_cases(include_archived=True)
+            },
         )
         with self.assertRaises(InvalidStateTransition):
             self.store.create_decision_turn(
-                case["id"],
+                archive_candidate["id"],
                 client_message_id="after-archive",
                 user_message="Can this still run?",
                 operator_name="Alex Operator",
@@ -342,13 +354,14 @@ class AutonomyStoreTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db_path)) as connection:
             with self.assertRaisesRegex(sqlite3.IntegrityError, "archived, not deleted"):
                 connection.execute(
-                    "DELETE FROM decision_cases WHERE case_id = ?", (case["id"],)
+                    "DELETE FROM decision_cases WHERE case_id = ?",
+                    (archive_candidate["id"],),
                 )
             with self.assertRaisesRegex(sqlite3.IntegrityError, "archived.*read-only"):
                 connection.execute(
                     "UPDATE decision_cases SET title = 'changed', "
                     "revision = revision + 1 WHERE case_id = ?",
-                    (case["id"],),
+                    (archive_candidate["id"],),
                 )
 
     def test_concurrent_idempotent_turn_creation_never_duplicates_user_message(self) -> None:

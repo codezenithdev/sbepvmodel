@@ -34,18 +34,23 @@ from sbepv.api.autonomy_schemas import (
     DecisionCaseUpdateRequest,
     DecisionComparisonBundleCreateRequest,
     DecisionMessageCreateRequest,
+    DecisionReportCreateRequest,
     DecisionScenarioConfirmRequest,
     DecisionScenarioCreateRequest,
     DecisionScenarioExpireRequest,
     DecisionScenarioJobActionRequest,
     DecisionScenarioRevisionRequest,
     DecisionScenarioValidateRequest,
+    DecisionShadowReviewCreateRequest,
+    DecisionSignoffCreateRequest,
     EvidenceDeleteRequest,
     EvidenceReviewRequest,
 )
 from sbepv.autonomy import comparison as comparison_service
 from sbepv.autonomy import decision_agent as decision_agent_module
 from sbepv.autonomy import evidence, lifecycle, readiness, scenarios, serializers
+from sbepv.autonomy import recommendation as recommendation_service
+from sbepv.autonomy import reporting as decision_reporting
 from sbepv.autonomy import result_verification
 from sbepv.store import (
     AgentStoreError,
@@ -68,6 +73,17 @@ _SCENARIO_ID_RE = re.compile(r"^dsc_[A-Za-z0-9]+$")
 _TEA_JOB_ID_RE = re.compile(r"^tea_[A-Za-z0-9_-]+$")
 _COMPARISON_BUNDLE_ID_RE = re.compile(r"^dcmp_[A-Za-z0-9]+$")
 _DECISION_BRIEF_REVISION_ID_RE = re.compile(r"^dbr_[A-Za-z0-9]+$")
+_DECISION_SIGNOFF_ID_RE = re.compile(r"^dsgn_[A-Za-z0-9]+$")
+_DECISION_REPORT_ID_RE = re.compile(r"^drpt_[A-Za-z0-9]+$")
+_DECISION_ACKNOWLEDGEMENT_VERSION = "autonomy-signoff-ack-v1"
+_DECISION_ACKNOWLEDGEMENT_TEXT = (
+    "I understand that signing freezes an immutable decision snapshot. It does "
+    "not change plant controls, calibration or Annual baselines, existing TEA "
+    "jobs, or the approved calculation contract."
+)
+_HUMAN_ACTION_HEADER = "X-Autonomy-Human-Action"
+_SHADOW_REVIEW_CHECKLIST_VERSION = "autonomy-shadow-review-v2"
+_SHADOW_REVIEW_REQUIRED_CASES = 10
 _GROUPED_TEA_ACKNOWLEDGEMENT = (
     "I confirm the selected scenarios, source and basis lock, evidence status, "
     "realization count, seed, and exact request hashes shown here. I understand "
@@ -111,6 +127,259 @@ def _store_failure(exc: Exception) -> HTTPException:
             detail={"code": "invalid_request", "message": str(exc)},
         )
     return HTTPException(status_code=500, detail="Durable state is unavailable.")
+
+
+def _require_human_authority(request: Request) -> str:
+    """Require authenticated application authority plus a CSRF-resistant intent."""
+
+    if request.headers.get(_HUMAN_ACTION_HEADER) != "1":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "human_action_intent_required",
+                "message": (
+                    "This authority action requires the explicit application "
+                    f"header {_HUMAN_ACTION_HEADER}: 1."
+                ),
+            },
+        )
+    principal = getattr(request.state, "authenticated_principal", None)
+    if not isinstance(principal, str) or not principal.strip():
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "authenticated_principal_required",
+                "message": (
+                    "Configure dashboard authentication before signing, creating "
+                    "decision reports, or recording shadow review authority."
+                ),
+            },
+        )
+    return principal.strip()
+
+
+def _require_not_shadow_blocked(operation: str) -> None:
+    if bool(getattr(config, "DECISION_AGENT_SHADOW_MODE", False)):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "decision_agent_shadow_mode",
+                "message": f"Shadow mode blocks {operation}.",
+            },
+        )
+
+
+def _require_shadow_mode(operation: str) -> None:
+    if not bool(getattr(config, "DECISION_AGENT_ENABLED", False)):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "decision_agent_disabled",
+                "message": f"The Decision Agent must be enabled for {operation}.",
+            },
+        )
+    if not bool(getattr(config, "DECISION_AGENT_SHADOW_MODE", False)):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "decision_agent_shadow_mode_required",
+                "message": f"Shadow mode must be active for {operation}.",
+            },
+        )
+
+
+def _shadow_review_matches_report(
+    review: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    active_renderer_fingerprint: str,
+) -> bool:
+    return bool(
+        report.get("report_kind") == "draft"
+        and report.get("report_id") == review.get("report_id")
+        and report.get("case_id") == review.get("case_id")
+        and report.get("brief_revision_id") == review.get("brief_revision_id")
+        and secrets.compare_digest(
+            str(report.get("snapshot_sha256") or ""),
+            str(review.get("report_snapshot_sha256") or ""),
+        )
+        and secrets.compare_digest(
+            str(report.get("pdf_sha256") or ""),
+            str(review.get("pdf_sha256") or ""),
+        )
+        and secrets.compare_digest(
+            str(report.get("report_identity_sha256") or ""),
+            str(review.get("report_identity_sha256") or ""),
+        )
+        and isinstance(report.get("snapshot"), dict)
+        and report["snapshot"].get("schema_version")
+        == decision_reporting.REPORT_SNAPSHOT_SCHEMA_VERSION
+        and report.get("recommendation_contract_version")
+        == recommendation_service.RECOMMENDATION_CONTRACT_VERSION
+        and secrets.compare_digest(
+            str(report.get("recommendation_contract_digest") or ""),
+            recommendation_service.RECOMMENDATION_CONTRACT_DIGEST,
+        )
+        and report.get("generation_contract_version")
+        == decision_reporting.REPORT_GENERATION_CONTRACT_VERSION
+        and report.get("renderer_fingerprint") == active_renderer_fingerprint
+        and review.get("recommendation_contract_version")
+        == report.get("recommendation_contract_version")
+        and secrets.compare_digest(
+            str(review.get("recommendation_contract_digest") or ""),
+            str(report.get("recommendation_contract_digest") or ""),
+        )
+        and review.get("generation_contract_version")
+        == report.get("generation_contract_version")
+        and review.get("renderer_fingerprint") == report.get("renderer_fingerprint")
+    )
+
+
+def _shadow_review_has_verified_artifact(
+    review: dict[str, Any],
+    *,
+    active_renderer_fingerprint: str,
+) -> bool:
+    try:
+        report = state.AGENT_STORE.get_decision_report(str(review.get("report_id") or ""))
+        if not isinstance(report, dict) or not _shadow_review_matches_report(
+            review,
+            report,
+            active_renderer_fingerprint=active_renderer_fingerprint,
+        ):
+            return False
+        _, verification = decision_reporting.verified_report_pdf(
+            config.DECISION_REPORT_DIR, report
+        )
+    except (
+        AgentStoreError,
+        OSError,
+        TypeError,
+        ValueError,
+        decision_reporting.DecisionReportError,
+    ):
+        return False
+    return bool(
+        secrets.compare_digest(
+            str(verification.get("snapshot_sha256") or ""),
+            str(review.get("report_snapshot_sha256") or ""),
+        )
+        and secrets.compare_digest(
+            str(verification.get("pdf_sha256") or ""),
+            str(review.get("pdf_sha256") or ""),
+        )
+    )
+
+
+def _release_readiness() -> dict[str, Any]:
+    try:
+        reviews = state.AGENT_STORE.list_decision_shadow_reviews(
+            checklist_version=_SHADOW_REVIEW_CHECKLIST_VERSION,
+            limit=None,
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    try:
+        active_renderer_fingerprint = decision_reporting.renderer_fingerprint()
+    except decision_reporting.DecisionReportError:
+        active_renderer_fingerprint = ""
+    renderer_available = bool(active_renderer_fingerprint)
+    active_reviews = [
+        item
+        for item in reviews
+        if item.get("recommendation_contract_version")
+        == recommendation_service.RECOMMENDATION_CONTRACT_VERSION
+        and secrets.compare_digest(
+            str(item.get("recommendation_contract_digest") or ""),
+            recommendation_service.RECOMMENDATION_CONTRACT_DIGEST,
+        )
+        and item.get("generation_contract_version")
+        == decision_reporting.REPORT_GENERATION_CONTRACT_VERSION
+        and item.get("renderer_fingerprint") == active_renderer_fingerprint
+    ]
+    verified_reviews = [
+        item
+        for item in active_reviews
+        if _shadow_review_has_verified_artifact(
+            item,
+            active_renderer_fingerprint=active_renderer_fingerprint,
+        )
+    ]
+    invalid_evidence = len(active_reviews) - len(verified_reviews)
+    passed_case_ids = {
+        str(item.get("case_id"))
+        for item in verified_reviews
+        if item.get("outcome") == "passed"
+    }
+    passed = len(passed_case_ids)
+    failed = sum(item.get("outcome") == "failed" for item in verified_reviews)
+    needs_followup = sum(
+        item.get("outcome") == "needs_followup" for item in verified_reviews
+    )
+    behavior_eval_cases = int(
+        getattr(config, "DECISION_AGENT_BEHAVIOR_EVAL_CASES", 0)
+    )
+    automated_complete = behavior_eval_cases >= 20
+    automated_passed = bool(automated_complete and renderer_available)
+    automated_checks = [
+        {
+            "id": "recommendation_contract_bound",
+            "status": "passed",
+            "contract_version": recommendation_service.RECOMMENDATION_CONTRACT_VERSION,
+            "contract_digest": recommendation_service.RECOMMENDATION_CONTRACT_DIGEST,
+        },
+        {
+            "id": "report_integrity_contract_bound",
+            "status": "passed" if renderer_available else "failed",
+            "contract_version": decision_reporting.REPORT_GENERATION_CONTRACT_VERSION,
+        },
+        {
+            "id": "human_authority_server_enforced",
+            "status": "passed",
+        },
+    ]
+    human_complete = bool(
+        passed >= _SHADOW_REVIEW_REQUIRED_CASES
+        and failed == 0
+        and needs_followup == 0
+        and invalid_evidence == 0
+    )
+    return {
+        "decision_agent_enabled": bool(config.DECISION_AGENT_ENABLED),
+        "shadow_mode": bool(
+            getattr(config, "DECISION_AGENT_SHADOW_MODE", False)
+        ),
+        "automated_gates": {
+            "status": "passed" if automated_passed else "incomplete",
+            "checks": automated_checks,
+            "scope": "runtime contract wiring and operator-supplied CI eval count",
+            "behavior_evals": {
+                "status": "complete" if automated_complete else "incomplete",
+                "required_cases": 20,
+                "recorded_cases": behavior_eval_cases,
+            },
+        },
+        "human_shadow_review": {
+            "status": "complete" if human_complete else "incomplete",
+            "checklist_version": _SHADOW_REVIEW_CHECKLIST_VERSION,
+            "required_cases": _SHADOW_REVIEW_REQUIRED_CASES,
+            "recorded_cases": len({str(item.get("case_id")) for item in reviews}),
+            "active_contract_cases": len(active_reviews),
+            "verified_cases": len(verified_reviews),
+            "passed_cases": passed,
+            "failed_cases": failed,
+            "needs_followup_cases": needs_followup,
+            "invalid_evidence_cases": invalid_evidence,
+            "outdated_contract_cases": len(reviews) - len(active_reviews),
+        },
+        "release_ready": bool(
+            config.DECISION_AGENT_ENABLED
+            and automated_passed
+            and human_complete
+            and failed == 0
+            and needs_followup == 0
+        ),
+    }
 
 
 def _case_or_404(case_id: str) -> dict[str, Any]:
@@ -304,41 +573,150 @@ def _decision_brief_caveats(bundle: dict[str, Any]) -> list[Any]:
     return public_caveats if isinstance(public_caveats, list) else []
 
 
-def _decision_action_context(case_id: str) -> dict[str, Any]:
-    """Return the server-owned gates for the unsigned Decision Brief phase."""
-
+def _classify_brief_bundle(brief: dict[str, Any]) -> dict[str, Any]:
+    bundle = brief.get("comparison_bundle")
+    if not isinstance(bundle, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "decision_brief_bundle_invalid",
+                "message": "The immutable Decision Brief bundle is invalid.",
+            },
+        )
     try:
-        links = state.AGENT_STORE.list_decision_scenario_jobs(
-            case_id,
-            latest_attempts_only=False,
-            limit=1_000,
+        return recommendation_service.classify_comparison_bundle(
+            bundle,
+            expected_bundle_sha256=str(
+                brief.get("comparison_bundle_sha256") or ""
+            ),
         )
-        bundles = state.AGENT_STORE.list_decision_comparison_bundles(
-            case_id,
-            include_stale=True,
-            limit=100,
-        )
-        briefs = state.AGENT_STORE.list_decision_briefs(
-            case_id,
-            include_superseded=True,
-            limit=100,
+    except recommendation_service.RecommendationContractError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+
+def _persist_brief_recommendation(brief: dict[str, Any]) -> dict[str, Any]:
+    existing = state.AGENT_STORE.get_decision_recommendation(
+        str(brief["brief_revision_id"])
+    )
+    if existing is not None:
+        # Recompute before every authority boundary; durable sidecar identity alone
+        # is not permission to trust changed or corrupted comparison bytes.
+        calculated = _classify_brief_bundle(brief)
+        stored_payload = existing.get("recommendation")
+        if not isinstance(stored_payload, dict) or calculated != stored_payload:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "stored_recommendation_mismatch",
+                    "message": (
+                        "The stored recommendation no longer matches the exact "
+                        "immutable comparison snapshot."
+                    ),
+                },
+            )
+        return existing
+    calculated = _classify_brief_bundle(brief)
+    if calculated.get("state") != "available" or calculated.get(
+        "recommendation_eligible"
+    ) is not True:
+        return {
+            "case_id": brief.get("case_id"),
+            "brief_revision_id": brief.get("brief_revision_id"),
+            "classification": calculated.get("classification"),
+            "confidence": calculated.get("confidence"),
+            "contract_version": calculated.get("contract_version"),
+            "contract_digest": calculated.get("contract_digest"),
+            "recommendation": calculated,
+            "available": False,
+        }
+    try:
+        return state.AGENT_STORE.create_decision_recommendation(
+            str(brief["case_id"]),
+            brief_revision_id=str(brief["brief_revision_id"]),
+            recommendation=calculated,
+            contract_version=recommendation_service.RECOMMENDATION_CONTRACT_VERSION,
+            contract_digest=recommendation_service.RECOMMENDATION_CONTRACT_DIGEST,
+            recommendation_id=(
+                "drec_" + str(calculated["classification_input_sha256"])[:32]
+            ),
         )
     except (AgentStoreError, ValueError) as exc:
         raise _store_failure(exc) from exc
-    # Read the case after its related histories so the returned revision is a
-    # usable response fence for clients. Store methods own separate transactions,
-    # so a later write can still require the normal expected-revision retry.
-    case_record = _case_or_404(case_id)
 
-    confirmation_ids: list[str] = []
-    for link in links:
-        confirmation_id = str(
-            link.get("confirmation_id")
-            or link.get("scenario_confirmation_id")
-            or ""
+
+def _brief_with_sidecars(
+    brief: dict[str, Any],
+    *,
+    recommendation_record: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    enriched = dict(brief)
+    if recommendation_record is None:
+        recommendation_record = state.AGENT_STORE.get_decision_recommendation(
+            str(brief["brief_revision_id"])
         )
-        if confirmation_id and confirmation_id not in confirmation_ids:
-            confirmation_ids.append(confirmation_id)
+        if recommendation_record is None:
+            recommendation_payload = _classify_brief_bundle(brief)
+            recommendation_record = {
+                "case_id": brief.get("case_id"),
+                "brief_revision_id": brief.get("brief_revision_id"),
+                "classification": recommendation_payload.get("classification"),
+                "confidence": recommendation_payload.get("confidence"),
+                "contract_version": recommendation_payload.get("contract_version"),
+                "contract_digest": recommendation_payload.get("contract_digest"),
+                "recommendation": recommendation_payload,
+            }
+    enriched["recommendation"] = recommendation_record
+    signoffs = state.AGENT_STORE.list_decision_signoffs(
+        str(brief["case_id"]), limit=100
+    )
+    signoff = next(
+        (
+            item
+            for item in signoffs
+            if item.get("brief_revision_id") == brief.get("brief_revision_id")
+        ),
+        None,
+    )
+    if signoff is not None:
+        enriched["signoff"] = signoff
+    return enriched
+
+
+def _decision_action_context(case_id: str) -> dict[str, Any]:
+    """Return server-owned comparison, authority, and report gates."""
+
+    try:
+        links = state.AGENT_STORE.list_decision_scenario_jobs(
+            case_id, latest_attempts_only=False, limit=1_000
+        )
+        bundles = state.AGENT_STORE.list_decision_comparison_bundles(
+            case_id, include_stale=True, limit=100
+        )
+        briefs = state.AGENT_STORE.list_decision_briefs(
+            case_id, include_superseded=True, limit=100
+        )
+        recommendations = state.AGENT_STORE.list_decision_recommendations(
+            case_id, limit=100
+        )
+        signoffs = state.AGENT_STORE.list_decision_signoffs(case_id, limit=100)
+        reports = state.AGENT_STORE.list_decision_reports(case_id, limit=100)
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    case_record = _case_or_404(case_id)
+    confirmation_ids = list(
+        dict.fromkeys(
+            str(
+                item.get("confirmation_id")
+                or item.get("scenario_confirmation_id")
+                or ""
+            )
+            for item in links
+            if item.get("confirmation_id") or item.get("scenario_confirmation_id")
+        )
+    )
     current_bundle = next(
         (
             item
@@ -346,6 +724,9 @@ def _decision_action_context(case_id: str) -> dict[str, Any]:
             if item.get("is_current", True) and not item.get("stale_at")
         ),
         None,
+    )
+    stale_bundle = next(
+        (item for item in bundles if item.get("stale_at")), None
     )
     current_brief = next(
         (
@@ -357,39 +738,86 @@ def _decision_action_context(case_id: str) -> dict[str, Any]:
         ),
         None,
     )
-    stale_bundle = next(
-        (item for item in bundles if item.get("stale_at")),
+    current_recommendation = next(
+        (
+            item
+            for item in recommendations
+            if current_brief is not None
+            and item.get("brief_revision_id")
+            == current_brief.get("brief_revision_id")
+        ),
         None,
     )
-    case_mutable = str(case_record.get("status") or "") not in {
-        "signed",
-        "archived",
-    }
-    can_open = bool(confirmation_ids or bundles or briefs)
-    can_build = bool(confirmation_ids and case_mutable and current_bundle is None)
+    current_signoff = next(
+        (
+            item
+            for item in signoffs
+            if current_brief is not None
+            and item.get("brief_revision_id")
+            == current_brief.get("brief_revision_id")
+        ),
+        None,
+    )
+    draft_report = next(
+        (
+            item
+            for item in reports
+            if current_brief is not None
+            and item.get("brief_revision_id")
+            == current_brief.get("brief_revision_id")
+            and item.get("report_kind") == "draft"
+        ),
+        None,
+    )
+    final_report = next(
+        (
+            item
+            for item in reports
+            if current_signoff is not None
+            and item.get("signoff_id") == current_signoff.get("signoff_id")
+            and item.get("report_kind") == "final"
+        ),
+        None,
+    )
+    shadow = bool(getattr(config, "DECISION_AGENT_SHADOW_MODE", False))
+    case_status = str(case_record.get("status") or "")
+    case_mutable = case_status not in {"signed", "archived"}
     current_bundle_id = (
         current_bundle.get("comparison_bundle_id") if current_bundle else None
     )
     current_brief_bundle_id = (
         current_brief.get("comparison_bundle_id") if current_brief else None
     )
+    can_open = bool(confirmation_ids or bundles or briefs)
+    can_build = bool(confirmation_ids and case_mutable and current_bundle is None)
     can_create_brief = bool(
         current_bundle
         and current_bundle.get("is_complete")
-        and not current_bundle.get("stale_at")
         and current_brief_bundle_id != current_bundle_id
         and case_mutable
     )
-    brief_create_disabled_reason = (
-        "This exact comparison snapshot already has an immutable brief revision."
-        if current_bundle_id
-        and current_brief_bundle_id == current_bundle_id
-        else "A current, complete, verified comparison bundle is required."
+    can_sign = bool(
+        current_recommendation
+        and current_brief
+        and current_signoff is None
+        and case_status == "decision_ready"
+        and not shadow
     )
-    comparison_build_disabled_reason = (
-        "A current immutable comparison snapshot already exists."
-        if current_bundle is not None
-        else "An immutable confirmation is required for comparison."
+    can_draft_report = bool(
+        current_recommendation and current_brief and draft_report is None
+    )
+    can_final_report = bool(
+        current_signoff
+        and final_report is None
+        and case_status == "signed"
+        and not shadow
+    )
+    required_acknowledgements = (
+        state.AGENT_STORE._recommendation_warning_ids(
+            current_recommendation.get("recommendation") or {}
+        )
+        if current_recommendation is not None
+        else []
     )
     blockers: list[dict[str, Any]] = []
     if not confirmation_ids:
@@ -407,7 +835,7 @@ def _decision_action_context(case_id: str) -> dict[str, Any]:
                 "blocking": True,
                 "message": (
                     "Partial results remain visible, but an incomplete comparison "
-                    "cannot create a final Decision Brief revision."
+                    "cannot create a Decision Brief revision."
                 ),
             }
         )
@@ -422,14 +850,26 @@ def _decision_action_context(case_id: str) -> dict[str, Any]:
                 "message": "Build a new comparison snapshot from current durable inputs.",
             }
         )
-    if current_bundle is not None and current_bundle.get("is_complete"):
+    if current_brief is not None and current_recommendation is None:
+        observed = _classify_brief_bundle(current_brief)
+        blockers.extend(observed.get("blockers") or [])
+        if observed.get("state") == "available":
+            blockers.append(
+                {
+                    "code": "recommendation_not_activated",
+                    "blocking": True,
+                    "message": "Replay brief verification to activate this recommendation.",
+                }
+            )
+    if shadow:
         blockers.append(
             {
-                "code": "classification_pending_contract",
+                "code": "decision_agent_shadow_mode",
                 "blocking": True,
                 "message": (
-                    "No approved deterministic recommendation or confidence "
-                    "threshold contract exists for this phase."
+                    "Shadow mode permits evaluation and draft reports, but blocks "
+                    "execution, evidence acceptance, recommendation activation, "
+                    "sign-off, and final reports."
                 ),
             }
         )
@@ -459,13 +899,21 @@ def _decision_action_context(case_id: str) -> dict[str, Any]:
             action(
                 "build_comparison_bundle",
                 can_build,
-                comparison_build_disabled_reason,
+                (
+                    "A current immutable comparison snapshot already exists."
+                    if current_bundle is not None
+                    else "An immutable confirmation is required for comparison."
+                ),
                 confirmation_ids=confirmation_ids,
             ),
             action(
                 "create_decision_brief",
                 can_create_brief,
-                brief_create_disabled_reason,
+                (
+                    "This exact comparison snapshot already has a brief."
+                    if current_brief_bundle_id == current_bundle_id
+                    else "A current complete comparison is required."
+                ),
                 comparison_bundle_id=(
                     current_bundle_id
                 ),
@@ -475,6 +923,61 @@ def _decision_action_context(case_id: str) -> dict[str, Any]:
                     else None
                 ),
             ),
+            action(
+                "sign_accept",
+                can_sign,
+                "A current activated recommendation and human authority are required.",
+                brief_revision_id=(
+                    current_brief.get("brief_revision_id") if current_brief else None
+                ),
+                acknowledgement_text=_DECISION_ACKNOWLEDGEMENT_TEXT,
+                acknowledgement_version=_DECISION_ACKNOWLEDGEMENT_VERSION,
+                required_warning_acknowledgements=required_acknowledgements,
+            ),
+            action(
+                "sign_reject",
+                can_sign,
+                "A current activated recommendation and human authority are required.",
+                brief_revision_id=(
+                    current_brief.get("brief_revision_id") if current_brief else None
+                ),
+                acknowledgement_text=_DECISION_ACKNOWLEDGEMENT_TEXT,
+                acknowledgement_version=_DECISION_ACKNOWLEDGEMENT_VERSION,
+                required_warning_acknowledgements=required_acknowledgements,
+            ),
+            action(
+                "sign_defer",
+                can_sign,
+                "A current activated recommendation and human authority are required.",
+                brief_revision_id=(
+                    current_brief.get("brief_revision_id") if current_brief else None
+                ),
+                acknowledgement_text=_DECISION_ACKNOWLEDGEMENT_TEXT,
+                acknowledgement_version=_DECISION_ACKNOWLEDGEMENT_VERSION,
+                required_warning_acknowledgements=required_acknowledgements,
+            ),
+            action(
+                "generate_draft_report",
+                can_draft_report,
+                "A stored recommendation and current brief are required.",
+            ),
+            action(
+                "generate_final_report",
+                can_final_report,
+                "An authenticated sign-off is required and shadow mode must be off.",
+            ),
+            action(
+                "verify_report",
+                bool(final_report or draft_report),
+                "Generate a report before verifying it.",
+                report_id=(final_report or draft_report or {}).get("report_id"),
+            ),
+            action(
+                "download_report",
+                bool(final_report or draft_report),
+                "Generate and verify a report before downloading it.",
+                report_id=(final_report or draft_report or {}).get("report_id"),
+            ),
         ],
         "decision_blockers": serializers.safe_public_value(blockers),
         "current_comparison_bundle_id": (
@@ -483,9 +986,24 @@ def _decision_action_context(case_id: str) -> dict[str, Any]:
         "current_decision_brief_revision_id": (
             current_brief.get("brief_revision_id") if current_brief else None
         ),
-        "recommendation_contract_state": "classification_pending_contract",
-        "signoff_available": False,
-        "report_generation_available": False,
+        "recommendation_contract_state": (
+            "active"
+            if current_recommendation and not shadow
+            else "shadow" if current_recommendation else "unavailable"
+        ),
+        "recommendation_contract_version": (
+            recommendation_service.RECOMMENDATION_CONTRACT_VERSION
+        ),
+        "recommendation_contract_digest": (
+            recommendation_service.RECOMMENDATION_CONTRACT_DIGEST
+        ),
+        "signoff_available": can_sign,
+        "report_generation_available": bool(
+            can_draft_report or can_final_report
+        ),
+        "signoffs": [serializers.public_decision_signoff(item) for item in signoffs],
+        "reports": [serializers.public_decision_report(item) for item in reports],
+        "release_readiness": _release_readiness(),
     }
 
 
@@ -572,10 +1090,23 @@ def _expire_due_scenario_drafts(case_record: dict[str, Any]) -> None:
 def _scenario_response_context(case_id: str) -> dict[str, Any]:
     case_record = _case_or_404(case_id)
     readiness_record = _readiness_or_503(case_id)
+    allowed_actions = list(readiness_record.get("allowed_case_actions") or [])
+    if getattr(config, "DECISION_AGENT_SHADOW_MODE", False):
+        shadow_blocked = {"confirm_scenarios", "retry_failed_execution"}
+        allowed_actions = [
+            {
+                **item,
+                "enabled": False,
+                "disabled_reason": "Shadow mode blocks execution authority.",
+            }
+            if isinstance(item, dict) and item.get("id") in shadow_blocked
+            else item
+            for item in allowed_actions
+        ]
     return {
         "case": serializers.public_decision_case(case_record),
         "readiness": readiness_record,
-        "allowed_actions": readiness_record.get("allowed_case_actions") or [],
+        "allowed_actions": allowed_actions,
         "blockers": readiness_record.get("blockers") or [],
         **_decision_action_context(case_id),
     }
@@ -610,7 +1141,10 @@ def _public_scenario(
         ),
         (
             "select_for_confirmation",
-            current and status == "validated" and case_status == "ready_to_run",
+            current
+            and status == "validated"
+            and case_status == "ready_to_run"
+            and not getattr(config, "DECISION_AGENT_SHADOW_MODE", False),
             "Selection requires a current validated scenario in a ready case.",
         ),
     )
@@ -1395,6 +1929,7 @@ def confirm_case_scenarios(
     case_id: str,
     request_payload: DecisionScenarioConfirmRequest,
 ) -> dict[str, Any]:
+    _require_not_shadow_blocked("scenario confirmation and execution")
     canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
     case_record = _case_or_404(canonical_case)
     try:
@@ -1709,6 +2244,7 @@ def retry_case_execution_job(
     job_id: str,
     request_payload: DecisionScenarioJobActionRequest,
 ) -> dict[str, Any]:
+    _require_not_shadow_blocked("scenario execution retry")
     canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
     canonical_job = _validate_identifier(job_id, _TEA_JOB_ID_RE)
     case_record = _case_or_404(canonical_case)
@@ -1930,7 +2466,8 @@ def list_case_decision_briefs(
         raise _store_failure(exc) from exc
     return {
         "decision_briefs": [
-            serializers.public_decision_brief(item) for item in records
+            serializers.public_decision_brief(_brief_with_sidecars(item))
+            for item in records
         ],
         **_decision_action_context(canonical_case),
     }
@@ -1982,25 +2519,23 @@ def create_case_decision_brief(
                 "message": "The stored comparison snapshot is invalid.",
             },
         )
-    recommendation = bundle.get("recommendation")
-    if not isinstance(recommendation, dict):
-        recommendation = {}
-    classification = str(
-        recommendation.get("state") or "classification_pending_contract"
-    )
-    if classification != "classification_pending_contract":
+    try:
+        decision_recommendation = (
+            recommendation_service.classify_comparison_bundle(
+                bundle,
+                expected_bundle_sha256=request_payload.bundle_sha256,
+            )
+        )
+    except recommendation_service.RecommendationContractError as exc:
         raise HTTPException(
             status_code=409,
-            detail={
-                "code": "recommendation_contract_unsupported",
-                "message": (
-                    "This phase only permits the explicit pending-contract "
-                    "classification; no winner threshold is approved."
-                ),
-            },
-        )
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    # Schema-v8 Decision Brief bytes remain historical and explicitly pending.
+    # The approved v1 result is persisted in the schema-v9 immutable sidecar.
+    classification = "classification_pending_contract"
     caveats = _decision_brief_caveats(bundle)
-    reversal_conditions = recommendation.get("reversal_conditions")
+    reversal_conditions = decision_recommendation.get("reversal_conditions")
     if not isinstance(reversal_conditions, list):
         reversal_conditions = []
     reversal_conditions = serializers.exact_public_value(reversal_conditions)
@@ -2015,11 +2550,25 @@ def create_case_decision_brief(
         "comparison_schema_version": bundle_record.get(
             "bundle_schema_version"
         ),
-        "recommendation_contract_state": "classification_pending_contract",
+        "recommendation_contract_state": decision_recommendation.get("state"),
+        "recommendation_contract_version": (
+            recommendation_service.RECOMMENDATION_CONTRACT_VERSION
+        ),
+        "recommendation_contract_digest": (
+            recommendation_service.RECOMMENDATION_CONTRACT_DIGEST
+        ),
+        "classification_input_sha256": decision_recommendation.get(
+            "classification_input_sha256"
+        ),
         "result_interpretation": "deterministic_server_only",
         "decision_agent_result_access": False,
-        "signoff_available": False,
-        "report_generation_available": False,
+        "signoff_available": bool(
+            decision_recommendation.get("state") == "available"
+            and not getattr(config, "DECISION_AGENT_SHADOW_MODE", False)
+        ),
+        "report_generation_available": bool(
+            decision_recommendation.get("state") == "available"
+        ),
     }
     public_provenance = serializers.exact_public_value(provenance)
     if not isinstance(public_provenance, dict):  # pragma: no cover - fixed shape
@@ -2125,11 +2674,34 @@ def create_case_decision_brief(
         )
     except (AgentStoreError, ValueError) as exc:
         raise _store_failure(exc) from exc
+    recommendation_record = _persist_brief_recommendation(created)
     response_case = created.get("case")
     if not isinstance(response_case, dict):
         response_case = _case_or_404(canonical_case)
+    if (
+        recommendation_record.get("recommendation_id")
+        and not getattr(config, "DECISION_AGENT_SHADOW_MODE", False)
+        and response_case.get("status") == "results_ready"
+    ):
+        try:
+            response_case = state.AGENT_STORE.transition_decision_case(
+                canonical_case,
+                expected_revision=int(response_case.get("revision") or 0),
+                status="decision_ready",
+                operator_name="deterministic-recommendation-policy",
+                reason=(
+                    "The exact comparison passed the approved deterministic "
+                    "recommendation contract."
+                ),
+            )
+        except (AgentStoreError, ValueError) as exc:
+            raise _store_failure(exc) from exc
     return {
-        "decision_brief": serializers.public_decision_brief(created),
+        "decision_brief": serializers.public_decision_brief(
+            _brief_with_sidecars(
+                created, recommendation_record=recommendation_record
+            )
+        ),
         "case": serializers.public_decision_case(response_case),
         "idempotent_replay": bool(created.get("idempotent_replay")),
         **_decision_action_context(canonical_case),
@@ -2154,8 +2726,499 @@ def get_case_decision_brief(
     if record is None or str(record.get("case_id") or "") != canonical_case:
         raise _not_found()
     return {
-        "decision_brief": serializers.public_decision_brief(record),
+        "decision_brief": serializers.public_decision_brief(
+            _brief_with_sidecars(record)
+        ),
         **_decision_action_context(canonical_case),
+    }
+
+
+@router.get(
+    "/cases/{case_id}/decision-briefs/{brief_revision_id}/signoffs"
+)
+def list_case_decision_signoffs(
+    case_id: str,
+    brief_revision_id: str,
+) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    canonical_brief = _validate_identifier(
+        brief_revision_id, _DECISION_BRIEF_REVISION_ID_RE
+    )
+    brief = state.AGENT_STORE.get_decision_brief(canonical_brief)
+    if brief is None or brief.get("case_id") != canonical_case:
+        raise _not_found()
+    try:
+        records = state.AGENT_STORE.list_decision_signoffs(
+            canonical_case, limit=100
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    return {
+        "signoffs": [
+            serializers.public_decision_signoff(item)
+            for item in records
+            if item.get("brief_revision_id") == canonical_brief
+        ],
+        **_decision_action_context(canonical_case),
+    }
+
+
+@router.post(
+    "/cases/{case_id}/decision-briefs/{brief_revision_id}/signoffs",
+    status_code=201,
+)
+def create_case_decision_signoff(
+    request: Request,
+    case_id: str,
+    brief_revision_id: str,
+    request_payload: DecisionSignoffCreateRequest,
+) -> dict[str, Any]:
+    principal = _require_human_authority(request)
+    _require_not_shadow_blocked("recommendation activation and sign-off")
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    canonical_brief = _validate_identifier(
+        brief_revision_id, _DECISION_BRIEF_REVISION_ID_RE
+    )
+    if (
+        request_payload.acknowledgement_text
+        != _DECISION_ACKNOWLEDGEMENT_TEXT
+        or request_payload.acknowledgement_version
+        != _DECISION_ACKNOWLEDGEMENT_VERSION
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "signoff_acknowledgement_mismatch",
+                "message": "Use the exact server-published sign-off acknowledgement.",
+            },
+        )
+    brief = state.AGENT_STORE.get_decision_brief(canonical_brief)
+    if brief is None or brief.get("case_id") != canonical_case:
+        raise _not_found()
+    recommendation_record = _persist_brief_recommendation(brief)
+    recommendation_id = recommendation_record.get("recommendation_id")
+    if not recommendation_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "recommendation_unavailable",
+                "message": "The exact comparison does not pass every hard recommendation gate.",
+                "blockers": (
+                    recommendation_record.get("recommendation", {}).get("blockers")
+                    if isinstance(recommendation_record.get("recommendation"), dict)
+                    else []
+                ),
+            },
+        )
+    # Recompute and compare before crossing the authority boundary.
+    _persist_brief_recommendation(brief)
+    try:
+        created = state.AGENT_STORE.create_decision_signoff(
+            canonical_case,
+            expected_case_revision=request_payload.expected_case_revision,
+            brief_revision_id=canonical_brief,
+            recommendation_id=str(recommendation_id),
+            disposition=request_payload.disposition,
+            authenticated_principal=principal,
+            decision_owner_name=request_payload.decision_owner_name,
+            rationale=request_payload.rationale,
+            acknowledgement_text=request_payload.acknowledgement_text,
+            acknowledgement_version=request_payload.acknowledgement_version,
+            provisional_warning_acknowledgements=(
+                request_payload.provisional_warning_acknowledgements
+            ),
+            idempotency_key=request_payload.idempotency_key,
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    return {
+        "signoff": serializers.public_decision_signoff(created),
+        "idempotent_replay": bool(created.get("idempotent_replay")),
+        **_decision_action_context(canonical_case),
+    }
+
+
+def _report_source_snapshots(
+    *,
+    case_record: dict[str, Any],
+    brief: dict[str, Any],
+    recommendation_record: dict[str, Any],
+    signoff: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    if signoff is not None:
+        signed_snapshot = signoff.get("decision_snapshot")
+        if not isinstance(signed_snapshot, dict):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "signed_snapshot_invalid",
+                    "message": "The immutable signed snapshot is unavailable.",
+                },
+            )
+        case_source = signed_snapshot.get("case")
+        brief_source = signed_snapshot.get("brief")
+        recommendation_source = signed_snapshot.get("recommendation")
+        signoff_source = signed_snapshot.get("signoff")
+        if not all(
+            isinstance(item, dict)
+            for item in (
+                case_source,
+                brief_source,
+                recommendation_source,
+                signoff_source,
+            )
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "signed_snapshot_invalid",
+                    "message": "The immutable signed snapshot is malformed.",
+                },
+            )
+        exact_signoff = dict(signoff_source)
+        exact_signoff.update(
+            {
+                "signoff_id": signoff.get("signoff_id"),
+                "decision_snapshot_sha256": signoff.get(
+                    "decision_snapshot_sha256"
+                ),
+            }
+        )
+        return (
+            dict(case_source),
+            dict(brief_source),
+            dict(recommendation_source),
+            exact_signoff,
+        )
+    case_source = dict(case_record)
+    case_source["case_id"] = case_source.pop("id", case_source.get("case_id"))
+    recommendation_source = recommendation_record.get("recommendation")
+    if not isinstance(recommendation_source, dict):
+        raise HTTPException(status_code=409, detail="Recommendation unavailable.")
+    return case_source, dict(brief), dict(recommendation_source), None
+
+
+@router.post("/cases/{case_id}/reports", status_code=201)
+def create_case_decision_report(
+    request: Request,
+    case_id: str,
+    request_payload: DecisionReportCreateRequest,
+) -> dict[str, Any]:
+    principal = _require_human_authority(request)
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    canonical_brief = _validate_identifier(
+        request_payload.brief_revision_id, _DECISION_BRIEF_REVISION_ID_RE
+    )
+    if request_payload.report_kind == "final":
+        _require_not_shadow_blocked("final report generation")
+    case_record = _case_or_404(canonical_case)
+    brief = state.AGENT_STORE.get_decision_brief(canonical_brief)
+    if brief is None or brief.get("case_id") != canonical_case:
+        raise _not_found()
+    recommendation_record = _persist_brief_recommendation(brief)
+    if not recommendation_record.get("recommendation_id"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "recommendation_unavailable",
+                "message": "A stored approved recommendation is required.",
+            },
+        )
+    signoff = None
+    if request_payload.signoff_id is not None:
+        signoff_id = _validate_identifier(
+            request_payload.signoff_id, _DECISION_SIGNOFF_ID_RE
+        )
+        signoff = state.AGENT_STORE.get_decision_signoff(signoff_id)
+        if (
+            signoff is None
+            or signoff.get("case_id") != canonical_case
+            or signoff.get("brief_revision_id") != canonical_brief
+        ):
+            raise _not_found()
+    case_source, brief_source, rec_source, signoff_source = (
+        _report_source_snapshots(
+            case_record=case_record,
+            brief=brief,
+            recommendation_record=recommendation_record,
+            signoff=signoff,
+        )
+    )
+    try:
+        snapshot = decision_reporting.prepare_report_snapshot(
+            report_kind=request_payload.report_kind,
+            case=case_source,
+            brief=brief_source,
+            recommendation=rec_source,
+            signoff=signoff_source,
+        )
+        rendered = decision_reporting.render_manager_pdf(snapshot)
+        storage_key = decision_reporting.publish_report_pdf(
+            config.DECISION_REPORT_DIR, rendered
+        )
+        report_section = snapshot["report"]
+        created = state.AGENT_STORE.create_decision_report(
+            canonical_case,
+            case_revision=request_payload.expected_case_revision,
+            report_kind=request_payload.report_kind,
+            brief_revision_id=canonical_brief,
+            signoff_id=(signoff.get("signoff_id") if signoff else None),
+            recommendation_contract_version=(
+                recommendation_service.RECOMMENDATION_CONTRACT_VERSION
+            ),
+            recommendation_contract_digest=(
+                recommendation_service.RECOMMENDATION_CONTRACT_DIGEST
+            ),
+            snapshot=snapshot,
+            pdf_sha256=rendered.pdf_sha256,
+            byte_count=rendered.byte_count,
+            page_count=rendered.page_count,
+            generation_contract_version=(
+                decision_reporting.REPORT_GENERATION_CONTRACT_VERSION
+            ),
+            renderer_fingerprint=rendered.renderer_fingerprint,
+            storage_key=storage_key,
+            report_identity_sha256=str(
+                report_section["report_identity_sha256"]
+            ),
+            created_principal=principal,
+            created_by=principal,
+            idempotency_key=request_payload.idempotency_key,
+            report_id=str(report_section["report_id"]),
+        )
+        _, verification = decision_reporting.verified_report_pdf(
+            config.DECISION_REPORT_DIR, created
+        )
+    except decision_reporting.DecisionReportError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.detail},
+        ) from exc
+    except (AgentStoreError, OSError, TypeError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    return {
+        "report": serializers.public_decision_report(created),
+        "verification": serializers.safe_public_value(verification),
+        "idempotent_replay": bool(created.get("idempotent_replay")),
+        **_decision_action_context(canonical_case),
+    }
+
+
+@router.get("/cases/{case_id}/reports")
+def list_case_decision_reports(case_id: str) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    _case_or_404(canonical_case)
+    try:
+        records = state.AGENT_STORE.list_decision_reports(
+            canonical_case, limit=100
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    return {
+        "reports": [serializers.public_decision_report(item) for item in records],
+        **_decision_action_context(canonical_case),
+    }
+
+
+def _decision_report_or_404(case_id: str, report_id: str) -> dict[str, Any]:
+    canonical_report = _validate_identifier(report_id, _DECISION_REPORT_ID_RE)
+    record = state.AGENT_STORE.get_decision_report(canonical_report)
+    if record is None or record.get("case_id") != case_id:
+        raise _not_found()
+    return record
+
+
+@router.get("/cases/{case_id}/reports/{report_id}")
+def get_case_decision_report(case_id: str, report_id: str) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    record = _decision_report_or_404(canonical_case, report_id)
+    return {
+        "report": serializers.public_decision_report(record),
+        **_decision_action_context(canonical_case),
+    }
+
+
+@router.post("/cases/{case_id}/reports/{report_id}/verify")
+def verify_case_decision_report(case_id: str, report_id: str) -> dict[str, Any]:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    record = _decision_report_or_404(canonical_case, report_id)
+    try:
+        _, verification = decision_reporting.verified_report_pdf(
+            config.DECISION_REPORT_DIR, record
+        )
+    except decision_reporting.DecisionReportError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.detail},
+        ) from exc
+    return {
+        "report": serializers.public_decision_report(record),
+        "verification": serializers.safe_public_value(verification),
+    }
+
+
+@router.get("/cases/{case_id}/reports/{report_id}/download")
+def download_case_decision_report(case_id: str, report_id: str) -> Response:
+    canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
+    record = _decision_report_or_404(canonical_case, report_id)
+    try:
+        payload, verification = decision_reporting.verified_report_pdf(
+            config.DECISION_REPORT_DIR, record
+        )
+    except decision_reporting.DecisionReportError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.detail},
+        ) from exc
+    filename = f"pv-decision-report-{record['report_id']}.pdf"
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "ETag": f'"sha256-{verification["pdf_sha256"]}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/release-readiness")
+def get_autonomy_release_readiness() -> dict[str, Any]:
+    return {"release_readiness": _release_readiness()}
+
+
+@router.post("/shadow-reviews", status_code=201)
+def create_autonomy_shadow_review(
+    request: Request,
+    request_payload: DecisionShadowReviewCreateRequest,
+) -> dict[str, Any]:
+    principal = _require_human_authority(request)
+    _require_shadow_mode("recording shadow review evidence")
+    if request_payload.checklist_version != _SHADOW_REVIEW_CHECKLIST_VERSION:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "shadow_checklist_version_mismatch",
+                "message": "Use the current server-published shadow checklist.",
+            },
+        )
+    canonical_case = _validate_identifier(request_payload.case_id, _CASE_ID_RE)
+    canonical_brief = _validate_identifier(
+        request_payload.brief_revision_id, _DECISION_BRIEF_REVISION_ID_RE
+    )
+    canonical_report = _validate_identifier(
+        request_payload.report_id, _DECISION_REPORT_ID_RE
+    )
+    report = _decision_report_or_404(canonical_case, canonical_report)
+    try:
+        active_renderer_fingerprint = decision_reporting.renderer_fingerprint()
+    except decision_reporting.DecisionReportError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.detail},
+        ) from exc
+    supplied_identity = {
+        "case_id": canonical_case,
+        "brief_revision_id": canonical_brief,
+        "report_id": canonical_report,
+        "report_snapshot_sha256": request_payload.report_snapshot_sha256,
+        "pdf_sha256": request_payload.pdf_sha256,
+        "report_identity_sha256": request_payload.report_identity_sha256,
+        "recommendation_contract_version": report.get(
+            "recommendation_contract_version"
+        ),
+        "recommendation_contract_digest": report.get(
+            "recommendation_contract_digest"
+        ),
+        "generation_contract_version": report.get("generation_contract_version"),
+        "renderer_fingerprint": report.get("renderer_fingerprint"),
+    }
+    if not _shadow_review_matches_report(
+        supplied_identity,
+        report,
+        active_renderer_fingerprint=active_renderer_fingerprint,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "shadow_review_report_identity_mismatch",
+                "message": (
+                    "The shadow review must reference the exact active-contract "
+                    "draft report, snapshot, and PDF."
+                ),
+            },
+        )
+    try:
+        _, verification = decision_reporting.verified_report_pdf(
+            config.DECISION_REPORT_DIR, report
+        )
+    except decision_reporting.DecisionReportError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.detail},
+        ) from exc
+    if not (
+        secrets.compare_digest(
+            str(verification.get("snapshot_sha256") or ""),
+            request_payload.report_snapshot_sha256,
+        )
+        and secrets.compare_digest(
+            str(verification.get("pdf_sha256") or ""),
+            request_payload.pdf_sha256,
+        )
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "shadow_review_report_verification_mismatch",
+                "message": "The verified report identities do not match the review request.",
+            },
+        )
+    review = request_payload.review.model_dump(mode="python")
+    required_checks = {
+        "unauthorized_execution_observed": False,
+        "numeric_citations_verified": True,
+        "result_tie_out_verified": True,
+        "report_tie_out_verified": True,
+    }
+    if any(review.get(key) is not expected for key, expected in required_checks.items()):
+        if request_payload.outcome == "passed":
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "shadow_review_pass_not_supported",
+                    "message": "A passed review must explicitly satisfy every checklist gate.",
+                },
+            )
+    try:
+        created = state.AGENT_STORE.create_decision_shadow_review(
+            case_id=canonical_case,
+            brief_revision_id=canonical_brief,
+            report_id=canonical_report,
+            report_snapshot_sha256=request_payload.report_snapshot_sha256,
+            pdf_sha256=request_payload.pdf_sha256,
+            report_identity_sha256=request_payload.report_identity_sha256,
+            recommendation_contract_version=str(
+                report["recommendation_contract_version"]
+            ),
+            recommendation_contract_digest=str(
+                report["recommendation_contract_digest"]
+            ),
+            generation_contract_version=str(report["generation_contract_version"]),
+            renderer_fingerprint=str(report["renderer_fingerprint"]),
+            review_case_key=request_payload.review_case_key,
+            checklist_version=request_payload.checklist_version,
+            authenticated_principal=principal,
+            reviewer_name=request_payload.reviewer_name,
+            outcome=request_payload.outcome,
+            review=review,
+        )
+    except (AgentStoreError, ValueError) as exc:
+        raise _store_failure(exc) from exc
+    return {
+        "shadow_review": serializers.public_decision_shadow_review(created),
+        "release_readiness": _release_readiness(),
     }
 
 
@@ -2537,6 +3600,8 @@ def review_evidence_candidate(
     candidate_id: str,
     request_payload: EvidenceReviewRequest,
 ) -> dict[str, Any]:
+    if request_payload.decision == "accepted":
+        _require_not_shadow_blocked("evidence acceptance")
     canonical_case = _validate_identifier(case_id, _CASE_ID_RE)
     canonical_evidence = _validate_identifier(evidence_id, _EVIDENCE_ID_RE)
     canonical_candidate = _validate_identifier(candidate_id, _CANDIDATE_ID_RE)

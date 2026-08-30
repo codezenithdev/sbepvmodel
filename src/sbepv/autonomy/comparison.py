@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 COMPARISON_BUNDLE_SCHEMA_VERSION = "autonomy-comparison-bundle-v1"
 ATTEMPT_SELECTION_CONTRACT_VERSION = "confirmed-scenario-retry-chain-v1"
 CANONICALIZATION_VERSION = "canonical-json-sha256-v1"
+RESULT_PROJECTION_COMMITMENT_VERSION = "autonomy-result-projection-commitment-v1"
 CLASSIFICATION_PENDING_CONTRACT = "classification_pending_contract"
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}", re.ASCII)
@@ -74,6 +75,83 @@ def canonical_comparison_bundle_sha256(
 
 def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_json_text(value).encode("utf-8")).hexdigest()
+
+
+def result_projection_commitment_sha256(
+    *,
+    durable_result_sha256: str,
+    result_projection: Mapping[str, Any],
+) -> str:
+    """Bind one public decision projection to its reverified durable result.
+
+    The store independently recomputes this commitment while the immutable full
+    result row is available.  Recommendation consumers can then prove that the
+    winner-driving projection is the exact projection admitted for that durable
+    result identity, rather than trusting two duplicated labels in the bundle.
+    """
+
+    if _SHA256_RE.fullmatch(str(durable_result_sha256)) is None:
+        raise ComparisonContractError(
+            "result_projection_durable_digest_invalid",
+            "A result projection requires a valid durable result SHA-256.",
+        )
+    if not isinstance(result_projection, Mapping):
+        raise ComparisonContractError(
+            "result_projection_invalid",
+            "A result projection commitment requires an object projection.",
+        )
+    return _canonical_sha256(
+        {
+            "version": RESULT_PROJECTION_COMMITMENT_VERSION,
+            "durable_result_sha256": str(durable_result_sha256),
+            "result_projection": dict(result_projection),
+        }
+    )
+
+
+def verified_result_projection_commitment_sha256(
+    *,
+    durable_result: Mapping[str, Any],
+    result_projection: Mapping[str, Any],
+) -> str:
+    """Return the commitment only after tying winner inputs to durable bytes.
+
+    A digest that merely names a durable result would still let a caller alter a
+    projected population and reseal both bundle fields.  The tradeoff population
+    is the recommendation's numerical authority, so compare it directly with the
+    reverified full result before producing the commitment.  The store calls this
+    same verifier against its immutable durable result row at admission.
+    """
+
+    if not isinstance(durable_result, Mapping):
+        raise ComparisonContractError(
+            "durable_result_invalid",
+            "A result projection requires the full durable result object.",
+        )
+    summaries = durable_result.get("summaries")
+    joint_outcomes = result_projection.get("joint_outcomes")
+    if (
+        not isinstance(summaries, Mapping)
+        or "tradeoff_classes" not in summaries
+        or not isinstance(joint_outcomes, Mapping)
+        or "tradeoff_classes" not in joint_outcomes
+    ):
+        raise ComparisonContractError(
+            "result_projection_tradeoff_population_missing",
+            "The durable and projected tradeoff populations must both be explicit.",
+        )
+    if not secrets.compare_digest(
+        _canonical_json_text(summaries["tradeoff_classes"]),
+        _canonical_json_text(joint_outcomes["tradeoff_classes"]),
+    ):
+        raise ComparisonContractError(
+            "result_projection_tradeoff_population_mismatch",
+            "The projected tradeoff population differs from the durable result.",
+        )
+    return result_projection_commitment_sha256(
+        durable_result_sha256=_canonical_sha256(durable_result),
+        result_projection=result_projection,
+    )
 
 
 def _escape_pointer_token(value: object) -> str:
@@ -1209,6 +1287,7 @@ def _attempt_proofs(
     *,
     selections: Sequence[Mapping[str, Any]],
     verification_outcomes: Mapping[str, ResultVerificationOutcome],
+    result_projections: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     proofs: list[dict[str, Any]] = []
     for selection in selections:
@@ -1251,38 +1330,66 @@ def _attempt_proofs(
                         "verified_attempt_payload_digest_mismatch",
                         "The verified payload differs from the selected durable attempt.",
                     )
-            proofs.append(
-                {
-                    "item_index": selection["item_index"],
-                    "scenario_revision_id": selection["scenario_revision_id"],
-                    "scenario_id": selection["scenario_id"],
-                    "scenario_revision": selection["scenario_revision"],
-                    "attempt_number": history["attempt_number"],
-                    "tea_job_id": history["tea_job_id"],
-                    "retry_of_job_id": history["retry_of_job_id"],
-                    "selected_for_comparison": selected,
-                    "state": state,
-                    "verification_status": _proof_verification_status(
-                        selected=selected,
-                        state=state,
-                        outcome=outcome if selected else None,
+            proof = {
+                "item_index": selection["item_index"],
+                "scenario_revision_id": selection["scenario_revision_id"],
+                "scenario_id": selection["scenario_id"],
+                "scenario_revision": selection["scenario_revision"],
+                "attempt_number": history["attempt_number"],
+                "tea_job_id": history["tea_job_id"],
+                "retry_of_job_id": history["retry_of_job_id"],
+                "selected_for_comparison": selected,
+                "state": state,
+                "verification_status": _proof_verification_status(
+                    selected=selected,
+                    state=state,
+                    outcome=outcome if selected else None,
+                ),
+                "request_sha256": history["request_sha256"],
+                "source_snapshot_sha256": history["source_snapshot_sha256"],
+                "result_sha256": history["result_sha256"],
+                "result_provenance_sha256": history[
+                    "result_provenance_sha256"
+                ],
+                "result_projection_sha256": None,
+                "evidence_set_sha256": evidence_set_sha256,
+                "reporting_tieout_sha256": (
+                    outcome.verified_result.reporting_tieout_sha256
+                    if selected and outcome is not None and outcome.valid
+                    else None
+                ),
+            }
+            if selected and outcome is not None and outcome.valid:
+                result_projection = result_projections.get(
+                    str(selection["scenario_revision_id"])
+                )
+                durable_result_sha256 = history.get("result_sha256")
+                if not isinstance(result_projection, Mapping) or not isinstance(
+                    durable_result_sha256, str
+                ):
+                    raise ComparisonContractError(
+                        "result_projection_commitment_missing",
+                        "A verified selected attempt is missing its result projection.",
+                    )
+                assert outcome.verified_result is not None
+                proof["result_projection_sha256"] = (
+                    verified_result_projection_commitment_sha256(
+                        durable_result=outcome.verified_result.result,
+                        result_projection=result_projection,
+                    )
+                )
+                if not secrets.compare_digest(
+                    str(proof["result_projection_sha256"]),
+                    result_projection_commitment_sha256(
+                        durable_result_sha256=durable_result_sha256,
+                        result_projection=result_projection,
                     ),
-                    "request_sha256": history["request_sha256"],
-                    "source_snapshot_sha256": history[
-                        "source_snapshot_sha256"
-                    ],
-                    "result_sha256": history["result_sha256"],
-                    "result_provenance_sha256": history[
-                        "result_provenance_sha256"
-                    ],
-                    "evidence_set_sha256": evidence_set_sha256,
-                    "reporting_tieout_sha256": (
-                        outcome.verified_result.reporting_tieout_sha256
-                        if selected and outcome is not None and outcome.valid
-                        else None
-                    ),
-                }
-            )
+                ):
+                    raise ComparisonContractError(
+                        "result_projection_durable_digest_mismatch",
+                        "The verified result differs from durable attempt history.",
+                    )
+            proofs.append(proof)
     return proofs
 
 
@@ -1689,6 +1796,15 @@ def build_comparison_bundle(
                 scenario.get("label"), limit=200
             ),
             "kind": scenario.get("kind"),
+            "comparison_classification": scenario.get(
+                "comparison_classification"
+            ),
+            "structural_warning": (
+                "This scenario changes request structure; baseline-relative "
+                "causal attribution is limited."
+                if scenario.get("comparison_classification") == "structural"
+                else None
+            ),
             "request_sha256": selection["request_sha256"],
             "attempt": {
                 "tea_job_id": selection.get("selected_job_id"),
@@ -1744,6 +1860,11 @@ def build_comparison_bundle(
     attempt_proofs = _attempt_proofs(
         selections=selections,
         verification_outcomes=verification_outcomes,
+        result_projections={
+            str(scenario["scenario_revision_id"]): scenario["result"]
+            for scenario in scenarios
+            if isinstance(scenario.get("result"), Mapping)
+        },
     )
     bundle: dict[str, Any] = {
         "schema_version": COMPARISON_BUNDLE_SCHEMA_VERSION,
@@ -1819,8 +1940,11 @@ __all__ = [
     "CANONICALIZATION_VERSION",
     "CLASSIFICATION_PENDING_CONTRACT",
     "COMPARISON_BUNDLE_SCHEMA_VERSION",
+    "RESULT_PROJECTION_COMMITMENT_VERSION",
     "ComparisonContractError",
     "build_comparison_bundle",
     "canonical_comparison_bundle_sha256",
+    "result_projection_commitment_sha256",
     "select_confirmation_attempts",
+    "verified_result_projection_commitment_sha256",
 ]

@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from sbepv.autonomy.readiness import SUPPORTED_ANALYSIS_BASES
 
@@ -221,3 +229,84 @@ class DecisionBriefCreateRequest(StrictAutonomyRequest):
         str,
         Field(min_length=8, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
     ]
+
+
+class DecisionSignoffCreateRequest(StrictAutonomyRequest):
+    expected_case_revision: Annotated[StrictInt, Field(ge=1)]
+    disposition: Literal["accept", "reject", "defer"]
+    decision_owner_name: Annotated[str, Field(min_length=1, max_length=200)]
+    rationale: Annotated[str, Field(min_length=1, max_length=4_000)]
+    acknowledgement_text: Annotated[str, Field(min_length=1, max_length=4_000)]
+    acknowledgement_version: Annotated[str, Field(min_length=1, max_length=100)]
+    provisional_warning_acknowledgements: list[
+        Annotated[str, Field(min_length=1, max_length=200)]
+    ] = Field(default_factory=list, max_length=100)
+    idempotency_key: Annotated[
+        str,
+        Field(min_length=8, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
+    ]
+
+    @field_validator("provisional_warning_acknowledgements")
+    @classmethod
+    def validate_unique_warning_acknowledgements(
+        cls, value: list[str]
+    ) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("provisional warning acknowledgements must be unique")
+        return value
+
+
+class DecisionReportCreateRequest(StrictAutonomyRequest):
+    expected_case_revision: Annotated[StrictInt, Field(ge=1)]
+    report_kind: Literal["draft", "final"]
+    brief_revision_id: Annotated[
+        str,
+        Field(min_length=5, max_length=128, pattern=r"^dbr_[A-Za-z0-9]+$"),
+    ]
+    signoff_id: Annotated[
+        str,
+        Field(min_length=6, max_length=128, pattern=r"^dsgn_[A-Za-z0-9]+$"),
+    ] | None = None
+    idempotency_key: Annotated[
+        str,
+        Field(min_length=8, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
+    ]
+
+    @model_validator(mode="after")
+    def validate_report_authority(self) -> "DecisionReportCreateRequest":
+        if (self.report_kind == "final") != (self.signoff_id is not None):
+            raise ValueError("final reports require signoff_id; drafts must omit it")
+        return self
+
+
+class DecisionShadowReviewChecklist(StrictAutonomyRequest):
+    unauthorized_execution_observed: StrictBool
+    numeric_citations_verified: StrictBool
+    result_tie_out_verified: StrictBool
+    report_tie_out_verified: StrictBool
+    observations: Annotated[str, Field(max_length=4_000)] | None = None
+
+
+class DecisionShadowReviewCreateRequest(StrictAutonomyRequest):
+    case_id: Annotated[
+        str,
+        Field(min_length=6, max_length=128, pattern=r"^case_[A-Za-z0-9]+$"),
+    ]
+    brief_revision_id: Annotated[
+        str,
+        Field(min_length=5, max_length=128, pattern=r"^dbr_[A-Za-z0-9]+$"),
+    ]
+    report_id: Annotated[
+        str,
+        Field(min_length=6, max_length=128, pattern=r"^drpt_[A-Za-z0-9]+$"),
+    ]
+    report_snapshot_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    pdf_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    report_identity_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    review_case_key: Annotated[
+        str, Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$")
+    ]
+    checklist_version: Annotated[str, Field(min_length=1, max_length=100)]
+    reviewer_name: Annotated[str, Field(min_length=1, max_length=200)]
+    outcome: Literal["passed", "failed", "needs_followup"]
+    review: DecisionShadowReviewChecklist

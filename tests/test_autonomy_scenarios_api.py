@@ -73,10 +73,15 @@ class AutonomyScenarioExecutionApiTests(unittest.TestCase):
             side_effect=self._fake_readiness,
         )
         self.readiness_patch.start()
+        self.shadow_patch = patch.object(
+            config, "DECISION_AGENT_SHADOW_MODE", False
+        )
+        self.shadow_patch.start()
         self.client = TestClient(app.app)
 
     def _cleanup(self) -> None:
         self.client.close()
+        self.shadow_patch.stop()
         self.readiness_patch.stop()
         state.AGENT_STORE = self.original_store
         state._WORKER_WAKE = self.original_wake
@@ -577,6 +582,34 @@ class AutonomyScenarioExecutionApiTests(unittest.TestCase):
         self.assertEqual(409, conflict.status_code, conflict.text)
         self.assertEqual("idempotency_key_reused", conflict.json()["detail"]["code"])
 
+    def test_shadow_mode_blocks_scenario_execution_before_job_creation(self) -> None:
+        baseline = self._validated_baseline()
+        payload = self._confirmation_payload(
+            [baseline], idempotency_key="shadow-mode-must-not-execute"
+        )
+        with (
+            patch.object(config, "DECISION_AGENT_SHADOW_MODE", True),
+            patch.object(
+                autonomy_api.scenarios,
+                "prepare_technoeconomic_bundle",
+                side_effect=self._fake_prepare_bundle,
+            ),
+        ):
+            response = self.client.post(
+                f"/api/autonomy/cases/{self.case['id']}/scenarios/confirm",
+                json=payload,
+            )
+        self.assertEqual(409, response.status_code, response.text)
+        self.assertEqual(
+            "decision_agent_shadow_mode", response.json()["detail"]["code"]
+        )
+        self.assertEqual([], state.AGENT_STORE.list_technoeconomic_jobs())
+        self.assertIsNone(
+            state.AGENT_STORE.get_decision_scenario_confirmation_by_idempotency(
+                self.case["id"], "shadow-mode-must-not-execute"
+            )
+        )
+
     def test_concurrent_duplicate_confirmation_replays_after_lock(self) -> None:
         baseline = self._validated_baseline()
         request_payload = self._confirmation_payload(
@@ -1056,7 +1089,36 @@ class AutonomyScenarioExecutionApiTests(unittest.TestCase):
         )
         self.assertIsNotNone(claimed)
         self.assertEqual(job_id, claimed["id"])
-        result_payload = {"schema_version": 3, "verified_fixture": True}
+        tradeoff_summary = {
+            "denominator": 1,
+            "counts": {
+                "cost_increase_energy_gain": 0,
+                "cost_neutral_energy_gain": 0,
+                "cost_saving_energy_gain": 1,
+                "cost_increase_energy_loss": 0,
+                "cost_neutral_energy_loss": 0,
+                "cost_saving_energy_loss": 0,
+                "cost_increase_zero_energy_change": 0,
+                "cost_neutral_zero_energy_change": 0,
+                "cost_saving_zero_energy_change": 0,
+            },
+            "probabilities": {
+                "cost_increase_energy_gain": 0.0,
+                "cost_neutral_energy_gain": 0.0,
+                "cost_saving_energy_gain": 1.0,
+                "cost_increase_energy_loss": 0.0,
+                "cost_neutral_energy_loss": 0.0,
+                "cost_saving_energy_loss": 0.0,
+                "cost_increase_zero_energy_change": 0.0,
+                "cost_neutral_zero_energy_change": 0.0,
+                "cost_saving_zero_energy_change": 0.0,
+            },
+        }
+        result_payload = {
+            "schema_version": 3,
+            "verified_fixture": True,
+            "summaries": {"tradeoff_classes": tradeoff_summary},
+        }
         result_provenance = {
             "schema_version": 1,
             "fixture": "store-authority-only",
@@ -1105,6 +1167,24 @@ class AutonomyScenarioExecutionApiTests(unittest.TestCase):
             "evidence_set_sha256": technoeconomic_api.canonical_json_sha256([]),
             "reporting_tieout_sha256": "9" * 64,
         }
+        result_projection = {
+            "metrics": {},
+            "warnings": [
+                {
+                    "code": "provisional_inputs",
+                    "source": "evidence",
+                }
+            ],
+            "joint_outcomes": {
+                "tradeoff_classes": deepcopy(tradeoff_summary),
+            },
+        }
+        attempt_proof["result_projection_sha256"] = (
+            comparison_service.verified_result_projection_commitment_sha256(
+                durable_result=result_payload,
+                result_projection=result_projection,
+            )
+        )
         bundle = {
             "schema_version": "autonomy-comparison-bundle-v1",
             "is_complete": True,
@@ -1136,15 +1216,7 @@ class AutonomyScenarioExecutionApiTests(unittest.TestCase):
                         "display_status": "done",
                     },
                     "verification": {"status": "verified"},
-                    "result": {
-                        "metrics": {},
-                        "warnings": [
-                            {
-                                "code": "provisional_inputs",
-                                "source": "evidence",
-                            }
-                        ],
-                    },
+                    "result": result_projection,
                 }
             ],
             "recommendation": {

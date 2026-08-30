@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 import sqlite3
@@ -11,6 +12,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from sbepv.autonomy import comparison as autonomy_comparison
+from sbepv.autonomy import reporting as decision_reporting
+from sbepv import store as store_module
 from sbepv.store import (
     AgentStore,
     InvalidStateTransition,
@@ -90,6 +94,48 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
     def _remove_database_files(path: Path) -> None:
         for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
             candidate.unlink(missing_ok=True)
+
+    @staticmethod
+    def _restore_v8_case_transition_guard(
+        connection: sqlite3.Connection,
+    ) -> None:
+        connection.execute("DROP TRIGGER IF EXISTS decision_case_transition_guard")
+        connection.executescript(
+            """
+            CREATE TRIGGER decision_case_transition_guard
+            BEFORE UPDATE OF status ON decision_cases
+            WHEN NEW.status <> OLD.status AND NOT (
+                (OLD.status = 'draft'
+                    AND NEW.status IN ('evidence_needed','blocked','archived'))
+                OR (OLD.status = 'evidence_needed'
+                    AND NEW.status IN ('blocked','ready_to_run','archived'))
+                OR (OLD.status = 'blocked'
+                    AND NEW.status IN ('evidence_needed','ready_to_run','archived'))
+                OR (OLD.status = 'ready_to_run'
+                    AND NEW.status IN (
+                        'evidence_needed','blocked','running','archived'
+                    ))
+                OR (OLD.status = 'running' AND NEW.status = 'results_ready')
+                OR (OLD.status = 'results_ready'
+                    AND NEW.status = 'decision_ready')
+                OR (OLD.status = 'results_ready' AND NEW.status = 'running'
+                    AND EXISTS (
+                        SELECT 1
+                          FROM decision_scenario_jobs l
+                          JOIN technoeconomic_jobs j
+                            ON j.tea_job_id = l.tea_job_id
+                         WHERE l.case_id = OLD.case_id
+                           AND j.state = 'queued'
+                           AND j.created_at = NEW.updated_at
+                    ))
+                OR (OLD.status = 'decision_ready' AND NEW.status = 'signed')
+                OR (OLD.status = 'signed' AND NEW.status = 'archived')
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid decision case state transition');
+            END;
+            """
+        )
 
     def _completed_annual_source(self, job_id: str) -> dict[str, Any]:
         created = self.store.create_job(
@@ -270,6 +316,13 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
                 result={
                     "schema_version": "technoeconomic-result-v3",
                     "summary": {"scenario": job_id},
+                    "summaries": {
+                        "tradeoff_classes": {
+                            "denominator": 1,
+                            "counts": {"fixture": 1},
+                            "probabilities": {"fixture": 1.0},
+                        }
+                    },
                 },
                 result_provenance={
                     "schema_version": "technoeconomic-result-provenance-v3",
@@ -331,6 +384,43 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
             "reporting_tieout_sha256": "e" * 64 if verified else None,
         }
 
+    def _projection_and_attempt_proof(
+        self,
+        execution: Mapping[str, Any],
+        *,
+        verified: bool,
+        result_projection_override: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        proof = self._attempt_proof(execution, verified=verified)
+        durable_result = execution["job"].get("result")
+        tradeoff_classes = (
+            ((durable_result or {}).get("summaries") or {}).get(
+                "tradeoff_classes"
+            )
+            if isinstance(durable_result, Mapping)
+            else None
+        )
+        result_projection = None
+        if verified:
+            result_projection = (
+                deepcopy(dict(result_projection_override))
+                if result_projection_override is not None
+                else {
+                    "joint_outcomes": {
+                        "tradeoff_classes": deepcopy(tradeoff_classes)
+                    }
+                }
+            )
+        proof["result_projection_sha256"] = (
+            autonomy_comparison.result_projection_commitment_sha256(
+                durable_result_sha256=str(proof["result_sha256"]),
+                result_projection=result_projection,
+            )
+            if verified and isinstance(result_projection, Mapping)
+            else None
+        )
+        return proof, result_projection
+
     def _create_bundle(
         self,
         execution: Mapping[str, Any],
@@ -339,8 +429,13 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
         marker: str = "initial",
         expected_case_revision: int | None = None,
         comparison_bundle_id: str | None = None,
+        result_projection_override: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        proof = self._attempt_proof(execution, verified=complete)
+        proof, result_projection = self._projection_and_attempt_proof(
+            execution,
+            verified=complete,
+            result_projection_override=result_projection_override,
+        )
         bundle: dict[str, Any] = {
             "schema_version": "autonomy-decision-comparison-v1",
             "is_complete": complete,
@@ -351,6 +446,7 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
                     "scenario_revision_id": proof["scenario_revision_id"],
                     "tea_job_id": proof["tea_job_id"],
                     "status": proof["state"],
+                    "result": result_projection,
                 }
             ],
             "comparison": {"fixture_marker": marker},
@@ -424,7 +520,94 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
             brief_revision_id=brief_revision_id,
         )
 
-    def test_schema_v8_migrates_v7_transactionally_and_survives_restart(self) -> None:
+    def _create_available_recommendation(
+        self,
+        brief: Mapping[str, Any],
+        *,
+        classification: str = "solaredge",
+        confidence: str = "strong",
+        required_acknowledgements: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        contract_version = "autonomy-conservative-dominance-v1"
+        contract_digest = "a" * 64
+        payload = {
+            "schema_version": "autonomy-recommendation-v1",
+            "state": "available",
+            "recommendation_eligible": True,
+            "classification": classification,
+            "confidence": confidence,
+            "contract_version": contract_version,
+            "contract_digest": contract_digest,
+            "comparison_bundle_sha256": brief["comparison_bundle_sha256"],
+            "classification_input_sha256": "b" * 64,
+            "blockers": [],
+            "warnings": [],
+            "required_acknowledgements": required_acknowledgements or [],
+            "reasons": ["Exact store authority fixture."],
+            "reversal_conditions": [],
+        }
+        return self.store.create_decision_recommendation(
+            self.case["id"],
+            brief_revision_id=brief["brief_revision_id"],
+            recommendation=payload,
+            contract_version=contract_version,
+            contract_digest=contract_digest,
+        )
+
+    def _create_draft_report_for_shadow_review(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        execution = self._confirmed_baseline(complete=True)
+        bundle = self._create_bundle(execution, complete=True)
+        brief = self._create_brief(bundle)
+        recommendation = self._create_available_recommendation(brief)
+        stored_brief = self.store.get_decision_brief(brief["brief_revision_id"])
+        self.assertIsNotNone(stored_brief)
+        assert stored_brief is not None
+        brief = stored_brief
+        current = self._refresh_case()
+        case_source = dict(current)
+        case_source["case_id"] = case_source.pop("id")
+        snapshot = decision_reporting.prepare_report_snapshot(
+            report_kind="draft",
+            case=case_source,
+            brief=brief,
+            recommendation=recommendation["recommendation"],
+            signoff=None,
+        )
+        rendered = decision_reporting.render_manager_pdf(snapshot)
+        report_temp = tempfile.TemporaryDirectory(
+            prefix="autonomy-shadow-report-store-test-",
+            dir=Path(__file__).resolve().parent,
+        )
+        self.addCleanup(report_temp.cleanup)
+        storage_key = decision_reporting.publish_report_pdf(
+            Path(report_temp.name), rendered
+        )
+        report = self.store.create_decision_report(
+            current["id"],
+            case_revision=current["revision"],
+            report_kind="draft",
+            brief_revision_id=brief["brief_revision_id"],
+            signoff_id=None,
+            recommendation_contract_version=recommendation["contract_version"],
+            recommendation_contract_digest=recommendation["contract_digest"],
+            snapshot=snapshot,
+            pdf_sha256=rendered.pdf_sha256,
+            byte_count=rendered.byte_count,
+            page_count=rendered.page_count,
+            generation_contract_version=(
+                decision_reporting.REPORT_GENERATION_CONTRACT_VERSION
+            ),
+            renderer_fingerprint=rendered.renderer_fingerprint,
+            storage_key=storage_key,
+            report_identity_sha256=snapshot["report"]["report_identity_sha256"],
+            created_principal="dashboard-user",
+            created_by="Shadow Review Builder",
+            idempotency_key="shadow-review-draft-report-001",
+            report_id=snapshot["report"]["report_id"],
+        )
+        return brief, report
+
+    def test_schema_v9_migrates_v7_transactionally_and_survives_restart(self) -> None:
         case_id = self.case["id"]
         source_id = self.source["id"]
         with closing(sqlite3.connect(self.db_path)) as connection:
@@ -432,27 +615,37 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
             trigger_rows = connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'trigger' "
                 "AND (name LIKE 'decision_comparison_%' "
-                "OR name LIKE 'decision_brief_%')"
+                "OR name LIKE 'decision_brief_%' "
+                "OR name LIKE 'decision_recommendation%' "
+                "OR name LIKE 'decision_signoff%' "
+                "OR name LIKE 'decision_report%' "
+                "OR name = 'decision_case_transition_guard')"
             ).fetchall()
             for (trigger_name,) in trigger_rows:
                 connection.execute(f'DROP TRIGGER "{trigger_name}"')
             for table_name in (
+                "decision_report_idempotency",
+                "decision_reports",
+                "decision_signoff_idempotency",
+                "decision_signoffs",
+                "decision_recommendations",
+                "decision_shadow_reviews",
                 "decision_brief_idempotency",
                 "decision_briefs",
                 "decision_comparison_bundle_attempts",
                 "decision_comparison_bundles",
             ):
                 connection.execute(f'DROP TABLE "{table_name}"')
-            connection.execute("DELETE FROM schema_migrations WHERE version = 8")
+            connection.execute("DELETE FROM schema_migrations WHERE version IN (8, 9)")
             connection.execute("PRAGMA user_version = 7")
             connection.commit()
 
         reopened = AgentStore(self.db_path, now=self.clock)
         restarted = AgentStore(self.db_path, now=self.clock)
 
-        self.assertEqual(8, SCHEMA_VERSION)
-        self.assertEqual(8, reopened.schema_version)
-        self.assertEqual(8, restarted.schema_version)
+        self.assertEqual(9, SCHEMA_VERSION)
+        self.assertEqual(9, reopened.schema_version)
+        self.assertEqual(9, restarted.schema_version)
         self.assertEqual(case_id, restarted.get_decision_case(case_id)["id"])
         self.assertEqual(source_id, restarted.get_job(source_id)["id"])
         with closing(sqlite3.connect(self.db_path)) as connection:
@@ -471,9 +664,13 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
                 "decision_comparison_bundle_attempts",
                 "decision_briefs",
                 "decision_brief_idempotency",
+                "decision_recommendations",
+                "decision_signoffs",
+                "decision_reports",
+                "decision_shadow_reviews",
             }.issubset(tables)
         )
-        self.assertEqual([(number,) for number in range(1, 9)], migrations)
+        self.assertEqual([(number,) for number in range(1, 10)], migrations)
 
     def test_schema_v8_failure_rolls_back_every_migration_side_effect(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as connection:
@@ -520,13 +717,179 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
         self.assertIsNone(migration)
         self.assertEqual({"decision_comparison_bundles"}, created_tables)
 
+    def test_schema_v9_marker_failure_rolls_back_authority_schema(self) -> None:
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            self._restore_v8_case_transition_guard(connection)
+            transition_sql_before = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' "
+                "AND name = 'decision_case_transition_guard'"
+            ).fetchone()[0]
+            trigger_rows = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND ("
+                "name = 'decision_comparison_projection_insert_guard' OR "
+                "name LIKE 'decision_recommendation%' OR "
+                "name LIKE 'decision_signoff%' OR "
+                "name LIKE 'decision_report%' OR "
+                "name LIKE 'decision_shadow_review%')"
+            ).fetchall()
+            for (trigger_name,) in trigger_rows:
+                connection.execute(f'DROP TRIGGER "{trigger_name}"')
+            for table_name in (
+                "decision_report_idempotency",
+                "decision_shadow_reviews",
+                "decision_reports",
+                "decision_signoff_idempotency",
+                "decision_signoffs",
+                "decision_recommendations",
+            ):
+                connection.execute(f'DROP TABLE "{table_name}"')
+            connection.execute(
+                "ALTER TABLE decision_comparison_bundle_attempts "
+                "DROP COLUMN result_projection_sha256"
+            )
+            connection.execute("DELETE FROM schema_migrations WHERE version = 9")
+            connection.execute("PRAGMA user_version = 8")
+            connection.executescript(
+                """
+                CREATE TRIGGER fail_schema_v9_marker
+                BEFORE INSERT ON schema_migrations
+                WHEN NEW.version = 9
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected v9 marker failure');
+                END;
+                """
+            )
+            connection.commit()
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            AgentStore(self.db_path, now=self.clock)
+
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            migration = connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version = 9"
+            ).fetchone()
+            authority_objects = connection.execute(
+                "SELECT name FROM sqlite_master WHERE "
+                "name LIKE 'decision_recommendation%' OR "
+                "name LIKE 'decision_signoff%' OR "
+                "name LIKE 'decision_report%' OR "
+                "name LIKE 'decision_shadow_review%'"
+            ).fetchall()
+            attempt_columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(decision_comparison_bundle_attempts)"
+                )
+            }
+            projection_trigger = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'trigger' "
+                "AND name = 'decision_comparison_projection_insert_guard'"
+            ).fetchone()
+            transition_sql_after = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' "
+                "AND name = 'decision_case_transition_guard'"
+            ).fetchone()[0]
+        self.assertEqual(8, version)
+        self.assertIsNone(migration)
+        self.assertEqual([], authority_objects)
+        self.assertNotIn("result_projection_sha256", attempt_columns)
+        self.assertIsNone(projection_trigger)
+        self.assertEqual(transition_sql_before, transition_sql_after)
+
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("DROP TRIGGER fail_schema_v9_marker")
+            connection.commit()
+        retried = AgentStore(self.db_path, now=self.clock)
+        self.assertEqual(9, retried.schema_version)
+
+    def test_schema_v9_rejects_legacy_signed_case_without_signoff(self) -> None:
+        case_id = self.case["id"]
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            self._restore_v8_case_transition_guard(connection)
+            trigger_rows = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND ("
+                "name = 'decision_comparison_projection_insert_guard' OR "
+                "name LIKE 'decision_recommendation%' OR "
+                "name LIKE 'decision_signoff%' OR "
+                "name LIKE 'decision_report%' OR "
+                "name LIKE 'decision_shadow_review%')"
+            ).fetchall()
+            for (trigger_name,) in trigger_rows:
+                connection.execute(f'DROP TRIGGER "{trigger_name}"')
+            for table_name in (
+                "decision_report_idempotency",
+                "decision_shadow_reviews",
+                "decision_reports",
+                "decision_signoff_idempotency",
+                "decision_signoffs",
+                "decision_recommendations",
+            ):
+                connection.execute(f'DROP TABLE "{table_name}"')
+            connection.execute(
+                "ALTER TABLE decision_comparison_bundle_attempts "
+                "DROP COLUMN result_projection_sha256"
+            )
+            connection.execute("DROP TRIGGER decision_case_transition_guard")
+            connection.execute(
+                "UPDATE decision_cases SET status = 'decision_ready', "
+                "revision = revision + 1 WHERE case_id = ?",
+                (case_id,),
+            )
+            self._restore_v8_case_transition_guard(connection)
+            connection.execute(
+                "UPDATE decision_cases SET status = 'signed', "
+                "revision = revision + 1 WHERE case_id = ?",
+                (case_id,),
+            )
+            connection.execute("DELETE FROM schema_migrations WHERE version = 9")
+            connection.execute("PRAGMA user_version = 8")
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            RuntimeError, "archive them under schema v8"
+        ):
+            AgentStore(self.db_path, now=self.clock)
+
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            self.assertEqual(
+                8, connection.execute("PRAGMA user_version").fetchone()[0]
+            )
+            self.assertEqual(
+                "signed",
+                connection.execute(
+                    "SELECT status FROM decision_cases WHERE case_id = ?",
+                    (case_id,),
+                ).fetchone()[0],
+            )
+            authority_objects = connection.execute(
+                "SELECT name FROM sqlite_master WHERE "
+                "name LIKE 'decision_recommendation%' OR "
+                "name LIKE 'decision_signoff%' OR "
+                "name LIKE 'decision_report%' OR "
+                "name LIKE 'decision_shadow_review%'"
+            ).fetchall()
+            self.assertEqual([], authority_objects)
+            connection.execute(
+                "UPDATE decision_cases SET status = 'archived', archived_at = ?, "
+                "revision = revision + 1 WHERE case_id = ?",
+                (self.clock().isoformat(), case_id),
+            )
+            connection.commit()
+
+        migrated = AgentStore(self.db_path, now=self.clock)
+        self.assertEqual(9, migrated.schema_version)
+        self.assertEqual("archived", migrated.get_decision_case(case_id)["status"])
+
     def test_newer_schema_is_rejected(self) -> None:
         future_path = self.db_path.with_name(
             f"{self.db_path.stem}-future.sqlite3"
         )
         self.addCleanup(self._remove_database_files, future_path)
         with closing(sqlite3.connect(future_path)) as connection:
-            connection.execute("PRAGMA user_version = 9")
+            connection.execute("PRAGMA user_version = 10")
         with self.assertRaises(SchemaVersionError):
             AgentStore(future_path, now=self.clock)
 
@@ -610,12 +973,20 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
 
     def test_concurrent_exact_bundle_and_brief_creation_converges(self) -> None:
         execution = self._confirmed_baseline(complete=True)
-        proof = self._attempt_proof(execution, verified=True)
+        proof, result_projection = self._projection_and_attempt_proof(
+            execution, verified=True
+        )
         payload: dict[str, Any] = {
             "schema_version": "autonomy-decision-comparison-v1",
             "is_complete": True,
             "recommendation_eligible": False,
             "attempt_proofs": [proof],
+            "scenarios": [
+                {
+                    "scenario_revision_id": proof["scenario_revision_id"],
+                    "result": result_projection,
+                }
+            ],
             "comparison": {"fixture_marker": "concurrent"},
         }
         digest = _canonical_sha256(payload)
@@ -703,7 +1074,9 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
 
     def test_concurrent_distinct_bundles_consume_one_case_revision(self) -> None:
         execution = self._confirmed_baseline(complete=True)
-        proof = self._attempt_proof(execution, verified=True)
+        proof, result_projection = self._projection_and_attempt_proof(
+            execution, verified=True
+        )
         expected_revision = self._refresh_case()["revision"]
         stores = [
             AgentStore(self.db_path, now=self.clock),
@@ -716,6 +1089,12 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
                 "is_complete": True,
                 "recommendation_eligible": False,
                 "attempt_proofs": [proof],
+                "scenarios": [
+                    {
+                        "scenario_revision_id": proof["scenario_revision_id"],
+                        "result": result_projection,
+                    }
+                ],
                 "comparison": {"fixture_marker": marker},
             }
             payload["bundle_hash"] = _canonical_sha256(payload)
@@ -853,6 +1232,26 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
                     ),
                 )
             connection.rollback()
+
+    def test_bundle_admission_rejects_resealed_projection_not_in_durable_result(
+        self,
+    ) -> None:
+        execution = self._confirmed_baseline(complete=True)
+        forged_tradeoff = {
+            "denominator": 1,
+            "counts": {"forged_winner": 1},
+            "probabilities": {"forged_winner": 1.0},
+        }
+        with self.assertRaises(StoreConflict):
+            self._create_bundle(
+                execution,
+                complete=True,
+                result_projection_override={
+                    "joint_outcomes": {
+                        "tradeoff_classes": forged_tradeoff,
+                    }
+                },
+            )
 
     def test_brief_supersession_timestamp_requires_a_target_at_insert(self) -> None:
         execution = self._confirmed_baseline(complete=True)
@@ -1287,6 +1686,624 @@ class AutonomyDecisionBriefStoreTests(unittest.TestCase):
             self._create_brief(
                 bundle,
                 expected_case_revision=brief["expected_case_revision"],
+            )
+
+    def test_v9_migration_preserves_every_v8_brief_and_bundle_byte(self) -> None:
+        execution = self._confirmed_baseline(complete=True)
+        proof = self._attempt_proof(execution, verified=True)
+        self.assertNotIn("result_projection_sha256", proof)
+        legacy_bundle_payload = {
+            "schema_version": "autonomy-decision-comparison-v1",
+            "is_complete": True,
+            "recommendation_eligible": False,
+            "attempt_proofs": [proof],
+            "scenarios": [
+                {
+                    "scenario_revision_id": proof["scenario_revision_id"],
+                    "tea_job_id": proof["tea_job_id"],
+                    "status": proof["state"],
+                }
+            ],
+            "comparison": {"fixture_marker": "genuine-v8"},
+            "recommendation": {
+                "state": "classification_pending_contract",
+                "reversal_conditions": [],
+            },
+        }
+        legacy_bundle_sha256 = _canonical_sha256(legacy_bundle_payload)
+        legacy_bundle_payload["bundle_hash"] = legacy_bundle_sha256
+        legacy_bundle_json = _canonical_json(legacy_bundle_payload)
+        legacy_bundle_id = "dcmp_genuine_v8_fixture"
+        current = self._refresh_case()
+        created_at = self.clock().isoformat()
+
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            triggers = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND "
+                "(name IN ('decision_comparison_projection_insert_guard', "
+                "'decision_case_transition_guard') OR "
+                "name LIKE 'decision_recommendation%' OR "
+                "name LIKE 'decision_signoff%' OR name LIKE 'decision_report%')"
+            ).fetchall()
+            for (trigger_name,) in triggers:
+                connection.execute(f'DROP TRIGGER "{trigger_name}"')
+            for table_name in (
+                "decision_report_idempotency",
+                "decision_reports",
+                "decision_signoff_idempotency",
+                "decision_signoffs",
+                "decision_recommendations",
+                "decision_shadow_reviews",
+            ):
+                connection.execute(f'DROP TABLE "{table_name}"')
+            connection.execute(
+                "ALTER TABLE decision_comparison_bundle_attempts "
+                "DROP COLUMN result_projection_sha256"
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER decision_case_transition_guard
+                BEFORE UPDATE OF status ON decision_cases
+                WHEN NEW.status <> OLD.status AND NOT (
+                    (OLD.status = 'draft'
+                        AND NEW.status IN ('evidence_needed','blocked','archived'))
+                    OR (OLD.status = 'evidence_needed'
+                        AND NEW.status IN ('blocked','ready_to_run','archived'))
+                    OR (OLD.status = 'blocked'
+                        AND NEW.status IN ('evidence_needed','ready_to_run','archived'))
+                    OR (OLD.status = 'ready_to_run'
+                        AND NEW.status IN (
+                            'evidence_needed','blocked','running','archived'
+                        ))
+                    OR (OLD.status = 'running' AND NEW.status = 'results_ready')
+                    OR (OLD.status = 'results_ready'
+                        AND NEW.status = 'decision_ready')
+                    OR (OLD.status = 'results_ready' AND NEW.status = 'running'
+                        AND EXISTS (
+                            SELECT 1
+                              FROM decision_scenario_jobs l
+                              JOIN technoeconomic_jobs j
+                                ON j.tea_job_id = l.tea_job_id
+                             WHERE l.case_id = OLD.case_id
+                               AND j.state = 'queued'
+                               AND j.created_at = NEW.updated_at
+                        ))
+                    OR (OLD.status = 'decision_ready' AND NEW.status = 'signed')
+                    OR (OLD.status = 'signed' AND NEW.status = 'archived')
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid decision case state transition');
+                END;
+                """
+            )
+            connection.execute("DELETE FROM schema_migrations WHERE version = 9")
+            connection.execute("PRAGMA user_version = 8")
+            connection.commit()
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(
+                """
+                INSERT INTO decision_comparison_bundles (
+                    comparison_bundle_id, case_id, source_confirmation_id,
+                    expected_case_revision, bundle_schema_version,
+                    bundle_json, bundle_sha256, is_complete,
+                    recommendation_eligible, created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+                """,
+                (
+                    legacy_bundle_id,
+                    current["id"],
+                    execution["confirmation"]["id"],
+                    current["revision"],
+                    legacy_bundle_payload["schema_version"],
+                    legacy_bundle_json,
+                    legacy_bundle_sha256,
+                    "Schema-v8 Writer",
+                    created_at,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO decision_comparison_bundle_attempts (
+                    comparison_bundle_id, case_id, item_index,
+                    scenario_revision_id, scenario_id, scenario_revision,
+                    attempt_number, tea_job_id, retry_of_job_id,
+                    selected_for_comparison, state, verification_status,
+                    request_sha256, source_snapshot_sha256, result_sha256,
+                    result_provenance_sha256, evidence_set_sha256,
+                    reporting_tieout_sha256, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    legacy_bundle_id,
+                    current["id"],
+                    proof["item_index"],
+                    proof["scenario_revision_id"],
+                    proof["scenario_id"],
+                    proof["scenario_revision"],
+                    proof["attempt_number"],
+                    proof["tea_job_id"],
+                    proof["retry_of_job_id"],
+                    int(proof["selected_for_comparison"]),
+                    proof["state"],
+                    proof["verification_status"],
+                    proof["request_sha256"],
+                    proof["source_snapshot_sha256"],
+                    proof["result_sha256"],
+                    proof["result_provenance_sha256"],
+                    proof["evidence_set_sha256"],
+                    proof["reporting_tieout_sha256"],
+                    created_at,
+                ),
+            )
+            connection.execute(
+                "UPDATE decision_cases SET revision = revision + 1, "
+                "updated_at = ?, updated_by = ? WHERE case_id = ?",
+                (created_at, "Schema-v8 Writer", current["id"]),
+            )
+            connection.commit()
+
+        legacy_record = self.store.get_decision_comparison_bundle(legacy_bundle_id)
+        self.assertIsNotNone(legacy_record)
+        assert legacy_record is not None
+        self.assertNotIn(
+            "result_projection_sha256", legacy_record["attempt_proofs"][0]
+        )
+        self._refresh_case()
+        brief = self._create_brief(
+            legacy_record,
+            idempotency_key="genuine-v8-brief",
+        )
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            before_bundle = connection.execute(
+                "SELECT bundle_json, bundle_sha256 FROM decision_comparison_bundles "
+                "WHERE comparison_bundle_id = ?",
+                (legacy_bundle_id,),
+            ).fetchone()
+            before_brief = connection.execute(
+                "SELECT comparison_bundle_json, comparison_bundle_sha256, "
+                "provenance_json, provenance_sha256 FROM decision_briefs "
+                "WHERE brief_revision_id = ?",
+                (brief["brief_revision_id"],),
+            ).fetchone()
+
+        reopened = AgentStore(self.db_path, now=self.clock)
+        self.assertEqual(9, reopened.schema_version)
+        migrated_bundle = reopened.get_decision_comparison_bundle(legacy_bundle_id)
+        migrated_brief = reopened.get_decision_brief(brief["brief_revision_id"])
+        self.assertIsNotNone(migrated_bundle)
+        self.assertIsNotNone(migrated_brief)
+        assert migrated_bundle is not None
+        self.assertNotIn(
+            "result_projection_sha256", migrated_bundle["attempt_proofs"][0]
+        )
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            after_bundle = connection.execute(
+                "SELECT bundle_json, bundle_sha256 FROM decision_comparison_bundles "
+                "WHERE comparison_bundle_id = ?",
+                (legacy_bundle_id,),
+            ).fetchone()
+            after_brief = connection.execute(
+                "SELECT comparison_bundle_json, comparison_bundle_sha256, "
+                "provenance_json, provenance_sha256 FROM decision_briefs "
+                "WHERE brief_revision_id = ?",
+                (brief["brief_revision_id"],),
+            ).fetchone()
+        self.assertEqual(before_bundle, after_bundle)
+        self.assertEqual(before_brief, after_brief)
+
+    def test_recommendation_and_signoff_bind_exact_authority_and_acknowledgements(self) -> None:
+        execution = self._confirmed_baseline(complete=True)
+        bundle = self._create_bundle(execution, complete=True)
+        brief = self._create_brief(bundle)
+        required = [
+            {
+                "code": "acknowledge_model_limitation",
+                "model_limitation": {
+                    "code": "structural_comparison_causal_attribution_limited",
+                    "acknowledgement_required": True,
+                },
+            }
+        ]
+        recommendation = self._create_available_recommendation(
+            brief, required_acknowledgements=required
+        )
+        current = self._refresh_case()
+        current = self.store.transition_decision_case(
+            current["id"],
+            expected_revision=current["revision"],
+            status="decision_ready",
+            operator_name="Recommendation Policy",
+        )
+        arguments = {
+            "expected_case_revision": current["revision"],
+            "brief_revision_id": brief["brief_revision_id"],
+            "recommendation_id": recommendation["recommendation_id"],
+            "disposition": "accept",
+            "authenticated_principal": "dashboard-user",
+            "decision_owner_name": "Decision Owner",
+            "rationale": "The immutable evidence supports this decision.",
+            "acknowledgement_text": "Exact application acknowledgement.",
+            "acknowledgement_version": "ack-v1",
+            "idempotency_key": "signoff-structural-001",
+        }
+        with self.assertRaises(InvalidStateTransition):
+            self.store.create_decision_signoff(
+                current["id"],
+                provisional_warning_acknowledgements=[],
+                **arguments,
+            )
+        required_ids = self.store._recommendation_warning_ids(
+            recommendation["recommendation"]
+        )
+        with self.assertRaises(InvalidStateTransition):
+            self.store.create_decision_signoff(
+                current["id"],
+                provisional_warning_acknowledgements=[*required_ids, "extra"],
+                **arguments,
+            )
+        with self.assertRaises(InvalidStateTransition):
+            self.store.transition_decision_case(
+                current["id"],
+                expected_revision=current["revision"],
+                status="signed",
+                operator_name="Bypass Attempt",
+            )
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with self.assertRaisesRegex(
+                sqlite3.IntegrityError, "invalid decision case state transition"
+            ):
+                connection.execute(
+                    "UPDATE decision_cases SET status = 'signed', "
+                    "revision = revision + 1 WHERE case_id = ?",
+                    (current["id"],),
+                )
+        signed = self.store.create_decision_signoff(
+            current["id"],
+            provisional_warning_acknowledgements=required_ids,
+            **arguments,
+        )
+        self.assertEqual(required_ids, signed["provisional_acknowledgements"])
+        self.assertEqual(
+            current["revision"], signed["decision_snapshot"]["case"]["revision"]
+        )
+        self.assertEqual(
+            brief["brief_revision_id"],
+            signed["decision_snapshot"]["brief"]["brief_revision_id"],
+        )
+        signed_case = self._refresh_case()
+        self.assertEqual("signed", signed_case["status"])
+        self.assertEqual(signed["case_revision_after"], signed_case["revision"])
+        replay = self.store.create_decision_signoff(
+            current["id"],
+            provisional_warning_acknowledgements=required_ids,
+            **arguments,
+        )
+        self.assertTrue(replay["idempotent_replay"])
+
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute(
+                "DROP TRIGGER decision_signoff_idempotency_update_guard"
+            )
+            connection.execute(
+                "UPDATE decision_signoff_idempotency SET response_sha256 = ? "
+                "WHERE signoff_id = ?",
+                ("f" * 64, signed["signoff_id"]),
+            )
+            connection.commit()
+        with self.assertRaises(StoreConflict):
+            self.store.create_decision_signoff(
+                current["id"],
+                provisional_warning_acknowledgements=required_ids,
+                **arguments,
+            )
+
+    def test_stale_brief_accept_reject_fail_but_defer_is_retained(self) -> None:
+        execution = self._confirmed_baseline(complete=True)
+        bundle = self._create_bundle(execution, complete=True)
+        brief = self._create_brief(bundle)
+        recommendation = self._create_available_recommendation(brief)
+        current = self._refresh_case()
+        current = self.store.transition_decision_case(
+            current["id"],
+            expected_revision=current["revision"],
+            status="decision_ready",
+            operator_name="Recommendation Policy",
+        )
+        self.store.mark_decision_comparison_bundle_stale(
+            bundle["comparison_bundle_id"],
+            reason={"code": "newer_verified_snapshot"},
+        )
+        common = {
+            "expected_case_revision": current["revision"],
+            "brief_revision_id": brief["brief_revision_id"],
+            "recommendation_id": recommendation["recommendation_id"],
+            "authenticated_principal": "dashboard-user",
+            "decision_owner_name": "Decision Owner",
+            "rationale": "The source is stale.",
+            "acknowledgement_text": "Exact application acknowledgement.",
+            "acknowledgement_version": "ack-v1",
+            "provisional_warning_acknowledgements": [],
+        }
+        for disposition in ("accept", "reject"):
+            with self.assertRaises(InvalidStateTransition):
+                self.store.create_decision_signoff(
+                    current["id"],
+                    disposition=disposition,
+                    idempotency_key=f"stale-{disposition}-001",
+                    **common,
+                )
+        deferred = self.store.create_decision_signoff(
+            current["id"],
+            disposition="defer",
+            idempotency_key="stale-defer-001",
+            **common,
+        )
+        self.assertEqual("defer", deferred["disposition"])
+
+    def test_case_metadata_edit_stales_authority_and_rolls_back_readiness(self) -> None:
+        execution = self._confirmed_baseline(complete=True)
+        bundle = self._create_bundle(execution, complete=True)
+        brief = self._create_brief(bundle)
+        recommendation = self._create_available_recommendation(brief)
+        current = self._refresh_case()
+        current = self.store.transition_decision_case(
+            current["id"],
+            expected_revision=current["revision"],
+            status="decision_ready",
+            operator_name="Recommendation Policy",
+        )
+
+        updated = self.store.update_decision_case(
+            current["id"],
+            expected_revision=current["revision"],
+            operator_name="Case Editor",
+            title="Reframed lifecycle cost decision",
+            question="Which system should the revised decision authority select?",
+            decision_owner="Morgan Owner",
+        )
+
+        self.assertEqual("results_ready", updated["status"])
+        self.assertEqual(current["revision"] + 1, updated["revision"])
+        self.assertEqual("Reframed lifecycle cost decision", updated["title"])
+        self.assertEqual(
+            "Which system should the revised decision authority select?",
+            updated["question"],
+        )
+        self.assertEqual("Morgan Owner", updated["decision_owner"])
+        stale_bundle = self.store.get_decision_comparison_bundle(bundle["id"])
+        stale_brief = self.store.get_decision_brief(brief["brief_revision_id"])
+        self.assertIsNotNone(stale_bundle)
+        self.assertIsNotNone(stale_brief)
+        assert stale_bundle is not None and stale_brief is not None
+        self.assertEqual(stale_bundle["stale_at"], stale_brief["stale_at"])
+        self.assertEqual(
+            {
+                "code": "decision_case_metadata_changed",
+                "changed_fields": ["decision_owner", "question", "title"],
+                "case_revision_before": current["revision"],
+            },
+            stale_bundle["stale_reason"],
+        )
+        self.assertEqual(stale_bundle["stale_reason"], stale_brief["stale_reason"])
+
+        common = {
+            "expected_case_revision": updated["revision"],
+            "brief_revision_id": brief["brief_revision_id"],
+            "recommendation_id": recommendation["recommendation_id"],
+            "authenticated_principal": "dashboard-user",
+            "decision_owner_name": "Morgan Owner",
+            "rationale": "The case metadata changed after classification.",
+            "acknowledgement_text": "Exact application acknowledgement.",
+            "acknowledgement_version": "ack-v1",
+            "provisional_warning_acknowledgements": [],
+        }
+        for disposition in ("accept", "reject"):
+            with self.assertRaises(InvalidStateTransition):
+                self.store.create_decision_signoff(
+                    current["id"],
+                    disposition=disposition,
+                    idempotency_key=f"metadata-stale-{disposition}-001",
+                    **common,
+                )
+
+        deferred = self.store.create_decision_signoff(
+            current["id"],
+            disposition="defer",
+            idempotency_key="metadata-stale-defer-001",
+            **common,
+        )
+        self.assertEqual("defer", deferred["disposition"])
+        case_after_defer = self._refresh_case()
+        self.assertEqual("results_ready", case_after_defer["status"])
+        self.assertIsNone(case_after_defer["active_recommendation_revision"])
+
+    def test_shadow_review_binds_exact_draft_report_and_full_authority_envelope(self) -> None:
+        brief, report = self._create_draft_report_for_shadow_review()
+        checklist = {
+            "unauthorized_execution_observed": False,
+            "numeric_citations_verified": True,
+            "result_tie_out_verified": True,
+            "report_tie_out_verified": True,
+            "observations": None,
+        }
+        arguments = {
+            "case_id": self.case["id"],
+            "brief_revision_id": brief["brief_revision_id"],
+            "report_id": report["report_id"],
+            "report_snapshot_sha256": report["snapshot_sha256"],
+            "pdf_sha256": report["pdf_sha256"],
+            "report_identity_sha256": report["report_identity_sha256"],
+            "recommendation_contract_version": report[
+                "recommendation_contract_version"
+            ],
+            "recommendation_contract_digest": report[
+                "recommendation_contract_digest"
+            ],
+            "generation_contract_version": report["generation_contract_version"],
+            "renderer_fingerprint": report["renderer_fingerprint"],
+            "review_case_key": "representative-case-001",
+            "checklist_version": "autonomy-shadow-review-v2",
+            "authenticated_principal": "dashboard-user",
+            "reviewer_name": "Human Reviewer",
+            "outcome": "passed",
+            "review": checklist,
+        }
+
+        with self.assertRaises(StoreConflict):
+            self.store.create_decision_shadow_review(
+                **{**arguments, "pdf_sha256": "f" * 64}
+            )
+        with self.assertRaises(ValueError):
+            self.store.create_decision_shadow_review(
+                **{
+                    **arguments,
+                    "review": {**checklist, "report_tie_out_verified": False},
+                }
+            )
+
+        created = self.store.create_decision_shadow_review(**arguments)
+        replay = self.store.create_decision_shadow_review(**arguments)
+        self.assertEqual(created["shadow_review_id"], replay["shadow_review_id"])
+        self.assertEqual(report["report_id"], created["report_id"])
+        self.assertEqual(report["report_identity_sha256"], created["report_identity_sha256"])
+
+        noncanonical_review_json = (
+            '{"unauthorized_execution_observed":false,'
+            '"unauthorized_execution_observed":true,'
+            '"numeric_citations_verified":true,'
+            '"result_tie_out_verified":true,'
+            '"report_tie_out_verified":true,'
+            '"observations":null}'
+        )
+        python_interpretation = json.loads(noncanonical_review_json)
+        resealed_sha256 = store_module._decision_shadow_review_sha256(
+            created, python_interpretation
+        )
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("DROP TRIGGER decision_shadow_review_update_guard")
+            connection.execute(
+                "UPDATE decision_shadow_reviews SET review_json = ?, review_sha256 = ? "
+                "WHERE shadow_review_id = ?",
+                (
+                    noncanonical_review_json,
+                    resealed_sha256,
+                    created["shadow_review_id"],
+                ),
+            )
+            connection.commit()
+        with self.assertRaises(StoreConflict):
+            self.store.list_decision_shadow_reviews(
+                checklist_version="autonomy-shadow-review-v2",
+                limit=None,
+            )
+
+    def test_final_report_is_exactly_signed_content_addressed_and_replay_safe(self) -> None:
+        execution = self._confirmed_baseline(complete=True)
+        bundle = self._create_bundle(execution, complete=True)
+        brief = self._create_brief(bundle)
+        recommendation = self._create_available_recommendation(brief)
+        current = self._refresh_case()
+        current = self.store.transition_decision_case(
+            current["id"],
+            expected_revision=current["revision"],
+            status="decision_ready",
+            operator_name="Recommendation Policy",
+        )
+        signed = self.store.create_decision_signoff(
+            current["id"],
+            expected_case_revision=current["revision"],
+            brief_revision_id=brief["brief_revision_id"],
+            recommendation_id=recommendation["recommendation_id"],
+            disposition="accept",
+            authenticated_principal="dashboard-user",
+            decision_owner_name="Decision Owner",
+            rationale="Proceed under the stored assumptions.",
+            acknowledgement_text="Exact application acknowledgement.",
+            acknowledgement_version="ack-v1",
+            provisional_warning_acknowledgements=[],
+            idempotency_key="final-report-signoff-001",
+        )
+        signed_snapshot = signed["decision_snapshot"]
+        signoff_source = dict(signed_snapshot["signoff"])
+        signoff_source.update(
+            {
+                "signoff_id": signed["signoff_id"],
+                "decision_snapshot_sha256": signed[
+                    "decision_snapshot_sha256"
+                ],
+            }
+        )
+        snapshot = decision_reporting.prepare_report_snapshot(
+            report_kind="final",
+            case=signed_snapshot["case"],
+            brief=signed_snapshot["brief"],
+            recommendation=signed_snapshot["recommendation"],
+            signoff=signoff_source,
+        )
+        rendered = decision_reporting.render_manager_pdf(snapshot)
+        report_temp = tempfile.TemporaryDirectory(
+            prefix="autonomy-report-store-test-",
+            dir=Path(__file__).resolve().parent,
+        )
+        self.addCleanup(report_temp.cleanup)
+        storage_key = decision_reporting.publish_report_pdf(
+            Path(report_temp.name), rendered
+        )
+        case_after_signoff = self._refresh_case()
+        report_args = {
+            "case_revision": case_after_signoff["revision"],
+            "report_kind": "final",
+            "brief_revision_id": brief["brief_revision_id"],
+            "signoff_id": signed["signoff_id"],
+            "recommendation_contract_version": recommendation[
+                "contract_version"
+            ],
+            "recommendation_contract_digest": recommendation[
+                "contract_digest"
+            ],
+            "snapshot": snapshot,
+            "pdf_sha256": rendered.pdf_sha256,
+            "byte_count": rendered.byte_count,
+            "page_count": rendered.page_count,
+            "generation_contract_version": (
+                decision_reporting.REPORT_GENERATION_CONTRACT_VERSION
+            ),
+            "renderer_fingerprint": rendered.renderer_fingerprint,
+            "storage_key": storage_key,
+            "report_identity_sha256": snapshot["report"][
+                "report_identity_sha256"
+            ],
+            "created_principal": "dashboard-user",
+            "created_by": "Decision Owner",
+            "idempotency_key": "final-report-create-001",
+            "report_id": snapshot["report"]["report_id"],
+        }
+        created = self.store.create_decision_report(
+            current["id"], **report_args
+        )
+        self.assertEqual(rendered.pdf_sha256, created["pdf_sha256"])
+        tampered = json.loads(_canonical_json(snapshot))
+        tampered["technical_exports"].append(
+            {"label": "forged", "url": "/forged", "media_type": "text/plain"}
+        )
+        with self.assertRaises(StoreConflict):
+            self.store.create_decision_report(
+                current["id"],
+                **{
+                    **report_args,
+                    "snapshot": tampered,
+                    "idempotency_key": "final-report-tamper-001",
+                },
+            )
+        with self.assertRaises(ValueError):
+            self.store.create_decision_report(
+                current["id"],
+                **{
+                    **report_args,
+                    "storage_key": f"sha256/00/{'0' * 64}.pdf",
+                    "idempotency_key": "final-report-path-001",
+                },
             )
 
 

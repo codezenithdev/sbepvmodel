@@ -323,8 +323,9 @@ class AutonomyFrontendSources(unittest.TestCase):
             with self.subTest(authority=authority):
                 self.assertNotRegex(fixture_catalog, pattern)
 
-        for forbidden_live_surface in ("/signoff", "/reports"):
-            self.assertNotIn(forbidden_live_surface, self.script)
+        for live_surface in ("/signoffs", "/reports"):
+            self.assertIn(live_surface, self.script)
+            self.assertNotIn(live_surface, fixture_catalog)
 
         for boundary_copy in (
             "Fixture preview",
@@ -352,13 +353,16 @@ class AutonomyFrontendSources(unittest.TestCase):
             "/execution",
             "/comparison-bundles",
             "/decision-briefs",
+            "/signoffs",
+            "/reports",
+            "/verify",
         ):
             with self.subTest(endpoint=endpoint):
                 self.assertIn(endpoint, self.script)
         self.assertIn("function autonomyOpenWorkspace", self.script)
         self.assertIn("if (autonomy) autonomyOpenWorkspace()", self.all_scripts)
         self.assertIn('data-content-mode="live"', self.markup)
-        self.assertIn("Later-phase fixture preview — not live case data", self.markup)
+        self.assertIn("Fixture preview — not live case data", self.markup)
         self.assertIn("autonomySetContentMode('fixture')", self.script)
 
     def test_live_compare_renders_durable_cards_exact_differences_and_history(self):
@@ -736,6 +740,11 @@ class AutonomyFrontendSources(unittest.TestCase):
             (["autonomy", "cases", "case_abc123", "comparison-bundles", "dcmp_abc123"], True),
             (["autonomy", "cases", "case_abc123", "decision-briefs"], True),
             (["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_abc123"], True),
+            (["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_abc123", "signoffs"], True),
+            (["autonomy", "cases", "case_abc123", "reports"], True),
+            (["autonomy", "cases", "case_abc123", "reports", "drpt_abc123"], True),
+            (["autonomy", "cases", "case_abc123", "reports", "drpt_abc123", "verify"], True),
+            (["autonomy", "cases", "case_abc123", "reports", "drpt_abc123", "download"], True),
             (["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "cancel"], True),
             (["autonomy", "cases", "case_abc123", "execution", "tea_abc-123", "retry"], True),
             (["autonomy", "cases", "case_abc123", "readiness", "evaluate"], True),
@@ -749,12 +758,18 @@ class AutonomyFrontendSources(unittest.TestCase):
             (["autonomy", "cases", ".."], False),
             (["autonomy", "cases", "case_abc123", "confirm"], False),
             (["autonomy", "cases", "case_abc123", "signoff"], False),
-            (["autonomy", "cases", "case_abc123", "reports"], False),
+            (["autonomy", "cases", "case_abc123", "signoffs"], False),
             (["autonomy", "cases", "case_abc123", "comparison-bundles", "dcmp_bad-id"], False),
             (["autonomy", "cases", "case_abc123", "comparison-bundles", "dbr_abc123"], False),
             (["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_bad-id"], False),
             (["autonomy", "cases", "case_abc123", "decision-briefs", "dcmp_abc123"], False),
             (["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_abc123", "signoff"], False),
+            (["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_bad-id", "signoffs"], False),
+            (["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_abc123", "signoffs", "extra"], False),
+            (["autonomy", "cases", "case_abc123", "reports", "drpt_bad-id"], False),
+            (["autonomy", "cases", "case_abc123", "reports", "dsgn_abc123"], False),
+            (["autonomy", "cases", "case_abc123", "reports", "drpt_abc123", "delete"], False),
+            (["autonomy", "cases", "case_abc123", "reports", "..", "download"], False),
             (["autonomy", "cases", "case_abc123", "scenarios", "dsc_bad-id", "validate"], False),
             (["autonomy", "cases", "case_abc123", "scenarios", "..", "expire"], False),
             (["autonomy", "cases", "case_abc123", "execution", "job_abc123", "retry"], False),
@@ -900,21 +915,31 @@ for (const [path, expected] of cases) {{
             'id="autonomyFixtureDecisionBrief"', 1
         )[0]
         for forbidden in (
-            "autonomyPrepareSignoffBtn",
-            "autonomySignoffDialog",
-            "Accept recommendation",
-            "Reject recommendation",
-            "Defer decision",
-            "PDF",
+            'id="autonomyPrepareSignoffBtn"',
+            'id="autonomySignoffDialog"',
+            "Sign fixture revision",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, live_brief)
+        for live_id in (
+            "autonomyLiveSignoffPanel",
+            "autonomyLiveReportPanel",
+            "autonomyLiveAcceptBtn",
+            "autonomyLiveDraftReportBtn",
+            "autonomyLiveFinalReportBtn",
+        ):
+            self.assertIn(f'id="{live_id}"', live_brief)
         signoff_tag = re.search(
             r'<dialog[^>]+id="autonomySignoffDialog"[^>]*>',
             self.markup,
         )
         self.assertIsNotNone(signoff_tag)
         self.assertIn("data-autonomy-fixture-only", signoff_tag.group(0))
+        live_signoff_tag = re.search(
+            r'<dialog[^>]+id="autonomyLiveSignoffDialog"[^>]*>', self.markup
+        )
+        self.assertIsNotNone(live_signoff_tag)
+        self.assertIn("data-autonomy-live-only", live_signoff_tag.group(0))
         ids = re.findall(r'\bid="([^"]+)"', self.markup)
         self.assertEqual(len(ids), len(set(ids)), "Autonomy markup IDs must remain unique")
 
@@ -972,6 +997,254 @@ for (const [path, expected] of cases) {{
             self.assertNotIn(forbidden_field, create)
         self.assertIn("autonomyBriefCreationSignature", create)
         self.assertIn("autonomyBriefCreationIdempotencyKey", create)
+
+    def test_live_signoff_is_revision_fenced_idempotent_and_human_owned(self):
+        submit = self.script.split("async function autonomySubmitLiveSignoff", 1)[1].split(
+            "\n        async function ", 1
+        )[0]
+        for field in (
+            "expected_case_revision",
+            "disposition",
+            "decision_owner_name",
+            "rationale",
+            "acknowledgement_text",
+            "acknowledgement_version",
+            "provisional_warning_acknowledgements",
+            "idempotency_key",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, submit)
+        self.assertIn("/decision-briefs/", submit)
+        self.assertIn("/signoffs", submit)
+        self.assertIn("autonomyDecisionScopedActionIsAllowed", submit)
+        self.assertIn("autonomyLiveSignoffSignature", submit)
+        self.assertIn("autonomyLiveSignoffIdempotencyKey", submit)
+        self.assertIn("allWarningsAccepted", submit)
+        self.assertIn("acknowledgement.text", submit)
+        self.assertIn("acknowledgement.version", submit)
+        self.assertIn("X-Autonomy-Human-Action", submit)
+        self.assertNotIn("operator_name:", submit)
+        for forbidden in ("recommendation:", "result:", "metrics:", "bundle:"):
+            self.assertNotIn(forbidden, submit)
+        live_gate = self.script.split(
+            "function autonomyLiveSignoffFormIsComplete", 1
+        )[1].split("\n        function ", 1)[0]
+        for required in (
+            "autonomyLiveSignoffOwner?.value.trim()",
+            "autonomyLiveSignoffRationale?.value.trim()",
+            "autonomyLiveSignoffAck?.checked",
+            "requiredWarnings.every",
+            "autonomyDecisionScopedActionIsAllowed",
+        ):
+            self.assertIn(required, live_gate)
+        self.assertIn(
+            "autonomyLiveSignoffSubmitBtn.disabled = !autonomyLiveSignoffFormIsComplete()",
+            self.script,
+        )
+
+    def test_live_dispositions_and_provisional_warnings_are_server_gated(self):
+        for action_id in ("sign_accept", "sign_reject", "sign_defer"):
+            self.assertIn(action_id, self.script)
+        scoped_action = self.script.split(
+            "function autonomyDecisionScopedAction", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("Object.prototype.hasOwnProperty.call(entry, key)", scoped_action)
+        self.assertIn("return false", scoped_action)
+        self.assertNotIn("typeof entry !== 'object') return true", scoped_action)
+        collector = self.script.split(
+            "function autonomyCollectDecisionAllowedActions", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("action.brief_revision_id || action.report_id", collector)
+        self.assertIn("id + '|' + scope", collector)
+        gate = self.script.split("function autonomyOpenLiveSignoff", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        self.assertIn("brief_revision_id", gate)
+        self.assertIn("autonomyDecisionScopedActionIsAllowed", gate)
+        warnings = self.script.split(
+            "function autonomyRequiredWarningAcknowledgements", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("required_warning_acknowledgements", warnings)
+        self.assertIn("required_acknowledgements", warnings)
+        self.assertIn("autonomyDecisionRecommendation()", warnings)
+        acknowledgement = self.script.split(
+            "function autonomySignoffAcknowledgementContract", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("action?.acknowledgement_text", acknowledgement)
+        self.assertIn("action?.acknowledgement_version", acknowledgement)
+        self.assertIn("complete: Boolean(text && version)", acknowledgement)
+        for element_id in (
+            "autonomyLiveSignoffOwner",
+            "autonomyLiveSignoffRationale",
+            "autonomyLiveSignoffAck",
+            "autonomyLiveWarningAcknowledgements",
+            "autonomyLiveWarningAcknowledgementList",
+        ):
+            self.assertEqual(self.markup.count(f'id="{element_id}"'), 1)
+        self.assertIn("authenticated application sign-off", self.markup.lower())
+        self.assertIn("not a cryptographic or legal digital signature", self.markup.lower())
+
+    def test_live_signoff_receipt_and_prior_revision_history_are_immutable_presentations(self):
+        for element_id in (
+            "autonomyLiveSignoffReceipt",
+            "autonomyLiveSignoffReceiptDetails",
+            "autonomyLiveSignoffHistoryRows",
+        ):
+            self.assertEqual(self.markup.count(f'id="{element_id}"'), 1)
+        render = self.script.split("function autonomyRenderDecisionSignoffs", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        signoff_id_reader = self.script.split(
+            "function autonomyDecisionSignoffRecordId", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("signoff_id", signoff_id_reader)
+        for field in (
+            "disposition",
+            "decision_owner_name",
+            "rationale",
+            "authenticated_principal",
+            "acknowledgement_version",
+            "snapshot_sha256",
+            "recommendation_contract_version",
+            "recommendation_contract_digest",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, render)
+        self.assertIn("Signed decision revision history", self.markup)
+        self.assertIn("data-signoff-state=\"unsigned\"", self.markup)
+
+    def test_reports_are_snapshot_bound_and_never_accept_browser_result_values(self):
+        generate = self.script.split("async function autonomyGenerateDecisionReport", 1)[1].split(
+            "\n        async function ", 1
+        )[0]
+        for field in (
+            "expected_case_revision",
+            "report_kind",
+            "brief_revision_id",
+            "signoff_id",
+            "idempotency_key",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, generate)
+        self.assertIn("/reports", generate)
+        self.assertIn("AUTONOMY_REPORT_ACTIONS", generate)
+        self.assertIn("autonomyDecisionScopedActionIsAllowed", generate)
+        for forbidden in (
+            "snapshot_json:",
+            "pdf_sha256:",
+            "metrics:",
+            "recommendation:",
+            "result:",
+            "filesystem",
+        ):
+            self.assertNotIn(forbidden, generate)
+        self.assertIn("autonomyLiveReportIdempotencyKeys", generate)
+        self.assertIn("X-Autonomy-Human-Action", generate)
+
+    def test_report_list_verification_download_and_watermark_states_are_exact(self):
+        render = self.script.split("function autonomyRenderDecisionReports", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        verify = self.script.split("async function autonomyVerifyDecisionReport", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        for action_id in (
+            "generate_draft_report",
+            "generate_final_report",
+            "verify_report",
+            "download_report",
+        ):
+            self.assertIn(action_id, self.script)
+        for field in (
+            "report_revision",
+            "brief_revision_id",
+            "signoff_id",
+            "snapshot_sha256",
+            "pdf_sha256",
+            "byte_count",
+            "page_count",
+            "generation_contract_version",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, render)
+        self.assertIn("/download", render)
+        self.assertIn("/verify", verify)
+        self.assertIn("method: 'POST'", verify)
+        self.assertIn("X-Autonomy-Human-Action", verify)
+        self.assertIn("cross-case identity", verify)
+        self.assertIn("WATERMARKED DRAFT", self.styles)
+        self.assertIn("IMMUTABLE FINAL", self.styles)
+        self.assertIn('data-report-kind="draft"', self.styles)
+        self.assertIn("Generate watermarked draft PDF", self.markup)
+        self.assertIn("Generate immutable final PDF", self.markup)
+
+    def test_report_downloads_and_technical_exports_use_only_internal_id_routes(self):
+        reports = self.script.split("function autonomyRenderDecisionReports", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        exports = self.script.split(
+            "function autonomyRenderDecisionTechnicalExports", 1
+        )[1].split("\n        function ", 1)[0]
+        self.assertIn("autonomyReportId", self.script)
+        self.assertIn("^drpt_", self.script)
+        self.assertIn("/api/autonomy/cases/", reports)
+        self.assertIn("encodeURIComponent(reportId)", reports)
+        self.assertNotRegex(reports, r"record\.(?:url|path|download_url)")
+        self.assertIn("autonomyTeaJobId", exports)
+        self.assertIn("/api/technoeconomic/jobs/", exports)
+        self.assertIn("/exports/", exports)
+
+    def test_authority_payloads_fail_closed_on_cross_case_and_cross_brief_records(self):
+        adopt = self.script.split(
+            "function autonomyAdoptDecisionAuthorityPayloads", 1
+        )[1].split("\n        async function ", 1)[0]
+        self.assertIn("record.case_id !== caseId", adopt)
+        self.assertIn("record.brief_revision_id", adopt)
+        self.assertIn("cross-case or cross-brief identity", adopt)
+        self.assertIn("throw identityError", adopt)
+        self.assertIn("signoff_blockers", adopt)
+        self.assertIn("report_blockers", adopt)
+
+    def test_live_recommendation_supports_approved_no_winner_and_confidence_contract(self):
+        render = self.script.split("function autonomyRenderDecisionRecommendation", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        for value in (
+            "solaredge",
+            "solectria",
+            "no_decisive_winner",
+            "strong",
+            "mixed",
+            "provisional",
+            "not_applicable",
+        ):
+            self.assertIn(value, render)
+        self.assertIn("Confidence not applicable", render)
+        self.assertNotRegex(render, r"(?:>=|<=|>|<)\s*0?\.\d+")
+        recommendation = self.script.split("function autonomyDecisionRecommendation", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        self.assertIn("autonomyLiveBrief?.recommendation", recommendation)
+        self.assertIn("authorized_recommendation", recommendation)
+
+    def test_rollout_status_distinguishes_automated_and_human_shadow_review(self):
+        render = self.script.split("function autonomyRenderDecisionRolloutStatus", 1)[1].split(
+            "\n        function ", 1
+        )[0]
+        for field in (
+            "decision_agent_enabled",
+            "shadow_mode",
+            "automated_gates",
+            "human_shadow_review",
+            "release_ready",
+        ):
+            self.assertIn(field, render)
+        self.assertNotIn("process.env", render)
+        self.assertIn("Automated gates and human shadow review", self.markup)
+
+    def test_proxy_forwards_the_explicit_human_action_marker_only_by_name(self):
+        self.assertIn('"x-autonomy-human-action"', self.proxy)
+        self.assertNotIn('"x-autonomy-*"', self.proxy)
 
     def test_live_brief_creation_is_scoped_to_the_server_bundle_identity(self):
         identity_gate = self.script.split(
@@ -1184,7 +1457,7 @@ for (const [path, expected] of cases) {{
         self.assertIn("'partial-results'", recommendation)
         self.assertIn("autonomyLiveRecommendation.hidden = partial", recommendation)
         self.assertIn("no winner or confidence state is authorized", recommendation)
-        self.assertIn("['Strong', 'Mixed', 'Provisional']", recommendation)
+        self.assertIn("['strong', 'mixed', 'provisional', 'not_applicable']", recommendation)
         self.assertNotRegex(recommendation, r"(?:>=|<=|>|<)\s*0?\.\d+")
 
     def test_live_ask_why_is_deterministic_and_return_preserves_compare_context(self):
@@ -1214,6 +1487,9 @@ for (const [path, expected] of cases) {{
             ".autonomy-live-analysis-grid",
             ".autonomy-live-brief-lower-grid",
             ".autonomy-live-request-matrix",
+            ".autonomy-live-authority-panel",
+            ".autonomy-live-report-panel",
+            ".autonomy-live-rollout-status",
             ".autonomy-live-brief-state[data-status=\"verification-failure\"]",
         ):
             self.assertIn(selector, compact)
@@ -1227,8 +1503,15 @@ for (const [path, expected] of cases) {{
             compact,
             r"\.autonomy-live-brief-selectors select\s*\{[^}]*font-size:\s*16px",
         )
+        self.assertRegex(
+            compact,
+            r"\.autonomy-live-disposition-actions \.autonomy-button,[^{]*"
+            r"\{[^}]*min-height:\s*44px",
+        )
+        self.assertIn(".autonomy-live-signoff-dialog input", compact)
         forced_colors = compact.split("@media (forced-colors: active)", 1)[1]
         self.assertIn(".autonomy-live-brief-state", forced_colors)
+        self.assertIn(".autonomy-live-report-panel", forced_colors)
         self.assertIn(".autonomy-live-recommendation", forced_colors)
 
     def test_fixture_selector_and_live_status_are_accessibly_described(self):
@@ -1330,6 +1613,10 @@ for (const [path, expected] of cases) {{
             r"\.autonomy-shell\s*\{[^}]*min-width:\s*0",
         )
         self.assertIn("max-width: 100%", compact)
+        self.assertRegex(
+            compact,
+            r"@media\s*\(max-width:\s*767px\)[\s\S]*?\.autonomy-title-field input\s*\{[^}]*padding-inline:\s*4px",
+        )
         for mobile_section in ("ask", "scenarios", "evidence", "decision"):
             self.assertIn(f'data-mobile-section="{mobile_section}"', self.combined)
         self.assertIn(
@@ -1359,6 +1646,11 @@ for (const [path, expected] of cases) {{
         self.assertIn("[data-autonomy-confirm-scenario]:checked", self.script)
         self.assertIn("selectedScenarios === 0", self.script)
         self.assertIn("autonomyCurrentFixture().signoffAllowed", self.script)
+        self.assertIn("function autonomyFixtureSignoffFormIsComplete", self.script)
+        self.assertIn(
+            "autonomySignoffSubmitBtn.disabled = !autonomyFixtureSignoffFormIsComplete()",
+            self.script,
+        )
         self.assertIn(
             "autonomySignedDecision = {disposition: disposition.value, owner, rationale}",
             self.script,

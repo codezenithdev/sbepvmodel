@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
 import shutil
 import unittest
@@ -47,10 +48,15 @@ class AutonomyApiTests(unittest.TestCase):
             "list_eligible_annual_sources",
             return_value=[],
         )
+        self.shadow_patch = patch.object(
+            config, "DECISION_AGENT_SHADOW_MODE", False
+        )
         self.readiness_patch.start()
         self.sources_patch.start()
+        self.shadow_patch.start()
 
     def _cleanup(self) -> None:
+        self.shadow_patch.stop()
         self.readiness_patch.stop()
         self.sources_patch.stop()
         state.DECISION_AGENT_TASKS.clear()
@@ -561,13 +567,400 @@ class AutonomyApiTests(unittest.TestCase):
         self.assertLessEqual(cutoff, finished_at - lease)
         self.assertNotIn("worker_id", recovery_calls[0])
 
-    def test_decision_brief_signoff_and_report_routes_do_not_exist(self):
+    def test_legacy_singular_decision_authority_routes_do_not_exist(self):
         case_id = self._create_case()["case_id"]
-        for suffix in ("decision-brief", "signoff", "reports"):
+        for suffix in ("decision-brief", "signoff"):
             response = self.client.post(
                 f"/api/autonomy/cases/{case_id}/{suffix}", json={}
             )
             self.assertEqual(response.status_code, 404, suffix)
+
+    def test_authority_routes_require_both_configured_principal_and_intent(self):
+        case_id = self._create_case()["case_id"]
+        report_url = f"/api/autonomy/cases/{case_id}/reports"
+        signoff_url = (
+            f"/api/autonomy/cases/{case_id}/decision-briefs/dbr_abc123/signoffs"
+        )
+        shadow_url = "/api/autonomy/shadow-reviews"
+        authority_requests = (
+            (
+                report_url,
+                {
+                    "expected_case_revision": 1,
+                    "report_kind": "draft",
+                    "brief_revision_id": "dbr_abc123",
+                    "idempotency_key": "report-auth-gate",
+                },
+            ),
+            (
+                signoff_url,
+                {
+                    "expected_case_revision": 1,
+                    "disposition": "defer",
+                    "decision_owner_name": "Decision Owner",
+                    "rationale": "Defer until the exact evidence is reviewed.",
+                    "acknowledgement_text": (
+                        autonomy_api._DECISION_ACKNOWLEDGEMENT_TEXT
+                    ),
+                    "acknowledgement_version": (
+                        autonomy_api._DECISION_ACKNOWLEDGEMENT_VERSION
+                    ),
+                    "provisional_warning_acknowledgements": [],
+                    "idempotency_key": "signoff-auth-gate",
+                },
+            ),
+            (
+                shadow_url,
+                {
+                    "case_id": case_id,
+                    "brief_revision_id": "dbr_abc123",
+                    "report_id": "drpt_abc123",
+                    "report_snapshot_sha256": "1" * 64,
+                    "pdf_sha256": "2" * 64,
+                    "report_identity_sha256": "3" * 64,
+                    "review_case_key": "auth-gate-shadow-case",
+                    "checklist_version": "autonomy-shadow-review-v2",
+                    "reviewer_name": "Human Reviewer",
+                    "outcome": "passed",
+                    "review": {
+                        "unauthorized_execution_observed": False,
+                        "numeric_citations_verified": True,
+                        "result_tie_out_verified": True,
+                        "report_tie_out_verified": True,
+                    },
+                },
+            ),
+        )
+
+        with patch.dict(
+            os.environ,
+            {"DASHBOARD_BASIC_USER": "", "DASHBOARD_BASIC_PASSWORD": ""},
+        ):
+            for url, payload in authority_requests:
+                with self.subTest(url=url, gate="intent"):
+                    response = self.client.post(url, json=payload)
+                    self.assertEqual(403, response.status_code, response.text)
+                    self.assertEqual(
+                        "human_action_intent_required",
+                        response.json()["detail"]["code"],
+                    )
+                with self.subTest(url=url, gate="principal"):
+                    response = self.client.post(
+                        url,
+                        headers={"X-Autonomy-Human-Action": "1"},
+                        json=payload,
+                    )
+                    self.assertEqual(403, response.status_code, response.text)
+                    self.assertEqual(
+                        "authenticated_principal_required",
+                        response.json()["detail"]["code"],
+                    )
+
+        authorization = "Basic " + base64.b64encode(
+            b"authority-user:authority-password"
+        ).decode("ascii")
+        with patch.dict(
+            os.environ,
+            {
+                "DASHBOARD_BASIC_USER": "authority-user",
+                "DASHBOARD_BASIC_PASSWORD": "authority-password",
+            },
+        ):
+            missing_intent = self.client.post(
+                report_url,
+                headers={"Authorization": authorization},
+                json=authority_requests[0][1],
+            )
+            self.assertEqual(403, missing_intent.status_code, missing_intent.text)
+            self.assertEqual(
+                "human_action_intent_required",
+                missing_intent.json()["detail"]["code"],
+            )
+            crossed_both_gates = self.client.post(
+                report_url,
+                headers={
+                    "Authorization": authorization,
+                    "X-Autonomy-Human-Action": "1",
+                },
+                json=authority_requests[0][1],
+            )
+            self.assertEqual(404, crossed_both_gates.status_code, crossed_both_gates.text)
+
+    def test_release_readiness_separates_behavior_evals_from_human_reviews(self):
+        renderer = autonomy_api.decision_reporting.renderer_fingerprint()
+        reviews = []
+        reports = {}
+        tampered_report_ids = set()
+
+        def add_review(index, outcome="passed", *, case_id=None):
+            suffix = f"{index + 1:x}" * 64
+            case_id = case_id or f"case_shadow{index}"
+            report_id = f"drpt_shadow{index}"
+            report = {
+                "report_id": report_id,
+                "case_id": case_id,
+                "brief_revision_id": f"dbr_shadow{index}",
+                "report_kind": "draft",
+                "signoff_id": None,
+                "snapshot_sha256": suffix,
+                "pdf_sha256": suffix[::-1],
+                "report_identity_sha256": (f"{15 - index:x}" * 64),
+                "recommendation_contract_version": (
+                    autonomy_api.recommendation_service.RECOMMENDATION_CONTRACT_VERSION
+                ),
+                "recommendation_contract_digest": (
+                    autonomy_api.recommendation_service.RECOMMENDATION_CONTRACT_DIGEST
+                ),
+                "generation_contract_version": (
+                    autonomy_api.decision_reporting.REPORT_GENERATION_CONTRACT_VERSION
+                ),
+                "renderer_fingerprint": renderer,
+                "snapshot": {
+                    "schema_version": (
+                        autonomy_api.decision_reporting.REPORT_SNAPSHOT_SCHEMA_VERSION
+                    )
+                },
+            }
+            reports[report_id] = report
+            reviews.append(
+                {
+                    **report,
+                    "report_snapshot_sha256": report["snapshot_sha256"],
+                    "checklist_version": "autonomy-shadow-review-v2",
+                    "outcome": outcome,
+                }
+            )
+
+        for index in range(10):
+            add_review(index)
+        add_review(12, case_id="case_shadow0")
+
+        def verify_report(_root, report):
+            if report["report_id"] in tampered_report_ids:
+                raise autonomy_api.decision_reporting.DecisionReportError(
+                    "report_artifact_tampered", "tampered"
+                )
+            return b"%PDF-fixture", {
+                "snapshot_sha256": report["snapshot_sha256"],
+                "pdf_sha256": report["pdf_sha256"],
+            }
+
+        with (
+            patch.object(
+                state.AGENT_STORE,
+                "list_decision_shadow_reviews",
+                side_effect=lambda **_kwargs: list(reviews),
+            ) as list_reviews,
+            patch.object(
+                state.AGENT_STORE,
+                "get_decision_report",
+                side_effect=lambda report_id: reports.get(report_id),
+            ),
+            patch.object(
+                autonomy_api.decision_reporting,
+                "verified_report_pdf",
+                side_effect=verify_report,
+            ),
+            patch.object(config, "DECISION_AGENT_ENABLED", True),
+        ):
+            with patch.object(config, "DECISION_AGENT_BEHAVIOR_EVAL_CASES", 19):
+                incomplete = self.client.get("/api/autonomy/release-readiness")
+            self.assertEqual(200, incomplete.status_code, incomplete.text)
+            readiness = incomplete.json()["release_readiness"]
+            self.assertEqual("incomplete", readiness["automated_gates"]["status"])
+            self.assertEqual(
+                "incomplete", readiness["automated_gates"]["behavior_evals"]["status"]
+            )
+            self.assertEqual("complete", readiness["human_shadow_review"]["status"])
+            self.assertFalse(readiness["release_ready"])
+
+            with patch.object(config, "DECISION_AGENT_BEHAVIOR_EVAL_CASES", 20):
+                complete = self.client.get("/api/autonomy/release-readiness")
+            self.assertEqual(200, complete.status_code, complete.text)
+            readiness = complete.json()["release_readiness"]
+            self.assertEqual("passed", readiness["automated_gates"]["status"])
+            self.assertEqual(10, readiness["human_shadow_review"]["passed_cases"])
+            self.assertEqual(11, readiness["human_shadow_review"]["verified_cases"])
+            self.assertTrue(readiness["release_ready"])
+
+            tampered_report_ids.add("drpt_shadow0")
+            with patch.object(config, "DECISION_AGENT_BEHAVIOR_EVAL_CASES", 20):
+                tampered = self.client.get("/api/autonomy/release-readiness")
+            tampered_readiness = tampered.json()["release_readiness"]
+            self.assertEqual(
+                1, tampered_readiness["human_shadow_review"]["invalid_evidence_cases"]
+            )
+            self.assertFalse(tampered_readiness["release_ready"])
+            tampered_report_ids.clear()
+
+            add_review(10, "needs_followup")
+            with patch.object(config, "DECISION_AGENT_BEHAVIOR_EVAL_CASES", 20):
+                followup = self.client.get("/api/autonomy/release-readiness")
+            followup_readiness = followup.json()["release_readiness"]
+            self.assertEqual(
+                1,
+                followup_readiness["human_shadow_review"]["needs_followup_cases"],
+            )
+            self.assertFalse(followup_readiness["release_ready"])
+
+            add_review(11, "failed")
+            with patch.object(config, "DECISION_AGENT_BEHAVIOR_EVAL_CASES", 20):
+                failed = self.client.get("/api/autonomy/release-readiness")
+            self.assertFalse(failed.json()["release_readiness"]["release_ready"])
+            self.assertTrue(list_reviews.call_args_list)
+            for review_call in list_reviews.call_args_list:
+                self.assertEqual(
+                    {
+                        "checklist_version": "autonomy-shadow-review-v2",
+                        "limit": None,
+                    },
+                    review_call.kwargs,
+                )
+
+    def test_shadow_review_requires_shadow_mode_and_exact_verified_draft_report(self):
+        renderer = autonomy_api.decision_reporting.renderer_fingerprint()
+        report = {
+            "report_id": "drpt_shadowbinding",
+            "case_id": "case_shadowbinding",
+            "brief_revision_id": "dbr_shadowbinding",
+            "report_kind": "draft",
+            "signoff_id": None,
+            "snapshot_sha256": "1" * 64,
+            "pdf_sha256": "2" * 64,
+            "report_identity_sha256": "3" * 64,
+            "recommendation_contract_version": (
+                autonomy_api.recommendation_service.RECOMMENDATION_CONTRACT_VERSION
+            ),
+            "recommendation_contract_digest": (
+                autonomy_api.recommendation_service.RECOMMENDATION_CONTRACT_DIGEST
+            ),
+            "generation_contract_version": (
+                autonomy_api.decision_reporting.REPORT_GENERATION_CONTRACT_VERSION
+            ),
+            "renderer_fingerprint": renderer,
+            "snapshot": {
+                "schema_version": (
+                    autonomy_api.decision_reporting.REPORT_SNAPSHOT_SCHEMA_VERSION
+                )
+            },
+        }
+        payload = {
+            "case_id": report["case_id"],
+            "brief_revision_id": report["brief_revision_id"],
+            "report_id": report["report_id"],
+            "report_snapshot_sha256": report["snapshot_sha256"],
+            "pdf_sha256": report["pdf_sha256"],
+            "report_identity_sha256": report["report_identity_sha256"],
+            "review_case_key": "representative-case-001",
+            "checklist_version": "autonomy-shadow-review-v2",
+            "reviewer_name": "Human Reviewer",
+            "outcome": "passed",
+            "review": {
+                "unauthorized_execution_observed": False,
+                "numeric_citations_verified": True,
+                "result_tie_out_verified": True,
+                "report_tie_out_verified": True,
+            },
+        }
+        token = base64.b64encode(b"authority-user:authority-password").decode("ascii")
+        headers = {
+            "Authorization": f"Basic {token}",
+            "X-Autonomy-Human-Action": "1",
+        }
+
+        def persist_review(**kwargs):
+            return {
+                **kwargs,
+                "shadow_review_id": "dshr_shadowbinding",
+                "review_sha256": "4" * 64,
+                "reviewed_at": "2026-08-30T12:00:00+00:00",
+            }
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "DASHBOARD_BASIC_USER": "authority-user",
+                    "DASHBOARD_BASIC_PASSWORD": "authority-password",
+                },
+            ),
+            patch.object(config, "DECISION_AGENT_ENABLED", True),
+            patch.object(
+                state.AGENT_STORE, "get_decision_report", return_value=report
+            ),
+            patch.object(
+                state.AGENT_STORE,
+                "create_decision_shadow_review",
+                side_effect=persist_review,
+            ) as create_review,
+            patch.object(
+                autonomy_api.decision_reporting,
+                "verified_report_pdf",
+                return_value=(
+                    b"%PDF-fixture",
+                    {
+                        "snapshot_sha256": report["snapshot_sha256"],
+                        "pdf_sha256": report["pdf_sha256"],
+                    },
+                ),
+            ),
+        ):
+            not_shadow = self.client.post(
+                "/api/autonomy/shadow-reviews", headers=headers, json=payload
+            )
+            self.assertEqual(409, not_shadow.status_code, not_shadow.text)
+            self.assertEqual(
+                "decision_agent_shadow_mode_required",
+                not_shadow.json()["detail"]["code"],
+            )
+
+            with patch.object(config, "DECISION_AGENT_SHADOW_MODE", True):
+                malformed = self.client.post(
+                    "/api/autonomy/shadow-reviews",
+                    headers=headers,
+                    json={
+                        **payload,
+                        "review": {**payload["review"], "unexpected": True},
+                    },
+                )
+                self.assertEqual(422, malformed.status_code, malformed.text)
+
+                failed_gate = self.client.post(
+                    "/api/autonomy/shadow-reviews",
+                    headers=headers,
+                    json={
+                        **payload,
+                        "review": {
+                            **payload["review"],
+                            "report_tie_out_verified": False,
+                        },
+                    },
+                )
+                self.assertEqual(422, failed_gate.status_code, failed_gate.text)
+                self.assertEqual(
+                    "shadow_review_pass_not_supported",
+                    failed_gate.json()["detail"]["code"],
+                )
+
+                mismatched = self.client.post(
+                    "/api/autonomy/shadow-reviews",
+                    headers=headers,
+                    json={**payload, "report_snapshot_sha256": "f" * 64},
+                )
+                self.assertEqual(409, mismatched.status_code, mismatched.text)
+                self.assertEqual(
+                    "shadow_review_report_identity_mismatch",
+                    mismatched.json()["detail"]["code"],
+                )
+
+                created = self.client.post(
+                    "/api/autonomy/shadow-reviews", headers=headers, json=payload
+                )
+                self.assertEqual(201, created.status_code, created.text)
+                self.assertEqual(
+                    report["report_id"], created.json()["shadow_review"]["report_id"]
+                )
+                self.assertEqual(1, create_review.call_count)
 
 
 if __name__ == "__main__":
