@@ -1906,6 +1906,7 @@
         }
 
         .autonomy-live-brief-state[data-status="verification-failure"],
+        .autonomy-live-brief-state[data-status="recommendation-unavailable"],
         .autonomy-live-brief-state[data-status="api-unavailable"] {
             border-left-color: var(--danger);
             background: var(--danger-soft);
@@ -2072,6 +2073,148 @@
             gap: 10px;
             min-width: 0;
             align-items: start;
+        }
+
+        .autonomy-live-authority-panel,
+        .autonomy-live-report-panel,
+        .autonomy-live-rollout-status {
+            display: grid;
+            min-width: 0;
+            gap: 12px;
+            padding: 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+
+        .autonomy-live-authority-panel {
+            border-top: 4px solid var(--warning);
+        }
+
+        .autonomy-live-authority-panel[data-signoff-state="signed"] {
+            border-top-color: var(--success);
+            background: var(--success-soft);
+        }
+
+        .autonomy-live-authority-panel[data-signoff-state="superseded"] {
+            border-top-color: var(--warning);
+            background: var(--warning-soft);
+        }
+
+        .autonomy-live-report-panel {
+            border-top: 4px solid var(--accent);
+        }
+
+        .autonomy-live-rollout-status {
+            border-left: 4px solid #6b7f91;
+        }
+
+        .autonomy-live-authority-panel > .autonomy-section-heading,
+        .autonomy-live-report-panel > .autonomy-section-heading {
+            align-items: flex-start;
+        }
+
+        .autonomy-authority-note,
+        .autonomy-live-technical-exports > p,
+        .autonomy-live-warning-acknowledgements > p {
+            color: var(--muted-strong);
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .autonomy-live-authority-blockers {
+            display: grid;
+            gap: 5px;
+            padding-left: 18px;
+            color: var(--muted-strong);
+            font-size: 11px;
+        }
+
+        .autonomy-live-disposition-actions,
+        .autonomy-live-report-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .autonomy-live-receipt,
+        .autonomy-live-technical-exports,
+        .autonomy-live-warning-acknowledgements {
+            min-width: 0;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-muted);
+        }
+
+        .autonomy-live-receipt h4,
+        .autonomy-live-technical-exports h4 {
+            margin-bottom: 7px;
+            font-size: 13px;
+        }
+
+        .autonomy-live-report-panel tr[data-report-kind="draft"] th:first-child::after {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 2px 5px;
+            border: 1px solid var(--warning);
+            border-radius: 4px;
+            color: var(--warning);
+            content: "WATERMARKED DRAFT";
+            font-size: 9px;
+            font-weight: 900;
+            letter-spacing: 0.04em;
+        }
+
+        .autonomy-live-report-panel tr[data-report-kind="final"] th:first-child::after {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 2px 5px;
+            border: 1px solid var(--success);
+            border-radius: 4px;
+            color: var(--success);
+            content: "IMMUTABLE FINAL";
+            font-size: 9px;
+            font-weight: 900;
+            letter-spacing: 0.04em;
+        }
+
+        .autonomy-live-report-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .autonomy-live-report-controls a,
+        .autonomy-live-technical-exports a {
+            color: var(--accent-strong);
+            font-weight: 750;
+            text-underline-offset: 2px;
+        }
+
+        .autonomy-live-technical-exports ul {
+            display: grid;
+            gap: 6px;
+            margin-top: 8px;
+            padding-left: 18px;
+            font-size: 11px;
+        }
+
+        .autonomy-live-warning-acknowledgements {
+            display: grid;
+            gap: 8px;
+            border-color: #e8c18d;
+            background: var(--warning-soft);
+        }
+
+        .autonomy-live-warning-acknowledgements > div {
+            display: grid;
+            gap: 7px;
+        }
+
+        .autonomy-live-signoff-dialog[aria-busy="true"] footer {
+            opacity: 0.72;
         }
 
         .autonomy-partial-warning,
@@ -2761,6 +2904,10 @@
                 font-size: 16px;
             }
 
+            .autonomy-title-field input {
+                padding-inline: 4px;
+            }
+
             .autonomy-button,
             .autonomy-link-button,
             .autonomy-view-switch button,
@@ -2878,7 +3025,10 @@
             .autonomy-live-recommendation,
             .autonomy-live-brief-section,
             .autonomy-live-why,
-            .autonomy-live-decide-panel {
+            .autonomy-live-decide-panel,
+            .autonomy-live-authority-panel,
+            .autonomy-live-report-panel,
+            .autonomy-live-rollout-status {
                 width: 100%;
                 min-width: 0;
                 max-width: 100%;
@@ -2911,7 +3061,10 @@
 
             .autonomy-live-decide-actions,
             .autonomy-live-brief-actions,
-            .autonomy-live-recommendation-actions {
+            .autonomy-live-recommendation-actions,
+            .autonomy-live-disposition-actions,
+            .autonomy-live-report-actions,
+            .autonomy-live-report-controls {
                 display: grid;
                 grid-template-columns: minmax(0, 1fr);
                 width: 100%;
@@ -2920,7 +3073,12 @@
             .autonomy-live-decide-actions .autonomy-button,
             .autonomy-live-brief-actions .autonomy-button,
             .autonomy-live-recommendation-actions .autonomy-button,
-            .autonomy-live-export-links a {
+            .autonomy-live-export-links a,
+            .autonomy-live-disposition-actions .autonomy-button,
+            .autonomy-live-report-actions .autonomy-button,
+            .autonomy-live-report-controls .autonomy-button,
+            .autonomy-live-report-controls a,
+            .autonomy-live-technical-exports a {
                 display: inline-flex;
                 align-items: center;
                 width: 100%;
@@ -2945,6 +3103,11 @@
 
             .autonomy-live-cdf-details summary {
                 min-height: 44px;
+            }
+
+            .autonomy-live-signoff-dialog input,
+            .autonomy-live-signoff-dialog textarea {
+                font-size: 16px;
             }
 
             .autonomy-hero-actions {
@@ -3114,6 +3277,12 @@
             .autonomy-live-recommendation,
             .autonomy-live-brief-section,
             .autonomy-live-why,
+            .autonomy-live-authority-panel,
+            .autonomy-live-report-panel,
+            .autonomy-live-rollout-status,
+            .autonomy-live-receipt,
+            .autonomy-live-technical-exports,
+            .autonomy-live-warning-acknowledgements,
             .autonomy-recommendation-hero,
             .autonomy-outcomes,
             .autonomy-analysis-panel,

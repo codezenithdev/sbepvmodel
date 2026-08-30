@@ -77,6 +77,16 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). Copy `env.example` to 
 `BAZEFIELD_API_KEY` and `OPENAI_API_KEY` first; without them the dashboard loads but
 Bazefield retrieval and chat fail.
 
+Autonomy decision authority is intentionally stricter than ordinary local use.
+Sign-off, report generation, and human shadow-review records require configured
+dashboard Basic Auth plus the application intent header; an unprotected local
+dashboard can inspect and verify but cannot sign. The hosted frontend's Render
+service credential is not a user identity, so its proxy blocks those mutations;
+open the authenticated Render dashboard directly for v1 authority actions.
+Each release-counted shadow review is additionally bound to one strictly verified
+draft PDF, its immutable case/brief/report identities, and the active recommendation
+and renderer contracts. Ten distinct reviewed decision cases are required.
+
 Annual Simulation accepts one or more SolarTAC years from 2011 through the current
 year. Supported minute intervals are the whole-minute divisors of a day from 1
 through 60 (including 1, 5, 15, 30, 45, and 60 minutes), or exactly 1 hour.

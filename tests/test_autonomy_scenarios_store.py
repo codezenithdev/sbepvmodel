@@ -434,25 +434,45 @@ class AutonomyScenarioStoreTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db_path)) as connection:
             connection.execute("PRAGMA foreign_keys = OFF")
             triggers = connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
-                "AND sql LIKE '%decision_scenario%'"
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND ("
+                "name = 'decision_case_transition_guard' OR "
+                "name LIKE 'decision_scenario%' OR "
+                "name LIKE 'decision_comparison%' OR "
+                "name LIKE 'decision_brief%' OR "
+                "name LIKE 'decision_recommendation%' OR "
+                "name LIKE 'decision_signoff%' OR "
+                "name LIKE 'decision_report%' OR "
+                "name LIKE 'decision_shadow_review%')"
             ).fetchall()
             for (trigger_name,) in triggers:
                 connection.execute(f'DROP TRIGGER "{trigger_name}"')
-            tables = connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' "
-                "AND name LIKE 'decision_scenario%'"
-            ).fetchall()
-            for (table_name,) in tables:
+            for table_name in (
+                "decision_report_idempotency",
+                "decision_shadow_reviews",
+                "decision_reports",
+                "decision_signoff_idempotency",
+                "decision_signoffs",
+                "decision_recommendations",
+                "decision_brief_idempotency",
+                "decision_briefs",
+                "decision_comparison_bundle_attempts",
+                "decision_comparison_bundles",
+                "decision_scenario_confirmation_idempotency",
+                "decision_scenario_jobs",
+                "decision_scenario_confirmation_items",
+                "decision_scenario_confirmations",
+                "decision_scenario_evidence",
+                "decision_scenarios",
+            ):
                 connection.execute(f'DROP TABLE "{table_name}"')
-            connection.execute("DELETE FROM schema_migrations WHERE version = 7")
+            connection.execute("DELETE FROM schema_migrations WHERE version >= 7")
             connection.execute("PRAGMA user_version = 6")
             connection.commit()
 
         reopened = AgentStore(self.db_path, now=self.clock)
 
-        self.assertEqual(8, SCHEMA_VERSION)
-        self.assertEqual(8, reopened.schema_version)
+        self.assertEqual(9, SCHEMA_VERSION)
+        self.assertEqual(9, reopened.schema_version)
         self.assertEqual(case_id, reopened.get_decision_case(case_id)["id"])
         self.assertEqual(source_id, reopened.get_job(source_id)["id"])
         expected_tables = {
@@ -488,7 +508,7 @@ class AutonomyScenarioStoreTests(unittest.TestCase):
             }
         self.assertEqual(expected_tables, actual_tables)
         self.assertEqual(
-            [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)],
+            [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,)],
             migrations,
         )
         self.assertTrue(

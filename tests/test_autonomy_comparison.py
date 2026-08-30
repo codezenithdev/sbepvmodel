@@ -12,6 +12,7 @@ from sbepv import technoeconomic_reporting as reporting
 from sbepv.api import config
 from sbepv.api import technoeconomic as tea_api
 from sbepv.autonomy import comparison
+from sbepv.autonomy import recommendation
 from sbepv.autonomy import result_verification
 from sbepv.worker import run_technoeconomic
 
@@ -102,7 +103,9 @@ def _verified_outcome(
     *,
     contract_version: str = tea.CALCULATION_CONTRACT_VERSION,
     source_snapshot_sha256: str = "2" * 64,
+    request: dict | None = None,
 ) -> result_verification.ResultVerificationOutcome:
+    request = request or {"basis": "solartac_site", "value": 1.0}
     summaries: dict[str, object] = {}
     sealed_summaries: dict[str, object] = {}
     for index, metric_id in enumerate(_metric_ids(contract_version)):
@@ -208,6 +211,12 @@ def _verified_outcome(
         "class_probability_change_threshold": 0.001,
         "metric_absolute_tolerances": {"metric": 0.0001},
     }
+    reporting_tie_outs = {
+        "status": "passed",
+        "failed_check_ids": [],
+        "check_count": 0,
+        "realization_row_count": 3,
+    }
     result = {
         "schema_version": (
             3
@@ -240,10 +249,7 @@ def _verified_outcome(
         "common_cost_audit": [],
         "exports": {
             "manifest_sha256": "8" * 64,
-            "tie_outs": {
-                "status": "passed",
-                "failed_check_ids": [],
-            },
+            "tie_outs": reporting_tie_outs,
         },
     }
     if contract_version != tea.LEGACY_CALCULATION_CONTRACT_VERSION:
@@ -254,7 +260,7 @@ def _verified_outcome(
             "target_rating_basis": "dc_installed_nameplate",
         }
     result_provenance = {
-        "request_sha256": "1" * 64,
+        "request_sha256": _sha(request),
         "source_snapshot_sha256": source_snapshot_sha256,
         "submission_provenance_sha256": "3" * 64,
         "validated_kernel_request_sha256": "4" * 64,
@@ -269,6 +275,11 @@ def _verified_outcome(
             "immutable": True,
         },
         "kernel": {
+            "calculation_contract_version": contract_version,
+            "sampling_version": tea.SAMPLING_VERSION,
+            "analysis_basis": "solartac_site",
+            "realization_count": 3,
+            "energy_status": "available",
             "numerics": {
                 "contract_version": tea.NUMERICAL_CONTRACT_VERSION,
                 "probe_digests": deepcopy(tea.NUMERICAL_PROBE_DIGESTS),
@@ -283,7 +294,12 @@ def _verified_outcome(
         reporting_checks=(),
         evidence_receipts=(),
         evidence_set_sha256=_sha([]),
-        reporting_tieout_sha256="9" * 64,
+        reporting_tieout_sha256=_sha(
+            {
+                "manifest_sha256": "8" * 64,
+                "tie_outs": reporting_tie_outs,
+            }
+        ),
     )
     return result_verification.ResultVerificationOutcome(
         status="verified",
@@ -334,6 +350,7 @@ def _scenario(
     *,
     kind: str,
     confirmation_id: str = "dsc_confirm",
+    comparison_classification: str | None = None,
 ) -> dict:
     return {
         "id": scenario_id,
@@ -344,6 +361,9 @@ def _scenario(
         "confirmation_id": confirmation_id,
         "label": scenario_id,
         "kind": kind,
+        "comparison_classification": comparison_classification or (
+            "baseline" if kind == "baseline" else "controlled"
+        ),
         "request": deepcopy(request),
         "request_sha256": _sha(request),
         "source_annual_job_id": "annual-source",
@@ -543,7 +563,7 @@ class AutonomyComparisonBundleTests(unittest.TestCase):
         request = request or {"basis": "solartac_site", "value": 1.0}
         job = _job("tea_done", request, attempt_number=1, state="done")
         outcome = _verified_outcome(
-            "tea_done", contract_version=contract_version
+            "tea_done", contract_version=contract_version, request=request
         )
         assert outcome.verified_result is not None
         job["result"] = deepcopy(outcome.verified_result.result)
@@ -578,6 +598,7 @@ class AutonomyComparisonBundleTests(unittest.TestCase):
         self.assertTrue(bundle["is_complete"])
         self.assertFalse(bundle["recommendation_eligible"])
         self.assertEqual("verified", scenario["verification"]["status"])
+        self.assertEqual("baseline", scenario["comparison_classification"])
         self.assertEqual(
             "USD/applied_W",
             metrics[tea.APPLIED_FIELD_DELTA_COST]["unit"],
@@ -624,9 +645,91 @@ class AutonomyComparisonBundleTests(unittest.TestCase):
         )
         self.assertIsNone(bundle["recommendation"]["classification"])
         self.assertIsNone(bundle["recommendation"]["confidence"])
+        classified = recommendation.classify_comparison_bundle(
+            bundle, expected_bundle_sha256=bundle["bundle_hash"]
+        )
+        self.assertEqual("available", classified["state"])
+        self.assertEqual("no_decisive_winner", classified["classification"])
+        self.assertEqual("not_applicable", classified["confidence"])
         self.assertEqual(
             bundle["bundle_hash"],
             comparison.canonical_comparison_bundle_sha256(bundle),
+        )
+
+    def test_projection_commitment_requires_exact_durable_tradeoff_population(
+        self,
+    ) -> None:
+        outcome = _verified_outcome("tea_projection_commitment")
+        assert outcome.verified_result is not None
+        durable_result = outcome.verified_result.result
+        projection = {
+            "joint_outcomes": {
+                "tradeoff_classes": deepcopy(
+                    durable_result["summaries"]["tradeoff_classes"]
+                )
+            }
+        }
+        verified_digest = (
+            comparison.verified_result_projection_commitment_sha256(
+                durable_result=durable_result,
+                result_projection=projection,
+            )
+        )
+        self.assertEqual(
+            comparison.result_projection_commitment_sha256(
+                durable_result_sha256=_sha(durable_result),
+                result_projection=projection,
+            ),
+            verified_digest,
+        )
+        projection["joint_outcomes"]["tradeoff_classes"]["counts"] = {
+            "forged": 3
+        }
+        with self.assertRaisesRegex(
+            comparison.ComparisonContractError,
+            "differs from the durable result",
+        ):
+            comparison.verified_result_projection_commitment_sha256(
+                durable_result=durable_result,
+                result_projection=projection,
+            )
+
+    def test_bundle_preserves_structural_comparison_warning(self) -> None:
+        request = {"basis": "solartac_site", "value": 1.0}
+        job = _job("tea_structural", request, attempt_number=1, state="done")
+        outcome = _verified_outcome("tea_structural", request=request)
+        assert outcome.verified_result is not None
+        job["result"] = deepcopy(outcome.verified_result.result)
+        job["result_provenance"] = deepcopy(
+            outcome.verified_result.result_provenance
+        )
+        scenario = _scenario(
+            "ds_structural",
+            "dscr_structural_r1",
+            request,
+            [job],
+            kind="alternative",
+            comparison_classification="structural",
+        )
+        bundle = comparison.build_comparison_bundle(
+            case_record={
+                "id": "dc_case",
+                "revision": 6,
+                "source_annual_job_id": "annual-source",
+                "source_snapshot_sha256": "2" * 64,
+                "analysis_basis": "solartac_site",
+            },
+            confirmation_record=_confirmation([scenario]),
+            scenario_records=[scenario],
+            verification_outcomes={"tea_structural": outcome},
+        )
+
+        projected = bundle["scenarios"][0]
+        self.assertEqual("structural", projected["comparison_classification"])
+        self.assertEqual(
+            "This scenario changes request structure; baseline-relative causal "
+            "attribution is limited.",
+            projected["structural_warning"],
         )
 
     def test_metric_registry_preserves_v1_v2_v3_units(self) -> None:
@@ -685,7 +788,9 @@ class AutonomyComparisonBundleTests(unittest.TestCase):
             state="done",
             retry_of_job_id="tea_base_error",
         )
-        baseline_outcome = _verified_outcome("tea_base_done")
+        baseline_outcome = _verified_outcome(
+            "tea_base_done", request=baseline_request
+        )
         assert baseline_outcome.verified_result is not None
         baseline_retry["result"] = deepcopy(
             baseline_outcome.verified_result.result

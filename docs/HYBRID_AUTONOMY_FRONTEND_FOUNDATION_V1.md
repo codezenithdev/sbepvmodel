@@ -8,6 +8,10 @@ Date: **2026-08-27**
 
 Scope: **Hybrid Autonomy Workspace Phase 0 and Phase 1 only**
 
+Live recommendation authority: **not part of this historical fixture phase**;
+subsequent deterministic recommendation behavior is governed by
+`AUTONOMY_CONSERVATIVE_RECOMMENDATION_CONTRACT_V1.md`.
+
 ## 1. Authority and interpretation
 
 This contract applies the approved
@@ -15,6 +19,10 @@ This contract applies the approved
 foundation. The hybrid contract controls interaction and phase numbering. The
 unified contract continues to control the eventual architecture and end-state
 authority boundary.
+
+The approved conservative-dominance addendum controls the later live winner,
+no-winner, confidence, warning, and reversal classification. It does not
+retroactively turn these Phase 1 fixtures into server results.
 
 For this delivery, Phase 1 means the hybrid contract's shared shell and read-only,
 fixture-backed states. It does **not** mean the unified plan's later durable backend

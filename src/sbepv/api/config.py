@@ -83,11 +83,14 @@ ANNUAL_SOURCE_ARTIFACT_DIR = OUTPUT_DIR / ".annual_sources"
 ANNUAL_SOURCE_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 DECISION_EVIDENCE_DIR = OUTPUT_DIR / ".decision_evidence"
 DECISION_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+DECISION_REPORT_DIR = OUTPUT_DIR / ".decision_reports"
+DECISION_REPORT_DIR.mkdir(parents=True, exist_ok=True)
 PRIVATE_OUTPUT_DIRS = (
     (OUTPUT_DIR / ".agent_state").resolve(),
     CALIBRATION_REVIEW_DIR.resolve(),
     ANNUAL_SOURCE_ARTIFACT_DIR.resolve(),
     DECISION_EVIDENCE_DIR.resolve(),
+    DECISION_REPORT_DIR.resolve(),
     (OUTPUT_DIR / ".technoeconomic_attempts").resolve(),
 )
 PUBLIC_OUTPUT_SUFFIXES = frozenset({".csv", ".png", ".xlsx"})
@@ -138,6 +141,14 @@ if OPENAI_REASONING_EFFORT not in OPENAI_REASONING_EFFORTS:
 # are server authority, not prompt suggestions, and are kept module-qualified so
 # tests can replace them without touching process-global environment state.
 DECISION_AGENT_ENABLED = _env_flag("DECISION_AGENT_ENABLED", True)
+# Fail closed on a new deployment: operators must explicitly complete the shadow
+# checklist and opt out before execution or decision authority can activate.
+DECISION_AGENT_SHADOW_MODE = _env_flag("DECISION_AGENT_SHADOW_MODE", True)
+DECISION_AGENT_BEHAVIOR_EVAL_CASES = int(
+    _bounded_env_number(
+        "DECISION_AGENT_BEHAVIOR_EVAL_CASES", 0, minimum=0, maximum=10_000
+    )
+)
 DECISION_AGENT_TIMEOUT_SECONDS = _bounded_env_number(
     "DECISION_AGENT_TIMEOUT_SECONDS", 45, minimum=5, maximum=45
 )

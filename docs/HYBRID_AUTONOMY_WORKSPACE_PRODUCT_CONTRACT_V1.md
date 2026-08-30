@@ -7,6 +7,9 @@
 - Source: approved Hybrid Autonomy Workspace plan
 - Authority: controlling interaction and frontend-phase contract
 - Conflict rule: when a mockup or the unified plan's phase numbering differs, this written hybrid contract controls the Phase 0/Phase 1 frontend foundation.
+- Deterministic recommendation authority: winner, no-winner, confidence, warning,
+  and reversal classification is narrowed by
+  `AUTONOMY_CONSERVATIVE_RECOMMENDATION_CONTRACT_V1.md` (approved 2026-08-30).
 
 ---
 
@@ -37,6 +40,10 @@ The workspace should let an end user ask questions such as:
 The product is **supervised autonomy**, not unattended execution. The system may observe state, identify missing prerequisites, retrieve evidence, explain results, propose controlled scenarios, validate requests, monitor approved work, compare completed TEA results, and draft a recommendation. A named human must still accept evidence, confirm exact TEA request hashes, and sign the final decision.
 
 The agent never calculates lifecycle results itself, bypasses the TEA contract, promotes calibration, waives a data-quality gate, queues a run without confirmation, or signs its own recommendation.
+
+The agent also never chooses the recommendation classification or confidence. The
+approved conservative-dominance classifier owns those fields from an exact verified
+comparison bundle; the agent may only explain the stored result.
 
 ## 3. Primary user journey
 

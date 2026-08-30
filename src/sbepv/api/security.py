@@ -41,23 +41,34 @@ def _auth_required_response() -> JSONResponse:
     )
 
 
-def _basic_auth_is_valid(authorization: str | None) -> bool:
+def _basic_auth_result(authorization: str | None) -> tuple[bool, str | None]:
     expected = _dashboard_basic_credentials()
     if expected is None:
-        return True
+        return True, None
     if not authorization or not authorization.startswith("Basic "):
-        return False
+        return False, None
     try:
         decoded = base64.b64decode(
             authorization.removeprefix("Basic ").strip(),
             validate=True,
         ).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError):
-        return False
+        return False, None
 
     username, separator, password = decoded.partition(":")
     if not separator:
-        return False
-    return secrets.compare_digest(username, expected[0]) and secrets.compare_digest(
+        return False, None
+    valid = secrets.compare_digest(username, expected[0]) and secrets.compare_digest(
         password, expected[1]
     )
+    return valid, expected[0] if valid else None
+
+
+def _basic_auth_is_valid(authorization: str | None) -> bool:
+    return _basic_auth_result(authorization)[0]
+
+
+def _basic_auth_principal(authorization: str | None) -> str | None:
+    """Return the configured shared principal only after full validation."""
+
+    return _basic_auth_result(authorization)[1]

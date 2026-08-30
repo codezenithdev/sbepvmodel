@@ -651,6 +651,18 @@ def public_decision_brief(record: Mapping[str, Any]) -> dict[str, Any]:
     stale_reason = record.get("stale_reason")
     if stale_reason is None:
         stale_reason = record.get("stale_reason_json")
+    recommendation_record = record.get("recommendation")
+    recommendation = (
+        public_decision_recommendation(recommendation_record)
+        if isinstance(recommendation_record, Mapping)
+        else None
+    )
+    signoff_record = record.get("signoff")
+    signoff = (
+        public_decision_signoff(signoff_record)
+        if isinstance(signoff_record, Mapping)
+        else None
+    )
     return {
         "brief_id": _safe_text(record.get("brief_id"), limit=128),
         "brief_revision_id": _safe_text(
@@ -708,5 +720,180 @@ def public_decision_brief(record: Mapping[str, Any]) -> dict[str, Any]:
         "superseded": bool(record.get("superseded_by_revision_id")),
         "superseded_at": _safe_text(record.get("superseded_at"), limit=64),
         "is_current": bool(record.get("is_current")),
-        "signed": False,
+        "recommendation": recommendation,
+        "recommendation_id": (
+            recommendation.get("recommendation_id") if recommendation else None
+        ),
+        "recommendation_contract_version": (
+            recommendation.get("contract_version") if recommendation else None
+        ),
+        "recommendation_contract_digest": (
+            recommendation.get("contract_digest") if recommendation else None
+        ),
+        "signoff": signoff,
+        "signed": signoff is not None,
+    }
+
+
+def public_decision_recommendation(record: Mapping[str, Any]) -> dict[str, Any]:
+    payload = record.get("recommendation")
+    payload = payload if isinstance(payload, Mapping) else {}
+    exact_payload = _stored_exact_public_value(
+        payload, field="Decision Brief recommendation"
+    )
+    return {
+        **exact_payload,
+        "recommendation_id": _safe_text(
+            _pick(record, "recommendation_id", "id"), limit=128
+        ),
+        "case_id": _safe_text(record.get("case_id"), limit=128),
+        "brief_revision_id": _safe_text(
+            record.get("brief_revision_id"), limit=128
+        ),
+        "comparison_bundle_id": _safe_text(
+            record.get("comparison_bundle_id"), limit=128
+        ),
+        "comparison_bundle_sha256": _safe_text(
+            record.get("comparison_bundle_sha256"), limit=64
+        ),
+        "classification": _safe_text(record.get("classification"), limit=64),
+        "confidence": _safe_text(record.get("confidence"), limit=64),
+        "contract_version": _safe_text(record.get("contract_version"), limit=100),
+        "contract_digest": _safe_text(record.get("contract_digest"), limit=64),
+        "recommendation_sha256": _safe_text(
+            record.get("recommendation_sha256"), limit=64
+        ),
+        "required_acknowledgements": safe_public_value(
+            payload.get("required_acknowledgements") or []
+        ),
+        "created_at": _safe_text(record.get("created_at"), limit=64),
+    }
+
+
+def public_decision_signoff(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "signoff_id": _safe_text(_pick(record, "signoff_id", "id"), limit=128),
+        "case_id": _safe_text(record.get("case_id"), limit=128),
+        "brief_revision_id": _safe_text(
+            record.get("brief_revision_id"), limit=128
+        ),
+        "recommendation_id": _safe_text(
+            record.get("recommendation_id"), limit=128
+        ),
+        "disposition": _safe_text(record.get("disposition"), limit=32),
+        "decision_owner_name": _safe_text(
+            record.get("decision_owner_name"), limit=200
+        ),
+        "authenticated_principal": _safe_text(
+            record.get("authenticated_principal"), limit=200
+        ),
+        "rationale": _safe_text(record.get("rationale"), limit=4_000),
+        "acknowledgement_text": _safe_text(
+            record.get("acknowledgement_text"), limit=4_000
+        ),
+        "acknowledgement_version": _safe_text(
+            record.get("acknowledgement_version"), limit=100
+        ),
+        "provisional_warnings": safe_public_value(
+            record.get("provisional_warnings") or []
+        ),
+        "provisional_acknowledgements": safe_public_value(
+            record.get("provisional_acknowledgements") or []
+        ),
+        "decision_snapshot_sha256": _safe_text(
+            record.get("decision_snapshot_sha256"), limit=64
+        ),
+        "case_revision_before": int(
+            _pick(record, "case_revision_before", "expected_case_revision") or 0
+        ),
+        "case_revision_after": int(record.get("case_revision_after") or 0),
+        "signed_at": _safe_text(record.get("signed_at"), limit=64),
+    }
+
+
+def public_decision_report(record: Mapping[str, Any]) -> dict[str, Any]:
+    report_id = _safe_text(_pick(record, "report_id", "id"), limit=128)
+    case_id = _safe_text(record.get("case_id"), limit=128)
+    return {
+        "report_id": report_id,
+        "case_id": case_id,
+        "report_revision": int(record.get("report_revision") or 0),
+        "report_kind": _safe_text(record.get("report_kind"), limit=32),
+        "case_revision": int(record.get("case_revision") or 0),
+        "brief_revision_id": _safe_text(
+            record.get("brief_revision_id"), limit=128
+        ),
+        "signoff_id": _safe_text(record.get("signoff_id"), limit=128),
+        "recommendation_contract_version": _safe_text(
+            record.get("recommendation_contract_version"), limit=100
+        ),
+        "recommendation_contract_digest": _safe_text(
+            record.get("recommendation_contract_digest"), limit=64
+        ),
+        "snapshot_sha256": _safe_text(record.get("snapshot_sha256"), limit=64),
+        "pdf_sha256": _safe_text(record.get("pdf_sha256"), limit=64),
+        "byte_count": int(record.get("byte_count") or 0),
+        "page_count": int(record.get("page_count") or 0),
+        "generation_contract_version": _safe_text(
+            record.get("generation_contract_version"), limit=100
+        ),
+        "renderer_fingerprint": _safe_text(
+            record.get("renderer_fingerprint"), limit=1_000
+        ),
+        "report_identity_sha256": _safe_text(
+            record.get("report_identity_sha256"), limit=64
+        ),
+        "created_by": _safe_text(record.get("created_by"), limit=200),
+        "created_at": _safe_text(record.get("created_at"), limit=64),
+        "download_url": (
+            f"/api/autonomy/cases/{case_id}/reports/{report_id}/download"
+            if case_id and report_id
+            else None
+        ),
+        "verify_url": (
+            f"/api/autonomy/cases/{case_id}/reports/{report_id}/verify"
+            if case_id and report_id
+            else None
+        ),
+    }
+
+
+def public_decision_shadow_review(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "shadow_review_id": _safe_text(
+            _pick(record, "shadow_review_id", "id"), limit=128
+        ),
+        "case_id": _safe_text(record.get("case_id"), limit=128),
+        "brief_revision_id": _safe_text(
+            record.get("brief_revision_id"), limit=128
+        ),
+        "report_id": _safe_text(record.get("report_id"), limit=128),
+        "report_snapshot_sha256": _safe_text(
+            record.get("report_snapshot_sha256"), limit=64
+        ),
+        "pdf_sha256": _safe_text(record.get("pdf_sha256"), limit=64),
+        "report_identity_sha256": _safe_text(
+            record.get("report_identity_sha256"), limit=64
+        ),
+        "recommendation_contract_version": _safe_text(
+            record.get("recommendation_contract_version"), limit=100
+        ),
+        "recommendation_contract_digest": _safe_text(
+            record.get("recommendation_contract_digest"), limit=64
+        ),
+        "generation_contract_version": _safe_text(
+            record.get("generation_contract_version"), limit=100
+        ),
+        "renderer_fingerprint": _safe_text(
+            record.get("renderer_fingerprint"), limit=500
+        ),
+        "review_case_key": _safe_text(record.get("review_case_key"), limit=200),
+        "checklist_version": _safe_text(
+            record.get("checklist_version"), limit=100
+        ),
+        "reviewer_name": _safe_text(record.get("reviewer_name"), limit=200),
+        "outcome": _safe_text(record.get("outcome"), limit=32),
+        "review": safe_public_value(record.get("review") or {}),
+        "review_sha256": _safe_text(record.get("review_sha256"), limit=64),
+        "reviewed_at": _safe_text(record.get("reviewed_at"), limit=64),
     }

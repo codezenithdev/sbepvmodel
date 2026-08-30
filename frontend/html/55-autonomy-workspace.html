@@ -37,8 +37,8 @@
                     </div>
 
                     <section class="autonomy-fixture-notice autonomy-content-mode-notice" id="autonomyContentModeNotice" role="note" hidden>
-                        <strong>Later-phase fixture preview — not live case data.</strong>
-                        Compare, Run TEA, Decide, confirmation, results, and sign-off remain deterministic local demonstrations in this phase.
+                        <strong>Fixture preview — not live case data.</strong>
+                        Compare, Run TEA, Decide, confirmation, results, and sign-off remain deterministic local demonstrations and never use live authority APIs.
                     </section>
 
                     <section class="autonomy-live-toolbar" id="autonomyLiveToolbar" aria-label="Live decision-case connection" data-autonomy-live-only>
@@ -306,7 +306,7 @@
                                     </div>
                                     <aside class="autonomy-trust-note">
                                         <strong>Authority boundary</strong>
-                                        <p>The fixture agent may explain or propose. Deterministic services will own readiness and validation in later phases, and a named human must authorize any future run.</p>
+                                        <p>The fixture agent may explain or propose. In live mode, deterministic services own readiness and validation, and a named human must authorize every run and disposition.</p>
                                     </aside>
                                 </section>
 
@@ -743,6 +743,52 @@
                                 <section class="autonomy-analysis-panel" aria-labelledby="autonomyLiveProvenanceHeading"><h3 id="autonomyLiveProvenanceHeading">Bundle and result provenance</h3><dl class="autonomy-provenance-list" id="autonomyLiveBriefProvenance"></dl></section>
                                 <aside class="autonomy-timeline" aria-labelledby="autonomyLiveTimelineHeading"><h3 id="autonomyLiveTimelineHeading">Decision timeline</h3><ol id="autonomyLiveBriefTimeline"></ol></aside>
                             </section>
+
+                            <section class="autonomy-live-authority-panel" id="autonomyLiveSignoffPanel" data-signoff-state="unsigned" aria-labelledby="autonomyLiveSignoffHeading">
+                                <header class="autonomy-section-heading">
+                                    <div><p class="autonomy-eyebrow">Named human authority</p><h3 id="autonomyLiveSignoffHeading">Unsigned Decision Brief</h3><p id="autonomyLiveSignoffSummary">The server is checking which dispositions are safe for this exact immutable brief revision.</p></div>
+                                    <span class="autonomy-status-badge" id="autonomyLiveSignoffStatus" data-status="unsigned">Unsigned</span>
+                                </header>
+                                <p class="autonomy-authority-note">This is authenticated application sign-off. It is not a cryptographic or legal digital signature.</p>
+                                <ul class="autonomy-live-authority-blockers" id="autonomyLiveSignoffBlockers"></ul>
+                                <div class="autonomy-live-disposition-actions" role="group" aria-label="Available decision dispositions">
+                                    <button class="autonomy-button autonomy-button-primary" id="autonomyLiveAcceptBtn" type="button" disabled aria-disabled="true" data-autonomy-live-disposition="accept">Accept</button>
+                                    <button class="autonomy-button autonomy-button-secondary" id="autonomyLiveRejectBtn" type="button" disabled aria-disabled="true" data-autonomy-live-disposition="reject">Reject</button>
+                                    <button class="autonomy-button autonomy-button-secondary" id="autonomyLiveDeferBtn" type="button" disabled aria-disabled="true" data-autonomy-live-disposition="defer">Defer</button>
+                                </div>
+                                <section class="autonomy-live-receipt" id="autonomyLiveSignoffReceipt" aria-labelledby="autonomyLiveSignoffReceiptHeading" hidden>
+                                    <h4 id="autonomyLiveSignoffReceiptHeading">Immutable sign-off receipt</h4>
+                                    <dl class="autonomy-provenance-list" id="autonomyLiveSignoffReceiptDetails"></dl>
+                                </section>
+                                <div class="autonomy-table-wrap" tabindex="0" role="region" aria-label="Prior immutable application sign-offs">
+                                    <table><caption>Signed decision revision history</caption><thead><tr><th scope="col">Disposition</th><th scope="col">Decision owner</th><th scope="col">Recorded</th><th scope="col">Brief and snapshot</th><th scope="col">Recommendation contract</th></tr></thead><tbody id="autonomyLiveSignoffHistoryRows"></tbody></table>
+                                </div>
+                            </section>
+
+                            <section class="autonomy-live-report-panel" id="autonomyLiveReportPanel" aria-labelledby="autonomyLiveReportHeading">
+                                <header class="autonomy-section-heading">
+                                    <div><p class="autonomy-eyebrow">Verified manager PDF</p><h3 id="autonomyLiveReportHeading">Decision reports</h3><p id="autonomyLiveReportSummary">Drafts are visibly watermarked and finals are generated only from an immutable signed decision snapshot.</p></div>
+                                    <span class="autonomy-status-badge" id="autonomyLiveReportStatus" data-status="not-started">No report selected</span>
+                                </header>
+                                <ul class="autonomy-live-authority-blockers" id="autonomyLiveReportBlockers"></ul>
+                                <div class="autonomy-live-report-actions">
+                                    <button class="autonomy-button autonomy-button-secondary" id="autonomyLiveDraftReportBtn" type="button" disabled aria-disabled="true">Generate watermarked draft PDF</button>
+                                    <button class="autonomy-button autonomy-button-primary" id="autonomyLiveFinalReportBtn" type="button" disabled aria-disabled="true">Generate immutable final PDF</button>
+                                </div>
+                                <div class="autonomy-table-wrap" tabindex="0" role="region" aria-label="Immutable manager report revisions">
+                                    <table><caption>Draft and final manager report history</caption><thead><tr><th scope="col">Report</th><th scope="col">Snapshot linkage</th><th scope="col">PDF identity</th><th scope="col">Created</th><th scope="col">Verification and download</th></tr></thead><tbody id="autonomyLiveReportRows"></tbody></table>
+                                </div>
+                                <section class="autonomy-live-technical-exports" aria-labelledby="autonomyLiveTechnicalExportsHeading">
+                                    <h4 id="autonomyLiveTechnicalExportsHeading">Scenario technical exports</h4>
+                                    <p>These existing CSV and XLSX bundles remain the detailed calculation record referenced by the manager report.</p>
+                                    <ul id="autonomyLiveTechnicalExports"></ul>
+                                </section>
+                            </section>
+
+                            <section class="autonomy-live-rollout-status" id="autonomyLiveRolloutStatus" aria-labelledby="autonomyLiveRolloutHeading">
+                                <header class="autonomy-section-heading"><div><p class="autonomy-eyebrow">Release readiness</p><h3 id="autonomyLiveRolloutHeading">Automated gates and human shadow review</h3><p>Server-owned rollout status keeps automated validation distinct from the required manual shadow cases.</p></div></header>
+                                <dl class="autonomy-provenance-list" id="autonomyLiveRolloutDetails"></dl>
+                            </section>
                         </section>
 
                         <div id="autonomyFixtureDecisionBrief" data-autonomy-fixture-only>
@@ -978,7 +1024,36 @@
                             </footer>
                         </div>
                     </dialog>
+
+                    <dialog class="autonomy-dialog autonomy-signoff-dialog autonomy-live-signoff-dialog" id="autonomyLiveSignoffDialog" aria-labelledby="autonomyLiveSignoffDialogHeading" aria-describedby="autonomyLiveSignoffDialogDescription" data-autonomy-live-only>
+                        <div class="autonomy-dialog-content">
+                            <header>
+                                <div><p class="autonomy-eyebrow">Authenticated application sign-off</p><h2 id="autonomyLiveSignoffDialogHeading">Review the exact immutable decision snapshot</h2></div>
+                                <p id="autonomyLiveSignoffDialogDescription">A named human may record only a server-authorized disposition. This is application sign-off, not a cryptographic or legal digital signature.</p>
+                            </header>
+                            <section class="autonomy-signoff-summary" id="autonomyLiveSignoffSnapshot" aria-label="Exact decision snapshot identities"></section>
+                            <fieldset class="autonomy-disposition-group" id="autonomyLiveDispositionGroup">
+                                <legend>Disposition</legend>
+                                <label><input type="radio" name="autonomyLiveDisposition" value="accept"> Accept recommendation</label>
+                                <label><input type="radio" name="autonomyLiveDisposition" value="reject"> Reject recommendation</label>
+                                <label><input type="radio" name="autonomyLiveDisposition" value="defer"> Defer decision</label>
+                            </fieldset>
+                            <label class="autonomy-field" for="autonomyLiveSignoffOwner"><span>Typed decision-owner name</span><input id="autonomyLiveSignoffOwner" type="text" autocomplete="name" maxlength="160" required></label>
+                            <label class="autonomy-field" for="autonomyLiveSignoffRationale"><span>Decision rationale</span><textarea id="autonomyLiveSignoffRationale" rows="4" maxlength="4000" required></textarea></label>
+                            <label class="autonomy-checkbox" for="autonomyLiveSignoffAck"><input id="autonomyLiveSignoffAck" type="checkbox"><span id="autonomyLiveSignoffAckCopy">I understand that signing freezes an immutable decision snapshot. It does not change plant controls, calibration or Annual baselines, existing TEA jobs, or the approved calculation contract.</span></label>
+                            <fieldset class="autonomy-live-warning-acknowledgements" id="autonomyLiveWarningAcknowledgements" hidden>
+                                <legend>Required provisional-warning acknowledgements</legend>
+                                <p>Confirm every exact evidence or convergence warning before recording a provisional disposition.</p>
+                                <div id="autonomyLiveWarningAcknowledgementList"></div>
+                            </fieldset>
+                            <p class="autonomy-dialog-error" id="autonomyLiveSignoffError" role="alert" tabindex="-1" hidden></p>
+                            <footer>
+                                <button class="autonomy-button autonomy-button-secondary" id="autonomyLiveSignoffCancelBtn" type="button">Cancel</button>
+                                <button class="autonomy-button autonomy-button-primary" id="autonomyLiveSignoffSubmitBtn" type="button">Record immutable sign-off</button>
+                            </footer>
+                        </div>
+                    </dialog>
                 </section>
             </div>
 
-            <!-- Live Autonomy owns authenticated case/evidence/scenario actions, grouped execution confirmation, deterministic comparison bundles, and unsigned immutable Decision Brief revisions. Fixture previews remain explicit; sign-off, reporting, and TEA-kernel authority remain unavailable. -->
+            <!-- Live Autonomy owns authenticated case/evidence/scenario actions, grouped execution confirmation, deterministic comparison bundles, immutable Decision Brief revisions, named-human application sign-off, and verified manager reports. Fixture previews remain explicit and cannot cross any server authority boundary. -->

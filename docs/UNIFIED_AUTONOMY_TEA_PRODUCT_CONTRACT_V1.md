@@ -7,6 +7,10 @@
 - Source: approved unified autonomy/TEA plan
 - Authority: architecture and end-state product boundary
 - Delivery note: for the current frontend-foundation delivery, Phase 0 and Phase 1 use the fixture-only definitions in the Hybrid Autonomy Workspace contract. This contract does not authorize backend, Decision Agent, evidence-service, scenario-execution, report-generation, or TEA-kernel changes.
+- Deterministic recommendation authority: the approved version-1 winner,
+  no-winner, confidence, gate, and reversal policy is
+  `AUTONOMY_CONSERVATIVE_RECOMMENDATION_CONTRACT_V1.md`; it controls where this
+  broader plan previously described an agent-authored conditional recommendation.
 
 ---
 
@@ -193,7 +197,7 @@ For “why can’t we try this,” return:
 4. the closest supported alternative;
 5. the next action or deep link.
 
-After TEA completion, build a deterministic comparison bundle containing request differences, P5/P50/P95 metrics, outcome probabilities, sensitivity drivers, convergence, evidence status, and provenance. The agent turns that bundle into a conditional recommendation:
+After TEA completion, build a deterministic comparison bundle containing request differences, P5/P50/P95 metrics, outcome probabilities, sensitivity drivers, convergence, evidence status, and provenance. The deterministic conservative-dominance service classifies that exact bundle; the agent may explain the stored conditional recommendation but may not select or change it:
 
 - SolarEdge, Solectria, or no decisive winner;
 - strong, mixed, or provisional confidence;

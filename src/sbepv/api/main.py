@@ -71,6 +71,7 @@ from sbepv.worker import loop as worker_loop
 from sbepv.api.security import (
     _auth_required_response,
     _basic_auth_is_valid,
+    _basic_auth_principal,
     _dashboard_basic_credentials,
 )
 from sbepv.api.static_files import PublicOutputStaticFiles
@@ -248,7 +249,7 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-Autonomy-Human-Action"],
 )
 app.include_router(autonomy_api.router)
 app.mount(
@@ -272,6 +273,9 @@ async def require_dashboard_basic_auth(request: Request, call_next):
         )
     if not authenticated:
         return _auth_required_response()
+    request.state.authenticated_principal = _basic_auth_principal(
+        request.headers.get("authorization")
+    )
     request_path = request.url.path.replace("\\", "/")
     normalized_path = posixpath.normpath(
         "/" + request_path.lstrip("/")
@@ -287,6 +291,7 @@ async def require_dashboard_basic_auth(request: Request, call_next):
         "/outputs/.annual_sources",
         "/outputs/.calibration_reviews",
         "/outputs/.decision_evidence",
+        "/outputs/.decision_reports",
         "/outputs/.technoeconomic_attempts",
     )
     if any(

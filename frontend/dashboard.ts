@@ -1,20 +1,20 @@
 import template from "./html/document.template.html?raw";
 
-const cssPartials = import.meta.glob<string>("./css/*.css", {
+const cssPartials = import.meta.glob("./css/*.css", {
   eager: true,
   import: "default",
   query: "?raw",
-});
-const markupPartials = import.meta.glob<string>("./html/[0-9]*.html", {
+}) as unknown as Record<string, string>;
+const markupPartials = import.meta.glob("./html/[0-9]*.html", {
   eager: true,
   import: "default",
   query: "?raw",
-});
-const scriptPartials = import.meta.glob<string>("./js/*.js", {
+}) as unknown as Record<string, string>;
+const scriptPartials = import.meta.glob("./js/*.js", {
   eager: true,
   import: "default",
   query: "?raw",
-});
+}) as unknown as Record<string, string>;
 
 function normalizeNewlines(source: string): string {
   return source.replace(/\r\n?/g, "\n");
@@ -41,7 +41,10 @@ function replaceSlot(document: string, slot: string, content: string): string {
       `Dashboard template must contain ${slot} exactly once; found ${occurrences}`,
     );
   }
-  return document.replace(slot, content);
+  // A replacement string interprets `$&`, `$\``, and `$'` tokens. Dashboard
+  // JavaScript legitimately contains those byte sequences, so use a callback to
+  // preserve the canonical partial text exactly like the Python assembler.
+  return document.replace(slot, () => content);
 }
 
 export function assembleDashboardHtml(): string {

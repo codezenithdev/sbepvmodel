@@ -8,6 +8,11 @@ Date: **2026-08-13**
 
 Revision: **Phase 0.2 — Cliff shared-chat lifecycle/Wdc reconciliation**
 
+Autonomy recommendation layer:
+**`AUTONOMY_CONSERVATIVE_RECOMMENDATION_CONTRACT_V1.md`** uses this contract's
+durable tolerance-derived tradeoff probabilities without changing any calculation,
+population, tolerance, or numerical gate.
+
 This document defines the calculation and architecture contract for replacing the
 dashboard's deterministic, browser-only Technoeconomic Analysis (TEA) with a
 durable probabilistic job. It incorporates the Phase 0 repository inspection and the

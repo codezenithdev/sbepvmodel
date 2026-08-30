@@ -149,22 +149,32 @@ class TechnoeconomicStoreTests(unittest.TestCase):
 
     def test_schema_v5_migration_preserves_existing_model_rows(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as connection:
-            for trigger in (
-                "technoeconomic_job_inputs_are_immutable",
-                "technoeconomic_job_terminal_payload_is_immutable",
-                "technoeconomic_job_terminal_state_is_immutable",
-                "technoeconomic_job_terminal_row_is_immutable",
-            ):
-                connection.execute(f"DROP TRIGGER {trigger}")
+            connection.execute("PRAGMA foreign_keys = OFF")
+            trigger_rows = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND ("
+                "name LIKE 'technoeconomic_%' OR "
+                "name LIKE 'model_job_tea_namespace%' OR "
+                "name LIKE 'decision_%' OR name LIKE '%decision_case%' OR "
+                "name IN ('accepted_evidence_removal_guard',"
+                "'provisional_evidence_rationale_guard'))"
+            ).fetchall()
+            for (trigger_name,) in trigger_rows:
+                connection.execute(f'DROP TRIGGER "{trigger_name}"')
             connection.execute("DROP TABLE technoeconomic_jobs")
-            connection.execute("DELETE FROM schema_migrations WHERE version = 5")
+            decision_tables = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name LIKE 'decision_%'"
+            ).fetchall()
+            for (table_name,) in decision_tables:
+                connection.execute(f'DROP TABLE "{table_name}"')
+            connection.execute("DELETE FROM schema_migrations WHERE version >= 5")
             connection.execute("PRAGMA user_version = 4")
             connection.commit()
 
         reopened = AgentStore(self.db_path, now=self.clock)
 
-        self.assertEqual(8, SCHEMA_VERSION)
-        self.assertEqual(8, reopened.schema_version)
+        self.assertEqual(9, SCHEMA_VERSION)
+        self.assertEqual(9, reopened.schema_version)
         self.assertEqual(self.source["id"], reopened.get_job(self.source["id"])["id"])
         with closing(sqlite3.connect(self.db_path)) as connection:
             table = connection.execute(
@@ -176,7 +186,7 @@ class TechnoeconomicStoreTests(unittest.TestCase):
             ).fetchall()
         self.assertEqual(("technoeconomic_jobs",), table)
         self.assertEqual(
-            [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)],
+            [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,)],
             migrations,
         )
 

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 SAVED_RESULTS_LIMIT = 10
 PROPOSAL_STATES = frozenset(
     {"pending", "confirmed", "superseded", "dismissed", "expired"}
@@ -55,7 +55,9 @@ DECISION_CASE_TRANSITIONS: dict[str, frozenset[str]] = {
     ),
     "running": frozenset({"results_ready"}),
     "results_ready": frozenset({"decision_ready"}),
-    "decision_ready": frozenset({"signed"}),
+    # Signing is not a generic lifecycle edge.  Only create_decision_signoff may
+    # insert the immutable authority record and then advance the case atomically.
+    "decision_ready": frozenset(),
     "signed": frozenset({"archived"}),
     "archived": frozenset(),
 }
@@ -87,8 +89,16 @@ DECISION_RECOMMENDATION_CLASSIFICATIONS = frozenset(
     }
 )
 DECISION_CONFIDENCE_STATES = frozenset(
-    {"strong", "mixed", "provisional", "classification_pending_contract"}
+    {
+        "strong",
+        "mixed",
+        "provisional",
+        "not_applicable",
+        "classification_pending_contract",
+    }
 )
+DECISION_DISPOSITIONS = frozenset({"accept", "reject", "defer"})
+DECISION_REPORT_KINDS = frozenset({"draft", "final"})
 DECISION_EVIDENCE_MAX_FILE_BYTES = 10 * 1024 * 1024
 DECISION_EVIDENCE_MAX_FILES_PER_CASE = 10
 DECISION_EVIDENCE_MAX_CASE_BYTES = 50 * 1024 * 1024
@@ -216,6 +226,70 @@ def _optional_bounded_text(
     return _bounded_text(value, field=field, maximum=maximum)
 
 
+def _decision_shadow_review_sha256(
+    record: Mapping[str, Any], review: Mapping[str, Any]
+) -> str:
+    payload = {
+        "schema_version": "decision-shadow-review-record-v2",
+        "shadow_review_id": record.get("shadow_review_id"),
+        "case_id": record.get("case_id"),
+        "brief_revision_id": record.get("brief_revision_id"),
+        "report_id": record.get("report_id"),
+        "report_snapshot_sha256": record.get("report_snapshot_sha256"),
+        "pdf_sha256": record.get("pdf_sha256"),
+        "report_identity_sha256": record.get("report_identity_sha256"),
+        "recommendation_contract_version": record.get(
+            "recommendation_contract_version"
+        ),
+        "recommendation_contract_digest": record.get(
+            "recommendation_contract_digest"
+        ),
+        "generation_contract_version": record.get("generation_contract_version"),
+        "renderer_fingerprint": record.get("renderer_fingerprint"),
+        "review_case_key": record.get("review_case_key"),
+        "checklist_version": record.get("checklist_version"),
+        "authenticated_principal": record.get("authenticated_principal"),
+        "reviewer_name": record.get("reviewer_name"),
+        "outcome": record.get("outcome"),
+        "review": dict(review),
+        "reviewed_at": record.get("reviewed_at"),
+    }
+    return _sha256_text(_json_dump(payload))
+
+
+def _validated_decision_shadow_review_checklist(
+    review: Mapping[str, Any], *, outcome: str
+) -> dict[str, Any]:
+    payload = dict(review)
+    required_fields = {
+        "unauthorized_execution_observed",
+        "numeric_citations_verified",
+        "result_tie_out_verified",
+        "report_tie_out_verified",
+    }
+    if not required_fields.issubset(payload) or not set(payload).issubset(
+        required_fields | {"observations"}
+    ):
+        raise ValueError("shadow review must contain the exact checklist fields")
+    if any(type(payload[field]) is not bool for field in required_fields):
+        raise ValueError("shadow review checklist values must be booleans")
+    observations = payload.get("observations")
+    if observations is not None and (
+        not isinstance(observations, str) or len(observations) > 4000
+    ):
+        raise ValueError("shadow review observations must be bounded text")
+    if outcome == "passed" and any(
+        (
+            payload["unauthorized_execution_observed"] is not False,
+            payload["numeric_citations_verified"] is not True,
+            payload["result_tie_out_verified"] is not True,
+            payload["report_tie_out_verified"] is not True,
+        )
+    ):
+        raise ValueError("a passed shadow review must satisfy every checklist gate")
+    return payload
+
+
 def _decision_evidence_storage_key(sha256: str, media_type: str) -> tuple[str, str]:
     extension = _DECISION_EVIDENCE_MEDIA_EXTENSIONS.get(media_type)
     if extension is None:
@@ -304,6 +378,9 @@ class AgentStore:
                     version = 7
                 if version < 8:
                     self._migrate_v8(connection)
+                    version = 8
+                if version < 9:
+                    self._migrate_v9(connection)
             finally:
                 connection.close()
 
@@ -2933,6 +3010,797 @@ class AgentStore:
         connection.execute("PRAGMA user_version = 8")
         connection.commit()
 
+    def _migrate_v9(self, connection: sqlite3.Connection) -> None:
+        """Add immutable recommendation, sign-off, report, and shadow-review records.
+
+        Schema-v8 comparison bundles and unsigned Decision Brief revisions remain
+        byte-for-byte unchanged.  The approved recommendation contract is stored in
+        a sidecar keyed to their exact bundle and provenance identities, avoiding an
+        in-place rewrite of the historical v8 constraints.
+        """
+
+        unexpected = connection.execute(
+            """
+            SELECT name FROM sqlite_master
+             WHERE name LIKE 'decision_recommendation%'
+                OR name LIKE 'decision_signoff%'
+                OR name LIKE 'decision_report%'
+                OR name LIKE 'decision_shadow_review%'
+            """
+        ).fetchall()
+        if unexpected:
+            raise RuntimeError(
+                "schema-v9 authority objects already exist before their migration"
+            )
+        legacy_signed_cases = connection.execute(
+            "SELECT case_id FROM decision_cases WHERE status = 'signed' "
+            "ORDER BY case_id LIMIT 6"
+        ).fetchall()
+        if legacy_signed_cases:
+            visible_case_ids = ", ".join(
+                str(row["case_id"]) for row in legacy_signed_cases[:5]
+            )
+            remainder = "" if len(legacy_signed_cases) <= 5 else ", ..."
+            raise RuntimeError(
+                "schema-v9 migration cannot synthesize immutable sign-off "
+                "authority for legacy signed decision cases "
+                f"({visible_case_ids}{remainder}); archive them under schema v8 "
+                "before retrying the upgrade"
+            )
+        applied_at = _timestamp(self._current_time())
+        connection.executescript(
+            """
+            BEGIN IMMEDIATE;
+
+            ALTER TABLE decision_comparison_bundle_attempts
+                ADD COLUMN result_projection_sha256 TEXT CHECK (
+                    result_projection_sha256 IS NULL OR (
+                        length(result_projection_sha256) = 64
+                        AND result_projection_sha256 NOT GLOB '*[^0-9a-f]*'
+                    )
+                );
+
+            CREATE TRIGGER decision_comparison_projection_insert_guard
+            BEFORE INSERT ON decision_comparison_bundle_attempts
+            WHEN NOT EXISTS (
+                SELECT 1
+                  FROM decision_comparison_bundles b,
+                       json_each(b.bundle_json, '$.attempt_proofs') p
+                 WHERE b.comparison_bundle_id = NEW.comparison_bundle_id
+                   AND b.case_id = NEW.case_id
+                   AND json_extract(p.value, '$.item_index') = NEW.item_index
+                   AND json_extract(p.value, '$.attempt_number') =
+                        NEW.attempt_number
+                   AND json_extract(p.value, '$.tea_job_id') = NEW.tea_job_id
+                   AND json_extract(
+                        p.value, '$.result_projection_sha256'
+                   ) IS NEW.result_projection_sha256
+                   AND (
+                        (NEW.selected_for_comparison = 1
+                         AND NEW.verification_status = 'verified'
+                         AND NEW.result_projection_sha256 IS NOT NULL)
+                        OR (
+                            NOT (
+                                NEW.selected_for_comparison = 1
+                                AND NEW.verification_status = 'verified'
+                            )
+                            AND NEW.result_projection_sha256 IS NULL
+                        )
+                   )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'comparison result projection commitment is invalid');
+            END;
+
+            CREATE TABLE IF NOT EXISTS decision_recommendations (
+                recommendation_id TEXT PRIMARY KEY CHECK (
+                    recommendation_id GLOB 'drec_*'
+                    AND length(recommendation_id) > 5
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                case_revision INTEGER NOT NULL CHECK (case_revision > 0),
+                brief_revision_id TEXT NOT NULL UNIQUE,
+                comparison_bundle_id TEXT NOT NULL,
+                comparison_bundle_sha256 TEXT NOT NULL CHECK (
+                    length(comparison_bundle_sha256) = 64
+                    AND comparison_bundle_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                provenance_sha256 TEXT NOT NULL CHECK (
+                    length(provenance_sha256) = 64
+                    AND provenance_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                classification TEXT NOT NULL CHECK (
+                    classification IN (
+                        'solaredge','solectria','no_decisive_winner'
+                    )
+                ),
+                confidence TEXT NOT NULL CHECK (
+                    confidence IN (
+                        'strong','mixed','provisional','not_applicable'
+                    )
+                ),
+                recommendation_json TEXT NOT NULL CHECK (
+                    json_valid(recommendation_json)
+                    AND json_type(recommendation_json) = 'object'
+                ),
+                recommendation_sha256 TEXT NOT NULL CHECK (
+                    length(recommendation_sha256) = 64
+                    AND recommendation_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                contract_version TEXT NOT NULL CHECK (
+                    contract_version = trim(contract_version)
+                    AND length(contract_version) BETWEEN 1 AND 100
+                ),
+                contract_digest TEXT NOT NULL CHECK (
+                    length(contract_digest) = 64
+                    AND contract_digest NOT GLOB '*[^0-9a-f]*'
+                ),
+                created_at TEXT NOT NULL,
+                UNIQUE(recommendation_id, case_id),
+                UNIQUE(brief_revision_id, case_id),
+                FOREIGN KEY(brief_revision_id, case_id)
+                    REFERENCES decision_briefs(brief_revision_id, case_id)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY(comparison_bundle_id, case_id)
+                    REFERENCES decision_comparison_bundles(
+                        comparison_bundle_id, case_id
+                    ) ON DELETE RESTRICT,
+                CHECK (
+                    (classification = 'no_decisive_winner'
+                        AND confidence = 'not_applicable')
+                    OR (classification <> 'no_decisive_winner'
+                        AND confidence IN ('strong','mixed','provisional'))
+                ),
+                CHECK (
+                    COALESCE(json_extract(recommendation_json, '$.state') =
+                        'available', 0)
+                    AND COALESCE(json_extract(
+                        recommendation_json, '$.recommendation_eligible'
+                    ) = 1, 0)
+                    AND COALESCE(json_extract(
+                        recommendation_json, '$.comparison_bundle_sha256'
+                    ) = comparison_bundle_sha256, 0)
+                    AND COALESCE(length(json_extract(
+                        recommendation_json, '$.classification_input_sha256'
+                    )) = 64, 0)
+                    AND COALESCE(json_extract(
+                        recommendation_json, '$.classification_input_sha256'
+                    ) NOT GLOB '*[^0-9a-f]*', 0)
+                    AND COALESCE(json_extract(
+                        recommendation_json, '$.classification'
+                    ) = classification, 0)
+                    AND COALESCE(json_extract(
+                        recommendation_json, '$.confidence'
+                    ) = confidence, 0)
+                    AND COALESCE(json_extract(
+                        recommendation_json, '$.contract_version'
+                    ) = contract_version, 0)
+                    AND COALESCE(json_extract(
+                        recommendation_json, '$.contract_digest'
+                    ) = contract_digest, 0)
+                )
+            );
+
+            CREATE INDEX IF NOT EXISTS decision_recommendations_case_idx
+                ON decision_recommendations(case_id, created_at DESC);
+
+            CREATE TRIGGER IF NOT EXISTS decision_recommendation_insert_guard
+            BEFORE INSERT ON decision_recommendations
+            WHEN NOT EXISTS (
+                SELECT 1
+                  FROM decision_briefs b
+                  JOIN decision_comparison_bundles c
+                    ON c.comparison_bundle_id = b.comparison_bundle_id
+                   AND c.case_id = b.case_id
+                 WHERE b.brief_revision_id = NEW.brief_revision_id
+                   AND b.case_id = NEW.case_id
+                   AND b.case_revision_after = NEW.case_revision
+                   AND b.comparison_bundle_id = NEW.comparison_bundle_id
+                   AND b.comparison_bundle_sha256 =
+                        NEW.comparison_bundle_sha256
+                   AND b.provenance_sha256 = NEW.provenance_sha256
+                   AND c.bundle_sha256 = NEW.comparison_bundle_sha256
+                   AND c.is_complete = 1
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'recommendation does not match its immutable brief');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_recommendation_update_guard
+            BEFORE UPDATE ON decision_recommendations
+            BEGIN
+                SELECT RAISE(ABORT, 'decision recommendations are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_recommendation_delete_guard
+            BEFORE DELETE ON decision_recommendations
+            BEGIN
+                SELECT RAISE(ABORT, 'decision recommendations are retained');
+            END;
+
+            CREATE TABLE IF NOT EXISTS decision_signoffs (
+                signoff_id TEXT PRIMARY KEY CHECK (
+                    signoff_id GLOB 'dsgn_*' AND length(signoff_id) > 5
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                expected_case_revision INTEGER NOT NULL CHECK (
+                    expected_case_revision > 0
+                ),
+                case_revision_after INTEGER NOT NULL CHECK (
+                    case_revision_after = expected_case_revision + 1
+                ),
+                brief_revision_id TEXT NOT NULL UNIQUE,
+                recommendation_id TEXT NOT NULL UNIQUE,
+                comparison_bundle_sha256 TEXT NOT NULL CHECK (
+                    length(comparison_bundle_sha256) = 64
+                    AND comparison_bundle_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                provenance_sha256 TEXT NOT NULL CHECK (
+                    length(provenance_sha256) = 64
+                    AND provenance_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                recommendation_contract_version TEXT NOT NULL,
+                recommendation_contract_digest TEXT NOT NULL CHECK (
+                    length(recommendation_contract_digest) = 64
+                    AND recommendation_contract_digest NOT GLOB '*[^0-9a-f]*'
+                ),
+                disposition TEXT NOT NULL CHECK (
+                    disposition IN ('accept','reject','defer')
+                ),
+                authenticated_principal TEXT NOT NULL CHECK (
+                    authenticated_principal = trim(authenticated_principal)
+                    AND length(authenticated_principal) BETWEEN 1 AND 200
+                ),
+                decision_owner_name TEXT NOT NULL CHECK (
+                    decision_owner_name = trim(decision_owner_name)
+                    AND length(decision_owner_name) BETWEEN 1 AND 200
+                ),
+                rationale TEXT NOT NULL CHECK (
+                    rationale = trim(rationale)
+                    AND length(rationale) BETWEEN 1 AND 4000
+                ),
+                acknowledgement_text TEXT NOT NULL CHECK (
+                    acknowledgement_text = trim(acknowledgement_text)
+                    AND length(acknowledgement_text) BETWEEN 1 AND 4000
+                ),
+                acknowledgement_version TEXT NOT NULL CHECK (
+                    acknowledgement_version = trim(acknowledgement_version)
+                    AND length(acknowledgement_version) BETWEEN 1 AND 100
+                ),
+                provisional_warnings_json TEXT NOT NULL CHECK (
+                    json_valid(provisional_warnings_json)
+                    AND json_type(provisional_warnings_json) = 'array'
+                ),
+                provisional_acknowledgements_json TEXT NOT NULL CHECK (
+                    json_valid(provisional_acknowledgements_json)
+                    AND json_type(provisional_acknowledgements_json) = 'array'
+                ),
+                decision_snapshot_json TEXT NOT NULL CHECK (
+                    json_valid(decision_snapshot_json)
+                    AND json_type(decision_snapshot_json) = 'object'
+                ),
+                decision_snapshot_sha256 TEXT NOT NULL CHECK (
+                    length(decision_snapshot_sha256) = 64
+                    AND decision_snapshot_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                signoff_request_sha256 TEXT NOT NULL CHECK (
+                    length(signoff_request_sha256) = 64
+                    AND signoff_request_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                signed_at TEXT NOT NULL,
+                UNIQUE(signoff_id, case_id),
+                UNIQUE(case_id, expected_case_revision),
+                FOREIGN KEY(brief_revision_id, case_id)
+                    REFERENCES decision_briefs(brief_revision_id, case_id)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY(recommendation_id, case_id)
+                    REFERENCES decision_recommendations(
+                        recommendation_id, case_id
+                    ) ON DELETE RESTRICT,
+                CHECK (
+                    COALESCE(json_extract(
+                        decision_snapshot_json, '$.case.case_id'
+                    ) = case_id, 0)
+                    AND COALESCE(json_extract(
+                        decision_snapshot_json, '$.case.revision'
+                    ) = expected_case_revision, 0)
+                    AND COALESCE(json_extract(
+                        decision_snapshot_json, '$.brief.brief_revision_id'
+                    ) = brief_revision_id, 0)
+                    AND COALESCE(json_extract(
+                        decision_snapshot_json,
+                        '$.brief.comparison_bundle_sha256'
+                    ) = comparison_bundle_sha256, 0)
+                    AND COALESCE(json_extract(
+                        decision_snapshot_json, '$.brief.provenance_sha256'
+                    ) = provenance_sha256, 0)
+                    AND COALESCE(json_extract(
+                        decision_snapshot_json,
+                        '$.recommendation.contract_version'
+                    ) = recommendation_contract_version, 0)
+                    AND COALESCE(json_extract(
+                        decision_snapshot_json,
+                        '$.recommendation.contract_digest'
+                    ) = recommendation_contract_digest, 0)
+                    AND COALESCE(json_extract(
+                        decision_snapshot_json, '$.signoff.signoff_id'
+                    ) = signoff_id, 0)
+                    AND COALESCE(json_extract(
+                        decision_snapshot_json, '$.signoff.disposition'
+                    ) = disposition, 0)
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_signoff_idempotency (
+                case_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL CHECK (
+                    idempotency_key = trim(idempotency_key)
+                    AND length(idempotency_key) BETWEEN 8 AND 200
+                ),
+                request_sha256 TEXT NOT NULL CHECK (
+                    length(request_sha256) = 64
+                    AND request_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                signoff_id TEXT NOT NULL,
+                response_json TEXT NOT NULL CHECK (json_valid(response_json)),
+                response_sha256 TEXT NOT NULL CHECK (
+                    length(response_sha256) = 64
+                    AND response_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(case_id, idempotency_key),
+                FOREIGN KEY(signoff_id, case_id)
+                    REFERENCES decision_signoffs(signoff_id, case_id)
+                    ON DELETE RESTRICT
+            );
+
+            CREATE INDEX IF NOT EXISTS decision_signoffs_case_idx
+                ON decision_signoffs(case_id, signed_at DESC);
+
+            CREATE TRIGGER IF NOT EXISTS decision_signoff_insert_guard
+            BEFORE INSERT ON decision_signoffs
+            WHEN NOT EXISTS (
+                SELECT 1
+                  FROM decision_recommendations r
+                  JOIN decision_briefs b
+                    ON b.brief_revision_id = r.brief_revision_id
+                   AND b.case_id = r.case_id
+                  JOIN decision_cases c ON c.case_id = r.case_id
+                  JOIN decision_comparison_bundles cb
+                    ON cb.comparison_bundle_id = b.comparison_bundle_id
+                   AND cb.case_id = b.case_id
+                 WHERE r.recommendation_id = NEW.recommendation_id
+                   AND r.case_id = NEW.case_id
+                   AND r.brief_revision_id = NEW.brief_revision_id
+                   AND r.case_revision = b.case_revision_after
+                   AND r.comparison_bundle_sha256 =
+                        NEW.comparison_bundle_sha256
+                   AND r.provenance_sha256 = NEW.provenance_sha256
+                   AND r.contract_version =
+                        NEW.recommendation_contract_version
+                   AND r.contract_digest =
+                        NEW.recommendation_contract_digest
+                   AND c.revision = NEW.expected_case_revision
+                   AND (
+                        c.status = 'decision_ready'
+                        OR (
+                            c.status = 'results_ready'
+                            AND NEW.disposition = 'defer'
+                            AND (
+                                b.stale_at IS NOT NULL
+                                OR b.superseded_by_revision_id IS NOT NULL
+                                OR cb.stale_at IS NOT NULL
+                                OR cb.superseded_by_bundle_id IS NOT NULL
+                            )
+                        )
+                   )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'sign-off does not match its recommendation authority');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_signoff_update_guard
+            BEFORE UPDATE ON decision_signoffs
+            BEGIN
+                SELECT RAISE(ABORT, 'decision sign-offs are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_signoff_delete_guard
+            BEFORE DELETE ON decision_signoffs
+            BEGIN
+                SELECT RAISE(ABORT, 'decision sign-offs are retained');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_signoff_idempotency_update_guard
+            BEFORE UPDATE ON decision_signoff_idempotency
+            BEGIN
+                SELECT RAISE(ABORT, 'decision sign-off idempotency receipts are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_signoff_idempotency_delete_guard
+            BEFORE DELETE ON decision_signoff_idempotency
+            BEGIN
+                SELECT RAISE(ABORT, 'decision sign-off idempotency receipts are immutable');
+            END;
+
+            CREATE TABLE IF NOT EXISTS decision_reports (
+                report_id TEXT PRIMARY KEY CHECK (
+                    report_id GLOB 'drpt_*' AND length(report_id) > 5
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                report_revision INTEGER NOT NULL CHECK (report_revision > 0),
+                report_kind TEXT NOT NULL CHECK (
+                    report_kind IN ('draft','final')
+                ),
+                case_revision INTEGER NOT NULL CHECK (case_revision > 0),
+                brief_revision_id TEXT NOT NULL,
+                signoff_id TEXT,
+                recommendation_contract_version TEXT NOT NULL,
+                recommendation_contract_digest TEXT NOT NULL CHECK (
+                    length(recommendation_contract_digest) = 64
+                    AND recommendation_contract_digest NOT GLOB '*[^0-9a-f]*'
+                ),
+                snapshot_json TEXT NOT NULL CHECK (
+                    json_valid(snapshot_json)
+                    AND json_type(snapshot_json) = 'object'
+                ),
+                snapshot_sha256 TEXT NOT NULL CHECK (
+                    length(snapshot_sha256) = 64
+                    AND snapshot_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                pdf_sha256 TEXT NOT NULL CHECK (
+                    length(pdf_sha256) = 64
+                    AND pdf_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                byte_count INTEGER NOT NULL CHECK (byte_count > 0),
+                page_count INTEGER NOT NULL CHECK (page_count BETWEEN 1 AND 100),
+                generation_contract_version TEXT NOT NULL CHECK (
+                    generation_contract_version = trim(generation_contract_version)
+                    AND length(generation_contract_version) BETWEEN 1 AND 100
+                ),
+                renderer_fingerprint TEXT NOT NULL CHECK (
+                    renderer_fingerprint = trim(renderer_fingerprint)
+                    AND length(renderer_fingerprint) BETWEEN 1 AND 500
+                ),
+                storage_key TEXT NOT NULL CHECK (
+                    storage_key = 'sha256/' || substr(pdf_sha256, 1, 2)
+                        || '/' || pdf_sha256 || '.pdf'
+                ),
+                report_identity_sha256 TEXT NOT NULL UNIQUE CHECK (
+                    length(report_identity_sha256) = 64
+                    AND report_identity_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                created_principal TEXT NOT NULL CHECK (
+                    created_principal = trim(created_principal)
+                    AND length(created_principal) BETWEEN 1 AND 200
+                ),
+                created_by TEXT NOT NULL CHECK (
+                    created_by = trim(created_by)
+                    AND length(created_by) BETWEEN 1 AND 200
+                ),
+                created_at TEXT NOT NULL,
+                UNIQUE(case_id, report_revision, report_kind),
+                UNIQUE(report_id, case_id),
+                FOREIGN KEY(brief_revision_id, case_id)
+                    REFERENCES decision_briefs(brief_revision_id, case_id)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY(signoff_id, case_id)
+                    REFERENCES decision_signoffs(signoff_id, case_id)
+                    ON DELETE RESTRICT,
+                CHECK (
+                    (report_kind = 'draft' AND signoff_id IS NULL)
+                    OR (report_kind = 'final' AND signoff_id IS NOT NULL)
+                ),
+                CHECK (
+                    report_id = 'drpt_' || substr(
+                        report_identity_sha256, 1, 32
+                    )
+                    AND COALESCE(json_extract(
+                        snapshot_json, '$.case.case_id'
+                    ) = case_id, 0)
+                    AND COALESCE(json_extract(
+                        snapshot_json, '$.brief.brief_revision_id'
+                    ) = brief_revision_id, 0)
+                    AND COALESCE(json_extract(
+                        snapshot_json, '$.report.kind'
+                    ) = report_kind, 0)
+                    AND COALESCE(json_extract(
+                        snapshot_json, '$.report.report_id'
+                    ) = report_id, 0)
+                    AND COALESCE(json_extract(
+                        snapshot_json, '$.report.revision'
+                    ) = report_revision, 0)
+                    AND COALESCE(json_extract(
+                        snapshot_json, '$.report.report_identity_sha256'
+                    ) = report_identity_sha256, 0)
+                    AND COALESCE(json_extract(
+                        snapshot_json,
+                        '$.report.recommendation_contract_version'
+                    ) = recommendation_contract_version, 0)
+                    AND COALESCE(json_extract(
+                        snapshot_json,
+                        '$.report.recommendation_contract_digest'
+                    ) = recommendation_contract_digest, 0)
+                    AND COALESCE(json_extract(
+                        snapshot_json, '$.report.generation_contract_version'
+                    ) = generation_contract_version, 0)
+                    AND COALESCE(json_extract(
+                        snapshot_json, '$.report.renderer_fingerprint'
+                    ) = renderer_fingerprint, 0)
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS decision_report_idempotency (
+                case_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL CHECK (
+                    idempotency_key = trim(idempotency_key)
+                    AND length(idempotency_key) BETWEEN 8 AND 200
+                ),
+                request_sha256 TEXT NOT NULL CHECK (
+                    length(request_sha256) = 64
+                    AND request_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                report_id TEXT NOT NULL,
+                response_json TEXT NOT NULL CHECK (json_valid(response_json)),
+                response_sha256 TEXT NOT NULL CHECK (
+                    length(response_sha256) = 64
+                    AND response_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(case_id, idempotency_key),
+                FOREIGN KEY(report_id, case_id)
+                    REFERENCES decision_reports(report_id, case_id)
+                    ON DELETE RESTRICT
+            );
+
+            CREATE INDEX IF NOT EXISTS decision_reports_case_idx
+                ON decision_reports(case_id, report_revision DESC);
+
+            CREATE TRIGGER IF NOT EXISTS decision_report_insert_guard
+            BEFORE INSERT ON decision_reports
+            WHEN NOT EXISTS (
+                SELECT 1
+                  FROM decision_briefs b
+                  LEFT JOIN decision_signoffs s
+                    ON s.signoff_id = NEW.signoff_id
+                   AND s.case_id = NEW.case_id
+                 WHERE b.brief_revision_id = NEW.brief_revision_id
+                   AND b.case_id = NEW.case_id
+                   AND (
+                        (NEW.report_kind = 'draft'
+                            AND NEW.signoff_id IS NULL)
+                        OR (NEW.report_kind = 'final'
+                            AND s.brief_revision_id = NEW.brief_revision_id)
+                   )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'report does not match its immutable decision source');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_report_update_guard
+            BEFORE UPDATE ON decision_reports
+            BEGIN
+                SELECT RAISE(ABORT, 'decision reports are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_report_delete_guard
+            BEFORE DELETE ON decision_reports
+            BEGIN
+                SELECT RAISE(ABORT, 'decision reports are retained');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_report_idempotency_update_guard
+            BEFORE UPDATE ON decision_report_idempotency
+            BEGIN
+                SELECT RAISE(ABORT, 'decision report idempotency receipts are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_report_idempotency_delete_guard
+            BEFORE DELETE ON decision_report_idempotency
+            BEGIN
+                SELECT RAISE(ABORT, 'decision report idempotency receipts are immutable');
+            END;
+
+            CREATE TABLE IF NOT EXISTS decision_shadow_reviews (
+                shadow_review_id TEXT PRIMARY KEY CHECK (
+                    shadow_review_id GLOB 'dshr_*'
+                    AND length(shadow_review_id) > 5
+                ),
+                case_id TEXT NOT NULL
+                    REFERENCES decision_cases(case_id) ON DELETE RESTRICT,
+                brief_revision_id TEXT NOT NULL,
+                report_id TEXT NOT NULL,
+                report_snapshot_sha256 TEXT NOT NULL CHECK (
+                    length(report_snapshot_sha256) = 64
+                    AND report_snapshot_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                pdf_sha256 TEXT NOT NULL CHECK (
+                    length(pdf_sha256) = 64
+                    AND pdf_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                report_identity_sha256 TEXT NOT NULL CHECK (
+                    length(report_identity_sha256) = 64
+                    AND report_identity_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                recommendation_contract_version TEXT NOT NULL CHECK (
+                    recommendation_contract_version = trim(
+                        recommendation_contract_version
+                    )
+                    AND length(recommendation_contract_version) BETWEEN 1 AND 100
+                ),
+                recommendation_contract_digest TEXT NOT NULL CHECK (
+                    length(recommendation_contract_digest) = 64
+                    AND recommendation_contract_digest NOT GLOB '*[^0-9a-f]*'
+                ),
+                generation_contract_version TEXT NOT NULL CHECK (
+                    generation_contract_version = trim(generation_contract_version)
+                    AND length(generation_contract_version) BETWEEN 1 AND 100
+                ),
+                renderer_fingerprint TEXT NOT NULL CHECK (
+                    renderer_fingerprint = trim(renderer_fingerprint)
+                    AND length(renderer_fingerprint) BETWEEN 1 AND 500
+                ),
+                review_case_key TEXT NOT NULL CHECK (
+                    review_case_key = trim(review_case_key)
+                    AND length(review_case_key) BETWEEN 1 AND 200
+                ),
+                checklist_version TEXT NOT NULL CHECK (
+                    checklist_version = trim(checklist_version)
+                    AND length(checklist_version) BETWEEN 1 AND 100
+                ),
+                authenticated_principal TEXT NOT NULL CHECK (
+                    authenticated_principal = trim(authenticated_principal)
+                    AND length(authenticated_principal) BETWEEN 1 AND 200
+                ),
+                reviewer_name TEXT NOT NULL CHECK (
+                    reviewer_name = trim(reviewer_name)
+                    AND length(reviewer_name) BETWEEN 1 AND 200
+                ),
+                outcome TEXT NOT NULL CHECK (
+                    outcome IN ('passed','failed','needs_followup')
+                ),
+                review_json TEXT NOT NULL CHECK (
+                    json_valid(review_json)
+                    AND json_type(review_json) = 'object'
+                ),
+                review_sha256 TEXT NOT NULL CHECK (
+                    length(review_sha256) = 64
+                    AND review_sha256 NOT GLOB '*[^0-9a-f]*'
+                ),
+                reviewed_at TEXT NOT NULL,
+                CHECK (
+                    outcome <> 'passed' OR (
+                        COALESCE(json_type(
+                            review_json,
+                            '$.unauthorized_execution_observed'
+                        ) = 'false', 0)
+                        AND COALESCE(json_type(
+                            review_json,
+                            '$.numeric_citations_verified'
+                        ) = 'true', 0)
+                        AND COALESCE(json_type(
+                            review_json,
+                            '$.result_tie_out_verified'
+                        ) = 'true', 0)
+                        AND COALESCE(json_type(
+                            review_json,
+                            '$.report_tie_out_verified'
+                        ) = 'true', 0)
+                    )
+                ),
+                UNIQUE(checklist_version, report_id),
+                FOREIGN KEY(report_id, case_id)
+                    REFERENCES decision_reports(report_id, case_id)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY(brief_revision_id, case_id)
+                    REFERENCES decision_briefs(brief_revision_id, case_id)
+                    ON DELETE RESTRICT
+            );
+
+            CREATE TRIGGER IF NOT EXISTS decision_shadow_review_insert_guard
+            BEFORE INSERT ON decision_shadow_reviews
+            WHEN NOT EXISTS (
+                SELECT 1 FROM decision_reports r
+                 WHERE r.report_id = NEW.report_id
+                   AND r.case_id = NEW.case_id
+                   AND r.brief_revision_id = NEW.brief_revision_id
+                   AND r.report_kind = 'draft'
+                   AND r.signoff_id IS NULL
+                   AND r.snapshot_sha256 = NEW.report_snapshot_sha256
+                   AND r.pdf_sha256 = NEW.pdf_sha256
+                   AND r.report_identity_sha256 = NEW.report_identity_sha256
+                   AND r.recommendation_contract_version =
+                        NEW.recommendation_contract_version
+                   AND r.recommendation_contract_digest =
+                        NEW.recommendation_contract_digest
+                   AND r.generation_contract_version =
+                        NEW.generation_contract_version
+                   AND r.renderer_fingerprint = NEW.renderer_fingerprint
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'shadow review does not match its immutable draft report'
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_shadow_review_update_guard
+            BEFORE UPDATE ON decision_shadow_reviews
+            BEGIN
+                SELECT RAISE(ABORT, 'shadow review records are immutable');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS decision_shadow_review_delete_guard
+            BEFORE DELETE ON decision_shadow_reviews
+            BEGIN
+                SELECT RAISE(ABORT, 'shadow review records are retained');
+            END;
+
+            DROP TRIGGER IF EXISTS decision_case_transition_guard;
+            CREATE TRIGGER decision_case_transition_guard
+            BEFORE UPDATE OF status ON decision_cases
+            WHEN NEW.status <> OLD.status AND NOT (
+                (OLD.status = 'draft'
+                    AND NEW.status IN ('evidence_needed','blocked','archived'))
+                OR (OLD.status = 'evidence_needed'
+                    AND NEW.status IN ('blocked','ready_to_run','archived'))
+                OR (OLD.status = 'blocked'
+                    AND NEW.status IN ('evidence_needed','ready_to_run','archived'))
+                OR (OLD.status = 'ready_to_run'
+                    AND NEW.status IN ('evidence_needed','blocked','running','archived'))
+                OR (OLD.status = 'running' AND NEW.status = 'results_ready')
+                OR (OLD.status = 'results_ready' AND NEW.status = 'decision_ready')
+                OR (OLD.status = 'results_ready' AND NEW.status = 'running'
+                    AND EXISTS (
+                        SELECT 1
+                          FROM decision_scenario_jobs l
+                          JOIN technoeconomic_jobs j
+                            ON j.tea_job_id = l.tea_job_id
+                         WHERE l.case_id = OLD.case_id
+                           AND j.state = 'queued'
+                           AND j.created_at = NEW.updated_at
+                    ))
+                OR (OLD.status = 'decision_ready' AND NEW.status = 'results_ready'
+                    AND (
+                        NEW.title <> OLD.title
+                        OR NEW.question <> OLD.question
+                        OR NEW.decision_owner IS NOT OLD.decision_owner
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM decision_comparison_bundles
+                         WHERE case_id = OLD.case_id AND stale_at IS NULL
+                           AND superseded_by_bundle_id IS NULL
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM decision_briefs
+                         WHERE case_id = OLD.case_id AND stale_at IS NULL
+                           AND superseded_by_revision_id IS NULL
+                    ))
+                OR (OLD.status = 'decision_ready' AND NEW.status = 'signed'
+                    AND EXISTS (
+                        SELECT 1 FROM decision_signoffs s
+                         WHERE s.case_id = OLD.case_id
+                           AND s.expected_case_revision = OLD.revision
+                           AND s.case_revision_after = NEW.revision
+                    ))
+                OR (OLD.status = 'signed' AND NEW.status = 'archived')
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid decision case state transition');
+            END;
+
+            """
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (9, applied_at),
+        )
+        connection.execute("PRAGMA user_version = 9")
+        connection.commit()
+
     def _current_time(self) -> datetime:
         return _as_utc(self._now())
 
@@ -3190,6 +4058,99 @@ class AgentStore:
         return result
 
     @staticmethod
+    def _decision_recommendation_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = str(result["recommendation_id"])
+        recommendation_json = str(result.pop("recommendation_json"))
+        if not secrets.compare_digest(
+            str(result["recommendation_sha256"]),
+            _sha256_text(recommendation_json),
+        ):
+            raise StoreConflict("stored decision recommendation digest is invalid")
+        recommendation = _json_load(recommendation_json)
+        if not isinstance(recommendation, Mapping):
+            raise StoreConflict("stored decision recommendation is invalid")
+        result["recommendation"] = dict(recommendation)
+        return result
+
+    @staticmethod
+    def _decision_signoff_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = str(result["signoff_id"])
+        result["provisional_warnings"] = _json_load(
+            result.pop("provisional_warnings_json")
+        )
+        result["provisional_acknowledgements"] = _json_load(
+            result.pop("provisional_acknowledgements_json")
+        )
+        snapshot_json = str(result.pop("decision_snapshot_json"))
+        if not secrets.compare_digest(
+            str(result["decision_snapshot_sha256"]),
+            _sha256_text(snapshot_json),
+        ):
+            raise StoreConflict("stored decision sign-off snapshot digest is invalid")
+        snapshot = _json_load(snapshot_json)
+        if not isinstance(snapshot, Mapping):
+            raise StoreConflict("stored decision sign-off snapshot is invalid")
+        result["decision_snapshot"] = dict(snapshot)
+        return result
+
+    @staticmethod
+    def _decision_report_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = str(result["report_id"])
+        snapshot_json = str(result.pop("snapshot_json"))
+        if not secrets.compare_digest(
+            str(result["snapshot_sha256"]), _sha256_text(snapshot_json)
+        ):
+            raise StoreConflict("stored decision report snapshot digest is invalid")
+        snapshot = _json_load(snapshot_json)
+        if not isinstance(snapshot, Mapping):
+            raise StoreConflict("stored decision report snapshot is invalid")
+        result["snapshot"] = dict(snapshot)
+        return result
+
+    @staticmethod
+    def _decision_shadow_review_from_row(
+        row: sqlite3.Row | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["id"] = str(result["shadow_review_id"])
+        review_json = str(result.pop("review_json"))
+        review = _json_load(review_json)
+        if not isinstance(review, Mapping):
+            raise StoreConflict("stored shadow review is invalid")
+        try:
+            result["review"] = _validated_decision_shadow_review_checklist(
+                review,
+                outcome=str(result.get("outcome") or ""),
+            )
+        except ValueError as exc:
+            raise StoreConflict("stored shadow review checklist is invalid") from exc
+        if review_json != _json_dump(result["review"]):
+            raise StoreConflict("stored shadow review JSON is not canonical")
+        if not secrets.compare_digest(
+            str(result["review_sha256"]),
+            _decision_shadow_review_sha256(result, result["review"]),
+        ):
+            raise StoreConflict("stored shadow review digest is invalid")
+        return result
+
+    @staticmethod
     def _normalize_decision_scenario_evidence_refs(
         evidence_receipt_refs: Sequence[str | Mapping[str, Any]],
     ) -> list[dict[str, str]]:
@@ -3441,6 +4402,21 @@ class AgentStore:
             for attempt_row in attempt_rows
         ]
         embedded_attempts = result["bundle"].get("attempt_proofs")
+        if isinstance(embedded_attempts, list) and len(embedded_attempts) == len(
+            result["attempt_proofs"]
+        ):
+            for embedded, persisted in zip(
+                embedded_attempts, result["attempt_proofs"], strict=True
+            ):
+                if (
+                    isinstance(embedded, Mapping)
+                    and "result_projection_sha256" not in embedded
+                    and persisted.get("result_projection_sha256") is None
+                ):
+                    # Genuine schema-v8 bundles predate the v9 column.  Preserve
+                    # their exact proof shape while retaining the explicit NULL
+                    # key for every bundle admitted under the v9 commitment.
+                    persisted.pop("result_projection_sha256", None)
         if not isinstance(embedded_attempts, list) or not secrets.compare_digest(
             _json_dump(embedded_attempts), _json_dump(result["attempt_proofs"])
         ):
@@ -3517,9 +4493,27 @@ class AgentStore:
         *,
         case_id: str,
         source_confirmation_id: str,
+        bundle: Mapping[str, Any],
         attempt_proofs: Sequence[Mapping[str, Any]],
+        require_result_projection_commitment: bool,
     ) -> list[dict[str, Any]]:
         """Rebuild and prove the exact confirmation-bound attempt history."""
+
+        from sbepv.autonomy import comparison as autonomy_comparison
+
+        raw_scenarios = bundle.get("scenarios")
+        if not isinstance(raw_scenarios, list):
+            raise StoreConflict("comparison bundle scenarios are invalid")
+        result_projection_by_revision: dict[str, Mapping[str, Any]] = {}
+        for raw_scenario in raw_scenarios:
+            if not isinstance(raw_scenario, Mapping):
+                raise StoreConflict("comparison scenario projection is invalid")
+            revision_id = str(raw_scenario.get("scenario_revision_id") or "")
+            result_projection = raw_scenario.get("result")
+            if revision_id in result_projection_by_revision:
+                raise StoreConflict("comparison scenario projection is duplicated")
+            if isinstance(result_projection, Mapping):
+                result_projection_by_revision[revision_id] = result_projection
 
         confirmation = connection.execute(
             """
@@ -3741,6 +4735,65 @@ class AgentStore:
                         field="reporting_tieout_sha256",
                     )
                 )
+                supplied_projection_commitment = supplied.get(
+                    "result_projection_sha256"
+                )
+                if require_result_projection_commitment and (
+                    "result_projection_sha256" not in supplied
+                ):
+                    raise StoreConflict(
+                        "v9 attempt proofs require a result projection commitment field"
+                    )
+                projection_commitment: str | None = None
+                selected_and_verified = bool(
+                    offset == len(job_rows) and verification_status == "verified"
+                )
+                if selected_and_verified and require_result_projection_commitment:
+                    projection_commitment = self._validate_sha256(
+                        str(supplied_projection_commitment or ""),
+                        field="result_projection_sha256",
+                    )
+                    result_projection = result_projection_by_revision.get(
+                        str(item_row["scenario_revision_id"])
+                    )
+                    result_payload = (
+                        _json_load(str(job_row["result_json"]))
+                        if job_row["result_json"] is not None
+                        else None
+                    )
+                    if (
+                        not isinstance(result_projection, Mapping)
+                        or not isinstance(result_payload, Mapping)
+                        or result_sha256 is None
+                        or not secrets.compare_digest(
+                            result_sha256,
+                            _sha256_text(_json_dump(result_payload)),
+                        )
+                    ):
+                        raise StoreConflict(
+                            "verified result projection has no durable result authority"
+                        )
+                    try:
+                        expected_projection_commitment = (
+                            autonomy_comparison.verified_result_projection_commitment_sha256(
+                                durable_result=result_payload,
+                                result_projection=result_projection,
+                            )
+                        )
+                    except autonomy_comparison.ComparisonContractError as exc:
+                        raise StoreConflict(
+                            "result projection does not match durable result"
+                        ) from exc
+                    if not secrets.compare_digest(
+                        projection_commitment, expected_projection_commitment
+                    ):
+                        raise StoreConflict(
+                            "result projection commitment does not match durable result"
+                        )
+                elif supplied_projection_commitment is not None:
+                    raise StoreConflict(
+                        "only a verified selected result may carry a projection commitment"
+                    )
                 proof = {
                     "item_index": int(item_row["item_index"]),
                     "scenario_revision_id": str(
@@ -3763,6 +4816,8 @@ class AgentStore:
                     "evidence_set_sha256": evidence_set_sha256,
                     "reporting_tieout_sha256": normalized_tieout,
                 }
+                if require_result_projection_commitment:
+                    proof["result_projection_sha256"] = projection_commitment
                 for field, expected_value in proof.items():
                     supplied_value = supplied.get(field)
                     if field == "selected_for_comparison":
@@ -3805,16 +4860,40 @@ class AgentStore:
             """,
             (row["comparison_bundle_id"],),
         ).fetchall()
+        bundle = _verified_decision_bundle_json(
+            str(row["bundle_json"]), str(row["bundle_sha256"])
+        )
+        embedded_proofs = bundle.get("attempt_proofs")
+        if not isinstance(embedded_proofs, list):
+            return False
+        projection_key_presence = [
+            isinstance(proof, Mapping)
+            and "result_projection_sha256" in proof
+            for proof in embedded_proofs
+        ]
+        if any(projection_key_presence) and not all(projection_key_presence):
+            return False
+        require_projection_commitment = bool(projection_key_presence) and all(
+            projection_key_presence
+        )
         supplied = [
             self._decision_comparison_attempt_from_row(stored_row)
             for stored_row in stored_rows
         ]
+        if not require_projection_commitment:
+            for proof in supplied:
+                if proof.get("result_projection_sha256") is None:
+                    proof.pop("result_projection_sha256", None)
         try:
             current = self._verified_decision_comparison_attempts(
                 connection,
                 case_id=str(row["case_id"]),
                 source_confirmation_id=str(row["source_confirmation_id"]),
+                bundle=bundle,
                 attempt_proofs=supplied,
+                require_result_projection_commitment=(
+                    require_projection_commitment
+                ),
             )
         except (AgentStoreError, ValueError):
             return False
@@ -6650,8 +7729,27 @@ class AgentStore:
             }
             if not changed:
                 return self._decision_case_from_row(current)  # type: ignore[return-value]
+            invalidated_outputs = self._mark_current_decision_outputs_stale(
+                connection,
+                case_id=str(case_id),
+                reason={
+                    "code": "decision_case_metadata_changed",
+                    "changed_fields": sorted(changed),
+                    "case_revision_before": int(current["revision"]),
+                },
+                created_at=now_text,
+            )
+            next_status = (
+                "results_ready"
+                if current["status"] == "decision_ready"
+                else str(current["status"])
+            )
             assignments = [f"{field} = ?" for field in changed]
-            parameters = [*changed.values(), now_text, operator, str(case_id), expected_revision]
+            parameters = [*changed.values()]
+            if next_status != current["status"]:
+                assignments.append("status = ?")
+                parameters.append(next_status)
+            parameters.extend((now_text, operator, str(case_id), expected_revision))
             cursor = connection.execute(
                 "UPDATE decision_cases SET "
                 + ", ".join(assignments)
@@ -6682,6 +7780,9 @@ class AgentStore:
                         for field in sorted(changed)
                     },
                     "revision": int(updated["revision"]),
+                    "status_before": str(current["status"]),
+                    "status_after": str(updated["status"]),
+                    "invalidated_outputs": invalidated_outputs,
                 },
                 created_at=now_text,
             )
@@ -10114,7 +11215,9 @@ class AgentStore:
                 connection,
                 case_id=str(case_id),
                 source_confirmation_id=confirmation_id,
+                bundle=bundle,
                 attempt_proofs=attempt_proofs,
+                require_result_projection_commitment=True,
             )
             selected = [
                 proof for proof in proofs if proof["selected_for_comparison"]
@@ -10182,10 +11285,11 @@ class AgentStore:
                             retry_of_job_id, selected_for_comparison, state,
                             verification_status, request_sha256,
                             source_snapshot_sha256, result_sha256,
-                            result_provenance_sha256, evidence_set_sha256,
+                            result_provenance_sha256,
+                            result_projection_sha256, evidence_set_sha256,
                             reporting_tieout_sha256, created_at
                         ) VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                         )
                         """,
                         (
@@ -10205,6 +11309,7 @@ class AgentStore:
                             proof["source_snapshot_sha256"],
                             proof["result_sha256"],
                             proof["result_provenance_sha256"],
+                            proof["result_projection_sha256"],
                             proof["evidence_set_sha256"],
                             proof["reporting_tieout_sha256"],
                             now_text,
@@ -11089,6 +12194,1347 @@ class AgentStore:
             assert updated is not None
             return self._decision_brief_record(connection, updated)
 
+    def create_decision_recommendation(
+        self,
+        case_id: str,
+        *,
+        brief_revision_id: str,
+        recommendation: Mapping[str, Any],
+        contract_version: str,
+        contract_digest: str,
+        recommendation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist the approved deterministic classifier beside one v8 brief."""
+
+        if not isinstance(recommendation, Mapping):
+            raise ValueError("recommendation must be an object")
+        payload = dict(recommendation)
+        classification = str(payload.get("classification") or "").strip()
+        confidence = str(payload.get("confidence") or "").strip()
+        if classification not in {
+            "solaredge",
+            "solectria",
+            "no_decisive_winner",
+        }:
+            raise ValueError("unsupported recommendation classification")
+        if confidence not in {"strong", "mixed", "provisional", "not_applicable"}:
+            raise ValueError("unsupported recommendation confidence")
+        if (classification == "no_decisive_winner") != (
+            confidence == "not_applicable"
+        ):
+            raise ValueError("no-decisive-winner confidence must be not_applicable")
+        version = _bounded_text(
+            contract_version, field="contract_version", maximum=100
+        )
+        digest = str(contract_digest).strip().lower()
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("contract_digest must be a lowercase SHA-256")
+        if payload.get("contract_version") != version or payload.get(
+            "contract_digest"
+        ) != digest:
+            raise ValueError("recommendation contract identity is inconsistent")
+        if payload.get("state") != "available" or payload.get(
+            "recommendation_eligible"
+        ) is not True:
+            raise ValueError("only an available eligible recommendation may be stored")
+        bundle_digest = str(payload.get("comparison_bundle_sha256") or "").strip()
+        classification_input_digest = str(
+            payload.get("classification_input_sha256") or ""
+        ).strip()
+        for field, candidate in (
+            ("comparison_bundle_sha256", bundle_digest),
+            ("classification_input_sha256", classification_input_digest),
+        ):
+            if len(candidate) != 64 or any(
+                char not in "0123456789abcdef" for char in candidate
+            ):
+                raise ValueError(f"{field} must be a lowercase SHA-256")
+        recommendation_json = _json_dump(payload)
+        recommendation_sha256 = _sha256_text(recommendation_json)
+        normalized_id = (
+            _new_id("drec")
+            if recommendation_id is None
+            else self._validate_decision_record_id(
+                recommendation_id,
+                prefix="drec",
+                field="recommendation_id",
+            )
+        )
+        now_text = _timestamp(self._current_time())
+        with self._transaction(write=True) as connection:
+            brief = connection.execute(
+                "SELECT * FROM decision_briefs WHERE brief_revision_id = ?",
+                (str(brief_revision_id),),
+            ).fetchone()
+            if brief is None:
+                raise RecordNotFound(
+                    f"unknown decision brief revision: {brief_revision_id}"
+                )
+            if brief["case_id"] != str(case_id):
+                raise StoreConflict("decision brief belongs to a different case")
+            bundle = connection.execute(
+                "SELECT * FROM decision_comparison_bundles WHERE comparison_bundle_id = ?",
+                (brief["comparison_bundle_id"],),
+            ).fetchone()
+            if bundle is None or not bool(bundle["is_complete"]):
+                raise StoreConflict("decision brief has no complete comparison bundle")
+            if not secrets.compare_digest(
+                bundle_digest, str(brief["comparison_bundle_sha256"])
+            ):
+                raise StoreConflict(
+                    "recommendation belongs to a different comparison snapshot"
+                )
+            self._decision_brief_record(connection, brief)
+            existing = connection.execute(
+                "SELECT * FROM decision_recommendations WHERE brief_revision_id = ?",
+                (str(brief_revision_id),),
+            ).fetchone()
+            if existing is not None:
+                if any(
+                    (
+                        existing["case_id"] != str(case_id),
+                        existing["classification"] != classification,
+                        existing["confidence"] != confidence,
+                        existing["recommendation_json"] != recommendation_json,
+                        existing["contract_version"] != version,
+                        existing["contract_digest"] != digest,
+                    )
+                ):
+                    raise StoreConflict(
+                        "brief already has a different immutable recommendation"
+                    )
+                result = self._decision_recommendation_from_row(existing)
+                assert result is not None
+                result["idempotent_replay"] = True
+                return result
+            if any(
+                (
+                    brief["stale_at"] is not None,
+                    brief["superseded_by_revision_id"] is not None,
+                    bundle["stale_at"] is not None,
+                    bundle["superseded_by_bundle_id"] is not None,
+                    not self._decision_comparison_bundle_still_matches_history(
+                        connection, bundle
+                    ),
+                )
+            ):
+                raise StoreConflict(
+                    "only a current reverified brief may receive a recommendation"
+                )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_recommendations (
+                        recommendation_id, case_id, case_revision,
+                        brief_revision_id, comparison_bundle_id,
+                        comparison_bundle_sha256, provenance_sha256,
+                        classification, confidence, recommendation_json,
+                        recommendation_sha256, contract_version,
+                        contract_digest, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_id,
+                        str(case_id),
+                        int(brief["case_revision_after"]),
+                        str(brief_revision_id),
+                        str(brief["comparison_bundle_id"]),
+                        str(brief["comparison_bundle_sha256"]),
+                        str(brief["provenance_sha256"]),
+                        classification,
+                        confidence,
+                        recommendation_json,
+                        recommendation_sha256,
+                        version,
+                        digest,
+                        now_text,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict(
+                    "could not persist immutable decision recommendation"
+                ) from exc
+            row = connection.execute(
+                "SELECT * FROM decision_recommendations WHERE recommendation_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            assert row is not None
+            result = self._decision_recommendation_from_row(row)
+            assert result is not None
+            result["idempotent_replay"] = False
+            return result
+
+    def get_decision_recommendation(
+        self, brief_revision_id: str
+    ) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM decision_recommendations WHERE brief_revision_id = ?",
+                (str(brief_revision_id),),
+            ).fetchone()
+            return self._decision_recommendation_from_row(row)
+
+    def list_decision_recommendations(
+        self, case_id: str, *, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        with self._transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM decision_recommendations
+                 WHERE case_id = ? ORDER BY created_at DESC LIMIT ?
+                """,
+                (str(case_id), max(1, min(int(limit), 500))),
+            ).fetchall()
+            return [
+                item
+                for row in rows
+                if (item := self._decision_recommendation_from_row(row)) is not None
+            ]
+
+    @staticmethod
+    def _recommendation_warning_ids(
+        recommendation: Mapping[str, Any],
+    ) -> list[str]:
+        raw_warnings = recommendation.get("required_acknowledgements")
+        hash_items = isinstance(raw_warnings, Sequence) and not isinstance(
+            raw_warnings, (str, bytes)
+        )
+        if not hash_items:
+            raw_warnings = recommendation.get("warnings")
+        if raw_warnings is None:
+            raw_warnings = recommendation.get("provisional_warnings")
+        if not isinstance(raw_warnings, Sequence) or isinstance(
+            raw_warnings, (str, bytes)
+        ):
+            return []
+        warning_ids: list[str] = []
+        for index, warning in enumerate(raw_warnings):
+            if hash_items:
+                identifier = f"ack_{_sha256_text(_json_dump(warning))[:24]}"
+            elif isinstance(warning, Mapping):
+                identifier = warning.get("id") or warning.get("code")
+            else:
+                identifier = warning
+            normalized = str(identifier or f"warning-{index + 1}").strip()
+            if normalized and normalized not in warning_ids:
+                warning_ids.append(normalized[:200])
+        return warning_ids
+
+    def create_decision_signoff(
+        self,
+        case_id: str,
+        *,
+        expected_case_revision: int,
+        brief_revision_id: str,
+        recommendation_id: str,
+        disposition: str,
+        authenticated_principal: str,
+        decision_owner_name: str,
+        rationale: str,
+        acknowledgement_text: str,
+        acknowledgement_version: str,
+        provisional_warning_acknowledgements: Sequence[str],
+        idempotency_key: str,
+        signoff_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Append one authenticated application sign-off and freeze its snapshot."""
+
+        if (
+            isinstance(expected_case_revision, bool)
+            or not isinstance(expected_case_revision, int)
+            or expected_case_revision <= 0
+        ):
+            raise ValueError("expected_case_revision must be a positive integer")
+        normalized_disposition = str(disposition).strip().lower()
+        if normalized_disposition not in DECISION_DISPOSITIONS:
+            raise ValueError("unsupported decision disposition")
+        principal = _bounded_text(
+            authenticated_principal,
+            field="authenticated_principal",
+            maximum=200,
+        )
+        owner = _bounded_text(
+            decision_owner_name, field="decision_owner_name", maximum=200
+        )
+        rationale_text = _bounded_text(rationale, field="rationale", maximum=4000)
+        acknowledgement = _bounded_text(
+            acknowledgement_text, field="acknowledgement_text", maximum=4000
+        )
+        acknowledgement_ver = _bounded_text(
+            acknowledgement_version,
+            field="acknowledgement_version",
+            maximum=100,
+        )
+        key = _bounded_text(
+            idempotency_key, field="idempotency_key", maximum=200
+        )
+        if len(key) < 8:
+            raise ValueError("idempotency_key must contain at least 8 characters")
+        acknowledged_warning_ids = sorted(
+            {
+                _bounded_text(item, field="warning acknowledgement", maximum=200)
+                for item in provisional_warning_acknowledgements
+            }
+        )
+        normalized_signoff_id = (
+            _new_id("dsgn")
+            if signoff_id is None
+            else self._validate_decision_record_id(
+                signoff_id, prefix="dsgn", field="signoff_id"
+            )
+        )
+        request_payload = {
+            "schema_version": "decision-signoff-request-v1",
+            "case_id": str(case_id),
+            "expected_case_revision": expected_case_revision,
+            "brief_revision_id": str(brief_revision_id),
+            "recommendation_id": str(recommendation_id),
+            "disposition": normalized_disposition,
+            "authenticated_principal": principal,
+            "decision_owner_name": owner,
+            "rationale": rationale_text,
+            "acknowledgement_text": acknowledgement,
+            "acknowledgement_version": acknowledgement_ver,
+            "provisional_warning_acknowledgements": acknowledged_warning_ids,
+        }
+        request_json = _json_dump(request_payload)
+        request_sha256 = _sha256_text(request_json)
+        signed_at = _timestamp(self._current_time())
+
+        with self._transaction(write=True) as connection:
+            replay = connection.execute(
+                """
+                SELECT * FROM decision_signoff_idempotency
+                 WHERE case_id = ? AND idempotency_key = ?
+                """,
+                (str(case_id), key),
+            ).fetchone()
+            if replay is not None:
+                if not secrets.compare_digest(
+                    str(replay["request_sha256"]), request_sha256
+                ):
+                    raise StoreConflict(
+                        "idempotency key was already used for another sign-off request"
+                    )
+                response_json = str(replay["response_json"])
+                if not secrets.compare_digest(
+                    str(replay["response_sha256"]), _sha256_text(response_json)
+                ):
+                    raise StoreConflict("sign-off replay receipt is invalid")
+                response = _json_load(response_json)
+                if (
+                    not isinstance(response, Mapping)
+                    or response.get("signoff_id") != replay["signoff_id"]
+                ):
+                    raise StoreConflict("sign-off replay identity is invalid")
+                row = connection.execute(
+                    "SELECT * FROM decision_signoffs WHERE signoff_id = ?",
+                    (replay["signoff_id"],),
+                ).fetchone()
+                if row is None:
+                    raise StoreConflict("sign-off replay record is missing")
+                result = self._decision_signoff_from_row(row)
+                assert result is not None
+                result["idempotent_replay"] = True
+                return result
+
+            brief = connection.execute(
+                "SELECT * FROM decision_briefs WHERE brief_revision_id = ?",
+                (str(brief_revision_id),),
+            ).fetchone()
+            recommendation_row = connection.execute(
+                "SELECT * FROM decision_recommendations WHERE recommendation_id = ?",
+                (str(recommendation_id),),
+            ).fetchone()
+            if brief is None or recommendation_row is None:
+                raise RecordNotFound("unknown decision brief or recommendation")
+            if brief["case_id"] != str(case_id) or recommendation_row[
+                "case_id"
+            ] != str(case_id):
+                raise StoreConflict("sign-off identity belongs to another case")
+            if recommendation_row["brief_revision_id"] != str(brief_revision_id):
+                raise StoreConflict("recommendation belongs to another brief")
+            recommendation_record = self._decision_recommendation_from_row(
+                recommendation_row
+            )
+            assert recommendation_record is not None
+            warning_ids = self._recommendation_warning_ids(
+                recommendation_record["recommendation"]
+            )
+            if acknowledged_warning_ids != sorted(warning_ids):
+                raise InvalidStateTransition(
+                    "every required recommendation warning or limitation must be acknowledged exactly"
+                )
+            stale_or_superseded = bool(
+                brief["stale_at"] is not None
+                or brief["superseded_by_revision_id"] is not None
+            )
+            bundle = connection.execute(
+                "SELECT * FROM decision_comparison_bundles "
+                "WHERE comparison_bundle_id = ?",
+                (brief["comparison_bundle_id"],),
+            ).fetchone()
+            stale_or_superseded = stale_or_superseded or bool(
+                bundle is None
+                or bundle["stale_at"] is not None
+                or bundle["superseded_by_bundle_id"] is not None
+                or not self._decision_comparison_bundle_still_matches_history(
+                    connection, bundle
+                )
+            )
+            if stale_or_superseded and normalized_disposition != "defer":
+                raise InvalidStateTransition(
+                    "stale or superseded briefs permit only Defer"
+                )
+            existing = connection.execute(
+                "SELECT * FROM decision_signoffs WHERE brief_revision_id = ?",
+                (str(brief_revision_id),),
+            ).fetchone()
+            if existing is not None:
+                if not secrets.compare_digest(
+                    str(existing["signoff_request_sha256"]), request_sha256
+                ):
+                    raise StoreConflict(
+                        "decision brief already has a different immutable sign-off"
+                    )
+                response = {
+                    "schema_version": "decision-signoff-response-v1",
+                    "signoff_id": existing["signoff_id"],
+                    "case_id": str(case_id),
+                    "case_revision_after": int(existing["case_revision_after"]),
+                }
+                response_json = _json_dump(response)
+                connection.execute(
+                    """
+                    INSERT INTO decision_signoff_idempotency (
+                        case_id, idempotency_key, request_sha256, signoff_id,
+                        response_json, response_sha256, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(case_id), key, request_sha256,
+                        existing["signoff_id"], response_json,
+                        _sha256_text(response_json), signed_at,
+                    ),
+                )
+                result = self._decision_signoff_from_row(existing)
+                assert result is not None
+                result["idempotent_replay"] = True
+                return result
+            case = self._require_decision_case_row(
+                connection, str(case_id), mutable=True
+            )
+            self._require_case_revision(case, expected_case_revision)
+            stale_defer = bool(
+                stale_or_superseded
+                and normalized_disposition == "defer"
+                and case["status"] == "results_ready"
+            )
+            if case["status"] != "decision_ready" and not stale_defer:
+                raise InvalidStateTransition(
+                    "only a decision-ready case may receive a sign-off"
+                )
+            case_payload = self._decision_case_from_row(case)
+            assert case_payload is not None
+            case_payload["case_id"] = case_payload.pop("id")
+            brief_payload = self._decision_brief_record(connection, brief)
+            snapshot = {
+                "schema_version": "decision-signed-snapshot-v1",
+                "case": case_payload,
+                "brief": brief_payload,
+                "recommendation": dict(
+                    recommendation_record["recommendation"]
+                ),
+                "signoff": {
+                    "signoff_id": normalized_signoff_id,
+                    "disposition": normalized_disposition,
+                    "authenticated_principal": principal,
+                    "decision_owner_name": owner,
+                    "rationale": rationale_text,
+                    "acknowledgement_text": acknowledgement,
+                    "acknowledgement_version": acknowledgement_ver,
+                    "provisional_warning_acknowledgements": (
+                        acknowledged_warning_ids
+                    ),
+                    "signed_at": signed_at,
+                    "signature_semantics": (
+                        "authenticated_application_signoff_not_cryptographic_or_legal_signature"
+                    ),
+                },
+            }
+            snapshot_json = _json_dump(snapshot)
+            snapshot_sha256 = _sha256_text(snapshot_json)
+            warnings_json = _json_dump(warning_ids)
+            acknowledgements_json = _json_dump(acknowledged_warning_ids)
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_signoffs (
+                        signoff_id, case_id, expected_case_revision,
+                        case_revision_after, brief_revision_id,
+                        recommendation_id, comparison_bundle_sha256,
+                        provenance_sha256, recommendation_contract_version,
+                        recommendation_contract_digest, disposition,
+                        authenticated_principal, decision_owner_name, rationale,
+                        acknowledgement_text, acknowledgement_version,
+                        provisional_warnings_json,
+                        provisional_acknowledgements_json,
+                        decision_snapshot_json, decision_snapshot_sha256,
+                        signoff_request_sha256, signed_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        normalized_signoff_id,
+                        str(case_id),
+                        expected_case_revision,
+                        expected_case_revision + 1,
+                        str(brief_revision_id),
+                        str(recommendation_id),
+                        str(brief["comparison_bundle_sha256"]),
+                        str(brief["provenance_sha256"]),
+                        str(recommendation_row["contract_version"]),
+                        str(recommendation_row["contract_digest"]),
+                        normalized_disposition,
+                        principal,
+                        owner,
+                        rationale_text,
+                        acknowledgement,
+                        acknowledgement_ver,
+                        warnings_json,
+                        acknowledgements_json,
+                        snapshot_json,
+                        snapshot_sha256,
+                        request_sha256,
+                        signed_at,
+                    ),
+                )
+                cursor = connection.execute(
+                    """
+                    UPDATE decision_cases
+                       SET status = ?,
+                           active_recommendation_revision = ?,
+                           revision = revision + 1,
+                           updated_at = ?, updated_by = ?
+                     WHERE case_id = ? AND revision = ?
+                    """,
+                    (
+                        "results_ready" if stale_defer else "signed",
+                        (
+                            case["active_recommendation_revision"]
+                            if stale_defer
+                            else int(brief["revision"])
+                        ),
+                        signed_at,
+                        owner,
+                        str(case_id),
+                        expected_case_revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreConflict("decision case changed during sign-off")
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not persist immutable decision sign-off") from exc
+            response = {
+                "schema_version": "decision-signoff-response-v1",
+                "signoff_id": normalized_signoff_id,
+                "case_id": str(case_id),
+                "case_revision_after": expected_case_revision + 1,
+                "decision_snapshot_sha256": snapshot_sha256,
+            }
+            response_json = _json_dump(response)
+            connection.execute(
+                """
+                INSERT INTO decision_signoff_idempotency (
+                    case_id, idempotency_key, request_sha256, signoff_id,
+                    response_json, response_sha256, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(case_id), key, request_sha256, normalized_signoff_id,
+                    response_json, _sha256_text(response_json), signed_at,
+                ),
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_signoff_recorded",
+                actor_kind="operator",
+                operator_name=owner,
+                payload={
+                    "signoff_id": normalized_signoff_id,
+                    "brief_revision_id": str(brief_revision_id),
+                    "recommendation_id": str(recommendation_id),
+                    "disposition": normalized_disposition,
+                    "decision_snapshot_sha256": snapshot_sha256,
+                    "authenticated_principal": principal,
+                },
+                created_at=signed_at,
+            )
+            row = connection.execute(
+                "SELECT * FROM decision_signoffs WHERE signoff_id = ?",
+                (normalized_signoff_id,),
+            ).fetchone()
+            assert row is not None
+            result = self._decision_signoff_from_row(row)
+            assert result is not None
+            result["idempotent_replay"] = False
+            return result
+
+    def get_decision_signoff(self, signoff_id: str) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM decision_signoffs WHERE signoff_id = ?",
+                (str(signoff_id),),
+            ).fetchone()
+            return self._decision_signoff_from_row(row)
+
+    def list_decision_signoffs(
+        self, case_id: str, *, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        with self._transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM decision_signoffs
+                 WHERE case_id = ? ORDER BY signed_at DESC LIMIT ?
+                """,
+                (str(case_id), max(1, min(int(limit), 500))),
+            ).fetchall()
+            return [
+                item
+                for row in rows
+                if (item := self._decision_signoff_from_row(row)) is not None
+            ]
+
+    def create_decision_report(
+        self,
+        case_id: str,
+        *,
+        case_revision: int,
+        report_kind: str,
+        brief_revision_id: str,
+        signoff_id: str | None,
+        recommendation_contract_version: str,
+        recommendation_contract_digest: str,
+        snapshot: Mapping[str, Any],
+        pdf_sha256: str,
+        byte_count: int,
+        page_count: int,
+        generation_contract_version: str,
+        renderer_fingerprint: str,
+        storage_key: str,
+        report_identity_sha256: str,
+        created_principal: str,
+        created_by: str,
+        idempotency_key: str,
+        report_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record one already-rendered immutable report artifact."""
+
+        if isinstance(case_revision, bool) or not isinstance(case_revision, int) or case_revision <= 0:
+            raise ValueError("case_revision must be a positive integer")
+        kind = str(report_kind).strip().lower()
+        if kind not in DECISION_REPORT_KINDS:
+            raise ValueError("unsupported decision report kind")
+        if (kind == "draft") != (signoff_id is None):
+            raise ValueError("draft reports must be unsigned and final reports signed")
+        if not isinstance(snapshot, Mapping):
+            raise ValueError("report snapshot must be an object")
+        snapshot_payload = dict(snapshot)
+        snapshot_json = _json_dump(snapshot_payload)
+        snapshot_sha256 = _sha256_text(snapshot_json)
+        pdf_digest = str(pdf_sha256).strip().lower()
+        contract_digest = str(recommendation_contract_digest).strip().lower()
+        identity_digest = str(report_identity_sha256).strip().lower()
+        for value, field in (
+            (pdf_digest, "pdf_sha256"),
+            (contract_digest, "recommendation_contract_digest"),
+            (identity_digest, "report_identity_sha256"),
+        ):
+            if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+                raise ValueError(f"{field} must be a lowercase SHA-256")
+        if isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count <= 0:
+            raise ValueError("byte_count must be a positive integer")
+        if isinstance(page_count, bool) or not isinstance(page_count, int) or not 1 <= page_count <= 100:
+            raise ValueError("page_count must be between 1 and 100")
+        contract_version = _bounded_text(
+            recommendation_contract_version,
+            field="recommendation_contract_version",
+            maximum=100,
+        )
+        generation_version = _bounded_text(
+            generation_contract_version,
+            field="generation_contract_version",
+            maximum=100,
+        )
+        renderer = _bounded_text(
+            renderer_fingerprint, field="renderer_fingerprint", maximum=500
+        )
+        principal = _bounded_text(
+            created_principal, field="created_principal", maximum=200
+        )
+        creator = _bounded_text(created_by, field="created_by", maximum=200)
+        key = _bounded_text(idempotency_key, field="idempotency_key", maximum=200)
+        if len(key) < 8:
+            raise ValueError("idempotency_key must contain at least 8 characters")
+        normalized_storage_key = str(storage_key).strip().replace("\\", "/")
+        expected_storage_key = (
+            f"sha256/{pdf_digest[:2]}/{pdf_digest}.pdf"
+        )
+        if normalized_storage_key != expected_storage_key:
+            raise ValueError(
+                "decision report storage key must match the PDF content address"
+            )
+        normalized_report_id = (
+            _new_id("drpt")
+            if report_id is None
+            else self._validate_decision_record_id(
+                report_id, prefix="drpt", field="report_id"
+            )
+        )
+        request_payload = {
+            "schema_version": "decision-report-request-v1",
+            "case_id": str(case_id),
+            "case_revision": case_revision,
+            "report_kind": kind,
+            "brief_revision_id": str(brief_revision_id),
+            "signoff_id": signoff_id,
+            "recommendation_contract_version": contract_version,
+            "recommendation_contract_digest": contract_digest,
+            "snapshot_sha256": snapshot_sha256,
+            "pdf_sha256": pdf_digest,
+            "byte_count": byte_count,
+            "page_count": page_count,
+            "generation_contract_version": generation_version,
+            "renderer_fingerprint": renderer,
+            "storage_key": normalized_storage_key,
+            "report_identity_sha256": identity_digest,
+            "created_principal": principal,
+            "created_by": creator,
+        }
+        request_json = _json_dump(request_payload)
+        request_sha256 = _sha256_text(request_json)
+        created_at = _timestamp(self._current_time())
+
+        with self._transaction(write=True) as connection:
+            replay = connection.execute(
+                """
+                SELECT * FROM decision_report_idempotency
+                 WHERE case_id = ? AND idempotency_key = ?
+                """,
+                (str(case_id), key),
+            ).fetchone()
+            if replay is not None:
+                if not secrets.compare_digest(
+                    str(replay["request_sha256"]), request_sha256
+                ):
+                    raise StoreConflict(
+                        "idempotency key was already used for another report request"
+                    )
+                response_json = str(replay["response_json"])
+                if not secrets.compare_digest(
+                    str(replay["response_sha256"]), _sha256_text(response_json)
+                ):
+                    raise StoreConflict("report replay receipt is invalid")
+                response = _json_load(response_json)
+                if (
+                    not isinstance(response, Mapping)
+                    or response.get("report_id") != replay["report_id"]
+                ):
+                    raise StoreConflict("report replay identity is invalid")
+                row = connection.execute(
+                    "SELECT * FROM decision_reports WHERE report_id = ?",
+                    (replay["report_id"],),
+                ).fetchone()
+                if row is None:
+                    raise StoreConflict("report replay record is missing")
+                result = self._decision_report_from_row(row)
+                assert result is not None
+                result["idempotent_replay"] = True
+                return result
+            case = self._require_decision_case_row(connection, str(case_id))
+            self._require_case_revision(case, case_revision)
+            current_case_snapshot = self._decision_case_from_row(case)
+            assert current_case_snapshot is not None
+            current_case_snapshot["case_id"] = current_case_snapshot.pop("id")
+            brief = connection.execute(
+                "SELECT * FROM decision_briefs WHERE brief_revision_id = ?",
+                (str(brief_revision_id),),
+            ).fetchone()
+            if brief is None or brief["case_id"] != str(case_id):
+                raise RecordNotFound("unknown decision brief for report")
+            current_brief_snapshot = self._decision_brief_record(connection, brief)
+            recommendation = connection.execute(
+                "SELECT * FROM decision_recommendations WHERE brief_revision_id = ?",
+                (str(brief_revision_id),),
+            ).fetchone()
+            if recommendation is None:
+                raise InvalidStateTransition(
+                    "reports require an approved stored recommendation"
+                )
+            if any(
+                (
+                    recommendation["contract_version"] != contract_version,
+                    recommendation["contract_digest"] != contract_digest,
+                )
+            ):
+                raise StoreConflict("report recommendation contract identity changed")
+            recommendation_record = self._decision_recommendation_from_row(
+                recommendation
+            )
+            assert recommendation_record is not None
+            bundle = connection.execute(
+                "SELECT * FROM decision_comparison_bundles "
+                "WHERE comparison_bundle_id = ?",
+                (brief["comparison_bundle_id"],),
+            ).fetchone()
+            if kind == "draft":
+                if any(
+                    (
+                        brief["stale_at"] is not None,
+                        brief["superseded_by_revision_id"] is not None,
+                        bundle is None,
+                        bundle is not None and bundle["stale_at"] is not None,
+                        bundle is not None
+                        and bundle["superseded_by_bundle_id"] is not None,
+                        bundle is not None
+                        and not self._decision_comparison_bundle_still_matches_history(
+                            connection, bundle
+                        ),
+                    )
+                ):
+                    raise InvalidStateTransition(
+                        "draft reports require a current verified brief"
+                    )
+            else:
+                signoff = connection.execute(
+                    "SELECT * FROM decision_signoffs WHERE signoff_id = ?",
+                    (str(signoff_id),),
+                ).fetchone()
+                if (
+                    signoff is None
+                    or signoff["case_id"] != str(case_id)
+                    or signoff["brief_revision_id"] != str(brief_revision_id)
+                    or signoff["recommendation_contract_version"]
+                    != contract_version
+                    or signoff["recommendation_contract_digest"]
+                    != contract_digest
+                ):
+                    raise StoreConflict("final report sign-off identity is invalid")
+                signoff_record = self._decision_signoff_from_row(signoff)
+                assert signoff_record is not None
+            report_section = snapshot_payload.get("report")
+            case_section = snapshot_payload.get("case")
+            brief_section = snapshot_payload.get("brief")
+            recommendation_section = snapshot_payload.get("recommendation")
+            signoff_section = snapshot_payload.get("signoff")
+            if not all(
+                isinstance(item, Mapping)
+                for item in (
+                    report_section,
+                    case_section,
+                    brief_section,
+                    recommendation_section,
+                )
+            ) or any(
+                (
+                    report_section.get("kind") != kind,
+                    case_section.get("case_id") != str(case_id),
+                    brief_section.get("brief_revision_id")
+                    != str(brief_revision_id),
+                    recommendation_section
+                    != recommendation_record["recommendation"],
+                    report_section.get("report_id") != normalized_report_id,
+                    report_section.get("revision") != int(brief["revision"]),
+                    report_section.get("report_identity_sha256")
+                    != identity_digest,
+                    report_section.get("recommendation_contract_version")
+                    != contract_version,
+                    report_section.get("recommendation_contract_digest")
+                    != contract_digest,
+                    report_section.get("generation_contract_version")
+                    != generation_version,
+                    report_section.get("renderer_fingerprint") != renderer,
+                )
+            ):
+                raise StoreConflict("report snapshot identity is invalid")
+            source_case_revision = case_section.get("revision")
+            if (
+                isinstance(source_case_revision, bool)
+                or not isinstance(source_case_revision, int)
+                or source_case_revision <= 0
+                or (kind == "draft" and source_case_revision != case_revision)
+            ):
+                raise StoreConflict("report case revision identity is invalid")
+            source_identity: dict[str, Any] = {
+                "kind": kind,
+                "case_id": str(case_id),
+                "case_revision": source_case_revision,
+                "brief_revision_id": str(brief_revision_id),
+                "comparison_bundle_sha256": brief["comparison_bundle_sha256"],
+                "provenance_sha256": brief["provenance_sha256"],
+                "recommendation_contract_version": contract_version,
+                "recommendation_contract_digest": contract_digest,
+                "generation_contract_version": generation_version,
+                "renderer_fingerprint": renderer,
+            }
+            if kind == "final":
+                assert signoff is not None
+                source_identity["signoff_id"] = signoff["signoff_id"]
+                source_identity["decision_snapshot_sha256"] = signoff[
+                    "decision_snapshot_sha256"
+                ]
+            calculated_identity = _sha256_text(_json_dump(source_identity))
+            if (
+                not secrets.compare_digest(calculated_identity, identity_digest)
+                or normalized_report_id != f"drpt_{identity_digest[:32]}"
+            ):
+                raise StoreConflict("report identity is not content-derived")
+            if kind == "final":
+                expected_signoff_section = dict(
+                    signoff_record["decision_snapshot"]["signoff"]
+                )
+                expected_signoff_section.update(
+                    {
+                        "signoff_id": signoff_record["signoff_id"],
+                        "decision_snapshot_sha256": signoff_record[
+                            "decision_snapshot_sha256"
+                        ],
+                    }
+                )
+                signed_snapshot = signoff_record["decision_snapshot"]
+                if any(
+                    (
+                        case_section != signed_snapshot.get("case"),
+                        brief_section != signed_snapshot.get("brief"),
+                        recommendation_section
+                        != signed_snapshot.get("recommendation"),
+                        signoff_section != expected_signoff_section,
+                    )
+                ):
+                    raise StoreConflict(
+                        "final report does not exactly match its signed snapshot"
+                    )
+            elif signoff_section is not None:
+                raise StoreConflict("draft report snapshot must be unsigned")
+            elif any(
+                (
+                    case_section != current_case_snapshot,
+                    brief_section != current_brief_snapshot,
+                )
+            ):
+                raise StoreConflict(
+                    "draft report does not exactly match its current immutable source"
+                )
+            # Rebuild the entire derived snapshot, including export references and
+            # chart contracts. A matching identity header is not enough if any
+            # manager-facing or navigational content was altered.
+            from sbepv.autonomy import reporting as decision_reporting
+
+            expected_snapshot = decision_reporting.prepare_report_snapshot(
+                report_kind=kind,
+                case=(
+                    signoff_record["decision_snapshot"]["case"]
+                    if kind == "final"
+                    else current_case_snapshot
+                ),
+                brief=(
+                    signoff_record["decision_snapshot"]["brief"]
+                    if kind == "final"
+                    else current_brief_snapshot
+                ),
+                recommendation=recommendation_record["recommendation"],
+                signoff=(expected_signoff_section if kind == "final" else None),
+            )
+            if expected_snapshot != snapshot_payload:
+                raise StoreConflict(
+                    "report snapshot differs from its deterministic source projection"
+                )
+            existing = connection.execute(
+                "SELECT * FROM decision_reports WHERE report_identity_sha256 = ?",
+                (identity_digest,),
+            ).fetchone()
+            if existing is not None:
+                if any(
+                    (
+                        existing["case_id"] != str(case_id),
+                        existing["snapshot_sha256"] != snapshot_sha256,
+                        existing["pdf_sha256"] != pdf_digest,
+                        int(existing["byte_count"]) != byte_count,
+                        int(existing["page_count"]) != page_count,
+                        existing["storage_key"] != normalized_storage_key,
+                    )
+                ):
+                    raise StoreConflict("report identity already exists with different bytes")
+                response = {
+                    "schema_version": "decision-report-response-v1",
+                    "report_id": existing["report_id"],
+                    "case_id": str(case_id),
+                    "report_revision": int(existing["report_revision"]),
+                }
+                response_json = _json_dump(response)
+                connection.execute(
+                    """
+                    INSERT INTO decision_report_idempotency (
+                        case_id, idempotency_key, request_sha256, report_id,
+                        response_json, response_sha256, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(case_id), key, request_sha256,
+                        existing["report_id"], response_json,
+                        _sha256_text(response_json), created_at,
+                    ),
+                )
+                result = self._decision_report_from_row(existing)
+                assert result is not None
+                result["idempotent_replay"] = True
+                return result
+            # Report revision follows the immutable Decision Brief revision.  Draft
+            # and final are separate kinds, so both can truthfully carry the same
+            # source revision in their PDF audit section without a reservation race.
+            report_revision = int(brief["revision"])
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_reports (
+                        report_id, case_id, report_revision, report_kind,
+                        case_revision, brief_revision_id, signoff_id,
+                        recommendation_contract_version,
+                        recommendation_contract_digest, snapshot_json,
+                        snapshot_sha256, pdf_sha256, byte_count, page_count,
+                        generation_contract_version, renderer_fingerprint,
+                        storage_key, report_identity_sha256,
+                        created_principal, created_by, created_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        normalized_report_id, str(case_id), report_revision,
+                        kind, case_revision, str(brief_revision_id), signoff_id,
+                        contract_version, contract_digest, snapshot_json,
+                        snapshot_sha256, pdf_digest, byte_count, page_count,
+                        generation_version, renderer, normalized_storage_key,
+                        identity_digest, principal, creator, created_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not persist immutable decision report") from exc
+            response = {
+                "schema_version": "decision-report-response-v1",
+                "report_id": normalized_report_id,
+                "case_id": str(case_id),
+                "report_revision": report_revision,
+            }
+            response_json = _json_dump(response)
+            connection.execute(
+                """
+                INSERT INTO decision_report_idempotency (
+                    case_id, idempotency_key, request_sha256, report_id,
+                    response_json, response_sha256, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(case_id), key, request_sha256, normalized_report_id,
+                    response_json, _sha256_text(response_json), created_at,
+                ),
+            )
+            self._insert_decision_event(
+                connection,
+                case_id=str(case_id),
+                event_type="decision_report_generated",
+                actor_kind="operator",
+                operator_name=creator,
+                payload={
+                    "report_id": normalized_report_id,
+                    "report_revision": report_revision,
+                    "report_kind": kind,
+                    "brief_revision_id": str(brief_revision_id),
+                    "signoff_id": signoff_id,
+                    "snapshot_sha256": snapshot_sha256,
+                    "pdf_sha256": pdf_digest,
+                },
+                created_at=created_at,
+            )
+            row = connection.execute(
+                "SELECT * FROM decision_reports WHERE report_id = ?",
+                (normalized_report_id,),
+            ).fetchone()
+            assert row is not None
+            result = self._decision_report_from_row(row)
+            assert result is not None
+            result["idempotent_replay"] = False
+            return result
+
+    def get_decision_report(self, report_id: str) -> dict[str, Any] | None:
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM decision_reports WHERE report_id = ?",
+                (str(report_id),),
+            ).fetchone()
+            return self._decision_report_from_row(row)
+
+    def list_decision_reports(
+        self, case_id: str, *, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        with self._transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM decision_reports
+                 WHERE case_id = ? ORDER BY report_revision DESC LIMIT ?
+                """,
+                (str(case_id), max(1, min(int(limit), 500))),
+            ).fetchall()
+            return [
+                item
+                for row in rows
+                if (item := self._decision_report_from_row(row)) is not None
+            ]
+
+    def create_decision_shadow_review(
+        self,
+        *,
+        case_id: str,
+        brief_revision_id: str,
+        report_id: str,
+        report_snapshot_sha256: str,
+        pdf_sha256: str,
+        report_identity_sha256: str,
+        recommendation_contract_version: str,
+        recommendation_contract_digest: str,
+        generation_contract_version: str,
+        renderer_fingerprint: str,
+        review_case_key: str,
+        checklist_version: str,
+        authenticated_principal: str,
+        reviewer_name: str,
+        outcome: str,
+        review: Mapping[str, Any],
+        shadow_review_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Append one human-authored shadow review; no review is auto-created."""
+
+        if not isinstance(review, Mapping):
+            raise ValueError("shadow review must be an object")
+        normalized_case_id = self._validate_decision_record_id(
+            case_id,
+            prefix="case",
+            field="case_id",
+        )
+        normalized_brief_id = self._validate_decision_record_id(
+            brief_revision_id,
+            prefix="dbr",
+            field="brief_revision_id",
+        )
+        normalized_report_id = self._validate_decision_record_id(
+            report_id,
+            prefix="drpt",
+            field="report_id",
+        )
+        snapshot_digest = str(report_snapshot_sha256).strip().lower()
+        pdf_digest = str(pdf_sha256).strip().lower()
+        report_identity_digest = str(report_identity_sha256).strip().lower()
+        contract_digest = str(recommendation_contract_digest).strip().lower()
+        for value, field in (
+            (snapshot_digest, "report_snapshot_sha256"),
+            (pdf_digest, "pdf_sha256"),
+            (report_identity_digest, "report_identity_sha256"),
+            (contract_digest, "recommendation_contract_digest"),
+        ):
+            if len(value) != 64 or any(
+                char not in "0123456789abcdef" for char in value
+            ):
+                raise ValueError(f"{field} must be a lowercase SHA-256")
+        recommendation_version = _bounded_text(
+            recommendation_contract_version,
+            field="recommendation_contract_version",
+            maximum=100,
+        )
+        generation_version = _bounded_text(
+            generation_contract_version,
+            field="generation_contract_version",
+            maximum=100,
+        )
+        renderer = _bounded_text(
+            renderer_fingerprint,
+            field="renderer_fingerprint",
+            maximum=500,
+        )
+        case_key = _bounded_text(
+            review_case_key, field="review_case_key", maximum=200
+        )
+        version = _bounded_text(
+            checklist_version, field="checklist_version", maximum=100
+        )
+        principal = _bounded_text(
+            authenticated_principal,
+            field="authenticated_principal",
+            maximum=200,
+        )
+        reviewer = _bounded_text(
+            reviewer_name, field="reviewer_name", maximum=200
+        )
+        normalized_outcome = str(outcome).strip().lower()
+        if normalized_outcome not in {"passed", "failed", "needs_followup"}:
+            raise ValueError("unsupported shadow review outcome")
+        review_payload = _validated_decision_shadow_review_checklist(
+            review,
+            outcome=normalized_outcome,
+        )
+        review_json = _json_dump(review_payload)
+        normalized_id = (
+            _new_id("dshr")
+            if shadow_review_id is None
+            else self._validate_decision_record_id(
+                shadow_review_id,
+                prefix="dshr",
+                field="shadow_review_id",
+            )
+        )
+        reviewed_at = _timestamp(self._current_time())
+        digest_record = {
+            "shadow_review_id": normalized_id,
+            "case_id": normalized_case_id,
+            "brief_revision_id": normalized_brief_id,
+            "report_id": normalized_report_id,
+            "report_snapshot_sha256": snapshot_digest,
+            "pdf_sha256": pdf_digest,
+            "report_identity_sha256": report_identity_digest,
+            "recommendation_contract_version": recommendation_version,
+            "recommendation_contract_digest": contract_digest,
+            "generation_contract_version": generation_version,
+            "renderer_fingerprint": renderer,
+            "review_case_key": case_key,
+            "checklist_version": version,
+            "authenticated_principal": principal,
+            "reviewer_name": reviewer,
+            "outcome": normalized_outcome,
+            "reviewed_at": reviewed_at,
+        }
+        review_sha256 = _decision_shadow_review_sha256(
+            digest_record, review_payload
+        )
+        with self._transaction(write=True) as connection:
+            existing = connection.execute(
+                """
+                SELECT * FROM decision_shadow_reviews
+                 WHERE checklist_version = ? AND report_id = ?
+                """,
+                (version, normalized_report_id),
+            ).fetchone()
+            if existing is not None:
+                if any(
+                    (
+                        existing["case_id"] != normalized_case_id,
+                        existing["brief_revision_id"] != normalized_brief_id,
+                        existing["report_snapshot_sha256"] != snapshot_digest,
+                        existing["pdf_sha256"] != pdf_digest,
+                        existing["report_identity_sha256"]
+                        != report_identity_digest,
+                        existing["recommendation_contract_version"]
+                        != recommendation_version,
+                        existing["recommendation_contract_digest"]
+                        != contract_digest,
+                        existing["generation_contract_version"]
+                        != generation_version,
+                        existing["renderer_fingerprint"] != renderer,
+                        existing["review_case_key"] != case_key,
+                        existing["authenticated_principal"] != principal,
+                        existing["reviewer_name"] != reviewer,
+                        existing["outcome"] != normalized_outcome,
+                        existing["review_json"] != review_json,
+                    )
+                ):
+                    raise StoreConflict(
+                        "shadow case already has a different immutable review"
+                    )
+                result = self._decision_shadow_review_from_row(existing)
+                assert result is not None
+                return result
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO decision_shadow_reviews (
+                        shadow_review_id, case_id, brief_revision_id, report_id,
+                        report_snapshot_sha256, pdf_sha256,
+                        report_identity_sha256,
+                        recommendation_contract_version,
+                        recommendation_contract_digest,
+                        generation_contract_version, renderer_fingerprint,
+                        review_case_key, checklist_version,
+                        authenticated_principal, reviewer_name, outcome,
+                        review_json, review_sha256, reviewed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_id,
+                        normalized_case_id,
+                        normalized_brief_id,
+                        normalized_report_id,
+                        snapshot_digest,
+                        pdf_digest,
+                        report_identity_digest,
+                        recommendation_version,
+                        contract_digest,
+                        generation_version,
+                        renderer,
+                        case_key,
+                        version,
+                        principal,
+                        reviewer,
+                        normalized_outcome,
+                        review_json,
+                        review_sha256,
+                        reviewed_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StoreConflict("could not persist shadow review") from exc
+            row = connection.execute(
+                "SELECT * FROM decision_shadow_reviews WHERE shadow_review_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            assert row is not None
+            result = self._decision_shadow_review_from_row(row)
+            assert result is not None
+            return result
+
+    def list_decision_shadow_reviews(
+        self,
+        *,
+        checklist_version: str | None = None,
+        limit: int | None = 100,
+    ) -> list[dict[str, Any]]:
+        version = (
+            None
+            if checklist_version is None
+            else _bounded_text(
+                checklist_version,
+                field="checklist_version",
+                maximum=100,
+            )
+        )
+        where_clause = " WHERE checklist_version = ?" if version else ""
+        limit_clause = "" if limit is None else " LIMIT ?"
+        parameters: list[Any] = [] if version is None else [version]
+        if limit is not None:
+            parameters.append(max(1, min(int(limit), 500)))
+        with self._transaction() as connection:
+            rows = connection.execute(
+                "SELECT * FROM decision_shadow_reviews"
+                + where_clause
+                + " ORDER BY reviewed_at DESC"
+                + limit_clause,
+                parameters,
+            ).fetchall()
+            return [
+                item
+                for row in rows
+                if (item := self._decision_shadow_review_from_row(row)) is not None
+            ]
+
     def snapshot_state(
         self, *, mode: str | None = None, recent_limit: int = 10
     ) -> dict[str, Any]:
@@ -11164,6 +13610,8 @@ __all__ = [
     "DECISION_EVIDENCE_MAX_FILE_BYTES",
     "DECISION_EVIDENCE_MAX_FILES_PER_CASE",
     "DECISION_CONFIDENCE_STATES",
+    "DECISION_DISPOSITIONS",
+    "DECISION_REPORT_KINDS",
     "DECISION_RECOMMENDATION_CLASSIFICATIONS",
     "DECISION_TURN_STATES",
     "EvidenceLimitExceeded",
