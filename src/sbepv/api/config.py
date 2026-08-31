@@ -149,13 +149,28 @@ DECISION_AGENT_BEHAVIOR_EVAL_CASES = int(
         "DECISION_AGENT_BEHAVIOR_EVAL_CASES", 0, minimum=0, maximum=10_000
     )
 )
+# Budget for ONE model attempt, not for the whole turn. A why_not answer at high
+# reasoning effort measured around 35 s, so 45 s left no room to re-ask the model
+# after a rejected reply; the ceiling is now 90 s.
 DECISION_AGENT_TIMEOUT_SECONDS = _bounded_env_number(
-    "DECISION_AGENT_TIMEOUT_SECONDS", 45, minimum=5, maximum=45
+    "DECISION_AGENT_TIMEOUT_SECONDS", 60, minimum=5, maximum=90
 )
+# How many times a turn may re-ask the model after its reply failed the output
+# contract. Only schema and policy rejections are repairable; timeouts and
+# transport errors are not, and the OpenAI client already retries the latter.
+DECISION_AGENT_REPAIR_ATTEMPTS = int(
+    _bounded_env_number("DECISION_AGENT_REPAIR_ATTEMPTS", 1, minimum=0, maximum=2)
+)
+# Wall clock for the whole turn: every attempt plus a small settling margin.
+DECISION_AGENT_TURN_DEADLINE_SECONDS = (
+    DECISION_AGENT_TIMEOUT_SECONDS * (1 + DECISION_AGENT_REPAIR_ATTEMPTS) + 5
+)
+# Must outlast the deadline, or a turn that is still legitimately running gets
+# swept up as a stale claim.
 DECISION_AGENT_TURN_STALE_SECONDS = max(
-    DECISION_AGENT_TIMEOUT_SECONDS + 15,
+    DECISION_AGENT_TURN_DEADLINE_SECONDS + 15,
     _bounded_env_number(
-        "DECISION_AGENT_TURN_STALE_SECONDS", 120, minimum=60, maximum=600
+        "DECISION_AGENT_TURN_STALE_SECONDS", 120, minimum=60, maximum=900
     ),
 )
 DECISION_AGENT_MAX_RETRIES = int(

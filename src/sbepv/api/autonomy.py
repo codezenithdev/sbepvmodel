@@ -107,7 +107,13 @@ _GROUPED_TEA_ACKNOWLEDGEMENT = (
     "execution."
 )
 _SAFE_AGENT_FAILURE_CODES = frozenset(
-    {"agent_disabled", "agent_unavailable", "timeout", "agent_interrupted"}
+    {
+        "agent_disabled",
+        "agent_credential_missing",
+        "agent_unavailable",
+        "timeout",
+        "agent_interrupted",
+    }
 )
 
 
@@ -3311,6 +3317,16 @@ def _safe_failure(code: object) -> tuple[str, str, str]:
             "The Decision Agent process stopped before completing the response.",
             "The prior Decision Agent response was interrupted. Your message is preserved; please try again.",
         )
+    if canonical == "agent_credential_missing":
+        # Names the configuration gap rather than reusing the generic outage text.
+        # The variable name is public; its value is never read or echoed here.
+        return (
+            canonical,
+            "OPENAI_API_KEY is not available to the server process.",
+            "The Decision Agent cannot start because OPENAI_API_KEY is not configured "
+            "on the server. Deterministic readiness and existing manual workflows "
+            "remain available.",
+        )
     return (
         canonical,
         "The Decision Agent is unavailable.",
@@ -3332,6 +3348,12 @@ async def _execute_claimed_turn(
     try:
         if decision_agent_module is None:
             raise RuntimeError("the Decision Agent SDK is not installed")
+        # The module owns the arithmetic, because one turn may now spend the
+        # per-attempt budget more than once when it repairs a rejected reply.
+        # Wrapping with the per-attempt value would cancel a legitimate repair.
+        turn_deadline = float(
+            decision_agent_module.turn_deadline_seconds()
+        )
         result = await asyncio.wait_for(
             decision_agent_module.run_decision_agent_turn(
                 case_id,
@@ -3339,7 +3361,7 @@ async def _execute_claimed_turn(
                 agent_store=state.AGENT_STORE,
                 trace_id=trace_id,
             ),
-            timeout=float(config.DECISION_AGENT_TIMEOUT_SECONDS) + 1.0,
+            timeout=turn_deadline + 1.0,
         )
         result_trace_id = str(result.get("trace_id") or trace_id)
         if result_trace_id != trace_id:

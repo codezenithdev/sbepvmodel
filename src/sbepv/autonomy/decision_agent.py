@@ -15,6 +15,7 @@ import inspect
 import json
 import logging
 import math
+import os
 import re
 import time
 from typing import Any, Literal, TypeAlias
@@ -30,8 +31,9 @@ from agents import (
     function_tool,
     gen_trace_id,
 )
+from agents.exceptions import ModelBehaviorError
 from openai import AsyncOpenAI
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from sbepv.api import config, state
 from sbepv.autonomy import prompts
@@ -54,6 +56,24 @@ MAX_MODEL_TURNS = 6
 MAX_OUTPUT_TOKENS = 8_000
 DEFAULT_OUTPUT_TOKENS = 4_000
 MAX_TOOL_RESULT_CHARACTERS = 24_000
+# Per attempt, not per turn. 45 s left no room to re-ask the model after a rejected
+# reply, because one why_not answer at high reasoning effort measures around 35 s.
+DEFAULT_TIMEOUT_SECONDS = 60.0
+MAX_TIMEOUT_SECONDS = 90.0
+MAX_REPAIR_ATTEMPTS = 2
+MAX_TURN_DEADLINE_SECONDS = 300.0
+MAX_REPAIR_HINT_CHARACTERS = 300
+# Sent verbatim when the reply could not be parsed at all. The parse error itself
+# quotes the rejected output, so it is never the thing handed back to the model.
+_GENERIC_REPAIR_HINT = (
+    "the previous reply was not complete, valid structured output"
+)
+_REPAIR_INSTRUCTION = (
+    "Your previous reply was rejected because {hint}. This is a system correction, "
+    "not a new question from the user. Answer the same question again as a complete "
+    "structured object that satisfies every output rule. Keep it shorter, and do "
+    "not mention this correction or apologise for it."
+)
 
 _CASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SDK_TRACE_ID_RE = re.compile(r"^trace_[0-9a-f]{32}$")
@@ -278,13 +298,28 @@ class DecisionAgentOutput(_StrictPublicModel):
         return self
 
 
+class OutputPolicyError(ValueError):
+    """A rejected model reply whose reason is safe to hand back to the model.
+
+    Every message raised as this type is one of our own policy strings, never user
+    content, tool output, or an internal detail, so a repair attempt can quote it.
+    A plain ``ValidationError`` from the schema is deliberately not this type: its
+    message can echo the rejected input, so it repairs with a generic instruction.
+    """
+
+
 class DecisionAgentError(RuntimeError):
     """Safe operational failure surfaced to the API/SSE boundary."""
 
     def __init__(
         self,
         *,
-        code: Literal["agent_disabled", "timeout", "agent_unavailable"],
+        code: Literal[
+            "agent_disabled",
+            "agent_credential_missing",
+            "timeout",
+            "agent_unavailable",
+        ],
         detail: str,
         trace_id: str,
         tool_outcomes: list[dict[str, str]],
@@ -926,11 +961,34 @@ def _bounded_conversation_input(
 
 
 def _configured_timeout() -> float:
-    raw = getattr(config, "DECISION_AGENT_TIMEOUT_SECONDS", 45)
+    """Budget for one model attempt, not for the whole turn."""
+
+    raw = getattr(config, "DECISION_AGENT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
     try:
-        return min(45.0, max(0.001, float(raw)))
+        return min(MAX_TIMEOUT_SECONDS, max(0.001, float(raw)))
     except (TypeError, ValueError):
-        return 45.0
+        return DEFAULT_TIMEOUT_SECONDS
+
+
+def _configured_repair_attempts() -> int:
+    raw = getattr(config, "DECISION_AGENT_REPAIR_ATTEMPTS", 1)
+    try:
+        return min(MAX_REPAIR_ATTEMPTS, max(0, int(raw)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def turn_deadline_seconds() -> float:
+    """Wall clock for the whole turn, covering every attempt plus a margin."""
+
+    per_attempt = _configured_timeout()
+    derived = per_attempt * (1 + _configured_repair_attempts()) + 5.0
+    raw = getattr(config, "DECISION_AGENT_TURN_DEADLINE_SECONDS", derived)
+    try:
+        configured = float(raw)
+    except (TypeError, ValueError):
+        configured = derived
+    return min(MAX_TURN_DEADLINE_SECONDS, max(per_attempt, configured))
 
 
 def _configured_max_output_tokens() -> int:
@@ -1056,28 +1114,28 @@ def _validate_final_output(
         source_id for claim in output.claims for source_id in claim.source_ids
     )
     if cited - grounded:
-        raise ValueError("output cites a source identifier not returned by a tool")
+        raise OutputPolicyError("output cites a source identifier not returned by a tool")
     if "Model result" in output.basis_labels or any(
         claim.basis == "Model result" for claim in output.claims
     ) or any(citation.basis == "Model result" for citation in output.citations):
-        raise ValueError("result interpretation is unavailable in this phase")
+        raise OutputPolicyError("result interpretation is unavailable in this phase")
     for text in _output_policy_texts(output):
         if _RECOMMENDATION_RE.search(text):
-            raise ValueError("recommendations are unavailable in this phase")
+            raise OutputPolicyError("recommendations are unavailable in this phase")
         if _RESULT_INTERPRETATION_RE.search(text):
-            raise ValueError("result interpretation is unavailable in this phase")
+            raise OutputPolicyError("result interpretation is unavailable in this phase")
         if _OUTCOME_METRIC_RE.search(text) and _NUMERIC_TOKEN_RE.search(text):
-            raise ValueError("numeric outcome claims are unavailable in this phase")
+            raise OutputPolicyError("numeric outcome claims are unavailable in this phase")
         if _OUTPUT_MUTATION_AUTHORITY_RE.search(text):
-            raise ValueError("model output cannot claim mutation or execution authority")
+            raise OutputPolicyError("model output cannot claim mutation or execution authority")
         if _DEEP_LINK_CLAIM_RE.search(text):
-            raise ValueError("deep links must use a grounded structured next action")
+            raise OutputPolicyError("deep links must use a grounded structured next action")
         if _RUNNABLE_FIELD_RE.search(text) or _RUNNABLE_NUMERIC_RE.search(text):
-            raise ValueError("model output contains runnable scenario fields")
+            raise OutputPolicyError("model output contains runnable scenario fields")
     proposed_actions = _proposed_action_pairs(output)
     grounded_actions = grounded_action_pairs or set()
     if proposed_actions - grounded_actions:
-        raise ValueError("output proposes an action not returned by readiness")
+        raise OutputPolicyError("output proposes an action not returned by readiness")
     return output
 
 
@@ -1118,11 +1176,45 @@ def _forbidden_execution_output() -> DecisionAgentOutput:
     )
 
 
-def _timing(started_at: float, *, timed_out: bool) -> dict[str, Any]:
+def _repair_hint(error: BaseException) -> str:
+    """Return a reason safe to hand back to the model, never raw internals."""
+
+    if isinstance(error, OutputPolicyError):
+        hint = _scrub_text(str(error), limit=MAX_REPAIR_HINT_CHARACTERS).strip()
+        return hint or _GENERIC_REPAIR_HINT
+    return _GENERIC_REPAIR_HINT
+
+
+def _repair_conversation(
+    conversation_input: list[dict[str, str]], hint: str
+) -> list[dict[str, str]]:
+    """Append one bounded correction turn without touching durable history."""
+
+    return [
+        *conversation_input,
+        {
+            "role": "user",
+            "content": _REPAIR_INSTRUCTION.format(
+                hint=_scrub_text(hint, limit=MAX_REPAIR_HINT_CHARACTERS)
+            ),
+        },
+    ]
+
+
+def _timing(
+    started_at: float,
+    *,
+    timed_out: bool,
+    attempts: int = 1,
+    repaired: bool = False,
+) -> dict[str, Any]:
     elapsed_ms = max(0, round((time.monotonic() - started_at) * 1_000))
     return {
         "duration_ms": elapsed_ms,
         "timeout_seconds": _configured_timeout(),
+        "deadline_seconds": turn_deadline_seconds(),
+        "attempts": attempts,
+        "repaired": repaired,
         "timed_out": timed_out,
     }
 
@@ -1134,6 +1226,7 @@ def _public_result(
     context: DecisionRunContext,
     started_at: float,
     timed_out: bool,
+    attempts: int = 1,
 ) -> dict[str, Any]:
     structured_output = _safe_public_value(
         output.model_dump(mode="json", exclude_none=True)
@@ -1144,7 +1237,12 @@ def _public_result(
         "citations": structured_output.get("citations", []),
         "trace_id": trace_id,
         "tool_outcomes": _safe_public_value(context.tool_outcomes),
-        "timing": _timing(started_at, timed_out=timed_out),
+        "timing": _timing(
+            started_at,
+            timed_out=timed_out,
+            attempts=attempts,
+            repaired=attempts > 1,
+        ),
     }
 
 
@@ -1205,7 +1303,23 @@ async def run_decision_agent_turn(
             timing=_timing(started_at, timed_out=False),
         )
 
+    # Checked before the client is built, so a configuration gap is named instead
+    # of surfacing as the generic failure that a real outage produces. Readiness
+    # already reports credential_unavailable, but an operator reading the chat
+    # error should not have to open a second panel to learn why.
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        raise DecisionAgentError(
+            code="agent_credential_missing",
+            detail="OPENAI_API_KEY is not available to the server process.",
+            trace_id=normalized_trace_id,
+            tool_outcomes=context.tool_outcomes,
+            timing=_timing(started_at, timed_out=False),
+        )
+
     client: AsyncOpenAI | None = None
+    deadline = started_at + turn_deadline_seconds()
+    max_attempts = 1 + _configured_repair_attempts()
+    attempt = 0
     try:
         conversation_input = _bounded_conversation_input(
             normalized_case_id,
@@ -1213,26 +1327,73 @@ async def run_decision_agent_turn(
             agent_store=context.durable_store,
         )
         agent, client = _create_agent_runtime()
-        run = Runner.run(
-            agent,
-            conversation_input,
-            context=context,
-            max_turns=MAX_MODEL_TURNS,
-            run_config=_run_config(normalized_case_id, normalized_trace_id),
-        )
-        result = await asyncio.wait_for(run, timeout=_configured_timeout())
-        output = _validate_final_output(
-            result.final_output,
-            grounded_source_ids=context.grounded_source_ids,
-            grounded_action_pairs=context.grounded_action_pairs,
-        )
-        return _public_result(
-            output,
-            trace_id=normalized_trace_id,
-            context=context,
-            started_at=started_at,
-            timed_out=False,
-        )
+        while True:
+            attempt += 1
+            remaining = deadline - time.monotonic()
+            # Each attempt gets its own context: the four-call read budget and the
+            # grounded source/action sets are per attempt, so reusing one would
+            # leave a repair with no tool budget and stale grounding.
+            attempt_context = DecisionRunContext(
+                case_id=normalized_case_id,
+                agent_store=agent_store,
+                tool_outcomes=context.tool_outcomes,
+            )
+            try:
+                run = Runner.run(
+                    agent,
+                    conversation_input,
+                    context=attempt_context,
+                    max_turns=MAX_MODEL_TURNS,
+                    run_config=_run_config(
+                        normalized_case_id, normalized_trace_id
+                    ),
+                )
+                result = await asyncio.wait_for(
+                    run, timeout=min(_configured_timeout(), max(0.001, remaining))
+                )
+                output = _validate_final_output(
+                    result.final_output,
+                    grounded_source_ids=attempt_context.grounded_source_ids,
+                    grounded_action_pairs=attempt_context.grounded_action_pairs,
+                )
+            except (OutputPolicyError, ValidationError, ModelBehaviorError) as error:
+                # The model produced a reply that broke the output contract. That is
+                # transient and worth re-asking once; a timeout or transport failure
+                # is not, and the OpenAI client already retries the latter.
+                _log_safe_failure(error)
+                hint = _repair_hint(error)
+                attempt_context.record_tool_outcome(
+                    "output_contract",
+                    "rejected",
+                    f"Attempt {attempt} was rejected: {hint}",
+                )
+                per_attempt = _configured_timeout()
+                if (
+                    attempt >= max_attempts
+                    or deadline - time.monotonic() <= per_attempt * 0.5
+                ):
+                    raise DecisionAgentError(
+                        code="agent_unavailable",
+                        detail="The Decision Agent could not complete this turn.",
+                        trace_id=normalized_trace_id,
+                        tool_outcomes=attempt_context.tool_outcomes,
+                        timing=_timing(
+                            started_at,
+                            timed_out=False,
+                            attempts=attempt,
+                            repaired=attempt > 1,
+                        ),
+                    ) from None
+                conversation_input = _repair_conversation(conversation_input, hint)
+                continue
+            return _public_result(
+                output,
+                trace_id=normalized_trace_id,
+                context=attempt_context,
+                started_at=started_at,
+                timed_out=False,
+                attempts=attempt,
+            )
     except (TimeoutError, asyncio.TimeoutError) as error:
         _log_safe_failure(error)
         raise DecisionAgentError(
@@ -1240,7 +1401,9 @@ async def run_decision_agent_turn(
             detail="The Decision Agent timed out.",
             trace_id=normalized_trace_id,
             tool_outcomes=context.tool_outcomes,
-            timing=_timing(started_at, timed_out=True),
+            timing=_timing(
+                started_at, timed_out=True, attempts=attempt, repaired=attempt > 1
+            ),
         ) from None
     except DecisionAgentError:
         raise
@@ -1251,7 +1414,9 @@ async def run_decision_agent_turn(
             detail="The Decision Agent could not complete this turn.",
             trace_id=normalized_trace_id,
             tool_outcomes=context.tool_outcomes,
-            timing=_timing(started_at, timed_out=False),
+            timing=_timing(
+                started_at, timed_out=False, attempts=attempt, repaired=attempt > 1
+            ),
         ) from None
     finally:
         await _close_client(client)
@@ -1266,7 +1431,9 @@ __all__ = [
     "DecisionRunContext",
     "NextAction",
     "NonRunnableScenarioSuggestion",
+    "OutputPolicyError",
     "WhyNotDetails",
     "run_decision_agent_turn",
     "scenario_suggestion_violates_policy",
+    "turn_deadline_seconds",
 ]

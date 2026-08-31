@@ -7,15 +7,28 @@
 # Blueprint docs: https://render.com/docs/blueprint-spec
 
 services:
+  # Must match the existing service exactly. Render matches a blueprint service by
+  # name, so a different name here does not update srv-d96lfcfavr4c73a1fc60: it
+  # creates a second service alongside it, with an empty disk and none of the
+  # sync:false secrets. Verify with `render blueprints validate ./render.yaml`
+  # before connecting this file, and read the planned service list in the output.
   - type: web
-    name: sb-energy-dashboard
+    name: sbepvmodel
     runtime: python
     region: oregon
+    # DRIFT, unresolved on purpose. The running service reports instance type
+    # 1c-2g while this file still declares the older `starter`. Connecting the
+    # blueprint could therefore resize the instance and restart it. Confirm the
+    # correct plan value in the Render dashboard and set it here before the first
+    # sync; do not guess, because the wrong value downgrades a live service.
     plan: starter
     healthCheckPath: /healthz
 
     buildCommand: pip install -r requirements.txt
     # --app-dir puts src/ on sys.path so `sbepv` resolves without an install step.
+    # The running service currently hardcodes `--port 8000` instead of $PORT. This
+    # form is the correct one and a sync would replace the hardcoded port, so the
+    # drift is deliberate here rather than copied back from the live service.
     startCommand: uvicorn sbepv.api.main:app --app-dir src --host 0.0.0.0 --port $PORT
 
     disk:

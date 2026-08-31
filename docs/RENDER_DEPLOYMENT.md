@@ -24,7 +24,7 @@ Prefer `git push` over a manual file selection. The earlier hand-picked list omi
 
 Create a new Render Web Service from the private GitHub repo.
 
-- Name: `sb-energy-dashboard`
+- Name: `sbepvmodel`
 - Runtime: `Python 3`
 - Region: Oregon / US West
 - Instance type: paid Starter or higher

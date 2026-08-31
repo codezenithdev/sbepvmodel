@@ -5826,7 +5826,7 @@
                 }
                 autonomyPendingTurn = null;
                 autonomyStreamReconnectAttempts = 0;
-                const unavailable = ['agent_disabled', 'agent_unavailable'].includes(failureCode);
+                const unavailable = ['agent_disabled', 'agent_credential_missing', 'agent_unavailable'].includes(failureCode);
                 if (unavailable) autonomyLiveAgentAvailable = false;
                 autonomySetAgentStreamState(unavailable ? 'unavailable' : 'available', failureMessage);
                 if (autonomyStateBanner) autonomyStateBanner.dataset.tone = 'warning';

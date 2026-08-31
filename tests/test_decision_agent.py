@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import asyncio
+from contextlib import ExitStack
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -70,7 +72,11 @@ class DecisionAgentContractTests(unittest.TestCase):
             decision_agent._configured_max_output_tokens(),
         )
         self.assertEqual(agent.model_settings.reasoning.effort, "high")
-        client.assert_called_once_with(timeout=45.0, max_retries=2)
+        # The client timeout bounds one attempt, not the whole turn.
+        client.assert_called_once_with(
+            timeout=decision_agent._configured_timeout(), max_retries=2
+        )
+        self.assertEqual(60.0, decision_agent._configured_timeout())
 
     def test_output_token_budget_covers_the_largest_required_answer(self):
         """A truncated reply used to reach the operator as an outage.
@@ -570,6 +576,169 @@ class DecisionAgentAsyncTests(unittest.IsolatedAsyncioTestCase):
         kwargs = runner.await_args.kwargs
         self.assertEqual(kwargs["max_turns"], 6)
         self.assertFalse(kwargs["run_config"].trace_include_sensitive_data)
+
+    async def _run_with_outputs(self, outputs, **overrides):
+        """Drive one turn where Runner.run yields each output in sequence."""
+
+        fake_store = Mock()
+        fake_store.list_decision_messages.return_value = []
+        fake_client = SimpleNamespace(close=AsyncMock())
+        runner = AsyncMock(
+            side_effect=[
+                item
+                if isinstance(item, BaseException)
+                else SimpleNamespace(final_output=item)
+                for item in outputs
+            ]
+        )
+        patches = [
+            patch.object(state, "AGENT_STORE", fake_store),
+            patch.object(
+                decision_agent,
+                "_create_agent_runtime",
+                return_value=(object(), fake_client),
+            ),
+            patch.object(decision_agent.Runner, "run", runner),
+            patch.object(config, "DECISION_AGENT_ENABLED", True),
+            patch.object(config, "DECISION_AGENT_REPAIR_ATTEMPTS", 1),
+            *[patch.object(config, key, value) for key, value in overrides.items()],
+        ]
+        with ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            try:
+                result = await decision_agent.run_decision_agent_turn(
+                    "case-1", "Why is this blocked?", agent_store=fake_store
+                )
+            except decision_agent.DecisionAgentError as error:
+                return None, error, runner
+        return result, None, runner
+
+    async def test_a_rejected_reply_is_repaired_and_the_answer_is_returned(self):
+        """A broken output contract is transient, so re-ask once before failing."""
+
+        rejected = _valid_output(answer="I recommend SolarEdge for this decision.")
+        accepted = _valid_output(answer="Calibration is the blocking prerequisite.")
+        result, error, runner = await self._run_with_outputs([rejected, accepted])
+
+        self.assertIsNone(error)
+        self.assertEqual(2, runner.await_count)
+        self.assertEqual(
+            "Calibration is the blocking prerequisite.",
+            result["structured_output"]["answer"],
+        )
+        self.assertEqual(2, result["timing"]["attempts"])
+        self.assertTrue(result["timing"]["repaired"])
+        rejections = [
+            item
+            for item in result["tool_outcomes"]
+            if item["name"] == "output_contract"
+        ]
+        self.assertEqual(1, len(rejections))
+        self.assertIn("recommendations are unavailable", rejections[0]["result_summary"])
+
+    async def test_the_repair_turn_states_the_reason_without_leaking_internals(self):
+        rejected = _valid_output(answer="I recommend SolarEdge for this decision.")
+        _, _, runner = await self._run_with_outputs(
+            [rejected, _valid_output(answer="Calibration is blocking.")]
+        )
+        repair_input = runner.await_args_list[1].args[1]
+        correction = repair_input[-1]
+        self.assertEqual("user", correction["role"])
+        self.assertIn("recommendations are unavailable", correction["content"])
+        self.assertIn("system correction", correction["content"])
+        # The original question survives; the correction is appended, not swapped in.
+        self.assertEqual(
+            runner.await_args_list[0].args[1], repair_input[: len(repair_input) - 1]
+        )
+
+    async def test_an_unparseable_reply_repairs_with_a_generic_reason(self):
+        broken = decision_agent.ModelBehaviorError(
+            'Invalid JSON when parsing {"answer":"leaked partial output'
+        )
+        _, _, runner = await self._run_with_outputs(
+            [broken, _valid_output(answer="Calibration is blocking.")]
+        )
+        correction = runner.await_args_list[1].args[1][-1]["content"]
+        self.assertIn("not complete, valid structured output", correction)
+        self.assertNotIn("leaked partial output", correction)
+
+    async def test_repair_is_bounded_and_still_fails_safely(self):
+        rejected = _valid_output(answer="I recommend SolarEdge for this decision.")
+        result, error, runner = await self._run_with_outputs([rejected, rejected])
+
+        self.assertIsNone(result)
+        self.assertEqual(2, runner.await_count)
+        self.assertEqual("agent_unavailable", error.code)
+        self.assertEqual(2, error.timing["attempts"])
+        self.assertTrue(error.timing["repaired"])
+        self.assertNotIn("SolarEdge", error.detail)
+
+    async def test_repair_can_be_disabled(self):
+        rejected = _valid_output(answer="I recommend SolarEdge for this decision.")
+        result, error, runner = await self._run_with_outputs(
+            [rejected, _valid_output()], DECISION_AGENT_REPAIR_ATTEMPTS=0
+        )
+        self.assertIsNone(result)
+        self.assertEqual(1, runner.await_count)
+        self.assertEqual("agent_unavailable", error.code)
+
+    async def test_a_timeout_is_never_repaired(self):
+        """Only contract rejections are transient; re-asking a timeout wastes budget."""
+
+        result, error, runner = await self._run_with_outputs(
+            [TimeoutError("slow"), _valid_output()]
+        )
+        self.assertIsNone(result)
+        self.assertEqual(1, runner.await_count)
+        self.assertEqual("timeout", error.code)
+        self.assertTrue(error.timing["timed_out"])
+
+    def test_turn_deadline_covers_every_attempt(self):
+        with (
+            patch.object(config, "DECISION_AGENT_TIMEOUT_SECONDS", 60),
+            patch.object(config, "DECISION_AGENT_REPAIR_ATTEMPTS", 1),
+            patch.object(config, "DECISION_AGENT_TURN_DEADLINE_SECONDS", 125),
+        ):
+            self.assertEqual(125.0, decision_agent.turn_deadline_seconds())
+            self.assertEqual(60.0, decision_agent._configured_timeout())
+        with (
+            patch.object(config, "DECISION_AGENT_TIMEOUT_SECONDS", 90),
+            patch.object(config, "DECISION_AGENT_REPAIR_ATTEMPTS", 2),
+            patch.object(config, "DECISION_AGENT_TURN_DEADLINE_SECONDS", 9_999),
+        ):
+            self.assertEqual(300.0, decision_agent.turn_deadline_seconds())
+
+    async def test_missing_credential_is_named_and_never_reaches_the_model(self):
+        """A configuration gap must not look like a model outage.
+
+        Readiness already reports credential_unavailable, but the chat error used
+        to be the same generic text a real outage produces, so an operator had to
+        open a second panel to learn the key was simply not set.
+        """
+
+        fake_store = Mock()
+        runner = AsyncMock()
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key != "OPENAI_API_KEY"
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch.object(state, "AGENT_STORE", fake_store),
+            patch.object(decision_agent.Runner, "run", runner),
+            patch.object(config, "DECISION_AGENT_ENABLED", True),
+        ):
+            with self.assertRaises(decision_agent.DecisionAgentError) as captured:
+                await decision_agent.run_decision_agent_turn(
+                    "case-1", "Why is this blocked?", agent_store=fake_store
+                )
+        self.assertEqual("agent_credential_missing", captured.exception.code)
+        self.assertIn("OPENAI_API_KEY", captured.exception.detail)
+        # No model call, no store read: the gap is caught before either.
+        runner.assert_not_awaited()
+        fake_store.list_decision_messages.assert_not_called()
 
     async def test_explicit_execution_request_never_calls_model_or_state(self):
         fake_store = Mock()

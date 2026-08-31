@@ -58,7 +58,7 @@ frontend/             sole dashboard source -- see frontend/README.md
 
 app/ lib/ worker/ build/          vinext frontend on Cloudflare Workers (TypeScript)
 public/                           static assets, served by BOTH front doors
-deploy/render.yaml                Render service definition
+render.yaml                       Render service definition
 docs/                             deployment, calibration workflow, design QA
 tests/                            stdlib unittest suite
 ```
@@ -163,7 +163,7 @@ the directory containing `pyproject.toml` and `src/sbepv/`, so `.env`, `outputs/
 
 FastAPI runs on Render; a separate vinext/Cloudflare Worker frontend serves the same
 dashboard and proxies `/api/*` to it. See [docs/RENDER_DEPLOYMENT.md](docs/RENDER_DEPLOYMENT.md)
-and [deploy/render.yaml](deploy/render.yaml).
+and [render.yaml](render.yaml).
 
 ## Known rough edges
 
