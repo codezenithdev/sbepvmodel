@@ -208,6 +208,137 @@ class ChatBackendTests(unittest.TestCase):
         self.assertTrue(irradiance_path.is_file())
 
 
+class TechnoeconomicChatContextTests(unittest.TestCase):
+    """The agent must see the completed lifecycle economics it is asked about.
+
+    ``_normalise_config_keys`` answers which fields a scenario may override, so it
+    drops ``technoeconomic_analysis`` from the visible configuration. These tests
+    pin the separate, server-authoritative path that replaces it.
+    """
+
+    TEA_JOB_ID = "tea_00000000000000000000000000000001"
+
+    def setUp(self):
+        os.environ["OPENAI_API_KEY"] = "test-placeholder"
+        state.JOBS.clear()
+        self.calls = []
+        fake_client = types.SimpleNamespace(
+            responses=types.SimpleNamespace(
+                create=lambda **kwargs: (
+                    self.calls.append(kwargs)
+                    or types.SimpleNamespace(output_text="mock reply")
+                )
+            )
+        )
+        sys.modules["openai"] = types.SimpleNamespace(OpenAI=lambda: fake_client)
+
+    def durable_job(self, *, state_value="done", result=None):
+        return {
+            "id": self.TEA_JOB_ID,
+            "state": state_value,
+            "stage": "Done" if state_value == "done" else "Running",
+            "source_annual_job_id": "b9c7aea610e2",
+            "source_snapshot_sha256": "d" * 64,
+            "result": result
+            if result is not None
+            else {
+                "analysis_basis": "solartac_site",
+                "realization_count": 4096,
+                "energy_available": True,
+                "convergence": {"status": "converged"},
+                "summaries": {"lcoe": {"p50": 0.078}},
+            },
+        }
+
+    def visible_config(self, **overrides):
+        context = {
+            "schema_version": "technoeconomic-chat-context-v1",
+            "job_id": self.TEA_JOB_ID,
+        }
+        context.update(overrides)
+        return {"from_date": "2026-06-20", "technoeconomic_analysis": context}
+
+    def test_completed_technoeconomic_context_reaches_the_model(self):
+        with patch.object(
+            state.AGENT_STORE, "get_technoeconomic_job", return_value=self.durable_job()
+        ):
+            chat._openai_chat_response(
+                app.ChatRequest(
+                    message="Explain the headline LCOO.",
+                    current_config=self.visible_config(),
+                )
+            )
+
+        input_text = self.calls[0]["input"][0]["content"]
+        self.assertIn("technoeconomic_context", input_text)
+        self.assertIn(self.TEA_JOB_ID, input_text)
+        self.assertIn("0.078", input_text)
+        self.assertIn("solartac_site", input_text)
+        self.assertIn("technoeconomic_context", self.calls[0]["instructions"])
+
+    def test_client_supplied_economics_are_ignored_in_favour_of_the_durable_job(self):
+        forged = self.visible_config(
+            summaries={"lcoe": {"p50": 999.0}},
+            analysis_basis="commercial_representative",
+            job_state="done",
+        )
+        with patch.object(
+            state.AGENT_STORE, "get_technoeconomic_job", return_value=self.durable_job()
+        ):
+            context = chat._technoeconomic_chat_context(forged)
+
+        self.assertEqual("solartac_site", context["analysis_basis"])
+        self.assertEqual({"lcoe": {"p50": 0.078}}, context["summaries"])
+        self.assertEqual("technoeconomic-chat-context-v2", context["schema_version"])
+
+    def test_unfinished_job_reports_state_without_economics(self):
+        with patch.object(
+            state.AGENT_STORE,
+            "get_technoeconomic_job",
+            return_value=self.durable_job(state_value="running"),
+        ):
+            context = chat._technoeconomic_chat_context(self.visible_config())
+
+        self.assertEqual("running", context["job_state"])
+        self.assertNotIn("summaries", context)
+
+    def test_missing_or_malformed_visible_context_yields_no_technoeconomic_context(self):
+        for current_config in (
+            None,
+            {},
+            {"technoeconomic_analysis": None},
+            {"technoeconomic_analysis": {"job_id": None}},
+            {"technoeconomic_analysis": {"job_id": "b9c7aea610e2"}},
+        ):
+            self.assertIsNone(chat._technoeconomic_chat_context(current_config))
+
+    def test_unknown_job_id_yields_no_technoeconomic_context(self):
+        with patch.object(
+            state.AGENT_STORE, "get_technoeconomic_job", return_value=None
+        ):
+            self.assertIsNone(
+                chat._technoeconomic_chat_context(self.visible_config())
+            )
+
+    def test_oversized_context_drops_optional_sections_and_records_them(self):
+        oversized = {
+            "analysis_basis": "solartac_site",
+            "summaries": {"lcoe": {"p50": 0.078}},
+            "sensitivity": {"lcoe": ["x" * 30_000]},
+            "applied_capacities": {"solectria": 125_000},
+        }
+        with patch.object(
+            state.AGENT_STORE,
+            "get_technoeconomic_job",
+            return_value=self.durable_job(result=oversized),
+        ):
+            context = chat._technoeconomic_chat_context(self.visible_config())
+
+        self.assertNotIn("sensitivity", context)
+        self.assertIn("sensitivity", context["omitted_for_length"])
+        self.assertEqual({"lcoe": {"p50": 0.078}}, context["summaries"])
+
+
 class DashboardDeploymentTests(unittest.TestCase):
     def test_fastapi_root_uses_the_module_qualified_renderer(self):
         rendered = "<!DOCTYPE html><html><body>dashboard</body></html>"

@@ -388,6 +388,7 @@
         const autonomyCreateRevisionBtn = document.getElementById('autonomyCreateRevisionBtn');
         const autonomySignedSummary = document.getElementById('autonomySignedSummary');
         const autonomySignedRationale = document.getElementById('autonomySignedRationale');
+        const autonomyFixtureToolbar = document.getElementById('autonomyFixtureToolbar');
         const autonomyReturnLiveBtn = document.getElementById('autonomyReturnLiveBtn');
         const autonomyContentModeNotice = document.getElementById('autonomyContentModeNotice');
         const autonomyLiveToolbar = document.getElementById('autonomyLiveToolbar');
@@ -6655,9 +6656,23 @@
             });
         }
 
+        function autonomyFixturePreviewRequested() {
+            // The preview states are a development aid. A viewer of the deployed
+            // dashboard must never be able to switch the workspace into them, so the
+            // toolbar stays hidden unless it is asked for by name.
+            try {
+                return new URLSearchParams(window.location.search).get('fixtures') === '1';
+            } catch (error) {
+                return false;
+            }
+        }
+
         function autonomyInitializeWorkspace() {
             if (!autonomyPanel || autonomyInitialized) return;
             autonomyInitialized = true;
+            if (autonomyFixtureToolbar && autonomyFixturePreviewRequested()) {
+                autonomyFixtureToolbar.hidden = false;
+            }
             autonomyPopulateFixtureSelect();
             autonomyFixtureSelect?.addEventListener('change', () => {
                 if (autonomyFixtureSelect.value === 'signed') autonomyResetSignedDecision();

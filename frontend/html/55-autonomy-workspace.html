@@ -1,6 +1,8 @@
             <div class="autonomy-only" id="autonomyPanel" data-autonomy-case-id="case_sbe_hybrid_001" data-autonomy-case-revision="revision_003" data-autonomy-fixture="new-case" data-content-mode="live" data-mobile-section="ask">
                 <section class="autonomy-shell" aria-labelledby="autonomyWorkspaceHeading">
-                    <div class="autonomy-fixture-toolbar" role="region" aria-labelledby="autonomyFixtureHeading">
+                    <!-- Reachable only with ?fixtures=1. Hidden markup, not absent markup, so the
+                         preview states stay available to the team without a separate build. -->
+                    <div class="autonomy-fixture-toolbar" id="autonomyFixtureToolbar" role="region" aria-labelledby="autonomyFixtureHeading" hidden>
                         <div class="autonomy-fixture-copy">
                             <p class="autonomy-eyebrow" id="autonomyFixtureHeading">Later-phase preview states</p>
                             <p>Select a deterministic fixture to inspect Compare, Run TEA, or Decide without changing the live case.</p>
@@ -78,9 +80,9 @@
                                     <details class="autonomy-overflow">
                                         <summary aria-label="More case actions">More</summary>
                                         <div class="autonomy-overflow-menu">
-                                            <button type="button" data-autonomy-case-action="rename">Rename fixture case</button>
-                                            <button type="button" data-autonomy-case-action="archive">Preview archive details</button>
-                                            <button type="button" data-autonomy-case-action="export">Preview export details</button>
+                                            <button type="button" data-autonomy-case-action="rename">Rename case</button>
+                                            <button type="button" data-autonomy-case-action="archive" data-autonomy-fixture-only>Preview archive details</button>
+                                            <button type="button" data-autonomy-case-action="export" data-autonomy-fixture-only>Preview export details</button>
                                             <button type="button" data-autonomy-case-action="details">Case details</button>
                                         </div>
                                     </details>
@@ -197,7 +199,7 @@
                             <aside class="autonomy-agent-panel" id="autonomyAgentPanel" aria-labelledby="autonomyAgentHeading">
                                 <header class="autonomy-panel-header">
                                     <div>
-                                        <p class="autonomy-eyebrow">Fixture Decision Agent</p>
+                                        <p class="autonomy-eyebrow">Decision Agent</p>
                                         <h3 id="autonomyAgentHeading">Investigate the decision</h3>
                                     </div>
                                     <span class="autonomy-status-badge" id="autonomyAgentStatus" data-status="available">Available · local fixture</span>
@@ -263,7 +265,7 @@
                             <section class="autonomy-stage-canvas" id="autonomyStageCanvas" aria-label="Current investigation stage">
                                 <section class="autonomy-state-banner" id="autonomyStateBanner" data-status="info" aria-labelledby="autonomyStateBannerTitle">
                                     <div>
-                                        <p class="autonomy-eyebrow">Current fixture state</p>
+                                        <p class="autonomy-eyebrow">Current state</p>
                                         <h3 id="autonomyStateBannerTitle">Frame the decision question</h3>
                                         <p id="autonomyStateBannerText">The case is safe and editable. No evidence, scenario, or job has been created.</p>
                                     </div>
@@ -306,7 +308,7 @@
                                     </div>
                                     <aside class="autonomy-trust-note">
                                         <strong>Authority boundary</strong>
-                                        <p>The fixture agent may explain or propose. In live mode, deterministic services own readiness and validation, and a named human must authorize every run and disposition.</p>
+                                        <p>The Decision Agent may explain or propose, never execute. Deterministic services own readiness and validation, and a named human must authorize every run and disposition.</p>
                                     </aside>
                                 </section>
 

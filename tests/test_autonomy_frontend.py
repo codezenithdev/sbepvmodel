@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 
 from sbepv import dashboard
@@ -1713,6 +1714,142 @@ for (const [path, expected] of cases) {{
             check=False,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+
+class AutonomyFixtureHarnessIsNotShippedToViewers(unittest.TestCase):
+    """The preview harness must not be reachable from the deployed dashboard.
+
+    The panel defaults to live content mode, so anything that is neither tagged
+    ``data-autonomy-fixture-only`` nor hidden renders for every viewer. That is
+    how the fixture toolbar, and the labels around it, reached the deployment.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.markup = _read(FRONTEND_ROOT / "html" / "55-autonomy-workspace.html")
+        cls.script = _read(FRONTEND_ROOT / "js" / "07-autonomy-workspace.js")
+
+    def test_fixture_toolbar_is_hidden_until_explicitly_requested(self):
+        toolbar = self.markup.split('class="autonomy-fixture-toolbar"', 1)[1].split(
+            ">", 1
+        )[0]
+        self.assertIn("hidden", toolbar)
+        self.assertIn('id="autonomyFixtureToolbar"', toolbar)
+        # The predicate must read an explicit request, and every reveal of the
+        # toolbar must sit behind it. Asserting only that the reveal exists would
+        # still pass if the guard were dropped.
+        self.assertRegex(
+            self.script,
+            r"function autonomyFixturePreviewRequested\(\)[\s\S]{0,400}?['\"]fixtures['\"]",
+        )
+        reveals = list(
+            re.finditer(r"autonomyFixtureToolbar\.hidden\s*=\s*false", self.script)
+        )
+        self.assertTrue(reveals, "the toolbar is never revealed for the team")
+        for reveal in reveals:
+            guard = self.script[max(0, reveal.start() - 300) : reveal.start()]
+            self.assertIn(
+                "autonomyFixturePreviewRequested()",
+                guard,
+                "the fixture toolbar is revealed without checking for an explicit request",
+            )
+
+    def test_the_fixture_selector_lives_inside_the_gated_toolbar(self):
+        # The partials are slices of one document, so ancestry is only meaningful
+        # once the assembled page is parsed.
+        assembled = dashboard.assemble_dashboard_html(PROJECT_ROOT)
+
+        class Ancestry(HTMLParser):
+            void = {"br", "img", "input", "hr", "meta", "link", "source", "col"}
+
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self.stack = []
+                self.ancestors = None
+
+            def handle_starttag(self, tag, attrs):
+                attributes = dict(attrs)
+                if tag in self.void:
+                    return
+                self.stack.append(attributes)
+                if attributes.get("id") == "autonomyFixtureSelect":
+                    self.ancestors = list(self.stack)
+
+            def handle_endtag(self, tag):
+                if tag not in self.void and self.stack:
+                    self.stack.pop()
+
+        parser = Ancestry()
+        parser.feed(assembled)
+        self.assertIsNotNone(parser.ancestors, "the fixture selector is missing")
+        toolbar = next(
+            (a for a in parser.ancestors if a.get("id") == "autonomyFixtureToolbar"),
+            None,
+        )
+        self.assertIsNotNone(
+            toolbar, "the fixture selector must sit inside autonomyFixtureToolbar"
+        )
+        self.assertIn("hidden", toolbar)
+
+    # These three carry live values written over the fixture defaults on load.
+    LIVE_REWRITTEN_IDS = {
+        "autonomyCaseRevision",
+        "autonomyReadinessStrip",
+        "autonomyAgentStatus",
+    }
+
+    def test_no_fixture_wording_reaches_a_live_viewer(self):
+        """Every fixture string must be gated, hidden, or overwritten by live data."""
+
+        assembled = dashboard.assemble_dashboard_html(PROJECT_ROOT)
+        void = {"br", "img", "input", "hr", "meta", "link", "source", "col"}
+
+        class FixtureText(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self.stack = []
+                self.leaks = []
+
+            def handle_starttag(self, tag, attrs):
+                if tag not in void:
+                    self.stack.append((tag, dict(attrs)))
+
+            def handle_endtag(self, tag):
+                if tag not in void and self.stack:
+                    self.stack.pop()
+
+            def handle_data(self, data):
+                text = data.strip()
+                if not text or "fixture" not in text.lower():
+                    return
+                if any(tag in {"style", "script"} for tag, _ in self.stack):
+                    return
+                if any(
+                    "data-autonomy-fixture-only" in attrs or "hidden" in attrs
+                    for _, attrs in self.stack
+                ):
+                    return
+                nearest_id = next(
+                    (a.get("id") for _, a in reversed(self.stack) if a.get("id")), None
+                )
+                self.leaks.append((nearest_id, text[:80]))
+
+        parser = FixtureText()
+        parser.feed(assembled)
+        for nearest_id, text in parser.leaks:
+            with self.subTest(text=text[:60]):
+                self.assertIn(
+                    nearest_id,
+                    self.LIVE_REWRITTEN_IDS,
+                    f"fixture wording renders for live viewers: {text}",
+                )
+    def test_case_actions_unavailable_live_are_fixture_gated(self):
+        for action in ("archive", "export"):
+            with self.subTest(action=action):
+                button = self.markup.split(
+                    f'data-autonomy-case-action="{action}"', 1
+                )[1].split(">", 1)[0]
+                self.assertIn("data-autonomy-fixture-only", button)
 
 
 class AutonomyProductContractDocs(unittest.TestCase):

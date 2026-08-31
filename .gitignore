@@ -33,3 +33,4 @@ dist/
 .wrangler/
 *.tsbuildinfo
 *.tgz
+.gstack/

@@ -29,8 +29,33 @@ from sbepv.agent.tool_schemas import (
 from sbepv.agent import tools as agent_tools
 from sbepv.api import config, job_store, serializers, state
 from sbepv.api.schemas import ChatMessage, ChatRequest
+from sbepv.store import TECHNOECONOMIC_ID_PREFIX, AgentStoreError
 
 logger = logging.getLogger(__name__)
+
+# Result fields the agent needs to explain a completed lifecycle analysis. The
+# durable result also carries per-realization and per-year detail that would
+# crowd out the run context without changing any answer.
+_TECHNOECONOMIC_RESULT_KEYS = (
+    "analysis_basis",
+    "calculation_contract_version",
+    "project_life_years",
+    "realization_count",
+    "eligible_weather_years",
+    "energy_available",
+    "commercial_transfer_status",
+    "applied_capacities",
+    "convergence",
+    "sensitivity",
+    "summaries",
+)
+# Dropped in this order when the context exceeds its budget, largest first.
+_TECHNOECONOMIC_TRIMMABLE_KEYS = (
+    "sensitivity",
+    "applied_capacities",
+    "eligible_weather_years",
+)
+_TECHNOECONOMIC_CONTEXT_MAX_BYTES = 24_000
 
 
 def _clean_chat_history(
@@ -91,6 +116,80 @@ def _deduplicated_job_context(job: dict[str, Any]) -> dict[str, Any]:
         "provenance": provenance,
         "artifacts": artifacts,
     }
+
+
+def _visible_technoeconomic_job_id(current_config: dict[str, Any] | None) -> str | None:
+    """Return the TEA job id the visible dashboard reports, if it is well formed.
+
+    Only the identity is taken from the browser. Every value handed to the model
+    is read back from the durable job, so a tampered or stale client context
+    cannot put invented economics in front of the agent.
+    """
+
+    if not isinstance(current_config, dict):
+        return None
+    context = current_config.get("technoeconomic_analysis")
+    if not isinstance(context, dict):
+        return None
+    job_id = context.get("job_id")
+    if not isinstance(job_id, str):
+        return None
+    job_id = job_id.strip()
+    if not job_id.startswith(TECHNOECONOMIC_ID_PREFIX):
+        return None
+    return job_id
+
+
+def _technoeconomic_chat_context(
+    current_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the read-only technoeconomic context for the visible TEA job.
+
+    ``_normalise_config_keys`` answers which fields a *scenario* may override, so
+    it drops everything else including this one. The agent still needs to see the
+    completed lifecycle economics to answer the questions the drawer offers, so
+    the context is resolved here from the durable job instead.
+    """
+
+    job_id = _visible_technoeconomic_job_id(current_config)
+    if not job_id:
+        return None
+    try:
+        job = state.AGENT_STORE.get_technoeconomic_job(job_id)
+    except (AgentStoreError, ValueError):
+        logger.warning("The visible technoeconomic job could not be read", exc_info=True)
+        return None
+    if job is None:
+        return None
+
+    context: dict[str, Any] = {
+        "schema_version": "technoeconomic-chat-context-v2",
+        "read_only": True,
+        "server_authoritative": True,
+        "job_id": job.get("id", job_id),
+        "job_state": job.get("state", "queued"),
+        "stage": job.get("stage") or None,
+        "source_annual_job_id": job.get("source_annual_job_id"),
+        "source_snapshot_sha256": job.get("source_snapshot_sha256"),
+    }
+    if context["job_state"] != "done":
+        return context
+
+    result = serializers._public_value(job.get("result") or {})
+    if not isinstance(result, dict):
+        return context
+    for key in _TECHNOECONOMIC_RESULT_KEYS:
+        if key in result:
+            context[key] = result[key]
+
+    # The lifecycle summaries are the part the agent actually reasons over, so the
+    # optional supporting sections are what give way when the context runs long.
+    for key in _TECHNOECONOMIC_TRIMMABLE_KEYS:
+        if len(json.dumps(context, default=str)) <= _TECHNOECONOMIC_CONTEXT_MAX_BYTES:
+            break
+        if context.pop(key, None) is not None:
+            context.setdefault("omitted_for_length", []).append(key)
+    return context
 
 
 def _chat_run_context(
@@ -445,6 +544,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         ),
         "visible_iam_selection": _visible_iam_selection(req.current_config),
         "model_knowledge": SOLAR_MODEL_KNOWLEDGE,
+        "technoeconomic_context": _technoeconomic_chat_context(req.current_config),
         "recent_runs": _recent_run_context(req.active_mode),
         "recent_chat_history": _clean_chat_history(
             req.history, current_message=req.message
