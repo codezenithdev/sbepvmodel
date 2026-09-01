@@ -24,15 +24,23 @@
                                         <h4>SolarTAC modeled energy</h4>
                                     </div>
                                     <p class="tea-bridge-verification" id="technoeconomicStandaloneSourceVerification">Choose a verified Annual Simulation</p>
-                                    <dl class="tea-bridge-system-values">
-                                        <div><dt>Solectria capacity</dt><dd id="technoeconomicStandaloneSolectriaSourceCapacity">Unavailable</dd></div>
-                                        <div><dt>SolarEdge capacity</dt><dd id="technoeconomicStandaloneSolarEdgeSourceCapacity">Unavailable</dd></div>
-                                    </dl>
-                                    <p id="technoeconomicStandaloneSourceYears">Weather-year sample unavailable</p>
-                                    <dl class="tea-bridge-system-values">
-                                        <div><dt>Solectria energy</dt><dd id="technoeconomicStandaloneSolectriaSourceEnergy">Unavailable</dd></div>
-                                        <div><dt>SolarEdge energy</dt><dd id="technoeconomicStandaloneSolarEdgeSourceEnergy">Unavailable</dd></div>
-                                    </dl>
+                                    <div class="tea-bridge-system-columns tea-bridge-system-columns-source">
+                                        <section class="tea-bridge-system-column" aria-labelledby="technoeconomicBridgeSourceSolectriaHeading">
+                                            <h5 id="technoeconomicBridgeSourceSolectriaHeading">Solectria</h5>
+                                            <dl>
+                                                <div><dt class="sr-only">Capacity</dt><dd id="technoeconomicStandaloneSolectriaSourceCapacity">Unavailable</dd></div>
+                                                <div><dt class="sr-only">Annual energy</dt><dd id="technoeconomicStandaloneSolectriaSourceEnergy">Unavailable</dd></div>
+                                            </dl>
+                                        </section>
+                                        <section class="tea-bridge-system-column" aria-labelledby="technoeconomicBridgeSourceSolarEdgeHeading">
+                                            <h5 id="technoeconomicBridgeSourceSolarEdgeHeading">SolarEdge</h5>
+                                            <dl>
+                                                <div><dt class="sr-only">Capacity</dt><dd id="technoeconomicStandaloneSolarEdgeSourceCapacity">Unavailable</dd></div>
+                                                <div><dt class="sr-only">Annual energy</dt><dd id="technoeconomicStandaloneSolarEdgeSourceEnergy">Unavailable</dd></div>
+                                            </dl>
+                                        </section>
+                                    </div>
+                                    <p class="tea-bridge-source-years" id="technoeconomicStandaloneSourceYears">Weather-year sample unavailable</p>
                                 </li>
                                 <li class="tea-bridge-connector" aria-hidden="true">Then</li>
                                 <li class="tea-bridge-card">
@@ -41,10 +49,16 @@
                                         <h4>Normalize</h4>
                                     </div>
                                     <p>Annual energy ÷ each system's applied capacity</p>
-                                    <dl class="tea-bridge-system-values">
-                                        <div><dt>Solectria</dt><dd id="technoeconomicStandaloneSolectriaSpecificEnergy">Unavailable</dd></div>
-                                        <div><dt>SolarEdge</dt><dd id="technoeconomicStandaloneSolarEdgeSpecificEnergy">Unavailable</dd></div>
-                                    </dl>
+                                    <div class="tea-bridge-system-columns">
+                                        <section class="tea-bridge-system-column" aria-labelledby="technoeconomicBridgeNormalizeSolectriaHeading">
+                                            <h5 id="technoeconomicBridgeNormalizeSolectriaHeading">Solectria</h5>
+                                            <dl><div><dt class="sr-only">Specific energy</dt><dd id="technoeconomicStandaloneSolectriaSpecificEnergy">Unavailable</dd></div></dl>
+                                        </section>
+                                        <section class="tea-bridge-system-column" aria-labelledby="technoeconomicBridgeNormalizeSolarEdgeHeading">
+                                            <h5 id="technoeconomicBridgeNormalizeSolarEdgeHeading">SolarEdge</h5>
+                                            <dl><div><dt class="sr-only">Specific energy</dt><dd id="technoeconomicStandaloneSolarEdgeSpecificEnergy">Unavailable</dd></div></dl>
+                                        </section>
+                                    </div>
                                 </li>
                                 <li class="tea-bridge-connector" aria-hidden="true">Then</li>
                                 <li class="tea-bridge-card">
@@ -53,13 +67,21 @@
                                         <h4>Scale</h4>
                                     </div>
                                     <p>Scale to the commercial target</p>
-                                    <strong id="technoeconomicStandaloneTargetCapacity">100 MW · source basis pending</strong>
-                                    <span class="tea-bridge-equation">Specific energy × target capacity</span>
-                                    <dl class="tea-bridge-system-values">
-                                        <div><dt>Solectria</dt><dd id="technoeconomicStandaloneSolectriaTargetEnergy">Unavailable</dd></div>
-                                        <div><dt>SolarEdge</dt><dd id="technoeconomicStandaloneSolarEdgeTargetEnergy">Unavailable</dd></div>
-                                    </dl>
-                                    <p>Commercial annual-energy distribution</p>
+                                    <div class="tea-bridge-target">
+                                        <strong id="technoeconomicStandaloneTargetCapacity">100 MW · source basis pending</strong>
+                                        <span>commercial target</span>
+                                    </div>
+                                    <div class="tea-bridge-system-columns">
+                                        <section class="tea-bridge-system-column" aria-labelledby="technoeconomicBridgeScaleSolectriaHeading">
+                                            <h5 id="technoeconomicBridgeScaleSolectriaHeading">Solectria</h5>
+                                            <dl><div><dt class="sr-only">Target annual energy</dt><dd id="technoeconomicStandaloneSolectriaTargetEnergy">Unavailable</dd></div></dl>
+                                        </section>
+                                        <section class="tea-bridge-system-column" aria-labelledby="technoeconomicBridgeScaleSolarEdgeHeading">
+                                            <h5 id="technoeconomicBridgeScaleSolarEdgeHeading">SolarEdge</h5>
+                                            <dl><div><dt class="sr-only">Target annual energy</dt><dd id="technoeconomicStandaloneSolarEdgeTargetEnergy">Unavailable</dd></div></dl>
+                                        </section>
+                                    </div>
+                                    <span class="tea-bridge-equation tea-bridge-equation-end">Specific energy × target capacity</span>
                                 </li>
                                 <li class="tea-bridge-connector" aria-hidden="true">Then</li>
                                 <li class="tea-bridge-card">

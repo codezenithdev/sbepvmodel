@@ -400,3 +400,51 @@ final result: passed
 - [x] `npm run build` — all Vinext/Vite build stages passed.
 
 final result: passed
+
+---
+
+# Calculation bridge Option 2 — design QA
+
+## Evidence
+
+- Source visual truth: `C:\Users\Angushylesh(Shylesh)\.codex\generated_images\01a0598f-b949-75f3-840a-70a0723c04b4\exec-155bedb4-2be2-4a6d-b022-f3b22372a62e.png`.
+- Browser-rendered full page: `design-qa-assets/design-qa-option2-full-page.png`.
+- Browser-rendered bridge crop: `design-qa-assets/design-qa-option2-implementation.png`.
+- Normalized source and implementation comparison: `design-qa-assets/design-qa-option2-comparison.png`.
+- Source pixels: 2048 × 770. The live bridge measured 964.67 × 334.63 CSS px at DPR 1.5 and was normalized to a 643 × 223 px crop. The comparison displays both bridge crops at the same width.
+- Desktop browser surface: 1280 × 720 CSS px at DPR 1.5. Compact desktop was checked on a 1065 px page surface; mobile was checked on a 705 px page surface.
+- State: Technoeconomic Analysis selected with the verified 125 kWac paired Annual Simulation source, 12 weather years, and a 100 MWac commercial target.
+- Full-view evidence: the full-page capture shows the bridge in the real TEA workspace above the CDF and scenario rail.
+- Focused evidence: the exact bridge crop is the focused comparison. It keeps every heading, value, divider, and footer readable, so no smaller crop was needed.
+
+## Findings
+
+- No actionable P0, P1, or P2 findings remain.
+- Fonts and typography: the live bridge keeps the dashboard font stack and hierarchy. Long capacity, energy, and weather-year values wrap without clipping or overlap.
+- Spacing and layout rhythm: steps 1–3 receive more width, steps 4–5 stay compact, and each Solectria/SolarEdge pair has a fixed two-column split with a divider.
+- Colors and visual tokens: the bridge reuses the existing teal, muted text, border, surface, and verified-source tokens.
+- Image quality and asset fidelity: the bridge contains no image assets. The existing text connector is retained because the dashboard has no shared arrow icon asset.
+- Copy and content: the live values differ from the concept mock because the verified source contains 12 weather years. Capacity, target, formulas, and cost preset remain unchanged.
+- Responsive behavior: the bridge becomes two columns at compact desktop size and one column on mobile. Browser measurements showed no page, bridge, or value overflow.
+- Browser health: the final error console log was empty.
+
+## Comparison history
+
+1. First normalized comparison — passed.
+   - The selected Option 2 structure, wide data steps, paired system columns, commercial scale, levelize step, result step, and footer are present.
+   - No visual fix was made after this comparison because no P0, P1, or P2 issue was found.
+
+## Primary interactions tested
+
+- Open Technoeconomic Analysis from the mode tabs.
+- Confirm the verified Annual Simulation values populate all six system columns.
+- Check desktop, compact desktop, and mobile layout widths.
+- Confirm all values stay inside their own column and the browser console has no errors.
+
+## Verification
+
+- [x] `python -m unittest tests.test_technoeconomic_frontend tests.test_dashboard_build -q` — 65 tests passed.
+- [x] `npm run build` — passed.
+- [x] `npm run lint` — no errors; one existing unused-catch warning remains in `frontend/js/07-autonomy-workspace.js`.
+
+final result: passed

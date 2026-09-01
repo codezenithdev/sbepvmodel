@@ -2077,8 +2077,8 @@
         .tea-bridge-steps {
             display: grid;
             grid-template-columns:
-                minmax(155px, 1.22fr) auto minmax(135px, 0.95fr) auto
-                minmax(145px, 1fr) auto minmax(135px, 0.95fr) auto minmax(135px, 0.95fr);
+                minmax(0, 1.55fr) auto minmax(0, 1.2fr) auto
+                minmax(0, 1.2fr) auto minmax(0, 0.9fr) auto minmax(0, 0.85fr);
             align-items: stretch;
             gap: 8px;
             margin: 0;
@@ -2098,30 +2098,83 @@
             background: #fbfcfc;
         }
 
-        .tea-bridge-system-values {
+        .tea-bridge-system-columns {
             display: grid;
-            gap: 5px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0;
+            margin-top: auto;
+        }
+
+        .tea-bridge-system-column {
+            min-width: 0;
+            padding: 0 9px;
+            text-align: center;
+        }
+
+        .tea-bridge-system-column:first-child {
+            padding-left: 0;
+        }
+
+        .tea-bridge-system-column + .tea-bridge-system-column {
+            padding-right: 0;
+            border-left: 1px solid var(--border-strong);
+        }
+
+        .tea-bridge-system-column h5 {
             margin: 0;
-        }
-
-        .tea-bridge-system-values > div {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            gap: 8px;
-            align-items: baseline;
-        }
-
-        .tea-bridge-system-values dt {
-            color: var(--muted);
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border-strong);
+            color: var(--accent-strong);
             font-size: 10px;
+            font-weight: 820;
+            line-height: 1.3;
         }
 
-        .tea-bridge-system-values dd {
+        .tea-bridge-system-column dl {
+            display: grid;
+            gap: 9px;
+            margin: 0;
+            padding-top: 8px;
+        }
+
+        .tea-bridge-system-column dl > div {
+            min-width: 0;
+        }
+
+        .tea-bridge-system-column dd {
             margin: 0;
             color: var(--text);
             font-size: 10px;
             font-weight: 800;
-            text-align: right;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+            text-align: center;
+        }
+
+        .tea-bridge-source-years {
+            margin-top: auto;
+            padding-top: 8px;
+            border-top: 1px solid var(--border-strong);
+            text-align: center;
+        }
+
+        .tea-bridge-target {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .tea-bridge-target > strong {
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 820;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-bridge-target > span {
+            color: var(--muted-strong);
+            font-size: 10px;
         }
 
         .tea-bridge-card-heading {
@@ -2180,6 +2233,12 @@
             color: var(--text) !important;
             text-align: center;
             font-style: italic;
+        }
+
+        .tea-bridge-equation-end {
+            margin-top: auto;
+            border-top: 1px solid var(--border-strong);
+            border-bottom: 0;
         }
 
         .tea-bridge-connector {
@@ -3038,11 +3097,15 @@
 
         @media (max-width: 1080px) {
             .tea-bridge-steps {
-                grid-template-columns: repeat(5, minmax(0, 1fr));
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
             .tea-bridge-connector {
                 display: none;
+            }
+
+            .tea-bridge-card:last-child {
+                grid-column: 1 / -1;
             }
 
             .tea-standalone-primary {
@@ -3317,6 +3380,10 @@
 
             .tea-bridge-card {
                 min-height: 0;
+            }
+
+            .tea-bridge-card:last-child {
+                grid-column: auto;
             }
 
             .tea-bridge-footer,

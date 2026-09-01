@@ -902,6 +902,33 @@ console.log(JSON.stringify({
             r"\.tea-job-panel\s*\{[^}]*order:\s*3;",
         )
 
+    def test_calculation_bridge_keeps_each_system_in_its_own_column(self) -> None:
+        bridge = self.markup.split(
+            'id="technoeconomicCalculationBridge"', 1
+        )[1].split('class="tea-bridge-footer"', 1)[0]
+
+        self.assertEqual(6, bridge.count('class="tea-bridge-system-column"'))
+        self.assertNotIn("tea-bridge-system-values", bridge)
+        for marker in (
+            'id="technoeconomicStandaloneSolectriaSourceCapacity"',
+            'id="technoeconomicStandaloneSolarEdgeSourceCapacity"',
+            'id="technoeconomicStandaloneSolectriaSpecificEnergy"',
+            'id="technoeconomicStandaloneSolarEdgeSpecificEnergy"',
+            'id="technoeconomicStandaloneSolectriaTargetEnergy"',
+            'id="technoeconomicStandaloneSolarEdgeTargetEnergy"',
+        ):
+            self.assertIn(marker, bridge)
+
+        for marker in (
+            "grid-template-columns: repeat(2, minmax(0, 1fr));",
+            ".tea-bridge-system-column dd",
+            "overflow-wrap: anywhere;",
+            "minmax(0, 1.55fr)",
+            "minmax(0, 0.85fr)",
+            ".tea-bridge-card:last-child",
+        ):
+            self.assertIn(marker, self.styles)
+
     def test_option_two_density_adjustment_is_scoped_to_tea_mode(self) -> None:
         for marker in (
             "body.dashboard-mode-technoeconomic .workspace",
