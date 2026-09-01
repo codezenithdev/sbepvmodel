@@ -21,10 +21,12 @@ from time import perf_counter
 from sbepv.agent.message_guards import _ambiguous_numeric_iam, _visible_iam_selection
 from sbepv.agent.prompts import SOLAR_AGENT_INSTRUCTIONS, SOLAR_MODEL_KNOWLEDGE
 from sbepv.agent.scenario_math import _normalise_config_keys
+from sbepv.agent import technoeconomic_evidence
 from sbepv.agent.tool_schemas import (
     MAX_PARAMETER_SWEEP_VALUES,
     PARAMETER_SWEEP_TOOL,
     SCENARIO_TOOL,
+    TECHNOECONOMIC_EVIDENCE_TOOL,
 )
 from sbepv.agent import tools as agent_tools
 from sbepv.api import config, job_store, serializers, state
@@ -49,11 +51,14 @@ _TECHNOECONOMIC_RESULT_KEYS = (
     "sensitivity",
     "summaries",
 )
-# Dropped in this order when the context exceeds its budget, largest first.
+# Dropped in this order when the context exceeds its budget. Headline summaries
+# are kept until last because the evidence tool can retrieve any omitted detail.
 _TECHNOECONOMIC_TRIMMABLE_KEYS = (
     "sensitivity",
+    "convergence",
     "applied_capacities",
     "eligible_weather_years",
+    "summaries",
 )
 _TECHNOECONOMIC_CONTEXT_MAX_BYTES = 24_000
 
@@ -163,7 +168,7 @@ def _technoeconomic_chat_context(
         return None
 
     context: dict[str, Any] = {
-        "schema_version": "technoeconomic-chat-context-v2",
+        "schema_version": "technoeconomic-chat-context-v3",
         "read_only": True,
         "server_authoritative": True,
         "job_id": job.get("id", job_id),
@@ -181,6 +186,7 @@ def _technoeconomic_chat_context(
     for key in _TECHNOECONOMIC_RESULT_KEYS:
         if key in result:
             context[key] = result[key]
+    context["evidence_tool"] = technoeconomic_evidence.evidence_tool_context(job)
 
     # The lifecycle summaries are the part the agent actually reasons over, so the
     # optional supporting sections are what give way when the context runs long.
@@ -189,6 +195,26 @@ def _technoeconomic_chat_context(
             break
         if context.pop(key, None) is not None:
             context.setdefault("omitted_for_length", []).append(key)
+    if len(json.dumps(context, default=str)) > _TECHNOECONOMIC_CONTEXT_MAX_BYTES:
+        keep = {
+            "schema_version",
+            "read_only",
+            "server_authoritative",
+            "job_id",
+            "job_state",
+            "stage",
+            "source_annual_job_id",
+            "source_snapshot_sha256",
+            "analysis_basis",
+            "calculation_contract_version",
+            "evidence_tool",
+            "omitted_for_length",
+        }
+        omitted = [key for key in context if key not in keep]
+        context = {key: value for key, value in context.items() if key in keep}
+        for key in omitted:
+            if key not in context.setdefault("omitted_for_length", []):
+                context["omitted_for_length"].append(key)
     return context
 
 
@@ -480,6 +506,30 @@ def _scenario_tool_calls(response: Any) -> list[Any]:
     ]
 
 
+def _technoeconomic_evidence_tool_calls(response: Any) -> list[Any]:
+    return [
+        item
+        for item in (getattr(response, "output", None) or [])
+        if _response_item_value(item, "type") == "function_call"
+        and _response_item_value(item, "name")
+        == technoeconomic_evidence.TOOL_NAME
+    ]
+
+
+def _function_call_input_item(tool_call: Any) -> dict[str, Any] | None:
+    call_id = _response_item_value(tool_call, "call_id")
+    name = _response_item_value(tool_call, "name")
+    arguments = _response_item_value(tool_call, "arguments")
+    if not all(isinstance(value, str) and value for value in (call_id, name, arguments)):
+        return None
+    return {
+        "type": "function_call",
+        "call_id": call_id,
+        "name": name,
+        "arguments": arguments,
+    }
+
+
 def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
     if not (req.message or "").strip():
         raise HTTPException(status_code=422, detail="Message is required.")
@@ -531,6 +581,12 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         if req.allow_scenario_actions
         else []
     )
+    technoeconomic_context = _technoeconomic_chat_context(req.current_config)
+    if (
+        isinstance(technoeconomic_context, dict)
+        and technoeconomic_context.get("job_state") == "done"
+    ):
+        tools.append(TECHNOECONOMIC_EVIDENCE_TOOL)
     if allow_web:
         tools.append({"type": "web_search"})
     payload = {
@@ -544,7 +600,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         ),
         "visible_iam_selection": _visible_iam_selection(req.current_config),
         "model_knowledge": SOLAR_MODEL_KNOWLEDGE,
-        "technoeconomic_context": _technoeconomic_chat_context(req.current_config),
+        "technoeconomic_context": technoeconomic_context,
         "recent_runs": _recent_run_context(req.active_mode),
         "recent_chat_history": _clean_chat_history(
             req.history, current_message=req.message
@@ -571,7 +627,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
     gpt_started = perf_counter()
     try:
         request_options: dict[str, Any] = {}
-        if req.allow_scenario_actions:
+        if any(tool.get("type") == "function" for tool in tools):
             request_options.update(
                 {"max_tool_calls": 1, "parallel_tool_calls": False}
             )
@@ -581,6 +637,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             input=[user_input],
             tools=tools,
             store=False,
+            include=["reasoning.encrypted_content"],
             max_output_tokens=1_200,
             reasoning={"effort": config.OPENAI_REASONING_EFFORT},
             text={"verbosity": "low"},
@@ -603,7 +660,92 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
     web_sources = _extract_web_sources(response)
     action: dict[str, Any] | None = None
     deterministic_reply: str | None = None
+    evidence_calls = _technoeconomic_evidence_tool_calls(response)
     tool_calls = _scenario_tool_calls(response) if req.allow_scenario_actions else []
+    if evidence_calls and tool_calls:
+        deterministic_reply = (
+            "I did not take an action because the response mixed a read-only "
+            "technoeconomic evidence request with a model scenario request."
+        )
+        evidence_calls = []
+        tool_calls = []
+    elif len(evidence_calls) > 1:
+        deterministic_reply = (
+            "I could not answer because more than one technoeconomic evidence "
+            "section was requested at once."
+        )
+        evidence_calls = []
+    if evidence_calls:
+        evidence_call = evidence_calls[0]
+        call_input = _function_call_input_item(evidence_call)
+        try:
+            evidence_arguments = json.loads(
+                _response_item_value(evidence_call, "arguments", "{}")
+            )
+            if not isinstance(evidence_arguments, dict):
+                raise ValueError("Tool arguments must be an object")
+            evidence_result = technoeconomic_evidence.get_technoeconomic_evidence(
+                req.current_config,
+                evidence_arguments,
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            evidence_result = {
+                "schema_version": "technoeconomic-agent-evidence-v1",
+                "status": "unavailable",
+                "read_only": True,
+                "server_authoritative": True,
+                "reason": "invalid_tool_arguments",
+            }
+        if call_input is None:
+            deterministic_reply = (
+                "The technoeconomic evidence request was invalid, so I did not "
+                "use it."
+            )
+        else:
+            followup_input = [
+                user_input,
+                *(getattr(response, "output", None) or [call_input]),
+                {
+                    "type": "function_call_output",
+                    "call_id": call_input["call_id"],
+                    "output": json.dumps(
+                        evidence_result,
+                        allow_nan=False,
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                },
+            ]
+            gpt_started = perf_counter()
+            try:
+                response = client.responses.create(
+                    model=config.OPENAI_MODEL,
+                    instructions=SOLAR_AGENT_INSTRUCTIONS,
+                    input=followup_input,
+                    tools=[],
+                    store=False,
+                    include=["reasoning.encrypted_content"],
+                    max_output_tokens=1_200,
+                    reasoning={"effort": config.OPENAI_REASONING_EFFORT},
+                    text={"verbosity": "low"},
+                )
+            except Exception as exc:
+                logger.error(
+                    "OpenAI evidence follow-up failed: type=%s status=%s request_id=%s",
+                    exc.__class__.__name__,
+                    getattr(exc, "status_code", None),
+                    getattr(exc, "request_id", None),
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Solar Agent is temporarily unavailable. Please retry.",
+                ) from exc
+            finally:
+                gpt_seconds += perf_counter() - gpt_started
+            for source in _extract_web_sources(response):
+                if source not in web_sources:
+                    web_sources.append(source)
     if len(tool_calls) > 1:
         deterministic_reply = (
             "I did not start a run because more than one scenario action was "

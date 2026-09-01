@@ -46,7 +46,7 @@
             dashboardSubtitle.textContent = autonomy
                 ? 'Investigate evidence, compare controlled scenarios, and turn validated analysis into a supervised decision.'
                 : technoeconomic
-                ? 'Compare SolarEdge minus Solectria lifecycle economics using a frozen Annual Simulation, explicit evidence, and reproducible uncertainty.'
+                ? 'Compare commercial Solectria and SolarEdge LCOE distributions.'
                 : annual
                     ? 'Carry the reviewed calibration into a long-range forecast of energy and performance.'
                     : 'Compare measured power, irradiance, physics-model predictions, and export-ready run artifacts for the SBE Innovation Site.';
@@ -80,7 +80,7 @@
             pvModelNavLink.href = autonomy
                 ? '#autonomyDecisionBrief'
                 : technoeconomic
-                ? '#technoeconomicResults'
+                ? '#technoeconomicStandaloneResults'
                 : (annual ? '#annualChartGrid' : '#chartGrid');
             setActiveNav(operationsNavLink);
             if (technoeconomic) renderTechnoeconomicAnalysis();

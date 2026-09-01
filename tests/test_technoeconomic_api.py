@@ -202,6 +202,134 @@ def _commercial_scaling_request_payload(
     return payload
 
 
+def _standalone_commercial_request_payload(
+    *,
+    target_capacity: float = 100.0,
+    target_capacity_unit: str = "mw",
+    target_rating_basis: str = "ac_operating_limit",
+    n: int = 8,
+) -> dict:
+    payload = _applied_site_request_payload(n=n)
+    payload["cost_lines"] = []
+    payload["standalone_commercial"] = {
+        "technology": "solaredge",
+        "target_capacity": target_capacity,
+        "target_capacity_unit": target_capacity_unit,
+        "target_rating_basis": target_rating_basis,
+        "transfer_method": "direct_capacity_scaling",
+        "transfer_rationale": (
+            "Scale verified SolarEdge specific energy from the frozen Annual "
+            "capacity basis directly to the same-basis commercial target."
+        ),
+        "evidence": _evidence(),
+        "cost_lines": [
+            {
+                "input_id": "commercial.solaredge.capex",
+                "label": "SolarEdge installed CAPEX",
+                "cost_category": "full_initial_capex",
+                "coverage_ids": [
+                    "commercial.solaredge.full-initial-system"
+                ],
+                "timing": "initial_t0",
+                "unit": "constant_usd_per_target_w",
+                "constant_dollar_cost_year": payload["finance"][
+                    "constant_dollar_cost_year"
+                ],
+                "distribution": {
+                    "family": "triangular",
+                    "low": 1.0,
+                    "mode": 1.1,
+                    "high": 1.2,
+                },
+                "occurrence_years": [],
+                "evidence": _evidence(),
+            },
+            {
+                "input_id": "commercial.solaredge.om",
+                "label": "SolarEdge annual O&M",
+                "cost_category": "full_annual_om",
+                "coverage_ids": [
+                    "commercial.solaredge.full-annual-operations-maintenance"
+                ],
+                "timing": "annual_year_end",
+                "unit": "constant_usd_per_target_w_year",
+                "constant_dollar_cost_year": payload["finance"][
+                    "constant_dollar_cost_year"
+                ],
+                "distribution": {"family": "fixed", "value": 0.02},
+                "occurrence_years": [],
+                "evidence": _evidence(),
+            },
+            {
+                "input_id": "commercial.solaredge.replacement",
+                "label": "SolarEdge scheduled replacement",
+                "cost_category": "scheduled_replacement",
+                "coverage_ids": [
+                    "commercial.solaredge.inverter-replacement"
+                ],
+                "timing": "scheduled_year_end",
+                "unit": "constant_usd_per_target_w",
+                "constant_dollar_cost_year": payload["finance"][
+                    "constant_dollar_cost_year"
+                ],
+                "distribution": {"family": "fixed", "value": 0.08},
+                "occurrence_years": [10, 20],
+                "evidence": _evidence(),
+            },
+        ],
+    }
+    return payload
+
+
+def _paired_commercial_request_payload(
+    *,
+    target_capacity: float = 100.0,
+    target_capacity_unit: str = "mw",
+    target_rating_basis: str = "ac_operating_limit",
+    n: int = 8,
+) -> dict:
+    payload = _standalone_commercial_request_payload(
+        target_capacity=target_capacity,
+        target_capacity_unit=target_capacity_unit,
+        target_rating_basis=target_rating_basis,
+        n=n,
+    )
+    standalone = payload.pop("standalone_commercial")
+    solaredge_lines = standalone["cost_lines"]
+    solectria_lines = deepcopy(solaredge_lines)
+    for line in solectria_lines:
+        line["input_id"] = line["input_id"].replace("solaredge", "solectria")
+        line["label"] = line["label"].replace("SolarEdge", "Solectria")
+        line["coverage_ids"] = [
+            coverage.replace("solaredge", "solectria")
+            for coverage in line["coverage_ids"]
+        ]
+    payload["paired_commercial"] = {
+        "target_capacity": standalone["target_capacity"],
+        "target_capacity_unit": standalone["target_capacity_unit"],
+        "target_rating_basis": standalone["target_rating_basis"],
+        "transfer_method": standalone["transfer_method"],
+        "transfer_rationale": (
+            "Scale each verified system's specific energy from its own frozen "
+            "Annual capacity to one same-basis commercial target."
+        ),
+        "evidence": _evidence(),
+        "systems": [
+            {
+                "technology": "solectria",
+                "evidence": _evidence(),
+                "cost_lines": solectria_lines,
+            },
+            {
+                "technology": "solaredge",
+                "evidence": _evidence(),
+                "cost_lines": solaredge_lines,
+            },
+        ],
+    }
+    return payload
+
+
 def _commercial_request_payload(*, include_transfer: bool) -> dict:
     payload = _site_request_payload()
     payload["basis"] = "commercial_representative"
@@ -520,6 +648,14 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         )
         invalid_payloads.append(forged_content_address)
 
+        for reserved_id in (
+            "energy.source.solectria_specific",
+            "energy.source.solaredge_specific",
+        ):
+            reserved_source = deepcopy(valid)
+            reserved_source["cost_lines"][0]["input_id"] = reserved_id
+            invalid_payloads.append(reserved_source)
+
         for payload in invalid_payloads:
             with self.assertRaises(ValidationError):
                 TechnoeconomicSubmissionRequest.model_validate(payload)
@@ -783,6 +919,430 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
             receipt["marginal_cost_difference_input_id"],
         )
         state._WORKER_WAKE.set.assert_called_once_with()
+
+    def test_v5_paired_commercial_builds_both_systems_and_frozen_receipt(self) -> None:
+        payload = _paired_commercial_request_payload()
+        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
+        request = tea_api.build_technoeconomic_kernel_request(parsed, self.snapshot)
+
+        self.assertEqual(
+            tea_api.technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+            request.calculation_contract_version,
+        )
+        self.assertEqual((), request.cost_lines)
+        paired = request.paired_commercial
+        self.assertIsNotNone(paired)
+        self.assertEqual(100_000_000.0, paired.target_capacity_w)
+        self.assertEqual(
+            ["solectria", "solaredge"],
+            [system.technology for system in paired.systems],
+        )
+        self.assertTrue(
+            all(len(system.cost_lines) == 3 for system in paired.systems)
+        )
+
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            parsed,
+            self.envelope,
+            request,
+        )
+        self.assertEqual(5, provenance["schema_version"])
+        self.assertEqual("technoeconomic-submission-v5", provenance["request_schema"])
+        receipt = provenance["paired_commercial_receipt"]
+        self.assertEqual(100_000_000.0, receipt["target_capacity_w"])
+        self.assertEqual(
+            {"solectria", "solaredge"},
+            set(receipt["systems"]),
+        )
+        for technology in ("solectria", "solaredge"):
+            system = receipt["systems"][technology]
+            self.assertEqual(
+                125_000.0,
+                system["source_capacity"]["applied_capacity_w"],
+            )
+            self.assertEqual(800.0, system["capacity_scale_factor"])
+            self.assertEqual(
+                {
+                    "full_initial_capex": 1,
+                    "full_annual_om": 1,
+                    "scheduled_replacement": 1,
+                },
+                system["cost_category_counts"],
+            )
+        self.assertEqual(
+            tea_api.canonical_json_sha256(receipt),
+            provenance["paired_commercial_receipt_sha256"],
+        )
+        self.assertEqual(
+            "coverage IDs must be disjoint between lines within one system unless "
+            "both lines are scheduled replacements at disjoint occurrence years",
+            receipt["coverage_overlap_rule"],
+        )
+        evidence_subjects = {
+            item["subject"]
+            for item in provenance["evidence_receipt"]["preservation"]
+        }
+        self.assertIn("paired-commercial:energy-scaling", evidence_subjects)
+        self.assertIn("paired-commercial-system:solectria", evidence_subjects)
+        self.assertIn(
+            "paired-commercial-cost:solaredge:commercial.solaredge.capex",
+            evidence_subjects,
+        )
+
+        response = self._create_via_api(payload)
+        self.assertEqual(202, response.status_code, response.text)
+        stored = self.store.get_technoeconomic_job(response.json()["job"]["job_id"])
+        self.assertEqual(
+            100.0,
+            stored["request"]["paired_commercial"]["target_capacity"],
+        )
+        self.assertEqual(
+            800.0,
+            stored["submission_provenance"]["paired_commercial_receipt"]
+            ["systems"]["solectria"]["capacity_scale_factor"],
+        )
+
+    def test_v5_paired_commercial_keeps_the_user_target_capacity(self) -> None:
+        cases = (
+            (100.0, 100_000_000.0, 800.0),
+            (75.0, 75_000_000.0, 600.0),
+        )
+        for target_mw, expected_target_w, expected_scale in cases:
+            with self.subTest(target_mw=target_mw):
+                payload = _paired_commercial_request_payload(
+                    target_capacity=target_mw,
+                    target_capacity_unit="mw",
+                )
+                request = tea_api.build_technoeconomic_kernel_request(
+                    payload,
+                    self.snapshot,
+                )
+                provenance = tea_api.build_technoeconomic_submission_provenance(
+                    payload,
+                    self.envelope,
+                    request,
+                )
+
+                self.assertEqual(
+                    expected_target_w,
+                    request.paired_commercial.target_capacity_w,
+                )
+                receipt = provenance["paired_commercial_receipt"]
+                self.assertEqual(expected_target_w, receipt["target_capacity_w"])
+                for technology in ("solectria", "solaredge"):
+                    system = receipt["systems"][technology]
+                    self.assertEqual(
+                        125_000.0,
+                        system["source_capacity"]["applied_capacity_w"],
+                    )
+                    self.assertEqual(
+                        "ac_operating_limit",
+                        system["source_capacity"]["rating_basis"],
+                    )
+                    self.assertEqual(
+                        expected_scale,
+                        system["capacity_scale_factor"],
+                    )
+
+    def test_v5_paired_commercial_uses_nameplate_when_clipping_is_off(self) -> None:
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"]["request"] = {
+            "curtailment_enabled": False,
+            "curtailment_limit_kw": 125.0,
+        }
+        payload = _paired_commercial_request_payload(
+            target_capacity=75.0,
+            target_capacity_unit="mw",
+            target_rating_basis="dc_installed_nameplate",
+        )
+
+        request = tea_api.build_technoeconomic_kernel_request(payload, snapshot)
+        envelope = {
+            "source_snapshot": snapshot,
+            "source_snapshot_sha256": tea_api.canonical_json_sha256(snapshot),
+        }
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            payload,
+            envelope,
+            request,
+        )
+
+        self.assertEqual(75_000_000.0, request.paired_commercial.target_capacity_w)
+        receipt = provenance["paired_commercial_receipt"]
+        for technology in ("solectria", "solaredge"):
+            source = receipt["systems"][technology]["source_capacity"]
+            installed_wdc = snapshot["capacity_manifest"]["systems"][technology][
+                "installed_wdc"
+            ]
+            self.assertEqual(installed_wdc, source["applied_capacity_w"])
+            self.assertEqual("dc_installed_nameplate", source["rating_basis"])
+            self.assertAlmostEqual(
+                75_000_000.0 / installed_wdc,
+                receipt["systems"][technology]["capacity_scale_factor"],
+            )
+
+    def test_v5_paired_schema_rejects_duplicate_systems_and_cost_ids(self) -> None:
+        duplicate_system = _paired_commercial_request_payload()
+        duplicate_system["paired_commercial"]["systems"][1]["technology"] = (
+            "solectria"
+        )
+        duplicate_id = _paired_commercial_request_payload()
+        duplicate_id["paired_commercial"]["systems"][1]["cost_lines"][0][
+            "input_id"
+        ] = duplicate_id["paired_commercial"]["systems"][0]["cost_lines"][0][
+            "input_id"
+        ]
+        missing_om = _paired_commercial_request_payload()
+        missing_om["paired_commercial"]["systems"][0]["cost_lines"] = [
+            line
+            for line in missing_om["paired_commercial"]["systems"][0][
+                "cost_lines"
+            ]
+            if line["cost_category"] != "full_annual_om"
+        ]
+        for invalid in (duplicate_system, duplicate_id, missing_om):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                TechnoeconomicSubmissionRequest.model_validate(invalid)
+
+        overlapping_om_replacement = _paired_commercial_request_payload()
+        solectria_lines = overlapping_om_replacement["paired_commercial"][
+            "systems"
+        ][0]["cost_lines"]
+        annual_om = next(
+            line
+            for line in solectria_lines
+            if line["cost_category"] == "full_annual_om"
+        )
+        replacement = next(
+            line
+            for line in solectria_lines
+            if line["cost_category"] == "scheduled_replacement"
+        )
+        replacement["coverage_ids"] = list(annual_om["coverage_ids"])
+        with self.assertRaisesRegex(ValidationError, "coverage IDs must be disjoint"):
+            TechnoeconomicSubmissionRequest.model_validate(
+                overlapping_om_replacement
+            )
+
+    def test_v1_through_v4_durable_requests_omit_null_paired_commercial(self) -> None:
+        payloads = (
+            _site_request_payload(),
+            _applied_site_request_payload(),
+            _commercial_scaling_request_payload(),
+            _standalone_commercial_request_payload(),
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                response = self._create_via_api(payload)
+                self.assertEqual(202, response.status_code, response.text)
+                stored = self.store.get_technoeconomic_job(
+                    response.json()["job"]["job_id"]
+                )
+                self.assertNotIn("paired_commercial", stored["request"])
+                self.assertEqual(
+                    stored["submission_provenance"]["request_sha256"],
+                    tea_api.canonical_json_sha256(stored["request"]),
+                )
+
+    def test_v4_standalone_commercial_clipped_capacity_provenance_and_enqueue(self) -> None:
+        payload = _standalone_commercial_request_payload()
+        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
+        request = tea_api.build_technoeconomic_kernel_request(parsed, self.snapshot)
+
+        self.assertEqual(
+            tea_api.technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+            request.calculation_contract_version,
+        )
+        self.assertEqual((), request.cost_lines)
+        self.assertEqual(
+            [
+                ("solectria", 125_000.0, "ac_operating_limit"),
+                ("solaredge", 125_000.0, "ac_operating_limit"),
+            ],
+            [
+                (item.system, item.applied_capacity_w, item.rating_basis)
+                for item in request.applied_capacities or ()
+            ],
+        )
+        standalone = request.standalone_commercial
+        self.assertIsNotNone(standalone)
+        self.assertEqual(100_000_000.0, standalone.target_capacity_w)
+        self.assertEqual("ac_operating_limit", standalone.target_rating_basis)
+        self.assertEqual(
+            ["initial_t0", "annual_year_end", "scheduled_year_end"],
+            [line.timing for line in standalone.cost_lines],
+        )
+        self.assertEqual((10, 20), standalone.cost_lines[2].occurrence_years)
+        self.assertEqual(2026, request.constant_dollar_cost_year)
+        self.assertTrue(
+            all(
+                line.constant_dollar_cost_year == 2026
+                for line in standalone.cost_lines
+            )
+        )
+
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            parsed,
+            self.envelope,
+            request,
+        )
+        self.assertEqual(4, provenance["schema_version"])
+        self.assertEqual("technoeconomic-submission-v4", provenance["request_schema"])
+        receipt = provenance["standalone_commercial_receipt"]
+        self.assertEqual(100_000_000.0, receipt["target_capacity_w"])
+        self.assertEqual(125_000.0, receipt["source_capacity"]["applied_capacity_w"])
+        self.assertEqual("ac_operating_limit", receipt["source_capacity"]["rating_basis"])
+        self.assertEqual(800.0, receipt["capacity_scale_factor"])
+        self.assertEqual("full_system", receipt["cost_stack_completeness"])
+        self.assertEqual(
+            {
+                "full_initial_capex": 1,
+                "full_annual_om": 1,
+                "scheduled_replacement": 1,
+            },
+            receipt["cost_category_counts"],
+        )
+        self.assertEqual(
+            "full_initial_capex",
+            receipt["cost_lines"][0]["cost_category"],
+        )
+        self.assertEqual(
+            ["commercial.solaredge.full-initial-system"],
+            receipt["cost_lines"][0]["coverage_ids"],
+        )
+        self.assertEqual(2026, receipt["cost_lines"][0]["constant_dollar_cost_year"])
+        self.assertEqual(
+            tea_api.canonical_json_sha256(receipt),
+            provenance["standalone_commercial_receipt_sha256"],
+        )
+        evidence_subjects = {
+            item["subject"]
+            for item in provenance["evidence_receipt"]["preservation"]
+        }
+        self.assertIn("standalone-commercial:energy-scaling", evidence_subjects)
+        self.assertIn(
+            "standalone-commercial-cost:commercial.solaredge.capex",
+            evidence_subjects,
+        )
+
+        response = self._create_via_api(payload)
+        self.assertEqual(202, response.status_code, response.text)
+        stored = self.store.get_technoeconomic_job(response.json()["job"]["job_id"])
+        self.assertEqual([], stored["request"]["cost_lines"])
+        self.assertEqual(
+            100.0,
+            stored["request"]["standalone_commercial"]["target_capacity"],
+        )
+        self.assertEqual(
+            800.0,
+            stored["submission_provenance"]["standalone_commercial_receipt"]
+            ["capacity_scale_factor"],
+        )
+
+    def test_v4_capacity_fallback_and_rating_basis_mismatch_fail_closed(self) -> None:
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"]["request"] = {
+            "curtailment_enabled": False,
+            "curtailment_limit_kw": 125.0,
+        }
+        payload = _standalone_commercial_request_payload(
+            target_rating_basis="dc_installed_nameplate"
+        )
+        request = tea_api.build_technoeconomic_kernel_request(payload, snapshot)
+        source = next(
+            item
+            for item in request.applied_capacities or ()
+            if item.system == "solaredge"
+        )
+        expected_wdc = snapshot["capacity_manifest"]["systems"]["solaredge"][
+            "installed_wdc"
+        ]
+        self.assertEqual(expected_wdc, source.applied_capacity_w)
+        self.assertEqual("dc_installed_nameplate", source.rating_basis)
+
+        mismatched = _standalone_commercial_request_payload(
+            target_rating_basis="dc_installed_nameplate"
+        )
+        response = self._create_via_api(mismatched)
+        self.assertEqual(422, response.status_code, response.text)
+        self.assertIn("rating basis", response.text.lower())
+
+    def test_v4_standalone_schema_rejects_mixed_and_mistimed_cost_stacks(self) -> None:
+        mixed = _standalone_commercial_request_payload()
+        mixed["cost_lines"] = deepcopy(_applied_site_request_payload()["cost_lines"])
+        mixed_v3 = _standalone_commercial_request_payload()
+        mixed_v3["commercial_scaling"] = deepcopy(
+            _commercial_scaling_request_payload()["commercial_scaling"]
+        )
+        mistimed = _standalone_commercial_request_payload()
+        mistimed["standalone_commercial"]["cost_lines"][1]["unit"] = (
+            "constant_usd_per_target_w"
+        )
+        unscheduled = _standalone_commercial_request_payload()
+        unscheduled["standalone_commercial"]["cost_lines"][2][
+            "occurrence_years"
+        ] = []
+        out_of_life = _standalone_commercial_request_payload()
+        out_of_life["standalone_commercial"]["cost_lines"][2][
+            "occurrence_years"
+        ] = [21]
+
+        duplicate_capex = _standalone_commercial_request_payload()
+        second_capex = deepcopy(
+            duplicate_capex["standalone_commercial"]["cost_lines"][0]
+        )
+        second_capex["input_id"] = "commercial.solaredge.capex.duplicate"
+        second_capex["coverage_ids"] = [
+            "commercial.solaredge.full-initial-system.duplicate"
+        ]
+        duplicate_capex["standalone_commercial"]["cost_lines"].append(
+            second_capex
+        )
+
+        missing_capex = _standalone_commercial_request_payload()
+        missing_capex["standalone_commercial"]["cost_lines"] = [
+            line
+            for line in missing_capex["standalone_commercial"]["cost_lines"]
+            if line["cost_category"] != "full_initial_capex"
+        ]
+        missing_om = _standalone_commercial_request_payload()
+        missing_om["standalone_commercial"]["cost_lines"] = [
+            line
+            for line in missing_om["standalone_commercial"]["cost_lines"]
+            if line["cost_category"] != "full_annual_om"
+        ]
+
+        overlapping_replacement = _standalone_commercial_request_payload()
+        second_replacement = deepcopy(
+            overlapping_replacement["standalone_commercial"]["cost_lines"][2]
+        )
+        second_replacement["input_id"] = (
+            "commercial.solaredge.replacement.duplicate"
+        )
+        second_replacement["occurrence_years"] = [20]
+        overlapping_replacement["standalone_commercial"]["cost_lines"].append(
+            second_replacement
+        )
+        mismatched_cost_year = _standalone_commercial_request_payload()
+        mismatched_cost_year["standalone_commercial"]["cost_lines"][0][
+            "constant_dollar_cost_year"
+        ] = 2025
+
+        for invalid in (
+            mixed,
+            mixed_v3,
+            mistimed,
+            unscheduled,
+            out_of_life,
+            duplicate_capex,
+            missing_capex,
+            missing_om,
+            overlapping_replacement,
+            mismatched_cost_year,
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValidationError):
+                    TechnoeconomicSubmissionRequest.model_validate(invalid)
 
     def test_v2_site_request_falls_back_to_installed_dc_without_clipping(self) -> None:
         cases = (

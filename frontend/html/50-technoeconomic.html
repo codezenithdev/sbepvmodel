@@ -1,5 +1,5 @@
                 <section class="controls-bar tea-workspace" id="technoeconomicInputs" aria-labelledby="technoeconomicInputsHeading">
-                    <div class="controls-header tea-page-heading">
+                    <div class="controls-header tea-page-heading" hidden>
                         <div>
                             <p class="annual-kicker">Probabilistic lifecycle economics</p>
                             <h2 class="section-title" id="technoeconomicInputsHeading">Technoeconomic analysis setup</h2>
@@ -8,8 +8,408 @@
                         <span class="tea-contract-badge">Server calculated</span>
                     </div>
 
-                    <form class="tea-form" id="technoeconomicForm" novalidate>
-                        <section class="tea-panel tea-core-panel" aria-labelledby="technoeconomicSourceHeading">
+                    <form class="tea-form tea-standalone-workspace" id="technoeconomicForm" novalidate>
+                        <section class="tea-panel tea-calculation-bridge" id="technoeconomicCalculationBridge" aria-labelledby="technoeconomicCalculationBridgeHeading">
+                            <div class="tea-section-heading">
+                                <div>
+                                    <p class="tea-step-label" hidden>Calculation bridge</p>
+                                    <h3 id="technoeconomicCalculationBridgeHeading">Calculation bridge</h3>
+                                </div>
+                                <span class="tea-status-pill" id="technoeconomicStandaloneBridgeStatus">Select a source</span>
+                            </div>
+                            <ol class="tea-bridge-steps" aria-label="Paired commercial LCOE calculation steps">
+                                <li class="tea-bridge-card">
+                                    <div class="tea-bridge-card-heading">
+                                        <span class="tea-bridge-number" aria-hidden="true">1</span>
+                                        <h4>SolarTAC modeled energy</h4>
+                                    </div>
+                                    <p class="tea-bridge-verification" id="technoeconomicStandaloneSourceVerification">Choose a verified Annual Simulation</p>
+                                    <dl class="tea-bridge-system-values">
+                                        <div><dt>Solectria capacity</dt><dd id="technoeconomicStandaloneSolectriaSourceCapacity">Unavailable</dd></div>
+                                        <div><dt>SolarEdge capacity</dt><dd id="technoeconomicStandaloneSolarEdgeSourceCapacity">Unavailable</dd></div>
+                                    </dl>
+                                    <p id="technoeconomicStandaloneSourceYears">Weather-year sample unavailable</p>
+                                    <dl class="tea-bridge-system-values">
+                                        <div><dt>Solectria energy</dt><dd id="technoeconomicStandaloneSolectriaSourceEnergy">Unavailable</dd></div>
+                                        <div><dt>SolarEdge energy</dt><dd id="technoeconomicStandaloneSolarEdgeSourceEnergy">Unavailable</dd></div>
+                                    </dl>
+                                </li>
+                                <li class="tea-bridge-connector" aria-hidden="true">Then</li>
+                                <li class="tea-bridge-card">
+                                    <div class="tea-bridge-card-heading">
+                                        <span class="tea-bridge-number" aria-hidden="true">2</span>
+                                        <h4>Normalize</h4>
+                                    </div>
+                                    <p>Annual energy ÷ each system's applied capacity</p>
+                                    <dl class="tea-bridge-system-values">
+                                        <div><dt>Solectria</dt><dd id="technoeconomicStandaloneSolectriaSpecificEnergy">Unavailable</dd></div>
+                                        <div><dt>SolarEdge</dt><dd id="technoeconomicStandaloneSolarEdgeSpecificEnergy">Unavailable</dd></div>
+                                    </dl>
+                                </li>
+                                <li class="tea-bridge-connector" aria-hidden="true">Then</li>
+                                <li class="tea-bridge-card">
+                                    <div class="tea-bridge-card-heading">
+                                        <span class="tea-bridge-number" aria-hidden="true">3</span>
+                                        <h4>Scale</h4>
+                                    </div>
+                                    <p>Scale to the commercial target</p>
+                                    <strong id="technoeconomicStandaloneTargetCapacity">100 MW · source basis pending</strong>
+                                    <span class="tea-bridge-equation">Specific energy × target capacity</span>
+                                    <dl class="tea-bridge-system-values">
+                                        <div><dt>Solectria</dt><dd id="technoeconomicStandaloneSolectriaTargetEnergy">Unavailable</dd></div>
+                                        <div><dt>SolarEdge</dt><dd id="technoeconomicStandaloneSolarEdgeTargetEnergy">Unavailable</dd></div>
+                                    </dl>
+                                    <p>Commercial annual-energy distribution</p>
+                                </li>
+                                <li class="tea-bridge-connector" aria-hidden="true">Then</li>
+                                <li class="tea-bridge-card">
+                                    <div class="tea-bridge-card-heading">
+                                        <span class="tea-bridge-number" aria-hidden="true">4</span>
+                                        <h4>Levelize</h4>
+                                    </div>
+                                    <span class="tea-bridge-equation">Discounted lifecycle cost<br>÷<br>discounted lifecycle AC energy</span>
+                                    <strong>LCOE distribution</strong>
+                                    <p>Real USD/MWh</p>
+                                </li>
+                                <li class="tea-bridge-connector" aria-hidden="true">Then</li>
+                                <li class="tea-bridge-card">
+                                    <div class="tea-bridge-card-heading">
+                                        <span class="tea-bridge-number" aria-hidden="true">5</span>
+                                        <h4>Result</h4>
+                                    </div>
+                                    <strong>Paired commercial LCOE CDF</strong>
+                                    <p>Compare both distributions below.</p>
+                                </li>
+                            </ol>
+                            <div class="tea-bridge-footer">
+                                <p id="technoeconomicStandaloneSourceBasis">Each source capacity uses the enabled clipping/curtailment limit; otherwise it uses that system's verified nameplate.</p>
+                                <p>Cost preset: NREL 2024 ATB.</p>
+                            </div>
+                        </section>
+
+                        <section class="tea-standalone-primary" id="technoeconomicStandaloneResults" aria-labelledby="technoeconomicStandaloneResultsHeading" data-state="empty">
+                            <article class="tea-standalone-cdf-card">
+                                <header class="tea-standalone-result-heading">
+                                    <div>
+                                        <p class="tea-step-label">Result: paired commercial LCOE CDF</p>
+                                        <h3 id="technoeconomicStandaloneResultsHeading">Solectria and SolarEdge LCOE</h3>
+                                        <p id="technoeconomicStandaloneResultStatus" role="status" aria-live="polite">Complete the assumptions, then calculate. Results are modeled, not a validated forecast.</p>
+                                    </div>
+                                    <nav class="tea-standalone-result-actions" aria-label="Result exports">
+                                        <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneCdfLink" href="#" hidden>Chart</a>
+                                        <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneCsvLink" href="#" hidden>CSV bundle</a>
+                                        <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneXlsxLink" href="#" hidden>Workbook</a>
+                                    </nav>
+                                </header>
+                                <div class="tea-standalone-result-body">
+                                    <figure class="tea-standalone-cdf-figure">
+                                        <img id="technoeconomicStandaloneCdfPlot" alt="Empirical cumulative distributions of modeled commercial Solectria and SolarEdge lifecycle LCOE" hidden>
+                                        <p class="tea-figure-fallback" id="technoeconomicStandaloneCdfFallback" role="status">The verified CDF chart will appear after a completed calculation.</p>
+                                        <figcaption>The curve shows the probability that modeled LCOE is at or below each real-USD value.</figcaption>
+                                    </figure>
+                                    <div class="tea-standalone-interpretation">
+                                        <section aria-labelledby="technoeconomicStandaloneInterpretationHeading">
+                                            <h4 id="technoeconomicStandaloneInterpretationHeading">Interpretation</h4>
+                                            <p id="technoeconomicStandaloneInterpretation">A completed server result is required before the probability distribution can be interpreted.</p>
+                                        </section>
+                                        <div>
+                                            <h4 id="technoeconomicLcoePercentilesHeading">LCOE percentiles (real USD/MWh)</h4>
+                                            <div class="tea-table-region" role="region" aria-labelledby="technoeconomicLcoePercentilesHeading" tabindex="0">
+                                                <table class="tea-table tea-standalone-percentile-table" id="technoeconomicLcoePercentileTable">
+                                                    <caption>Commercial Solectria and SolarEdge lifecycle LCOE percentiles (P10, P50, and P90).</caption>
+                                                    <thead>
+                                                        <tr>
+                                                            <th scope="col">Percentile</th>
+                                                            <th scope="col">Solectria</th>
+                                                            <th scope="col">SolarEdge</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody id="technoeconomicLcoePercentileBody"></tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <p class="tea-standalone-run-context" id="technoeconomicStandaloneRunContext">Run details will appear here.</p>
+                                <dl class="tea-standalone-provenance" id="technoeconomicStandaloneProvenance" aria-label="Source and job provenance"></dl>
+                                <p class="tea-standalone-disclaimer">For internal use only. This modeled scenario is not a validated forecast.</p>
+                            </article>
+
+                            <aside class="tea-scenario-rail" id="technoeconomicScenarioInputs" aria-labelledby="technoeconomicScenarioInputsHeading">
+                                <div class="tea-scenario-summary-section">
+                                    <h3 id="technoeconomicScenarioInputsHeading">Scenario inputs</h3>
+                                    <dl class="tea-scenario-summary" id="technoeconomicScenarioSummary">
+                                        <div><dt>Target capacity</dt><dd>100 MW · source basis pending</dd></div>
+                                        <div><dt>Frozen source scale</dt><dd>Select a frozen Annual source</dd></div>
+                                        <div><dt>Project life</dt><dd>30 years</dd></div>
+                                        <div><dt>Systems</dt><dd>Solectria and SolarEdge</dd></div>
+                                        <div><dt>Currency</dt><dd>USD (real 2022)</dd></div>
+                                        <div><dt>Discount rate</dt><dd>Enter an evidenced real rate</dd></div>
+                                    </dl>
+                                </div>
+                                <div class="tea-scenario-summary-section">
+                                    <h4>System cost summary (P50)</h4>
+                                    <div class="tea-paired-cost-summary">
+                                        <section aria-labelledby="technoeconomicStandaloneSolectriaCostSummaryHeading">
+                                            <h5 id="technoeconomicStandaloneSolectriaCostSummaryHeading">Solectria</h5>
+                                            <dl class="tea-scenario-summary" id="technoeconomicStandaloneSolectriaCostSummary">
+                                                <div><dt>Initial cost</dt><dd>Calculate to view</dd></div>
+                                                <div><dt>Scheduled replacement</dt><dd>Not included until a sourced line is added</dd></div>
+                                                <div><dt>Total lifecycle cost</dt><dd>Calculate to view</dd></div>
+                                            </dl>
+                                        </section>
+                                        <section aria-labelledby="technoeconomicStandaloneSolarEdgeCostSummaryHeading">
+                                            <h5 id="technoeconomicStandaloneSolarEdgeCostSummaryHeading">SolarEdge</h5>
+                                            <dl class="tea-scenario-summary" id="technoeconomicStandaloneSolarEdgeCostSummary">
+                                                <div><dt>Initial cost</dt><dd>Calculate to view</dd></div>
+                                                <div><dt>Scheduled replacement</dt><dd>Not included until a sourced line is added</dd></div>
+                                                <div><dt>Total lifecycle cost</dt><dd>Calculate to view</dd></div>
+                                            </dl>
+                                        </section>
+                                    </div>
+                                </div>
+                                <div class="tea-scenario-actions">
+                                    <button class="tea-button tea-button-primary" id="technoeconomicEditAssumptionsBtn" type="button" aria-controls="technoeconomicAssumptionsDialog" aria-haspopup="dialog">Edit assumptions</button>
+                                    <button class="tea-button tea-button-secondary" id="technoeconomicStandaloneSubmitBtn" type="submit">Calculate LCOE</button>
+                                </div>
+                                <dialog class="tea-assumptions-dialog" id="technoeconomicAssumptionsDialog" aria-labelledby="technoeconomicAssumptionsHeading" aria-describedby="technoeconomicAssumptionsDescription">
+                                    <div class="tea-assumptions-dialog-shell">
+                                        <header class="tea-assumptions-dialog-header">
+                                            <div>
+                                                <p class="tea-step-label">Scenario inputs</p>
+                                                <h2 id="technoeconomicAssumptionsHeading">Edit assumptions</h2>
+                                                <p id="technoeconomicAssumptionsDescription">Review source, scale, cost, and finance inputs before calculation.</p>
+                                            </div>
+                                            <button class="tea-button tea-button-quiet" id="technoeconomicAssumptionsCloseBtn" type="button">Close</button>
+                                        </header>
+                                    <div class="tea-standalone-assumptions-body">
+                                        <div class="tea-alert" id="technoeconomicStandaloneFormErrors" role="alert" aria-live="assertive" tabindex="-1" hidden></div>
+                                        <div class="tea-assumptions-table-region" role="region" aria-labelledby="technoeconomicAssumptionsHeading" tabindex="0">
+                                            <table class="tea-assumptions-table">
+                                                <caption>Editable shared and paired assumptions for the probabilistic technoeconomic analysis.</caption>
+                                                <thead>
+                                                    <tr>
+                                                        <th scope="col">Assumption</th>
+                                                        <th scope="col">Distribution</th>
+                                                        <th class="tea-system-column-heading tea-system-column-heading-sol" scope="col">Solectria</th>
+                                                        <th class="tea-system-column-heading tea-system-column-heading-se" scope="col">SolarEdge</th>
+                                                        <th scope="col">Unit / status</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="tea-assumption-group" aria-labelledby="technoeconomicStandaloneSourceHeading technoeconomicStandaloneScaleHeading">
+                                                    <tr class="tea-assumption-group-heading">
+                                                        <th colspan="5" scope="rowgroup">
+                                                            <span id="technoeconomicStandaloneSourceHeading">Source &amp; scale</span>
+                                                            <span class="sr-only" id="technoeconomicStandaloneScaleHeading">Commercial scale and sampling</span>
+                                                        </th>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row tea-assumption-source-row">
+                                                        <th scope="row">
+                                                            <label for="technoeconomicStandaloneSourceSelect">Previous Annual Simulation source</label>
+                                                            <small>One completed, verified run supplies paired energy and capacity for both systems.</small>
+                                                        </th>
+                                                        <td class="tea-assumption-shared-marker" data-label="Distribution"><span class="tea-shared-value-label">Shared</span></td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
+                                                            <div class="tea-field">
+                                                                <select id="technoeconomicStandaloneSourceSelect" aria-describedby="technoeconomicStandaloneSourceHelp" required>
+                                                                    <option value="">Select a completed, verified Annual Simulation</option>
+                                                                </select>
+                                                                <div class="tea-assumption-actions">
+                                                                    <button class="tea-button tea-button-quiet" id="technoeconomicStandaloneRefreshSourcesBtn" type="button">Refresh sources</button>
+                                                                    <button class="tea-button tea-button-quiet" id="technoeconomicStandaloneOpenAnnualBtn" type="button">Open Annual Simulation</button>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Status">
+                                                            <strong>Verified prior run</strong>
+                                                            <small id="technoeconomicStandaloneSourceHelp">The selected source is frozen and re-verified when the job is queued.</small>
+                                                        </td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row">
+                                                        <th scope="row"><label for="technoeconomicStandaloneTargetCapacityInput">Target capacity</label></th>
+                                                        <td class="tea-assumption-shared-marker" data-label="Distribution"><span class="tea-shared-value-label">Shared</span></td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
+                                                            <div class="tea-input-with-unit">
+                                                                <input id="technoeconomicStandaloneTargetCapacityInput" type="number" min="0" step="any" inputmode="decimal" value="100" aria-describedby="technoeconomicStandaloneTargetBasisHelp" required>
+                                                                <span id="technoeconomicStandaloneTargetCapacityUnit" aria-hidden="true">MW</span>
+                                                            </div>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Unit / status">
+                                                            <strong>Commercial target</strong>
+                                                            <small id="technoeconomicStandaloneTargetBasisHelp">Enter any commercial target. Energy scales from the frozen Annual source; per-capacity costs use the target.</small>
+                                                        </td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row">
+                                                        <th scope="row"><label for="technoeconomicStandaloneRealizations">LHS realizations</label></th>
+                                                        <td class="tea-assumption-shared-marker" data-label="Distribution"><span class="tea-shared-value-label">Shared</span></td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
+                                                            <input id="technoeconomicStandaloneRealizations" type="number" min="1" max="100000" step="1" inputmode="numeric" value="10000" required>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Seeded LHS</strong><small>1–100,000 realizations</small></td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row">
+                                                        <th scope="row"><label for="technoeconomicStandaloneSeed">Sampling seed</label></th>
+                                                        <td class="tea-assumption-shared-marker" data-label="Distribution"><span class="tea-shared-value-label">Shared</span></td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
+                                                            <input id="technoeconomicStandaloneSeed" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="20" autocomplete="off" required>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Reproducible</strong><small>Whole-number seed</small></td>
+                                                    </tr>
+                                                </tbody>
+                                                <tbody class="tea-assumption-group" aria-labelledby="technoeconomicStandaloneFinanceHeading">
+                                                    <tr class="tea-assumption-group-heading">
+                                                        <th colspan="5" id="technoeconomicStandaloneFinanceHeading" scope="rowgroup">Finance</th>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row">
+                                                        <th scope="row"><label for="technoeconomicStandaloneCostYear">Constant-dollar year</label></th>
+                                                        <td class="tea-assumption-shared-marker" data-label="Distribution"><span class="tea-locked-value-label">Locked</span></td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
+                                                            <input id="technoeconomicStandaloneCostYear" type="number" value="2022" aria-describedby="technoeconomicStandaloneCostYearHelp" readonly>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Real 2022 USD</strong><small id="technoeconomicStandaloneCostYearHelp">Locked to the ATB real-2022-USD preset; no currency conversion is applied.</small></td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row">
+                                                        <th scope="row"><label for="technoeconomicStandaloneProjectLife">Project life</label></th>
+                                                        <td class="tea-assumption-shared-marker" data-label="Distribution"><span class="tea-shared-value-label">Shared</span></td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
+                                                            <div class="tea-input-with-unit">
+                                                                <input id="technoeconomicStandaloneProjectLife" type="number" min="1" step="1" inputmode="numeric" value="30" required>
+                                                                <span aria-hidden="true">years</span>
+                                                            </div>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Years</strong><small>Lifecycle horizon</small></td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row tea-v4-distribution" data-tea-v4-distribution="discount">
+                                                        <th scope="row">Real discount rate</th>
+                                                        <td data-label="Distribution">
+                                                            <div class="tea-field">
+                                                                <label class="sr-only" for="technoeconomicStandaloneDiscountFamily">Real discount rate distribution</label>
+                                                                <select id="technoeconomicStandaloneDiscountFamily" data-tea-v4-family>
+                                                                    <option value="fixed">Fixed</option>
+                                                                    <option value="uniform">Uniform</option>
+                                                                    <option value="triangular">Triangular</option>
+                                                                    <option value="bounded_normal">Normal (bounded)</option>
+                                                                </select>
+                                                            </div>
+                                                        </td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
+                                                            <div class="tea-v4-distribution-parameters" id="technoeconomicStandaloneDiscountParameters"></div>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Real % / year</strong><small>Enter percentages; the request stores a real fraction per year.</small></td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row tea-v4-distribution" data-tea-v4-distribution="degradation">
+                                                        <th scope="row">Annual module degradation</th>
+                                                        <td data-label="Distribution">
+                                                            <div class="tea-field">
+                                                                <label class="sr-only" for="technoeconomicStandaloneDegradationFamily">Annual module degradation distribution</label>
+                                                                <select id="technoeconomicStandaloneDegradationFamily" data-tea-v4-family>
+                                                                    <option value="fixed">Fixed</option>
+                                                                    <option value="uniform">Uniform</option>
+                                                                    <option value="triangular">Triangular</option>
+                                                                    <option value="bounded_normal">Normal (bounded)</option>
+                                                                </select>
+                                                            </div>
+                                                        </td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
+                                                            <div class="tea-v4-distribution-parameters" id="technoeconomicStandaloneDegradationParameters"></div>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>% / year</strong><small>Shared by both systems.</small></td>
+                                                    </tr>
+                                                </tbody>
+                                                <tbody class="tea-assumption-group" aria-labelledby="technoeconomicStandaloneCostsHeading">
+                                                    <tr class="tea-assumption-group-heading">
+                                                        <th colspan="5" id="technoeconomicStandaloneCostsHeading" scope="rowgroup">System costs</th>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row tea-assumption-cost-row">
+                                                        <th scope="row">
+                                                            System cost assumptions
+                                                            <small>Initial installed cost, annual O&amp;M, and optional sourced replacements.</small>
+                                                        </th>
+                                                        <td class="tea-assumption-cost-distribution-cell" data-label="Distribution">
+                                                            <div class="tea-cost-distribution-guide">
+                                                                <span class="tea-shared-value-label">Per system</span>
+                                                                <small>Choose each distribution in its Solectria or SolarEdge column.</small>
+                                                                <ul aria-label="Independent system cost distributions">
+                                                                    <li><strong>Initial installed cost</strong><small>Independent distribution for each system</small></li>
+                                                                    <li><strong>Annual operations and maintenance</strong><small>Independent distribution for each system</small></li>
+                                                                    <li><strong>Scheduled replacement</strong><small>Optional and independently configured</small></li>
+                                                                </ul>
+                                                            </div>
+                                                        </td>
+                                                        <td class="tea-system-cost-cell tea-system-cost-cell-sol" data-label="Solectria">
+                                                            <article class="tea-paired-system-cost-card tea-paired-system-cost-card-sol" aria-labelledby="technoeconomicStandaloneSolectriaCostsHeading">
+                                                                <h5 id="technoeconomicStandaloneSolectriaCostsHeading">Solectria</h5>
+                                                                <div class="tea-standalone-cost-lines" id="technoeconomicStandaloneSolectriaCostLines"></div>
+                                                                <label class="tea-switch-row" for="technoeconomicStandaloneSolectriaReplacementEnabled">
+                                                                    <input id="technoeconomicStandaloneSolectriaReplacementEnabled" type="checkbox" aria-controls="technoeconomicStandaloneSolectriaReplacementFields" aria-expanded="false">
+                                                                    <span><strong>Add a sourced replacement</strong><small>Off by default.</small></span>
+                                                                </label>
+                                                                <div id="technoeconomicStandaloneSolectriaReplacementFields" hidden></div>
+                                                            </article>
+                                                        </td>
+                                                        <td class="tea-system-cost-cell tea-system-cost-cell-se" data-label="SolarEdge">
+                                                            <article class="tea-paired-system-cost-card tea-paired-system-cost-card-se" aria-labelledby="technoeconomicStandaloneSolarEdgeCostsHeading">
+                                                                <h5 id="technoeconomicStandaloneSolarEdgeCostsHeading">SolarEdge</h5>
+                                                                <div class="tea-standalone-cost-lines" id="technoeconomicStandaloneSolarEdgeCostLines"></div>
+                                                                <label class="tea-switch-row" for="technoeconomicStandaloneSolarEdgeReplacementEnabled">
+                                                                    <input id="technoeconomicStandaloneSolarEdgeReplacementEnabled" type="checkbox" aria-controls="technoeconomicStandaloneSolarEdgeReplacementFields" aria-expanded="false">
+                                                                    <span><strong>Add a sourced replacement</strong><small>Off by default.</small></span>
+                                                                </label>
+                                                                <div id="technoeconomicStandaloneSolarEdgeReplacementFields" hidden></div>
+                                                            </article>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Real 2022 USD</strong><small>Wac or Wdc basis follows the selected Annual Simulation source.</small></td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-benchmark-row">
+                                                        <td colspan="5">
+                                                            <section class="tea-benchmark-preset" aria-labelledby="technoeconomicBenchmarkHeading">
+                                                                <h4 id="technoeconomicBenchmarkHeading">NREL 2024 ATB utility-scale PV benchmark preset</h4>
+                                                                <p>Preset (real 2022 USD): $1.56/Wac CAPEX and $22/kWac-year O&amp;M; DC equivalents: $1.17/Wdc and $16.58/kWdc-year. The same generic benchmark starts both systems. It is not a vendor quote.</p>
+                                                                <p><a href="https://data.openei.org/submissions/6006" target="_blank" rel="noreferrer">Review the official 2024 ATB data</a></p>
+                                                            </section>
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                                <tbody class="tea-assumption-group" aria-labelledby="technoeconomicStandaloneEvidenceHeading">
+                                                    <tr class="tea-assumption-group-heading">
+                                                        <th colspan="5" id="technoeconomicStandaloneEvidenceHeading" scope="rowgroup">Evidence</th>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row">
+                                                        <th scope="row"><label for="technoeconomicStandaloneAssumptionNote">Source / justification</label><small>Discount-rate and degradation evidence.</small></th>
+                                                        <td data-label="Requirement"><span class="tea-required-value-label">Required</span></td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Evidence">
+                                                            <textarea id="technoeconomicStandaloneAssumptionNote" rows="2" maxlength="4000" placeholder="Cite the source or explain these assumptions." required></textarea>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Status"><strong>Evidence needed</strong><small>Saved with the submitted request.</small></td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row">
+                                                        <th scope="row">Review acceptance</th>
+                                                        <td data-label="Requirement"><span class="tea-required-value-label">Required</span></td>
+                                                        <td class="tea-assumption-acceptance-cell" colspan="3" data-label="Acceptance">
+                                                            <label class="tea-checkbox-row" for="technoeconomicStandaloneAccept">
+                                                                <input id="technoeconomicStandaloneAccept" type="checkbox" required>
+                                                                <span>
+                                                                    <strong>I reviewed both system cost stacks, capacity scaling, benchmark limits, and financial assumptions.</strong>
+                                                                    <small>This acceptance is recorded with the submitted request.</small>
+                                                                </span>
+                                                            </label>
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                        <footer class="tea-assumptions-dialog-actions">
+                                            <p class="tea-assumptions-validation-summary">Complete the verified source, evidence, and acceptance before calculation.</p>
+                                            <button class="tea-button tea-button-secondary" id="technoeconomicAssumptionsFooterCloseBtn" type="button">Close</button>
+                                            <button class="tea-button tea-button-primary" id="technoeconomicAssumptionsReviewBtn" type="submit">Review and calculate</button>
+                                        </footer>
+                                    </div>
+                                </dialog>
+                            </aside>
+                        </section>
+
+                        <section class="tea-panel tea-core-panel tea-legacy-v3-workspace" aria-labelledby="technoeconomicSourceHeading" hidden inert>
                             <div class="tea-section-heading">
                                 <div>
                                     <p class="tea-step-label">Step 1</p>
@@ -102,7 +502,7 @@
 
                         </section>
 
-                        <section class="tea-panel tea-guided-panel" id="technoeconomicGuidedPanel" aria-labelledby="technoeconomicGuidedHeading">
+                        <section class="tea-panel tea-guided-panel tea-legacy-v3-workspace" id="technoeconomicGuidedPanel" aria-labelledby="technoeconomicGuidedHeading" hidden inert>
                             <div class="tea-section-heading">
                                 <div>
                                     <p class="tea-step-label">Step 2 · Guided SolarTAC setup</p>
@@ -819,7 +1219,7 @@
                             </div>
                         </details>
 
-                        <section class="tea-panel tea-submit-panel" id="technoeconomicSubmitPanel" aria-labelledby="technoeconomicSubmitHeading">
+                        <section class="tea-panel tea-submit-panel tea-legacy-v3-workspace" id="technoeconomicSubmitPanel" aria-labelledby="technoeconomicSubmitHeading" hidden inert>
                             <div>
                                 <p class="tea-step-label">Step 4</p>
                                 <h3 id="technoeconomicSubmitHeading">Validate and confirm</h3>
@@ -837,21 +1237,35 @@
                 <p class="tea-sr-live" id="technoeconomicLiveStatus" role="status" aria-live="polite" aria-atomic="true"></p>
 
                 <dialog class="tea-confirm-dialog" id="technoeconomicConfirmDialog" aria-labelledby="technoeconomicConfirmHeading" aria-describedby="technoeconomicConfirmDescription">
-                    <div class="tea-confirm-content">
-                        <div class="tea-section-heading">
+                    <div class="tea-confirm-content tea-confirm-shell">
+                        <header class="tea-confirm-header">
                             <div>
                                 <p class="tea-step-label">Submission confirmation</p>
                                 <h2 id="technoeconomicConfirmHeading">Queue this probabilistic analysis?</h2>
                                 <p id="technoeconomicConfirmDescription">Confirm the frozen request summary. No Annual baseline, model promotion, or comparison will be changed.</p>
                             </div>
+                            <button class="tea-button tea-button-quiet" id="technoeconomicConfirmCloseBtn" type="button">Close</button>
+                        </header>
+                        <div class="tea-confirm-scroll" role="region" aria-labelledby="technoeconomicConfirmReviewHeading" tabindex="0">
+                            <div class="tea-confirm-review-grid">
+                                <aside class="tea-confirm-readiness" aria-labelledby="technoeconomicConfirmReadinessHeading">
+                                    <h3 id="technoeconomicConfirmReadinessHeading">Request readiness</h3>
+                                    <div class="tea-confirm-readiness-list" id="technoeconomicConfirmReadiness"></div>
+                                </aside>
+                                <section class="tea-confirm-review" aria-labelledby="technoeconomicConfirmReviewHeading">
+                                    <h3 id="technoeconomicConfirmReviewHeading">Frozen request</h3>
+                                    <div class="tea-confirm-summary" id="technoeconomicConfirmSummary"></div>
+                                </section>
+                            </div>
+                            <div class="tea-confirm-notices">
+                                <div class="tea-inline-note tea-provisional-note" id="technoeconomicConfirmProvisional" role="note" hidden></div>
+                                <div class="tea-alert" id="technoeconomicConfirmError" role="alert" tabindex="-1" hidden></div>
+                            </div>
                         </div>
-                        <div class="tea-confirm-summary" id="technoeconomicConfirmSummary"></div>
-                        <div class="tea-inline-note tea-provisional-note" id="technoeconomicConfirmProvisional" role="note" hidden></div>
-                        <div class="tea-alert" id="technoeconomicConfirmError" role="alert" tabindex="-1" hidden></div>
-                        <div class="tea-action-row tea-confirm-actions">
+                        <footer class="tea-action-row tea-confirm-actions tea-confirm-footer">
                             <button class="tea-button tea-button-quiet" id="technoeconomicConfirmCancelBtn" type="button">Go back</button>
                             <button class="tea-button tea-button-primary" id="technoeconomicConfirmSubmitBtn" type="button">Confirm and queue</button>
-                        </div>
+                        </footer>
                     </div>
                 </dialog>
             </div>

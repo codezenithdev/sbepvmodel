@@ -27,7 +27,9 @@ from tests.test_technoeconomic_api import (
     _applied_site_request_payload,
     _commercial_request_payload,
     _commercial_scaling_request_payload,
+    _paired_commercial_request_payload,
     _site_request_payload,
+    _standalone_commercial_request_payload,
 )
 
 
@@ -83,6 +85,7 @@ class TechnoeconomicExportTests(unittest.TestCase):
         parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
         self.request_payload = parsed.model_dump(mode="json", exclude_none=False)
         self.request_payload.pop("capacity_normalization", None)
+        self.request_payload.pop("standalone_commercial", None)
         self.snapshot = {
             "schema_version": 1,
             "eligibility_version": technoeconomic_api.ANNUAL_SOURCE_ELIGIBILITY_VERSION,
@@ -228,6 +231,7 @@ class TechnoeconomicExportTests(unittest.TestCase):
                 n=24,
             )
         ).model_dump(mode="json", exclude_none=False)
+        request_payload.pop("standalone_commercial", None)
         snapshot = deepcopy(self.snapshot)
         snapshot["source_annual_job"] = {
             "request": {
@@ -418,6 +422,7 @@ class TechnoeconomicExportTests(unittest.TestCase):
         request_payload = TechnoeconomicSubmissionRequest.model_validate(
             payload
         ).model_dump(mode="json", exclude_none=False)
+        request_payload.pop("standalone_commercial", None)
         snapshot = deepcopy(self.snapshot)
         snapshot["eligible_paired_energy_rows"] = [
             {
@@ -558,6 +563,581 @@ class TechnoeconomicExportTests(unittest.TestCase):
             ):
                 self.assertEqual("OK", checks[check_id]["status_authority"])
 
+    def test_v4_exports_standalone_lcoe_cdf_and_independent_tie_outs(self) -> None:
+        payload = _standalone_commercial_request_payload(n=16)
+        payload["source_annual_job_id"] = "annual-export-source"
+        # Exercise the finite support boundary where an algebraically equivalent
+        # ``(1 + r) ** -year`` implementation differs from the kernel's pinned
+        # exp/log1p primitive by enough ULPs to produce a false export failure.
+        payload["finance"]["real_discount_rate"]["distribution"] = {
+            "family": "fixed",
+            "value": -0.999999999999,
+        }
+        request_payload = TechnoeconomicSubmissionRequest.model_validate(
+            payload
+        ).model_dump(mode="json", exclude_none=False)
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        snapshot_sha256 = technoeconomic_api.canonical_json_sha256(snapshot)
+        request = technoeconomic_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = technoeconomic_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": snapshot_sha256,
+            },
+            request,
+        )
+        calculation = kernel.run_technoeconomic(request)
+        job_id = "tea_export_v4"
+        sealed_artifact = run_technoeconomic._write_sealed_calculation_payload(
+            job_id,
+            "lease_v4",
+            calculation,
+            request_sha256=technoeconomic_api.canonical_json_sha256(request_payload),
+            source_snapshot_sha256=snapshot_sha256,
+            submission_provenance_sha256=technoeconomic_api.canonical_json_sha256(
+                provenance
+            ),
+            publish_check=lambda: None,
+        )
+        sealed_path = self.output / Path(sealed_artifact["storage_key"])
+        routine_result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            sealed_artifact,
+            provenance,
+        )
+
+        manifest = reporting.generate_technoeconomic_exports(
+            job_id=job_id,
+            attempt_directory=sealed_path.parent,
+            sealed_calculation_path=sealed_path,
+            sealed_calculation_artifact=sealed_artifact,
+            request_payload=request_payload,
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+            routine_result=routine_result,
+            cancellation_check=lambda: None,
+            publish_check=lambda: None,
+        )
+
+        self.assertEqual(
+            reporting.STANDALONE_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION,
+            manifest["schema_version"],
+        )
+        self.assertEqual(
+            reporting.STANDALONE_COMMERCIAL_CSV_FORMAT_VERSION,
+            manifest["csv_format_version"],
+        )
+        self.assertEqual("passed", manifest["tie_outs"]["status"])
+        self.assertEqual(
+            reporting.STANDALONE_COMMERCIAL_CDF_CHART_CONTRACT_ID,
+            manifest["artifacts"]["cdf_plot"]["chart_contract_id"],
+        )
+        self.assertEqual(
+            set(reporting.STANDALONE_COMMERCIAL_CHART_CONTRACTS),
+            set(manifest["chart_contracts"]),
+        )
+
+        archive_path = self.output / Path(
+            manifest["artifacts"]["csv_bundle"]["storage_key"]
+        )
+        with zipfile.ZipFile(archive_path) as archive:
+            self.assertIn("csv-bundle-manifest-v4.json", archive.namelist())
+            self.assertIn("standalone-commercial-summary.csv", archive.namelist())
+            realization = next(
+                csv.DictReader(
+                    io.StringIO(archive.read("realizations.csv").decode("utf-8"))
+                )
+            )
+            self.assertEqual(
+                100_000_000.0,
+                float(
+                    realization[
+                        kernel.COMMERCIAL_STANDALONE_FIELD_TARGET_CAPACITY
+                    ]
+                ),
+            )
+            self.assertEqual(
+                800.0,
+                float(
+                    realization[
+                        kernel.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR
+                    ]
+                ),
+            )
+            self.assertGreater(
+                float(realization[kernel.COMMERCIAL_STANDALONE_FIELD_LCOE]),
+                0.0,
+            )
+            cdf_rows = list(
+                csv.DictReader(
+                    io.StringIO(archive.read("metric-cdfs.csv").decode("utf-8"))
+                )
+            )
+            self.assertEqual(
+                routine_result["standalone_commercial"]["cdf"]["source_point_count"],
+                len(cdf_rows),
+            )
+            self.assertEqual(
+                {kernel.COMMERCIAL_STANDALONE_FIELD_LCOE},
+                {row["metric_id"] for row in cdf_rows},
+            )
+            self.assertEqual("1.0", cdf_rows[-1]["cumulative_probability"])
+            summary_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("standalone-commercial-summary.csv").decode(
+                            "utf-8"
+                        )
+                    )
+                )
+            )
+            self.assertEqual(4, len(summary_rows))
+            self.assertEqual("headline", summary_rows[0]["record_type"])
+            self.assertEqual("800.0", summary_rows[0]["capacity_scale_factor"])
+            self.assertTrue(summary_rows[0]["p10"])
+            self.assertTrue(summary_rows[0]["p50"])
+            self.assertTrue(summary_rows[0]["p90"])
+            cost_summary = next(
+                row
+                for row in summary_rows
+                if row["input_id"] == "commercial.solaredge.capex"
+            )
+            self.assertEqual("full_initial_capex", cost_summary["cost_category"])
+            self.assertEqual("2026", cost_summary["constant_dollar_cost_year"])
+            self.assertEqual(
+                ["commercial.solaredge.full-initial-system"],
+                json.loads(cost_summary["coverage_ids_json"]),
+            )
+            input_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("input-specifications.csv").decode("utf-8")
+                    )
+                )
+            )
+            capex_input = next(
+                row
+                for row in input_rows
+                if row["input_id"] == "commercial.solaredge.capex"
+            )
+            self.assertEqual("full_initial_capex", capex_input["cost_type"])
+            self.assertEqual("2026", capex_input["constant_dollar_cost_year"])
+            self.assertEqual(
+                ["commercial.solaredge.full-initial-system"],
+                json.loads(
+                    capex_input["coverage_include_ids_json_part_1"]
+                    + capex_input["coverage_include_ids_json_part_2"]
+                ),
+            )
+            per_year_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("per-year-summary.csv").decode("utf-8")
+                    )
+                )
+            )
+            self.assertEqual(1, len(per_year_rows))
+            per_year = per_year_rows[0]
+            self.assertNotIn("source_sol_predicted_kwh_ac", per_year)
+            self.assertNotIn("solectria_applied_w", per_year)
+            self.assertEqual("125000.0", per_year["source_solaredge_applied_capacity_w"])
+            self.assertEqual("ac_operating_limit", per_year["source_solaredge_rating_basis"])
+            self.assertEqual("100000000.0", per_year["commercial_target_capacity_w"])
+            self.assertEqual("ac_operating_limit", per_year["commercial_target_rating_basis"])
+            self.assertEqual(
+                "800.0",
+                per_year["commercial_capacity_scale_factor_target_w_per_source_w"],
+            )
+            self.assertEqual("direct_capacity_scaling", per_year["commercial_transfer_method"])
+            self.assertEqual(
+                "160000000.0",
+                per_year["commercial_scaled_target_year1_energy_kwh_ac"],
+            )
+            lcoe_prefix = kernel.COMMERCIAL_STANDALONE_FIELD_LCOE
+            self.assertIn(f"{lcoe_prefix}::p10", per_year)
+            self.assertIn(f"{lcoe_prefix}::p50", per_year)
+            self.assertIn(f"{lcoe_prefix}::p90", per_year)
+            self.assertNotIn(f"{lcoe_prefix}::p5", per_year)
+            self.assertNotIn(f"{lcoe_prefix}::p95", per_year)
+            checks = {
+                row["check_id"]: row
+                for row in csv.DictReader(
+                    io.StringIO(archive.read("checks.csv").decode("utf-8"))
+                )
+            }
+            for check_id in (
+                "standalone_target_capacity_receipt",
+                "standalone_source_capacity_receipt",
+                "standalone_capacity_scale_factor",
+                "standalone_capacity_scale_factor_realizations",
+                "standalone_rating_basis_bridge",
+                "standalone_full_system_cost_categories",
+                "standalone_cost_line_coverage::commercial.solaredge.capex",
+                "standalone_cost_line_constant_dollar_year::commercial.solaredge.capex",
+                "standalone_year1_energy_scaling",
+                "standalone_initial_cost_stack",
+                "standalone_recurring_cost_stack",
+                "standalone_scheduled_cost_stack",
+                "standalone_lifecycle_cost_component_sum",
+                "standalone_lcoe_lifecycle_ratio",
+                "standalone_lcoe_equivalent_annual_ratio",
+            ):
+                self.assertEqual("OK", checks[check_id]["status_authority"])
+
+        workbook_path = self.output / Path(
+            manifest["artifacts"]["xlsx_workbook"]["storage_key"]
+        )
+        workbook = openpyxl.load_workbook(workbook_path, read_only=True, data_only=False)
+        try:
+            self.assertIn("Commercial LCOE", workbook.sheetnames)
+            self.assertIn("Summary", workbook.sheetnames)
+            per_year_sheet = workbook["Per-Year Summary"]
+            per_year_headers = [cell.value for cell in next(per_year_sheet.iter_rows())]
+            self.assertIn("source_solaredge_applied_capacity_w", per_year_headers)
+            self.assertIn(
+                f"{kernel.COMMERCIAL_STANDALONE_FIELD_LCOE}::p10",
+                per_year_headers,
+            )
+            self.assertNotIn("source_sol_predicted_kwh_ac", per_year_headers)
+        finally:
+            workbook.close()
+
+        sealed_calculation = reporting._load_sealed_calculation(
+            attempt_directory=sealed_path.parent,
+            sealed_calculation_path=sealed_path,
+            sealed_calculation_artifact=sealed_artifact,
+            request_payload=request_payload,
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+        )
+        mismatched_year_provenance = deepcopy(provenance)
+        mismatched_year_provenance["standalone_commercial_receipt"][
+            "cost_lines"
+        ][0]["constant_dollar_cost_year"] = 2025
+        year_checks = {
+            row[0]: row
+            for row in reporting._build_checks(
+                sealed_calculation,
+                snapshot,
+                mismatched_year_provenance,
+                routine_result,
+            )
+        }
+        self.assertEqual(
+            "FAIL",
+            year_checks[
+                "standalone_cost_line_constant_dollar_year::commercial.solaredge.capex"
+            ][5],
+        )
+
+        tampered = deepcopy(routine_result)
+        tampered["standalone_commercial"]["capacity_scale_factor"] = 799.0
+        with self.assertRaisesRegex(
+            reporting.TechnoeconomicExportError,
+            "routine result differs",
+        ):
+            reporting.generate_technoeconomic_exports(
+                job_id="tea_export_v4_tampered",
+                attempt_directory=sealed_path.parent,
+                sealed_calculation_path=sealed_path,
+                sealed_calculation_artifact=sealed_artifact,
+                request_payload=request_payload,
+                source_snapshot=snapshot,
+                submission_provenance=provenance,
+                routine_result=tampered,
+                cancellation_check=lambda: None,
+                publish_check=lambda: None,
+            )
+
+    def test_v5_exports_paired_lcoe_cdfs_and_per_system_tie_outs(self) -> None:
+        payload = _paired_commercial_request_payload(
+            target_rating_basis="dc_installed_nameplate",
+            n=16,
+        )
+        payload["source_annual_job_id"] = "annual-export-source"
+        request_payload = TechnoeconomicSubmissionRequest.model_validate(
+            payload
+        ).model_dump(mode="json", exclude_none=False)
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": False,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        snapshot_sha256 = technoeconomic_api.canonical_json_sha256(snapshot)
+        request = technoeconomic_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = technoeconomic_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": snapshot_sha256,
+            },
+            request,
+        )
+        calculation = kernel.run_technoeconomic(request)
+        job_id = "tea_export_v5"
+        sealed_artifact = run_technoeconomic._write_sealed_calculation_payload(
+            job_id,
+            "lease_v5",
+            calculation,
+            request_sha256=technoeconomic_api.canonical_json_sha256(request_payload),
+            source_snapshot_sha256=snapshot_sha256,
+            submission_provenance_sha256=technoeconomic_api.canonical_json_sha256(
+                provenance
+            ),
+            publish_check=lambda: None,
+        )
+        sealed_path = self.output / Path(sealed_artifact["storage_key"])
+        routine_result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            sealed_artifact,
+            provenance,
+        )
+
+        manifest = reporting.generate_technoeconomic_exports(
+            job_id=job_id,
+            attempt_directory=sealed_path.parent,
+            sealed_calculation_path=sealed_path,
+            sealed_calculation_artifact=sealed_artifact,
+            request_payload=request_payload,
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+            routine_result=routine_result,
+            cancellation_check=lambda: None,
+            publish_check=lambda: None,
+        )
+
+        self.assertEqual(
+            reporting.PAIRED_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION,
+            manifest["schema_version"],
+        )
+        self.assertEqual(
+            reporting.PAIRED_COMMERCIAL_CSV_FORMAT_VERSION,
+            manifest["csv_format_version"],
+        )
+        self.assertEqual("passed", manifest["tie_outs"]["status"])
+        self.assertEqual(
+            reporting.PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID,
+            manifest["artifacts"]["cdf_plot"]["chart_contract_id"],
+        )
+        self.assertEqual(
+            set(reporting.PAIRED_COMMERCIAL_CHART_CONTRACTS),
+            set(manifest["chart_contracts"]),
+        )
+
+        paired = routine_result["paired_commercial"]
+        for technology in ("solectria", "solaredge"):
+            system = paired["systems"][technology]
+            self.assertEqual(
+                provenance["paired_commercial_receipt"]["systems"][technology][
+                    "source_capacity"
+                ]["applied_capacity_w"],
+                system["source_applied_capacity_w"],
+            )
+            self.assertEqual(
+                paired["target_capacity_w"] / system["source_applied_capacity_w"],
+                system["capacity_scale_factor"],
+            )
+        archive_path = self.output / Path(
+            manifest["artifacts"]["csv_bundle"]["storage_key"]
+        )
+        with zipfile.ZipFile(archive_path) as archive:
+            self.assertIn("csv-bundle-manifest-v5.json", archive.namelist())
+            self.assertIn("paired-commercial-summary.csv", archive.namelist())
+            realization = next(
+                csv.DictReader(
+                    io.StringIO(archive.read("realizations.csv").decode("utf-8"))
+                )
+            )
+            for field_name in (
+                kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+                kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+                kernel.COMMERCIAL_PAIRED_FIELD_LCOE_DELTA,
+            ):
+                self.assertIn(field_name, realization)
+            self.assertAlmostEqual(
+                float(realization[kernel.COMMERCIAL_PAIRED_FIELD_LCOE_DELTA]),
+                float(realization[kernel.COMMERCIAL_STANDALONE_FIELD_LCOE])
+                - float(realization[kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE]),
+            )
+
+            cdf_rows = list(
+                csv.DictReader(
+                    io.StringIO(archive.read("metric-cdfs.csv").decode("utf-8"))
+                )
+            )
+            self.assertEqual(
+                {"solectria", "solaredge"},
+                {row["technology"] for row in cdf_rows},
+            )
+            self.assertEqual(
+                {
+                    kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+                    kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+                },
+                {row["metric_id"] for row in cdf_rows},
+            )
+            for technology in ("solectria", "solaredge"):
+                technology_rows = [
+                    row for row in cdf_rows if row["technology"] == technology
+                ]
+                self.assertEqual(
+                    paired["systems"][technology]["cdf"]["source_point_count"],
+                    len(technology_rows),
+                )
+                self.assertEqual(
+                    "1.0",
+                    technology_rows[-1]["cumulative_probability"],
+                )
+
+            summary_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("paired-commercial-summary.csv").decode("utf-8")
+                    )
+                )
+            )
+            self.assertEqual(9, len(summary_rows))
+            self.assertEqual(
+                {"solectria", "solaredge"},
+                {
+                    row["technology"]
+                    for row in summary_rows
+                    if row["record_type"] == "headline"
+                },
+            )
+            self.assertEqual(
+                6,
+                sum(row["record_type"] == "cost_line" for row in summary_rows),
+            )
+            self.assertEqual(
+                1,
+                sum(row["record_type"] == "diagnostic" for row in summary_rows),
+            )
+
+            input_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("input-specifications.csv").decode("utf-8")
+                    )
+                )
+            )
+            paired_cost_rows = [
+                row
+                for row in input_rows
+                if row["input_category"] == "paired_commercial_cost"
+            ]
+            self.assertEqual(6, len(paired_cost_rows))
+            self.assertEqual(
+                {"solectria_only", "solaredge_only"},
+                {row["ownership"] for row in paired_cost_rows},
+            )
+
+            per_year_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("per-year-summary.csv").decode("utf-8")
+                    )
+                )
+            )
+            self.assertEqual(1, len(per_year_rows))
+            per_year = per_year_rows[0]
+            self.assertTrue(per_year["solectria_source_applied_capacity_w"])
+            self.assertTrue(per_year["solaredge_source_applied_capacity_w"])
+            self.assertIn(
+                f"{kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE}::p10",
+                per_year,
+            )
+            self.assertIn(
+                f"{kernel.COMMERCIAL_STANDALONE_FIELD_LCOE}::p90",
+                per_year,
+            )
+
+            checks = {
+                row["check_id"]: row
+                for row in csv.DictReader(
+                    io.StringIO(archive.read("checks.csv").decode("utf-8"))
+                )
+            }
+            for check_id in (
+                "paired_target_capacity_receipt",
+                "paired_solectria_source_capacity_receipt",
+                "paired_solaredge_source_capacity_receipt",
+                "paired_solectria_year1_energy_scaling",
+                "paired_solaredge_year1_energy_scaling",
+                "paired_solectria_initial_cost_stack",
+                "paired_solaredge_recurring_cost_stack",
+                "paired_solectria_lcoe_lifecycle_ratio",
+                "paired_solaredge_lcoe_equivalent_annual_ratio",
+                "paired_lcoe_delta_se_minus_sol",
+                "paired_per_year_realization_partition",
+            ):
+                self.assertEqual("OK", checks[check_id]["status_authority"])
+
+        workbook_path = self.output / Path(
+            manifest["artifacts"]["xlsx_workbook"]["storage_key"]
+        )
+        workbook = openpyxl.load_workbook(
+            workbook_path,
+            read_only=True,
+            data_only=False,
+        )
+        try:
+            self.assertIn("Commercial LCOE", workbook.sheetnames)
+            self.assertIn("Summary", workbook.sheetnames)
+            per_year_headers = [
+                cell.value
+                for cell in next(workbook["Per-Year Summary"].iter_rows())
+            ]
+            self.assertIn("solectria_source_applied_capacity_w", per_year_headers)
+            self.assertIn("solaredge_source_applied_capacity_w", per_year_headers)
+        finally:
+            workbook.close()
+
+        sealed_calculation = reporting._load_sealed_calculation(
+            attempt_directory=sealed_path.parent,
+            sealed_calculation_path=sealed_path,
+            sealed_calculation_artifact=sealed_artifact,
+            request_payload=request_payload,
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+        )
+        mismatched_provenance = deepcopy(provenance)
+        mismatched_provenance["paired_commercial_receipt"]["systems"][
+            "solectria"
+        ]["cost_lines"][0]["constant_dollar_cost_year"] = 2025
+        mismatched_checks = {
+            row[0]: row
+            for row in reporting._build_checks(
+                sealed_calculation,
+                snapshot,
+                mismatched_provenance,
+                routine_result,
+            )
+        }
+        self.assertEqual(
+            "FAIL",
+            mismatched_checks[
+                "paired_solectria_cost_line_identity::commercial.solectria.capex"
+            ][5],
+        )
+
     def test_v3_commercial_cost_timing_and_zero_reason_checks_are_independent(self) -> None:
         for timing in ("lifecycle_present_value", "equivalent_annual"):
             with self.subTest(timing=timing):
@@ -570,6 +1150,7 @@ class TechnoeconomicExportTests(unittest.TestCase):
                 request_payload = TechnoeconomicSubmissionRequest.model_validate(
                     payload
                 ).model_dump(mode="json", exclude_none=False)
+                request_payload.pop("standalone_commercial", None)
                 snapshot = deepcopy(self.snapshot)
                 snapshot["eligible_paired_energy_rows"] = [
                     {
@@ -1086,6 +1667,7 @@ class TechnoeconomicExportTests(unittest.TestCase):
                 payload["commercial_reference_design"][system][field] = maximum_text
         parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
         request_payload = parsed.model_dump(mode="json", exclude_none=False)
+        request_payload.pop("standalone_commercial", None)
         self.assertGreater(
             len(
                 reporting._canonical_json_text(
@@ -1196,6 +1778,151 @@ class TechnoeconomicExportTests(unittest.TestCase):
             cursor[parts[-1]] = json.loads(encoded)
         self.assertEqual(request_payload["commercial_reference_design"], rebuilt)
 
+    def test_paired_cdf_decision_view_uses_exact_full_width_chart(self) -> None:
+        from matplotlib import pyplot as plt
+        from matplotlib.collections import PathCollection
+
+        solectria_metric = kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE
+        solaredge_metric = kernel.COMMERCIAL_STANDALONE_FIELD_LCOE
+        metadata = {
+            "kernel_provenance": {
+                "commercial_paired": {"constant_dollar_cost_year": 2022}
+            },
+            "summaries": {
+                solectria_metric: {
+                    "cdf": {
+                        "values": [0.0, 10.0],
+                        "cumulative_probability": [0.5, 1.0],
+                        "population_count": 4,
+                    },
+                    "percentiles": {"p10": 0.0, "p50": 5.0, "p90": 10.0},
+                },
+                solaredge_metric: {
+                    "cdf": {
+                        "values": [1.0, 11.0],
+                        "cumulative_probability": [0.5, 1.0],
+                        "population_count": 4,
+                    },
+                    "percentiles": {"p10": 1.0, "p50": 6.0, "p90": 11.0},
+                },
+            }
+        }
+        captured: dict[str, object] = {}
+
+        def capture_figure(figure, _path, *, layout_bottom=0.035):
+            captured["figure"] = figure
+            captured["layout_bottom"] = layout_bottom
+            return 1600, 1000
+
+        with patch.object(reporting, "_save_figure", side_effect=capture_figure):
+            result = reporting._render_cdf_plot(
+                metadata,
+                self.output / "paired-cdf.png",
+                paired_headlines_only=True,
+            )
+
+        figure = captured["figure"]
+        try:
+            self.assertEqual((1600, 1000, 4, 4), result)
+            self.assertEqual(0.16, captured["layout_bottom"])
+            self.assertEqual(1, len(figure.axes))
+            axis = figure.axes[0]
+            self.assertGreater(axis.get_position().width, 0.7)
+            step_lines = [
+                line
+                for line in axis.lines
+                if line.get_drawstyle() == "steps-post"
+            ]
+            self.assertEqual(2, len(step_lines))
+            self.assertTrue(all(line.get_linewidth() == 3.0 for line in step_lines))
+            self.assertEqual(
+                [[0.0, 10_000.0], [1_000.0, 11_000.0]],
+                sorted(line.get_xdata().tolist() for line in step_lines),
+            )
+            self.assertIsNone(axis.get_legend())
+            marker_offsets = np.vstack(
+                [
+                    collection.get_offsets()
+                    for collection in axis.collections
+                    if isinstance(collection, PathCollection)
+                ]
+            )
+            np.testing.assert_allclose(
+                np.asarray(sorted(marker_offsets.tolist())),
+                np.asarray([[5_000.0, 0.5], [6_000.0, 0.5]]),
+            )
+            self.assertEqual(
+                "Lifecycle LCOE (real 2022 USD/MWh AC)",
+                axis.get_xlabel(),
+            )
+            self.assertEqual("0%", axis.yaxis.get_major_formatter()(0.0))
+            self.assertEqual("50%", axis.yaxis.get_major_formatter()(0.5))
+            self.assertEqual("100%", axis.yaxis.get_major_formatter()(1.0))
+            self.assertEqual(
+                {"SolarEdge", "Solectria"},
+                {text.get_text() for text in axis.texts},
+            )
+            self.assertIn(
+                "4 runs per system • 2 distinct outcomes per system • "
+                "Exact empirical CDF",
+                {text.get_text() for text in figure.texts},
+            )
+            figure_copy = " ".join(text.get_text() for text in figure.texts)
+            self.assertIn("SolarEdge P10  1000.00", figure_copy)
+            self.assertIn("P50  6000.00", figure_copy)
+            self.assertIn("P90  11000.00   USD/MWh AC", figure_copy)
+            self.assertIn(
+                "Lower median: Solectria by 1000.00 USD/MWh AC",
+                figure_copy,
+            )
+            self.assertEqual(
+                "paired_commercial_lcoe_cdf_v3",
+                reporting.PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID,
+            )
+            chart_contract = reporting.PAIRED_COMMERCIAL_CHART_CONTRACTS[
+                reporting.PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID
+            ]
+            self.assertEqual(
+                "paired_right_continuous_empirical_cdf_decision_view",
+                chart_contract["variant"],
+            )
+            self.assertIn("direct curve labels", chart_contract["non_color_cues"])
+            self.assertIn(
+                "P10/P50/P90 value rows with P50 chart markers",
+                chart_contract["non_color_cues"],
+            )
+            self.assertEqual(
+                "constant USD/kWh_AC",
+                chart_contract["source_value_unit"],
+            )
+            self.assertEqual(
+                "constant-dollar-year USD/MWh_AC",
+                chart_contract["display_value_unit"],
+            )
+            self.assertEqual(
+                [0.0, 10.0],
+                metadata["summaries"][solectria_metric]["cdf"]["values"],
+            )
+        finally:
+            plt.close(figure)
+
+    def test_paired_cdf_subtitle_names_systems_when_counts_differ(self) -> None:
+        available = [
+            (
+                kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+                {"cdf": {"values": [1.0, 2.0], "population_count": 16}},
+            ),
+            (
+                kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+                {"cdf": {"values": [1.0, 2.0, 3.0], "population_count": 12}},
+            ),
+        ]
+        self.assertEqual(
+            "Solectria: 16 runs, 2 outcomes • "
+            "SolarEdge: 12 runs, 3 outcomes • Exact empirical CDF",
+            reporting._paired_cdf_subtitle(available),
+        )
+
     def test_plots_are_nonempty_pngs_with_auditable_contracts(self) -> None:
         manifest = self._generate()
         self.assertEqual(set(reporting.CHART_CONTRACTS), set(manifest["chart_contracts"]))
@@ -1211,11 +1938,11 @@ class TechnoeconomicExportTests(unittest.TestCase):
             cdf_artifact["display_point_count"],
             cdf_artifact["source_point_count"],
         )
-        dense_probability = np.arange(1, 100_001, dtype=np.float64) / 100_000
+        dense_probability = np.arange(1, 10_001, dtype=np.float64) / 10_000
         selected = reporting._cdf_display_indices(dense_probability)
-        self.assertLessEqual(len(selected), 1_210)
+        self.assertLessEqual(len(selected), 1_200)
         self.assertEqual(0, selected[0])
-        self.assertEqual(99_999, selected[-1])
+        self.assertEqual(9_999, selected[-1])
         for quantile in (0.05, 0.5, 0.95):
             expected = int(np.searchsorted(dense_probability, quantile, side="left"))
             self.assertIn(expected, selected)

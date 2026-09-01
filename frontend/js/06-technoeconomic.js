@@ -9,6 +9,68 @@
         const TECHNOECONOMIC_LEGACY_DRAFT_STORAGE_KEY = 'sbepv.technoeconomic.draft.v1';
         const TECHNOECONOMIC_APPLIED_CAPACITY_NORMALIZATION = 'annual_applied_capacity_v1';
         const TECHNOECONOMIC_ACTIVE_JOB_STORAGE_KEY = 'sbepv.technoeconomic.active-job.v1';
+        const TECHNOECONOMIC_STANDALONE_CONTRACT_VERSION = 'tea-calculation-v4';
+        const TECHNOECONOMIC_PAIRED_CONTRACT_VERSION = 'tea-calculation-v5';
+        const TECHNOECONOMIC_SAMPLING_VERSION = 'tea-lhs-v1';
+        const TECHNOECONOMIC_PAIRED_SYSTEMS = Object.freeze([
+            Object.freeze({key: 'solectria', label: 'Solectria'}),
+            Object.freeze({key: 'solaredge', label: 'SolarEdge'}),
+        ]);
+        const TECHNOECONOMIC_PAIRED_METRICS = Object.freeze({
+            solectria: Object.freeze({
+                year1Energy: 'CommercialSolectriaYear1Energy_kWh_AC',
+                initialCost: 'CommercialSolectriaInitialCost_USD',
+                recurringCost: 'CommercialSolectriaRecurringLifecycleCost_USD',
+                scheduledCost: 'CommercialSolectriaScheduledLifecycleCost_USD',
+                lifecycleCost: 'CommercialSolectriaLifecycleCost_USD',
+                lcoe: 'CommercialSolectriaLifecycleLCOE_USD_per_kWh_AC',
+            }),
+            solaredge: Object.freeze({
+                year1Energy: 'CommercialSolarEdgeYear1Energy_kWh_AC',
+                initialCost: 'CommercialSolarEdgeInitialCost_USD',
+                recurringCost: 'CommercialSolarEdgeRecurringLifecycleCost_USD',
+                scheduledCost: 'CommercialSolarEdgeScheduledLifecycleCost_USD',
+                lifecycleCost: 'CommercialSolarEdgeLifecycleCost_USD',
+                lcoe: 'CommercialSolarEdgeLifecycleLCOE_USD_per_kWh_AC',
+            }),
+        });
+        const TECHNOECONOMIC_PAIRED_LCOE_DELTA_METRIC =
+            'CommercialLifecycleLCOEDelta_se_minus_sol_USD_per_kWh_AC';
+        const TECHNOECONOMIC_STANDALONE_LCOE_METRIC =
+            TECHNOECONOMIC_PAIRED_METRICS.solaredge.lcoe;
+        const TECHNOECONOMIC_STANDALONE_TARGET_MW = 100;
+        const TECHNOECONOMIC_STANDALONE_ATB_URL =
+            'https://data.openei.org/submissions/6006';
+        const TECHNOECONOMIC_STANDALONE_PREVIOUS_DRAFT_STORAGE_KEY =
+            'sbepv.technoeconomic.paired-draft.v2';
+        const TECHNOECONOMIC_STANDALONE_LEGACY_DRAFT_STORAGE_KEY =
+            'sbepv.technoeconomic.standalone-draft.v1';
+        const TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION =
+            'technoeconomic-paired-draft-v3';
+        const TECHNOECONOMIC_STANDALONE_DRAFT_STORAGE_KEY =
+            'sbepv.technoeconomic.paired-draft.v3';
+        const TECHNOECONOMIC_STANDALONE_ATB_PRESETS = Object.freeze({
+            ac_operating_limit: Object.freeze({capex: '1.56', om: '22'}),
+            dc_installed_nameplate: Object.freeze({capex: '1.17', om: '16.58'}),
+        });
+        const TECHNOECONOMIC_STANDALONE_COST_COVERAGE = Object.freeze(
+            Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(({key}) => [key, Object.freeze({
+                Capex: Object.freeze({
+                    costCategory: 'full_initial_capex',
+                    coverageIds: Object.freeze([`commercial.${key}.full-initial-system`]),
+                }),
+                Om: Object.freeze({
+                    costCategory: 'full_annual_om',
+                    coverageIds: Object.freeze([
+                        `commercial.${key}.full-annual-operations-maintenance`,
+                    ]),
+                }),
+                Replacement: Object.freeze({
+                    costCategory: 'scheduled_replacement',
+                    coverageIds: Object.freeze([`commercial.${key}.inverter-replacement`]),
+                }),
+            })]))
+        );
         const TECHNOECONOMIC_MAX_SAFE_SEED = Number.MAX_SAFE_INTEGER;
         const TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS = 8000000;
         const TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS = 25000000;
@@ -136,6 +198,8 @@
         let technoeconomicWorkspaceInitialized = false;
         let technoeconomicApplyingDraft = false;
         let technoeconomicEntryMode = TECHNOECONOMIC_GUIDED_ENTRY_MODE;
+        let technoeconomicAssumptionsTrigger = null;
+        let technoeconomicAssumptionsReturnFocus = true;
 
         function technoeconomicPlainObject(value) {
             return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -322,7 +386,7 @@
             return ((timestamp << 24n) | random).toString();
         }
 
-        function technoeconomicDefaultTechnologyDesign(solaredge = false) {
+        function technoeconomicDefaultTechnologyDesign(_solaredge = false) {
             return {
                 optimizer_count: '', inverter_count: '', transformer_count: '',
                 dc_ac_ratio: '', inverter_loading_ratio: '',
@@ -858,6 +922,1648 @@
                 ? document.getElementById(id) : null;
         }
 
+        function technoeconomicStandaloneSelectedSource() {
+            const sourceId = technoeconomicElements.standaloneSourceSelect?.value || '';
+            return technoeconomicSources.find(
+                (item) => item?.source_annual_job_id === sourceId
+            ) || null;
+        }
+
+        function technoeconomicPairedSystem(system) {
+            return TECHNOECONOMIC_PAIRED_SYSTEMS.find((item) => item.key === system) || null;
+        }
+
+        function technoeconomicPairedSystemElements(system) {
+            if (system === 'solectria') return {
+                costLines: technoeconomicElements.standaloneSolectriaCostLines,
+                replacementEnabled: technoeconomicElements.standaloneSolectriaReplacementEnabled,
+                replacementFields: technoeconomicElements.standaloneSolectriaReplacementFields,
+                costSummary: technoeconomicElements.standaloneSolectriaCostSummary,
+                sourceCapacity: technoeconomicElements.standaloneSolectriaSourceCapacity,
+                sourceEnergy: technoeconomicElements.standaloneSolectriaSourceEnergy,
+                specificEnergy: technoeconomicElements.standaloneSolectriaSpecificEnergy,
+                targetEnergy: technoeconomicElements.standaloneSolectriaTargetEnergy,
+            };
+            return {
+                costLines: technoeconomicElements.standaloneSolarEdgeCostLines,
+                replacementEnabled: technoeconomicElements.standaloneSolarEdgeReplacementEnabled,
+                replacementFields: technoeconomicElements.standaloneSolarEdgeReplacementFields,
+                costSummary: technoeconomicElements.standaloneSolarEdgeCostSummary,
+                sourceCapacity: technoeconomicElements.standaloneSolarEdgeSourceCapacity,
+                sourceEnergy: technoeconomicElements.standaloneSolarEdgeSourceEnergy,
+                specificEnergy: technoeconomicElements.standaloneSolarEdgeSpecificEnergy,
+                targetEnergy: technoeconomicElements.standaloneSolarEdgeTargetEnergy,
+            };
+        }
+
+        function technoeconomicStandaloneSourceCapacityInfo(source, system = 'solaredge') {
+            if (!source) return null;
+            if (!technoeconomicPairedSystem(system)) return null;
+            const applied = technoeconomicPlainObject(
+                technoeconomicPlainObject(source.applied_capacity)[system]
+            );
+            const appliedWatts = Number(applied.applied_capacity_w);
+            if (Number.isFinite(appliedWatts) && appliedWatts > 0
+                && ['ac_operating_limit', 'dc_installed_nameplate'].includes(
+                    applied.rating_basis
+                )) {
+                return {
+                    watts: appliedWatts,
+                    ratingBasis: applied.rating_basis,
+                    source: 'verified_applied_capacity',
+                };
+            }
+            const provenance = technoeconomicPlainObject(source.provenance);
+            const operating = technoeconomicPlainObject(provenance.operating_limit);
+            const limitKw = Number(operating.curtailment_limit_kw);
+            if (operating.curtailment_enabled === true
+                && Number.isFinite(limitKw) && limitKw > 0) {
+                return {
+                    watts: limitKw * 1000,
+                    ratingBasis: 'ac_operating_limit',
+                    source: 'verified_operating_limit',
+                };
+            }
+            const installedWdc = Number(source[`${system}_installed_wdc`]);
+            return Number.isFinite(installedWdc) && installedWdc > 0 ? {
+                watts: installedWdc,
+                ratingBasis: 'dc_installed_nameplate',
+                source: 'verified_installed_nameplate',
+            } : null;
+        }
+
+        function technoeconomicStandaloneRatingSuffix(ratingBasis) {
+            return ratingBasis === 'ac_operating_limit' ? 'ac'
+                : ratingBasis === 'dc_installed_nameplate' ? 'dc' : '';
+        }
+
+        function technoeconomicStandaloneFormatCapacity(watts, ratingBasis, options = {}) {
+            const value = Number(watts);
+            if (!Number.isFinite(value) || value <= 0) return 'Unavailable';
+            const suffix = technoeconomicStandaloneRatingSuffix(ratingBasis);
+            const useMw = options.forceMw === true || value >= 1000000;
+            return `${technoeconomicFormatNumber(value / (useMw ? 1000000 : 1000), 4)} `
+                + `${useMw ? 'MW' : 'kW'}${suffix}`;
+        }
+
+        function technoeconomicStandaloneDistributionFields(family) {
+            return ({
+                fixed: [['value', 'Value']],
+                uniform: [['low', 'Low'], ['high', 'High']],
+                triangular: [['low', 'Low'], ['mode', 'Most likely'], ['high', 'High']],
+                bounded_normal: [
+                    ['low', 'Low bound'], ['mean', 'Mean'],
+                    ['high', 'High bound'], ['sd', 'Standard deviation'],
+                ],
+            })[family] || [['value', 'Value']];
+        }
+
+        function technoeconomicStandaloneReadParameterValues(container) {
+            const values = {};
+            container?.querySelectorAll?.('[data-tea-v4-param]').forEach((input) => {
+                values[input.dataset.teaV4Param] = input.value;
+            });
+            return values;
+        }
+
+        function technoeconomicStandaloneRenderDistributionParameters(
+            container, family, prefix, defaults = {}
+        ) {
+            if (!container) return;
+            const previous = technoeconomicStandaloneReadParameterValues(container);
+            const fields = technoeconomicStandaloneDistributionFields(family);
+            const nodes = fields.map(([key, label]) => {
+                const id = `${prefix}${key[0].toUpperCase()}${key.slice(1)}`;
+                const input = technoeconomicNode('input', {
+                    id,
+                    type: 'number',
+                    step: 'any',
+                    inputmode: 'decimal',
+                    value: previous[key] ?? defaults[key] ?? '',
+                });
+                input.dataset.teaV4Param = key;
+                const field = technoeconomicNode('div', {className: 'tea-field'});
+                field.append(
+                    technoeconomicNode('label', {text: label, htmlFor: id}),
+                    input
+                );
+                return field;
+            });
+            container.replaceChildren(...nodes);
+        }
+
+        function technoeconomicStandaloneNrelEvidence(
+            subject, note, accepted = false, acceptanceRationale = ''
+        ) {
+            const reviewRationale = technoeconomicText(acceptanceRationale).trim();
+            return {
+                evidence_class: 'public_market_proxy_or_benchmark',
+                citation: {
+                    title: subject,
+                    organization: 'National Renewable Energy Laboratory',
+                    url: TECHNOECONOMIC_STANDALONE_ATB_URL,
+                    stable_reference: 'doi:10.25984/2377191',
+                    publication_or_as_of_date: '2024-06-24',
+                    accessed_date: technoeconomicToday(),
+                    excerpt_or_derivation_note: note,
+                    preservation_mode: 'metadata_excerpt_only',
+                    user_supplied_content_sha256: '',
+                    metadata_only_rationale: 'The official NREL/OEDI dataset record, DOI, '
+                        + 'and benchmark derivation are saved; source files are not uploaded.',
+                },
+                explicit_acceptance: accepted === true,
+                acceptance_rationale: accepted === true ? reviewRationale : '',
+            };
+        }
+
+        function technoeconomicStandaloneSourceEvidence(source, accepted, note) {
+            const sourceId = technoeconomicText(source?.source_annual_job_id);
+            return {
+                evidence_class: 'project_actual',
+                citation: {
+                    title: 'Verified SolarTAC Annual Simulation capacity and energy source',
+                    organization: 'SBE Innovation Center',
+                    url: '',
+                    stable_reference: sourceId || 'unselected-annual-source',
+                    publication_or_as_of_date: technoeconomicToday(),
+                    accessed_date: technoeconomicToday(),
+                    excerpt_or_derivation_note: note,
+                    preservation_mode: 'metadata_excerpt_only',
+                    user_supplied_content_sha256: '',
+                    metadata_only_rationale: 'The immutable Annual source identity is '
+                        + 're-verified by the server at submission.',
+                },
+                explicit_acceptance: accepted === true,
+                acceptance_rationale: technoeconomicText(note),
+            };
+        }
+
+        function technoeconomicStandaloneCreateCostLine(options) {
+            const card = technoeconomicNode('section', {className: 'tea-v4-cost-line'});
+            const system = technoeconomicPairedSystem(options.system) || TECHNOECONOMIC_PAIRED_SYSTEMS[1];
+            const coverage = TECHNOECONOMIC_STANDALONE_COST_COVERAGE[system.key][options.key] || {
+                costCategory: '', coverageIds: [],
+            };
+            card.dataset.teaV4CostLine = options.key;
+            card.dataset.teaV4System = system.key;
+            card.dataset.inputId = options.inputId;
+            card.dataset.timing = options.timing;
+            card.dataset.unit = options.unit;
+            card.dataset.costCategory = coverage.costCategory;
+            card.dataset.coverageIds = coverage.coverageIds.join(',');
+            const heading = technoeconomicNode('div', {className: 'tea-v4-cost-line-heading'});
+            const copy = technoeconomicNode('div');
+            copy.append(
+                technoeconomicNode('h5', {text: options.label}),
+                technoeconomicNode('p', {text: options.description})
+            );
+            heading.append(copy, technoeconomicNode('span', {
+                className: 'tea-contract-badge', text: options.badge,
+            }));
+            const systemPrefix = `${system.label}${options.key}`;
+            const familyId = `technoeconomicStandaloneCost${systemPrefix}Family`;
+            const family = technoeconomicNode('select', {id: familyId});
+            family.dataset.teaV4Family = '';
+            for (const [value, label] of TECHNOECONOMIC_DISTRIBUTION_FAMILIES) {
+                family.appendChild(technoeconomicNode('option', {value, text: label === 'Bounded normal'
+                    ? 'Normal (bounded)' : label}));
+            }
+            family.value = 'fixed';
+            const familyField = technoeconomicNode('div', {className: 'tea-field'});
+            familyField.append(
+                technoeconomicNode('label', {text: 'Distribution', htmlFor: familyId}),
+                family
+            );
+            const parameters = technoeconomicNode('div', {
+                className: 'tea-v4-distribution-parameters',
+                id: `technoeconomicStandaloneCost${systemPrefix}Parameters`,
+            });
+            card.append(heading, familyField, parameters);
+            technoeconomicStandaloneRenderDistributionParameters(
+                parameters, 'fixed', `technoeconomicStandaloneCost${systemPrefix}`,
+                {value: options.value || ''}
+            );
+            family.addEventListener('change', () => {
+                technoeconomicStandaloneRenderDistributionParameters(
+                    parameters, family.value,
+                    `technoeconomicStandaloneCost${systemPrefix}`
+                );
+            });
+            return card;
+        }
+
+        function technoeconomicStandaloneCostDefinitions(ratingBasis, system = 'solaredge') {
+            const systemMeta = technoeconomicPairedSystem(system) || TECHNOECONOMIC_PAIRED_SYSTEMS[1];
+            const preset = TECHNOECONOMIC_STANDALONE_ATB_PRESETS[ratingBasis]
+                || TECHNOECONOMIC_STANDALONE_ATB_PRESETS.ac_operating_limit;
+            const suffix = ratingBasis === 'dc_installed_nameplate' ? 'Wdc' : 'Wac';
+            return [
+                {
+                    system: systemMeta.key,
+                    key: 'Capex', inputId: `commercial.${systemMeta.key}.atb-capex`,
+                    label: 'Initial installed cost', timing: 'initial_t0',
+                    unit: 'constant_usd_per_target_w', value: preset.capex,
+                    badge: `real 2022 USD/${suffix}`,
+                    description: `Generic NREL 2024 ATB benchmark for ${systemMeta.label}; not a vendor quote.`,
+                },
+                {
+                    system: systemMeta.key,
+                    key: 'Om', inputId: `commercial.${systemMeta.key}.atb-om`,
+                    label: 'Annual operations and maintenance', timing: 'annual_year_end',
+                    unit: 'constant_usd_per_target_w_year', value: preset.om,
+                    badge: `real 2022 USD/k${suffix}-year`,
+                    description: `NREL 2024 ATB benchmark for ${systemMeta.label}. Enter USD/k${suffix}-year.`,
+                },
+            ];
+        }
+
+        function technoeconomicStandaloneRenderCostLines(system, ratingBasis, options = {}) {
+            const root = technoeconomicPairedSystemElements(system).costLines;
+            if (!root) return;
+            const current = new Map();
+            root.querySelectorAll?.('[data-tea-v4-cost-line]').forEach((card) => {
+                current.set(card.dataset.teaV4CostLine, {
+                    family: card.querySelector?.('[data-tea-v4-family]')?.value || 'fixed',
+                    values: technoeconomicStandaloneReadParameterValues(card),
+                });
+            });
+            const cards = technoeconomicStandaloneCostDefinitions(ratingBasis, system).map((definition) => {
+                const prior = current.get(definition.key);
+                const card = technoeconomicStandaloneCreateCostLine({
+                    ...definition,
+                    value: options.forcePreset === true || !prior ? definition.value
+                        : prior.values.value || definition.value,
+                });
+                if (prior && options.forcePreset !== true) {
+                    const family = card.querySelector('[data-tea-v4-family]');
+                    const parameters = card.querySelector('.tea-v4-distribution-parameters');
+                    family.value = prior.family;
+                    technoeconomicStandaloneRenderDistributionParameters(
+                        parameters, prior.family,
+                        `technoeconomicStandaloneCost${definition.key}`,
+                        prior.values
+                    );
+                }
+                return card;
+            });
+            root.replaceChildren(...cards);
+            root.dataset.ratingBasis = ratingBasis || '';
+        }
+
+        function technoeconomicStandaloneRenderReplacement(system) {
+            const systemMeta = technoeconomicPairedSystem(system);
+            if (!systemMeta) return;
+            const elements = technoeconomicPairedSystemElements(system);
+            const enabled = elements.replacementEnabled?.checked === true;
+            const root = elements.replacementFields;
+            if (elements.replacementEnabled) {
+                elements.replacementEnabled.setAttribute(
+                    'aria-expanded', String(enabled)
+                );
+            }
+            if (!root) return;
+            root.hidden = !enabled;
+            if (!enabled || root.childElementCount) return;
+            const card = technoeconomicStandaloneCreateCostLine({
+                system,
+                key: 'Replacement', inputId: `commercial.${system}.scheduled-replacement`,
+                label: 'Scheduled replacement', timing: 'scheduled_year_end',
+                unit: 'constant_usd_per_target_w', value: '',
+                badge: 'real USD/target W',
+                description: 'Enter a sourced cost and schedule.',
+            });
+            const schedule = technoeconomicNode('div', {className: 'tea-field'});
+            const id = `technoeconomicStandalone${systemMeta.label}ReplacementYears`;
+            schedule.append(
+                technoeconomicNode('label', {text: 'Occurrence years', htmlFor: id}),
+                technoeconomicNode('input', {
+                    id, type: 'text', inputmode: 'numeric',
+                    placeholder: 'e.g. 15 or 10, 20',
+                }),
+                technoeconomicNode('p', {
+                    className: 'tea-field-help',
+                    text: 'Enter project years in order, separated by commas.',
+                })
+            );
+            card.appendChild(schedule);
+            root.replaceChildren(card);
+        }
+
+        function technoeconomicStandaloneInitializeEditors() {
+            if (!technoeconomicElements.standaloneResults) return;
+            if (technoeconomicElements.standaloneSeed
+                && !technoeconomicElements.standaloneSeed.value) {
+                technoeconomicElements.standaloneSeed.value = technoeconomicGenerateSafeSeed();
+            }
+            for (const [family, parameters, prefix] of [
+                [technoeconomicElements.standaloneDiscountFamily,
+                    technoeconomicElements.standaloneDiscountParameters,
+                    'technoeconomicStandaloneDiscount'],
+                [technoeconomicElements.standaloneDegradationFamily,
+                    technoeconomicElements.standaloneDegradationParameters,
+                    'technoeconomicStandaloneDegradation'],
+            ]) {
+                if (!family || !parameters) continue;
+                technoeconomicStandaloneRenderDistributionParameters(
+                    parameters, family.value || 'fixed', prefix
+                );
+                family.addEventListener('change', () => {
+                    technoeconomicStandaloneRenderDistributionParameters(
+                        parameters, family.value, prefix
+                    );
+                    technoeconomicRenderStandaloneDraft();
+                });
+            }
+            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                technoeconomicStandaloneRenderCostLines(
+                    key, 'ac_operating_limit', {forcePreset: true}
+                );
+                technoeconomicStandaloneRenderReplacement(key);
+            }
+        }
+
+        function technoeconomicStandaloneDistributionDraft(familyElement, parameters) {
+            return {
+                family: familyElement?.value || 'fixed',
+                ...technoeconomicStandaloneReadParameterValues(parameters),
+            };
+        }
+
+        function technoeconomicStandaloneScaleDistribution(distribution, divisor) {
+            const output = {...distribution};
+            for (const key of ['value', 'low', 'mode', 'high', 'mean', 'sd']) {
+                if (output[key] === undefined || output[key] === '') continue;
+                const number = Number(output[key]);
+                output[key] = Number.isFinite(number) ? String(number / divisor) : output[key];
+            }
+            return output;
+        }
+
+        function technoeconomicStandaloneKernelCostDistribution(line) {
+            const distribution = technoeconomicPlainObject(line?.distribution);
+            if (line?.timing === 'annual_year_end'
+                && line?.unit === 'constant_usd_per_target_w_year') {
+                return technoeconomicStandaloneScaleDistribution(distribution, 1000);
+            }
+            return {...distribution};
+        }
+
+        function technoeconomicStandaloneDistributionDisplay(distribution, multiplier = 1) {
+            const value = technoeconomicPlainObject(distribution);
+            const format = (candidate) => {
+                const number = Number(candidate);
+                return Number.isFinite(number)
+                    ? technoeconomicFormatNumber(number * multiplier, 4) : 'Unavailable';
+            };
+            if (value.family === 'uniform') {
+                return `Uniform ${format(value.low)} to ${format(value.high)}`;
+            }
+            if (value.family === 'triangular') {
+                return `Triangular ${format(value.low)} / most likely ${format(value.mode)} / ${format(value.high)}`;
+            }
+            if (value.family === 'bounded_normal') {
+                return `Normal mean ${format(value.mean)}, SD ${format(value.sd)}, bounded ${format(value.low)} to ${format(value.high)}`;
+            }
+            return `Fixed ${format(value.value)}`;
+        }
+
+        function technoeconomicStandaloneCostReview(line, ratingBasis, costYear) {
+            const annualOm = line?.timing === 'annual_year_end'
+                && line?.unit === 'constant_usd_per_target_w_year';
+            const suffix = technoeconomicStandaloneRatingSuffix(ratingBasis);
+            const unit = annualOm ? `real ${costYear} USD/kW${suffix}-year`
+                : line?.unit === 'constant_usd_per_target_w'
+                    ? `real ${costYear} USD/W${suffix}` : technoeconomicText(line?.unit);
+            const distribution = annualOm
+                ? technoeconomicStandaloneDistributionDisplay(line.distribution, 1000)
+                : technoeconomicReviewDistribution(line.distribution);
+            return `${unit}; ${distribution}`;
+        }
+
+        function technoeconomicStandaloneParseYears(value, path, errors, projectLife) {
+            const text = technoeconomicText(value).trim();
+            if (!text) {
+                technoeconomicPushError(errors, path, 'Enter at least one occurrence year.');
+                return [];
+            }
+            const values = text.split(/[\s,]+/).filter(Boolean).map(Number);
+            if (!values.length || values.some((year) => !Number.isSafeInteger(year)
+                || year < 1 || (projectLife !== null && year > projectLife))) {
+                technoeconomicPushError(
+                    errors, path,
+                    `Use whole-number project years from 1 through ${projectLife || 'the project life'}.`
+                );
+                return [];
+            }
+            if (new Set(values).size !== values.length
+                || values.some((year, index) => index > 0 && year <= values[index - 1])) {
+                technoeconomicPushError(
+                    errors, path, 'Occurrence years must be unique and strictly increasing.'
+                );
+            }
+            return values;
+        }
+
+        function technoeconomicStandaloneReadCostCards(system = 'solaredge') {
+            const systemMeta = technoeconomicPairedSystem(system);
+            if (!systemMeta) return [];
+            const elements = technoeconomicPairedSystemElements(system);
+            const cards = [
+                ...Array.from(elements.costLines?.querySelectorAll?.(
+                    '[data-tea-v4-cost-line]'
+                ) || []),
+            ];
+            if (elements.replacementEnabled?.checked === true) {
+                cards.push(...Array.from(
+                    elements.replacementFields?.querySelectorAll?.(
+                        '[data-tea-v4-cost-line]'
+                    ) || []
+                ));
+            }
+            return cards.map((card) => ({
+                key: card.dataset.teaV4CostLine,
+                inputId: card.dataset.inputId,
+                timing: card.dataset.timing,
+                unit: card.dataset.unit,
+                costCategory: card.dataset.costCategory
+                    || TECHNOECONOMIC_STANDALONE_COST_COVERAGE[system][
+                        card.dataset.teaV4CostLine
+                    ]?.costCategory || '',
+                coverageIds: technoeconomicText(card.dataset.coverageIds).split(',')
+                    .map((value) => value.trim()).filter(Boolean).length
+                    ? technoeconomicText(card.dataset.coverageIds).split(',')
+                        .map((value) => value.trim()).filter(Boolean)
+                    : [...(TECHNOECONOMIC_STANDALONE_COST_COVERAGE[system][
+                        card.dataset.teaV4CostLine
+                    ]?.coverageIds || [])],
+                label: card.querySelector('h5')?.textContent || card.dataset.inputId,
+                distribution: technoeconomicStandaloneDistributionDraft(
+                    card.querySelector('[data-tea-v4-family]'), card
+                ),
+                occurrenceYears: card.dataset.timing === 'scheduled_year_end'
+                    ? technoeconomicDomElement(
+                        `technoeconomicStandalone${systemMeta.label}ReplacementYears`
+                    )?.value || ''
+                    : '',
+            }));
+        }
+
+        function technoeconomicStandaloneSanitizeDistributionDraft(value) {
+            const source = technoeconomicPlainObject(value);
+            const family = TECHNOECONOMIC_DISTRIBUTION_FAMILIES.some(
+                ([candidate]) => candidate === source.family
+            ) ? source.family : 'fixed';
+            const output = {family};
+            for (const key of ['value', 'low', 'mode', 'high', 'mean', 'sd']) {
+                if (source[key] !== undefined && source[key] !== null) {
+                    output[key] = technoeconomicText(source[key]);
+                }
+            }
+            return output;
+        }
+
+        function technoeconomicStandaloneSanitizeDraft(value) {
+            const source = technoeconomicPlainObject(value);
+            if (source.schema_version !== TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION) {
+                return null;
+            }
+            const systemDrafts = technoeconomicPlainObject(source.systems);
+            const systems = {};
+            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                const seen = new Set();
+                const systemDraft = technoeconomicPlainObject(systemDrafts[key]);
+                systems[key] = {
+                    cost_lines: (Array.isArray(systemDraft.cost_lines)
+                        ? systemDraft.cost_lines : [])
+                        .filter((line) => {
+                            const lineKey = technoeconomicText(line?.key);
+                            if (!['Capex', 'Om', 'Replacement'].includes(lineKey)
+                                || seen.has(lineKey)) return false;
+                            seen.add(lineKey);
+                            return true;
+                        })
+                        .map((line) => ({
+                            key: technoeconomicText(line.key),
+                            distribution: technoeconomicStandaloneSanitizeDistributionDraft(
+                                line.distribution
+                            ),
+                            occurrence_years: technoeconomicText(line.occurrence_years),
+                        })),
+                    replacement_enabled: systemDraft.replacement_enabled === true,
+                };
+            }
+            const ratingBasis = ['ac_operating_limit', 'dc_installed_nameplate'].includes(
+                source.rating_basis
+            ) ? source.rating_basis : 'ac_operating_limit';
+            return {
+                schema_version: TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION,
+                source_annual_job_id: technoeconomicText(source.source_annual_job_id),
+                target_capacity: technoeconomicText(source.target_capacity) || '100',
+                n: technoeconomicText(source.n) || '10000',
+                seed: technoeconomicText(source.seed),
+                project_life_years: technoeconomicText(source.project_life_years) || '30',
+                rating_basis: ratingBasis,
+                discount_distribution: technoeconomicStandaloneSanitizeDistributionDraft(
+                    source.discount_distribution
+                ),
+                degradation_distribution: technoeconomicStandaloneSanitizeDistributionDraft(
+                    source.degradation_distribution
+                ),
+                systems,
+                assumption_note: technoeconomicText(source.assumption_note),
+            };
+        }
+
+        function technoeconomicStandaloneDefaultDraft() {
+            return technoeconomicStandaloneSanitizeDraft({
+                schema_version: TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION,
+                source_annual_job_id: '', target_capacity: '100', n: '10000',
+                seed: '', project_life_years: '30', rating_basis: 'ac_operating_limit',
+                discount_distribution: {family: 'fixed', value: ''},
+                degradation_distribution: {family: 'fixed', value: ''},
+                systems: Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(({key}) => [key, {
+                    cost_lines: technoeconomicStandaloneCostDefinitions(
+                        'ac_operating_limit', key
+                    ).map((line) => ({
+                        key: line.key,
+                        distribution: {family: 'fixed', value: line.value},
+                        occurrence_years: '',
+                    })),
+                    replacement_enabled: false,
+                }])),
+                assumption_note: '',
+            });
+        }
+
+        function technoeconomicStandaloneDraftSnapshot() {
+            const systems = Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(({key}) => {
+                const elements = technoeconomicPairedSystemElements(key);
+                return [key, {
+                    cost_lines: technoeconomicStandaloneReadCostCards(key).map((line) => ({
+                        key: line.key,
+                        distribution: line.distribution,
+                        occurrence_years: line.occurrenceYears,
+                    })),
+                    replacement_enabled: elements.replacementEnabled?.checked === true,
+                }];
+            }));
+            return technoeconomicStandaloneSanitizeDraft({
+                schema_version: TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION,
+                source_annual_job_id: technoeconomicElements.standaloneSourceSelect?.value || '',
+                target_capacity: technoeconomicElements.standaloneTargetCapacityInput?.value || '',
+                n: technoeconomicElements.standaloneRealizations?.value || '',
+                seed: technoeconomicElements.standaloneSeed?.value || '',
+                project_life_years: technoeconomicElements.standaloneProjectLife?.value || '',
+                rating_basis: technoeconomicElements.standaloneSolarEdgeCostLines
+                    ?.dataset?.ratingBasis,
+                discount_distribution: technoeconomicStandaloneDistributionDraft(
+                    technoeconomicElements.standaloneDiscountFamily,
+                    technoeconomicElements.standaloneDiscountParameters
+                ),
+                degradation_distribution: technoeconomicStandaloneDistributionDraft(
+                    technoeconomicElements.standaloneDegradationFamily,
+                    technoeconomicElements.standaloneDegradationParameters
+                ),
+                systems,
+                assumption_note: technoeconomicElements.standaloneAssumptionNote?.value || '',
+            });
+        }
+
+        function technoeconomicStandaloneEnsureSourceOption(sourceId) {
+            const select = technoeconomicElements.standaloneSourceSelect;
+            if (!select || !sourceId || Array.from(select.options || []).some(
+                (option) => option.value === sourceId
+            )) return;
+            select.appendChild(technoeconomicNode('option', {
+                value: sourceId,
+                text: `Saved Annual source ${sourceId} (refresh to verify)`,
+            }));
+        }
+
+        function technoeconomicStandaloneApplyDistributionDraft(
+            familyElement, parameterRoot, prefix, distribution
+        ) {
+            if (!familyElement || !parameterRoot) return;
+            const sanitized = technoeconomicStandaloneSanitizeDistributionDraft(distribution);
+            familyElement.value = sanitized.family;
+            parameterRoot.replaceChildren();
+            technoeconomicStandaloneRenderDistributionParameters(
+                parameterRoot, sanitized.family, prefix, sanitized
+            );
+        }
+
+        function technoeconomicStandaloneApplyCostDraft(root, line) {
+            if (!root || !line) return;
+            const card = Array.from(root.querySelectorAll?.('[data-tea-v4-cost-line]') || [])
+                .find((candidate) => candidate.dataset.teaV4CostLine === line.key);
+            if (!card) return;
+            const system = technoeconomicPairedSystem(card.dataset.teaV4System)
+                || TECHNOECONOMIC_PAIRED_SYSTEMS[1];
+            technoeconomicStandaloneApplyDistributionDraft(
+                card.querySelector('[data-tea-v4-family]'),
+                card.querySelector('.tea-v4-distribution-parameters'),
+                `technoeconomicStandaloneCost${system.label}${line.key}`,
+                line.distribution
+            );
+            if (line.key === 'Replacement') {
+                const years = technoeconomicDomElement(
+                    `technoeconomicStandalone${system.label}ReplacementYears`
+                );
+                if (years) years.value = line.occurrence_years;
+            }
+        }
+
+        function technoeconomicStandaloneApplyDraft(value) {
+            const draft = technoeconomicStandaloneSanitizeDraft(value);
+            if (!draft || !technoeconomicElements?.standaloneResults) return false;
+            technoeconomicApplyingDraft = true;
+            try {
+                technoeconomicStandaloneEnsureSourceOption(draft.source_annual_job_id);
+                if (technoeconomicElements.standaloneSourceSelect) {
+                    technoeconomicElements.standaloneSourceSelect.value =
+                        draft.source_annual_job_id;
+                }
+                if (technoeconomicElements.standaloneTargetCapacityInput) {
+                    technoeconomicElements.standaloneTargetCapacityInput.value =
+                        draft.target_capacity;
+                }
+                if (technoeconomicElements.standaloneRealizations) {
+                    technoeconomicElements.standaloneRealizations.value = draft.n;
+                }
+                if (technoeconomicElements.standaloneSeed) {
+                    technoeconomicElements.standaloneSeed.value = draft.seed
+                        || technoeconomicGenerateSafeSeed();
+                }
+                if (technoeconomicElements.standaloneCostYear) {
+                    technoeconomicElements.standaloneCostYear.value = '2022';
+                }
+                if (technoeconomicElements.standaloneProjectLife) {
+                    technoeconomicElements.standaloneProjectLife.value = draft.project_life_years;
+                }
+                technoeconomicStandaloneApplyDistributionDraft(
+                    technoeconomicElements.standaloneDiscountFamily,
+                    technoeconomicElements.standaloneDiscountParameters,
+                    'technoeconomicStandaloneDiscount', draft.discount_distribution
+                );
+                technoeconomicStandaloneApplyDistributionDraft(
+                    technoeconomicElements.standaloneDegradationFamily,
+                    technoeconomicElements.standaloneDegradationParameters,
+                    'technoeconomicStandaloneDegradation', draft.degradation_distribution
+                );
+                for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                    const elements = technoeconomicPairedSystemElements(key);
+                    const systemDraft = draft.systems[key];
+                    technoeconomicStandaloneRenderCostLines(
+                        key, draft.rating_basis, {forcePreset: true}
+                    );
+                    for (const line of systemDraft.cost_lines.filter(
+                        (candidate) => candidate.key !== 'Replacement'
+                    )) {
+                        technoeconomicStandaloneApplyCostDraft(elements.costLines, line);
+                    }
+                    if (elements.replacementEnabled) {
+                        elements.replacementEnabled.checked = systemDraft.replacement_enabled;
+                    }
+                    technoeconomicStandaloneRenderReplacement(key);
+                    const replacement = systemDraft.cost_lines.find(
+                        (line) => line.key === 'Replacement'
+                    );
+                    if (systemDraft.replacement_enabled && replacement) {
+                        technoeconomicStandaloneApplyCostDraft(
+                            elements.replacementFields, replacement
+                        );
+                    }
+                }
+                if (technoeconomicElements.standaloneAssumptionNote) {
+                    technoeconomicElements.standaloneAssumptionNote.value = draft.assumption_note;
+                }
+                if (technoeconomicElements.standaloneAccept) {
+                    technoeconomicElements.standaloneAccept.checked = false;
+                }
+            } finally {
+                technoeconomicApplyingDraft = false;
+            }
+            technoeconomicRenderStandaloneDraft();
+            return true;
+        }
+
+        function technoeconomicPersistStandaloneDraft() {
+            if (!technoeconomicElements?.standaloneResults) return true;
+            if (typeof localStorage !== 'object') return false;
+            try {
+                localStorage.setItem(
+                    TECHNOECONOMIC_STANDALONE_DRAFT_STORAGE_KEY,
+                    JSON.stringify(technoeconomicStandaloneDraftSnapshot())
+                );
+                return true;
+            } catch (_error) {
+                return false;
+            }
+        }
+
+        function technoeconomicLoadStandaloneDraft() {
+            if (typeof localStorage !== 'object') return null;
+            try {
+                return technoeconomicStandaloneSanitizeDraft(JSON.parse(
+                    localStorage.getItem(TECHNOECONOMIC_STANDALONE_DRAFT_STORAGE_KEY) || 'null'
+                ));
+            } catch (_error) {
+                return null;
+            }
+        }
+
+        function technoeconomicClearStandaloneAcceptance(target) {
+            const acceptance = technoeconomicElements.standaloneAccept;
+            const assumptions = technoeconomicElements.standaloneAssumptionsDialog;
+            if (technoeconomicApplyingDraft || !acceptance?.checked
+                || target === acceptance || !assumptions?.contains?.(target)) return false;
+            acceptance.checked = false;
+            return true;
+        }
+
+        function technoeconomicSerializeStandaloneRequest(options = {}) {
+            const errors = [];
+            const context = {
+                evidenceCount: 0, provisionalEvidenceCount: 0, nonfixedPredictorCount: 0,
+            };
+            const sourceId = technoeconomicStrictText(
+                technoeconomicElements.standaloneSourceSelect?.value,
+                'source_annual_job_id', errors, {maximum: 200}
+            );
+            const source = (Array.isArray(options.sources) ? options.sources : technoeconomicSources)
+                .find((item) => item?.source_annual_job_id === sourceId);
+            if (!source) technoeconomicPushError(
+                errors, 'source_annual_job_id',
+                'Refresh sources and select a verified Annual Simulation.'
+            );
+            else if (source.eligible !== true) technoeconomicPushError(
+                errors, 'source_annual_job_id',
+                source.detail || 'The selected Annual Simulation is not eligible.'
+            );
+            const capacities = Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(
+                ({key}) => [key, technoeconomicStandaloneSourceCapacityInfo(source, key)]
+            ));
+            for (const {key, label} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                if (!capacities[key]) technoeconomicPushError(
+                    errors, 'paired_commercial.target_rating_basis',
+                    `The selected source has no verified ${label} applied capacity.`
+                );
+            }
+            const ratingBases = new Set(Object.values(capacities).filter(Boolean).map(
+                (capacity) => capacity.ratingBasis
+            ));
+            if (ratingBases.size > 1) technoeconomicPushError(
+                errors, 'paired_commercial.target_rating_basis',
+                'Solectria and SolarEdge must use the same AC or DC capacity basis.'
+            );
+            const ratingBasis = ratingBases.size === 1 ? [...ratingBases][0] : null;
+            const targetCapacity = technoeconomicFiniteNumber(
+                technoeconomicElements.standaloneTargetCapacityInput?.value,
+                'paired_commercial.target_capacity', errors, {positive: true}
+            );
+            const n = technoeconomicFiniteNumber(
+                technoeconomicElements.standaloneRealizations?.value, 'n', errors,
+                {integer: true, min: 1, max: 100000}
+            );
+            let seed = null;
+            const seedText = technoeconomicText(
+                technoeconomicElements.standaloneSeed?.value
+            ).trim();
+            if (!/^\d+$/.test(seedText)) {
+                technoeconomicPushError(errors, 'seed', 'Enter a nonnegative whole-number seed.');
+            } else {
+                try {
+                    const exactSeed = BigInt(seedText);
+                    if (exactSeed > BigInt(TECHNOECONOMIC_MAX_SAFE_SEED)) {
+                        technoeconomicPushError(
+                            errors, 'seed',
+                            `Use a seed no greater than ${TECHNOECONOMIC_MAX_SAFE_SEED.toLocaleString('en-US')}.`
+                        );
+                    } else seed = Number(exactSeed);
+                } catch (_error) {
+                    technoeconomicPushError(errors, 'seed', 'The sampling seed is invalid.');
+                }
+            }
+            const costYear = 2022;
+            if (technoeconomicElements.standaloneCostYear) {
+                technoeconomicElements.standaloneCostYear.value = String(costYear);
+            }
+            const projectLife = technoeconomicFiniteNumber(
+                technoeconomicElements.standaloneProjectLife?.value,
+                'finance.project_life_years', errors, {integer: true, min: 1}
+            );
+            const accepted = technoeconomicElements.standaloneAccept?.checked === true;
+            const note = technoeconomicText(
+                technoeconomicElements.standaloneAssumptionNote?.value
+            ).trim();
+            if (!note) technoeconomicPushError(
+                errors, 'evidence.assumption_note',
+                'Document the discount-rate and degradation source or justification.'
+            );
+            if (!accepted) technoeconomicPushError(
+                errors, 'evidence.explicit_acceptance',
+                'Confirm both system cost stacks, capacity scaling, benchmark limits, and financial assumptions.'
+            );
+            const userEvidence = technoeconomicGuidedEvidence(note, accepted, {
+                seed: seedText || 'paired-draft',
+                subject: 'Paired commercial Solectria and SolarEdge financial assumptions',
+            });
+            const discountDraft = technoeconomicStandaloneScaleDistribution(
+                technoeconomicStandaloneDistributionDraft(
+                    technoeconomicElements.standaloneDiscountFamily,
+                    technoeconomicElements.standaloneDiscountParameters
+                ), 100
+            );
+            const degradationDraft = technoeconomicStandaloneScaleDistribution(
+                technoeconomicStandaloneDistributionDraft(
+                    technoeconomicElements.standaloneDegradationFamily,
+                    technoeconomicElements.standaloneDegradationParameters
+                ), 100
+            );
+            const discount = technoeconomicSerializeDistribution(
+                discountDraft, 'finance.real_discount_rate.distribution', errors,
+                'discount_rate'
+            );
+            const degradation = technoeconomicSerializeDistribution(
+                degradationDraft, 'shared_degradation.annual_rate.distribution', errors,
+                'degradation'
+            );
+            if (discount.nonfixed) context.nonfixedPredictorCount += 1;
+            if (degradation.nonfixed) context.nonfixedPredictorCount += 1;
+            const userEvidencePayload = technoeconomicSerializeEvidence(
+                userEvidence, 'finance.real_discount_rate.evidence', errors, context
+            );
+            const degradationEvidencePayload = technoeconomicSerializeEvidence(
+                userEvidence, 'shared_degradation.annual_rate.evidence', errors, context
+            );
+            const projectLifeUsesAtb = costYear === 2022 && projectLife === 30;
+            const projectEvidence = projectLifeUsesAtb
+                ? technoeconomicStandaloneNrelEvidence(
+                    'NREL 2024 ATB utility-scale PV financial lifetime',
+                    'The interface uses the ATB 30-year utility-scale PV financial lifetime.',
+                    accepted,
+                    note
+                ) : userEvidence;
+            const projectEvidencePayload = technoeconomicSerializeEvidence(
+                projectEvidence, 'finance.project_life_evidence', errors, context
+            );
+            const preset = ratingBasis
+                ? TECHNOECONOMIC_STANDALONE_ATB_PRESETS[ratingBasis] : null;
+            const pairedSystems = TECHNOECONOMIC_PAIRED_SYSTEMS.map(
+                ({key, label}, systemIndex) => {
+                    const systemPath = `paired_commercial.systems.${systemIndex}`;
+                    const systemRationale = capacities[key]
+                        ? `Divide verified ${label} annual energy by its frozen ${
+                            technoeconomicRatingBasisLabel(capacities[key].ratingBasis)
+                        }, then multiply by the same-rated target capacity.`
+                        : `A verified ${label} source capacity is required.`;
+                    const systemEvidence = technoeconomicSerializeEvidence(
+                        technoeconomicStandaloneSourceEvidence(
+                            source, accepted, systemRationale
+                        ), `${systemPath}.evidence`, errors, context
+                    );
+                    const costLines = technoeconomicStandaloneReadCostCards(key).map(
+                        (line, lineIndex) => {
+                            const linePath = `${systemPath}.cost_lines.${lineIndex}`;
+                            const kernelDistribution =
+                                technoeconomicStandaloneKernelCostDistribution(line);
+                            const distribution = technoeconomicSerializeDistribution(
+                                kernelDistribution, `${linePath}.distribution`, errors, 'cost'
+                            );
+                            if (distribution.nonfixed) context.nonfixedPredictorCount += 1;
+                            const occurrenceYears = line.timing === 'scheduled_year_end'
+                                ? technoeconomicStandaloneParseYears(
+                                    line.occurrenceYears, `${linePath}.occurrence_years`,
+                                    errors, projectLife
+                                ) : [];
+                            const expected = line.key === 'Capex' ? preset?.capex
+                                : line.key === 'Om' ? preset?.om : null;
+                            const isAtbPreset = expected !== null && expected !== undefined
+                                && line.distribution.family === 'fixed'
+                                && Number(line.distribution.value) === Number(expected)
+                                && costYear === 2022;
+                            const evidence = isAtbPreset
+                                ? technoeconomicStandaloneNrelEvidence(
+                                    `NREL 2024 ATB utility-scale PV ${
+                                        line.key === 'Capex' ? 'CAPEX' : 'O&M'
+                                    } benchmark for ${label}`,
+                                    `${line.label}: ${expected} ${line.key === 'Om'
+                                        ? `USD/kW${technoeconomicStandaloneRatingSuffix(ratingBasis)}-year`
+                                        : `USD/${ratingBasis === 'dc_installed_nameplate' ? 'Wdc' : 'Wac'}`
+                                    } in real 2022 USD; generic utility-scale benchmark, not a vendor quote.`,
+                                    accepted, note
+                                ) : userEvidence;
+                            const evidencePayload = technoeconomicSerializeEvidence(
+                                evidence, `${linePath}.evidence`, errors, context
+                            );
+                            return {
+                                input_id: line.inputId,
+                                label: line.label,
+                                cost_category: line.costCategory,
+                                coverage_ids: line.coverageIds,
+                                constant_dollar_cost_year: Number(costYear),
+                                timing: line.timing,
+                                unit: line.unit,
+                                distribution: distribution.payload,
+                                occurrence_years: occurrenceYears,
+                                evidence: evidencePayload,
+                            };
+                        }
+                    );
+                    if (!costLines.some((line) => line.timing === 'initial_t0')) {
+                        technoeconomicPushError(
+                            errors, `${systemPath}.cost_lines`,
+                            `Add an initial ${label} cost line.`
+                        );
+                    }
+                    if (!costLines.some((line) => line.timing === 'annual_year_end')) {
+                        technoeconomicPushError(
+                            errors, `${systemPath}.cost_lines`,
+                            `Add an annual ${label} cost line.`
+                        );
+                    }
+                    return {technology: key, evidence: systemEvidence, cost_lines: costLines};
+                }
+            );
+            const transferRationale = ratingBasis
+                ? `Scale verified Solectria and SolarEdge energy from each system's frozen ${
+                    technoeconomicRatingBasisLabel(ratingBasis)
+                } to one same-rated target capacity.`
+                : 'Verified Solectria and SolarEdge source capacities are required.';
+            const transferEvidence = technoeconomicSerializeEvidence(
+                technoeconomicStandaloneSourceEvidence(source, accepted, transferRationale),
+                'paired_commercial.evidence', errors, context
+            );
+            const payload = {
+                source_annual_job_id: sourceId,
+                basis: 'solartac_site',
+                capacity_normalization: TECHNOECONOMIC_APPLIED_CAPACITY_NORMALIZATION,
+                n,
+                seed,
+                cost_stack_completeness: 'full_system',
+                cost_lines: [],
+                finance: {
+                    treatment_key: 'constant-real-v1',
+                    constant_dollar_cost_year: costYear,
+                    project_life_years: projectLife,
+                    project_life_evidence: projectEvidencePayload,
+                    real_discount_rate: {
+                        unit: 'real_fraction_per_year',
+                        distribution: discount.payload,
+                        evidence: userEvidencePayload,
+                    },
+                },
+                shared_degradation: {
+                    degradation_model: 'shared_module_v1',
+                    annual_rate: {
+                        unit: 'real_fraction_per_year',
+                        distribution: degradation.payload,
+                        evidence: degradationEvidencePayload,
+                    },
+                },
+                paired_commercial: {
+                    target_capacity: targetCapacity,
+                    target_capacity_unit: 'mw',
+                    target_rating_basis: ratingBasis,
+                    transfer_method: 'direct_capacity_scaling',
+                    transfer_rationale: transferRationale,
+                    evidence: transferEvidence,
+                    systems: pairedSystems,
+                },
+            };
+            return {
+                payload,
+                errors,
+                valid: errors.length === 0,
+                evidenceCount: context.evidenceCount,
+                provisionalEvidenceCount: context.provisionalEvidenceCount,
+                nonfixedPredictorCount: context.nonfixedPredictorCount,
+            };
+        }
+
+        function technoeconomicStandaloneAppendDefinition(root, term, description) {
+            if (!root) return;
+            const row = technoeconomicNode('div');
+            row.append(
+                technoeconomicNode('dt', {text: term}),
+                technoeconomicNode('dd', {text: description})
+            );
+            root.appendChild(row);
+        }
+
+        function technoeconomicStandaloneScaleText(source, targetWatts) {
+            const target = Number(targetWatts);
+            if (!Number.isFinite(target) || target <= 0) return 'Enter a target';
+            const capacities = TECHNOECONOMIC_PAIRED_SYSTEMS.map(({key, label}) => ({
+                key, label, capacity: technoeconomicStandaloneSourceCapacityInfo(source, key),
+            }));
+            if (capacities.some((item) => !item.capacity)) return 'Select a frozen Annual source';
+            const first = capacities[0].capacity;
+            const sameCapacity = capacities.every((item) =>
+                item.capacity.watts === first.watts
+                && item.capacity.ratingBasis === first.ratingBasis
+            );
+            const targetText = technoeconomicStandaloneFormatCapacity(
+                target, first.ratingBasis, {forceMw: true}
+            );
+            if (sameCapacity) {
+                return `${technoeconomicStandaloneFormatCapacity(
+                    first.watts, first.ratingBasis
+                )} to ${targetText} (${technoeconomicFormatNumber(
+                    target / first.watts, 4
+                )}x)`;
+            }
+            return capacities.map(({label, capacity}) => `${label} ${
+                technoeconomicStandaloneFormatCapacity(capacity.watts, capacity.ratingBasis)
+            } to ${technoeconomicStandaloneFormatCapacity(
+                target, capacity.ratingBasis, {forceMw: true}
+            )} (${technoeconomicFormatNumber(target / capacity.watts, 4)}x)`).join('; ');
+        }
+
+        function technoeconomicRenderStandaloneBridge(source, result = null) {
+            const capacities = Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(
+                ({key}) => [key, technoeconomicStandaloneSourceCapacityInfo(source, key)]
+            ));
+            const availableCapacities = Object.values(capacities).filter(Boolean);
+            const ratingBases = new Set(availableCapacities.map((item) => item.ratingBasis));
+            const ratingBasis = ratingBases.size === 1 ? [...ratingBases][0] : null;
+            const targetMw = Number(technoeconomicElements.standaloneTargetCapacityInput?.value);
+            const targetWatts = Number.isFinite(targetMw) && targetMw > 0
+                ? targetMw * 1000000 : null;
+            const suffix = technoeconomicStandaloneRatingSuffix(ratingBasis);
+            const targetUnit = suffix ? `MW${suffix}` : 'MW';
+            if (technoeconomicElements.standaloneTargetCapacityUnit) {
+                technoeconomicElements.standaloneTargetCapacityUnit.textContent = targetUnit;
+            }
+            if (technoeconomicElements.standaloneTargetCapacity) {
+                technoeconomicElements.standaloneTargetCapacity.textContent = targetWatts
+                    ? technoeconomicStandaloneFormatCapacity(
+                        targetWatts, ratingBasis, {forceMw: true}
+                    ) : `100 ${targetUnit}`;
+            }
+            const completeSource = source && TECHNOECONOMIC_PAIRED_SYSTEMS.every(
+                ({key}) => capacities[key]
+            ) && ratingBasis;
+            if (!completeSource) {
+                if (technoeconomicElements.standaloneBridgeStatus) {
+                    technoeconomicElements.standaloneBridgeStatus.textContent = 'Select a source';
+                }
+                if (technoeconomicElements.standaloneSourceVerification) {
+                    technoeconomicElements.standaloneSourceVerification.textContent =
+                        'Choose a verified Annual Simulation';
+                }
+                if (technoeconomicElements.standaloneSourceYears) {
+                    technoeconomicElements.standaloneSourceYears.textContent =
+                        'Weather-year sample unavailable';
+                }
+                for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                    const elements = technoeconomicPairedSystemElements(key);
+                    for (const element of [
+                        elements.sourceCapacity, elements.sourceEnergy,
+                        elements.specificEnergy, elements.targetEnergy,
+                    ]) if (element) element.textContent = 'Unavailable';
+                }
+                return;
+            }
+            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                const costRoot = technoeconomicPairedSystemElements(key).costLines;
+                if (costRoot && costRoot.dataset.ratingBasis !== ratingBasis) {
+                    technoeconomicStandaloneRenderCostLines(
+                        key, ratingBasis, {forcePreset: true}
+                    );
+                }
+            }
+            const years = Array.isArray(source.eligible_years) ? source.eligible_years : [];
+            if (technoeconomicElements.standaloneBridgeStatus) {
+                technoeconomicElements.standaloneBridgeStatus.textContent =
+                    source.eligible === true ? 'Verified source' : 'Source unavailable';
+            }
+            if (technoeconomicElements.standaloneSourceVerification) {
+                technoeconomicElements.standaloneSourceVerification.textContent =
+                    source.eligible === true ? 'Verified Annual Simulation source'
+                        : 'Annual source is not eligible';
+            }
+            if (technoeconomicElements.standaloneSourceYears) {
+                technoeconomicElements.standaloneSourceYears.textContent = years.length
+                    ? `${years.join(', ')} (${years.length} weather years)`
+                    : 'Weather-year sample unavailable';
+            }
+            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                const capacity = capacities[key];
+                const elements = technoeconomicPairedSystemElements(key);
+                const energies = technoeconomicAnnualEnergies(source, key).sort(
+                    (left, right) => left - right
+                );
+                const capacityText = technoeconomicStandaloneFormatCapacity(
+                    capacity.watts, capacity.ratingBasis
+                );
+                const energyText = energies.length
+                    ? `${technoeconomicFormatNumber(energies[0], 0)}–${
+                        technoeconomicFormatNumber(energies.at(-1), 0)
+                    } kWh/year` : 'Unavailable';
+                const specificLow = energies.length
+                    ? energies[0] / (capacity.watts / 1000) : null;
+                const specificHigh = energies.length
+                    ? energies.at(-1) / (capacity.watts / 1000) : null;
+                const specificText = specificLow !== null
+                    ? `${technoeconomicFormatNumber(specificLow, 0)}–${
+                        technoeconomicFormatNumber(specificHigh, 0)
+                    } kWh/kW${suffix}-year` : 'Unavailable';
+                let targetEnergyText = specificLow !== null && targetWatts
+                    ? `${technoeconomicFormatNumber(
+                        specificLow * targetWatts / 1000000000, 2
+                    )}–${technoeconomicFormatNumber(
+                        specificHigh * targetWatts / 1000000000, 2
+                    )} GWh/year` : 'Unavailable';
+                const resultSummary = technoeconomicStandaloneMetricSummary(
+                    result, TECHNOECONOMIC_PAIRED_METRICS[key].year1Energy
+                );
+                const resultPercentiles = technoeconomicPlainObject(resultSummary.percentiles);
+                if (resultSummary.status === 'available'
+                    && Number.isFinite(Number(resultPercentiles.p10))
+                    && Number.isFinite(Number(resultPercentiles.p90))) {
+                    targetEnergyText = `${technoeconomicFormatNumber(
+                        Number(resultPercentiles.p10) / 1000000, 2
+                    )}–${technoeconomicFormatNumber(
+                        Number(resultPercentiles.p90) / 1000000, 2
+                    )} GWh/year (P10–P90)`;
+                }
+                if (elements.sourceCapacity) elements.sourceCapacity.textContent = capacityText;
+                if (elements.sourceEnergy) elements.sourceEnergy.textContent = energyText;
+                if (elements.specificEnergy) elements.specificEnergy.textContent = specificText;
+                if (elements.targetEnergy) elements.targetEnergy.textContent = targetEnergyText;
+            }
+            if (technoeconomicElements.standaloneSourceBasis) {
+                const authority = ratingBasis === 'ac_operating_limit'
+                    ? 'enabled clipping/curtailment limit'
+                    : "each system's verified installed DC nameplate fallback";
+                technoeconomicElements.standaloneSourceBasis.textContent =
+                    `Frozen source scale: ${technoeconomicStandaloneScaleText(
+                        source, targetWatts
+                    )}. Basis: ${authority}.`;
+            }
+        }
+
+        function technoeconomicRenderStandaloneDraft() {
+            const source = technoeconomicStandaloneSelectedSource();
+            technoeconomicRenderStandaloneBridge(source);
+            const root = technoeconomicElements.standaloneScenarioSummary;
+            if (!root) return;
+            const capacity = technoeconomicStandaloneSourceCapacityInfo(source, 'solaredge');
+            const targetMw = Number(technoeconomicElements.standaloneTargetCapacityInput?.value);
+            const projectLife = technoeconomicElements.standaloneProjectLife?.value || '30';
+            const costYear = '2022';
+            const discountDraft = technoeconomicStandaloneDistributionDraft(
+                technoeconomicElements.standaloneDiscountFamily,
+                technoeconomicElements.standaloneDiscountParameters
+            );
+            root.replaceChildren();
+            technoeconomicStandaloneAppendDefinition(
+                root, 'Target capacity', Number.isFinite(targetMw) && targetMw > 0
+                    ? `${technoeconomicFormatNumber(targetMw, 4)} MW${
+                        technoeconomicStandaloneRatingSuffix(capacity?.ratingBasis)
+                    }` : 'Enter a target'
+            );
+            technoeconomicStandaloneAppendDefinition(
+                root, 'Frozen source scale', technoeconomicStandaloneScaleText(
+                    source, Number.isFinite(targetMw) && targetMw > 0
+                        ? targetMw * 1000000 : null
+                )
+            );
+            technoeconomicStandaloneAppendDefinition(root, 'Project life', `${projectLife} years`);
+            technoeconomicStandaloneAppendDefinition(
+                root, 'Systems', 'Solectria and SolarEdge'
+            );
+            technoeconomicStandaloneAppendDefinition(root, 'Currency', `USD (real ${costYear})`);
+            const discountHasValue = Object.values(discountDraft).some(
+                (value, index) => index > 0 && technoeconomicText(value).trim()
+            );
+            technoeconomicStandaloneAppendDefinition(
+                root, 'Discount rate (real)', discountHasValue
+                    ? `${technoeconomicStandaloneDistributionDisplay(discountDraft)}%`
+                    : 'Enter an evidenced real rate'
+            );
+        }
+
+        function technoeconomicStandaloneMetricSummary(result, metricName) {
+            return technoeconomicPlainObject(
+                technoeconomicPlainObject(result?.summaries)[metricName]
+            );
+        }
+
+        function technoeconomicStandalonePercentile(summary, key) {
+            const value = technoeconomicPlainObject(summary.percentiles)[key];
+            const number = technoeconomicStandaloneOptionalNumber(value);
+            return summary.status === 'available' ? number : null;
+        }
+
+        function technoeconomicStandaloneOptionalNumber(value) {
+            if (value === null || value === undefined) return null;
+            if (typeof value === 'string' && !value.trim()) return null;
+            const number = Number(value);
+            return Number.isFinite(number) ? number : null;
+        }
+
+        function technoeconomicStandaloneFormatLcoePerMwh(value) {
+            const number = technoeconomicStandaloneOptionalNumber(value);
+            return number !== null
+                ? `${technoeconomicFormatNumber(number * 1000, 1)} USD/MWh`
+                : 'Unavailable';
+        }
+
+        function technoeconomicStandaloneFormatUsd(value, suffix = '') {
+            const number = technoeconomicStandaloneOptionalNumber(value);
+            if (number === null) return 'Unavailable';
+            const formatted = number.toLocaleString('en-US', {
+                style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+            });
+            return `${formatted}${suffix}`;
+        }
+
+        function technoeconomicStandaloneAggregateLinePercentile(lines, timing, key) {
+            const matching = (Array.isArray(lines) ? lines : []).filter(
+                (line) => line?.timing === timing
+            );
+            if (!matching.length) return null;
+            const values = matching.map((line) =>
+                technoeconomicStandaloneOptionalNumber(line?.percentiles?.[key])
+            );
+            if (values.some((value) => value === null)) return null;
+            return values.reduce((total, value) => total + value, 0);
+        }
+
+        function technoeconomicRenderStandaloneScenario(job, result) {
+            const request = technoeconomicPlainObject(job?.request);
+            const standaloneRequest = technoeconomicPlainObject(request.standalone_commercial);
+            const pairedRequest = technoeconomicPlainObject(request.paired_commercial);
+            const standaloneResult = technoeconomicPlainObject(result.standalone_commercial);
+            const pairedResult = technoeconomicPlainObject(result.paired_commercial);
+            const commercialRequest = Object.keys(pairedRequest).length
+                ? pairedRequest : standaloneRequest;
+            const commercialResult = Object.keys(pairedResult).length
+                ? pairedResult : standaloneResult;
+            const paired = Object.keys(pairedRequest).length > 0
+                || result.calculation_contract_version === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION;
+            const root = technoeconomicElements.standaloneScenarioSummary;
+            if (root) {
+                root.replaceChildren();
+                const targetWatts = Number(
+                    commercialResult.target_capacity_w
+                        ?? (Number(commercialRequest.target_capacity)
+                            * (commercialRequest.target_capacity_unit === 'mw' ? 1000000 : 1000))
+                );
+                const ratingBasis = commercialResult.target_rating_basis
+                    || commercialRequest.target_rating_basis;
+                technoeconomicStandaloneAppendDefinition(
+                    root, 'Target capacity',
+                    technoeconomicStandaloneFormatCapacity(
+                        targetWatts, ratingBasis, {forceMw: targetWatts >= 1000000}
+                    )
+                );
+                technoeconomicStandaloneAppendDefinition(
+                    root, 'Project life', `${request.finance?.project_life_years
+                        ?? result.project_life_years ?? 'Unavailable'} years`
+                );
+                technoeconomicStandaloneAppendDefinition(
+                    root, paired ? 'Systems' : 'Model', paired
+                        ? 'Solectria and SolarEdge'
+                        : 'SolarEdge (saved v4 job)'
+                );
+                technoeconomicStandaloneAppendDefinition(
+                    root, 'Currency', `USD (real ${request.finance?.constant_dollar_cost_year
+                        ?? result.constant_dollar_cost_year ?? 'unavailable'})`
+                );
+                const discount = technoeconomicPlainObject(
+                    request.finance?.real_discount_rate?.distribution
+                );
+                technoeconomicStandaloneAppendDefinition(
+                    root, 'Discount rate (real)',
+                    Object.keys(discount).length
+                        ? `${technoeconomicStandaloneDistributionDisplay(discount, 100)}%`
+                        : 'Unavailable'
+                );
+            }
+            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                const costRoot = technoeconomicPairedSystemElements(key).costSummary;
+                if (!costRoot) continue;
+                costRoot.replaceChildren();
+                if (!paired && key === 'solectria') {
+                    technoeconomicStandaloneAppendDefinition(
+                        costRoot, 'Saved result', 'Not part of this v4 job'
+                    );
+                    continue;
+                }
+                const metrics = TECHNOECONOMIC_PAIRED_METRICS[key];
+                const initial = technoeconomicStandaloneMetricSummary(
+                    result, metrics.initialCost
+                );
+                const recurring = technoeconomicStandaloneMetricSummary(
+                    result, metrics.recurringCost
+                );
+                const scheduled = technoeconomicStandaloneMetricSummary(
+                    result, metrics.scheduledCost
+                );
+                const lifecycle = technoeconomicStandaloneMetricSummary(
+                    result, metrics.lifecycleCost
+                );
+                technoeconomicStandaloneAppendDefinition(
+                    costRoot, 'Initial cost',
+                    technoeconomicStandaloneFormatUsd(
+                        technoeconomicStandalonePercentile(initial, 'p50')
+                    )
+                );
+                technoeconomicStandaloneAppendDefinition(
+                    costRoot, 'Recurring lifecycle cost',
+                    technoeconomicStandaloneFormatUsd(
+                        technoeconomicStandalonePercentile(recurring, 'p50')
+                    )
+                );
+                technoeconomicStandaloneAppendDefinition(
+                    costRoot, 'Scheduled replacement',
+                    technoeconomicStandalonePercentile(scheduled, 'p50') === 0
+                        ? 'Not included'
+                        : technoeconomicStandaloneFormatUsd(
+                            technoeconomicStandalonePercentile(scheduled, 'p50')
+                        )
+                );
+                technoeconomicStandaloneAppendDefinition(
+                    costRoot, 'Total lifecycle cost',
+                    technoeconomicStandaloneFormatUsd(
+                        technoeconomicStandalonePercentile(lifecycle, 'p50')
+                    )
+                );
+            }
+        }
+
+        function technoeconomicRenderStandaloneResult(job, result) {
+            const summary = technoeconomicStandaloneMetricSummary(
+                result, TECHNOECONOMIC_STANDALONE_LCOE_METRIC
+            );
+            const p10 = technoeconomicStandalonePercentile(summary, 'p10');
+            const p50 = technoeconomicStandalonePercentile(summary, 'p50');
+            const p90 = technoeconomicStandalonePercentile(summary, 'p90');
+            if (technoeconomicElements.standaloneResults) {
+                technoeconomicElements.standaloneResults.dataset.state =
+                    summary.status === 'available' ? 'done' : 'unavailable';
+            }
+            if (technoeconomicElements.standaloneResultStatus) {
+                technoeconomicElements.standaloneResultStatus.textContent =
+                    'Completed server calculation. Modeled result, not a validated forecast.';
+            }
+            if (technoeconomicElements.standaloneInterpretation) {
+                technoeconomicElements.standaloneInterpretation.textContent = p50 === null
+                    ? `SolarEdge LCOE is unavailable: ${
+                        technoeconomicHumanize(summary.reason || 'no completed population')}.`
+                    : `SolarEdge P50 is ${technoeconomicStandaloneFormatLcoePerMwh(
+                        p50
+                    )} (real USD): half of modeled outcomes are at or below this value.`;
+            }
+            const body = technoeconomicElements.standalonePercentileBody;
+            if (body) {
+                body.replaceChildren();
+                for (const [key, label, value] of [
+                    ['p10', 'P10', p10], ['p50', 'P50 (median)', p50], ['p90', 'P90', p90],
+                ]) {
+                    const row = technoeconomicNode('tr');
+                    row.dataset.percentile = key;
+                    row.append(
+                        technoeconomicNode('th', {text: label, scope: 'row'}),
+                        technoeconomicNode('td', {text: 'Unavailable'}),
+                        technoeconomicNode('td', {
+                            text: technoeconomicStandaloneFormatLcoePerMwh(value),
+                        })
+                    );
+                    body.appendChild(row);
+                }
+            }
+            const request = technoeconomicPlainObject(job.request);
+            if (technoeconomicElements.standaloneRunContext) {
+                technoeconomicElements.standaloneRunContext.textContent =
+                    `${technoeconomicFormatNumber(
+                        result.realization_count ?? request.n, 0
+                    )} trials · Real discount rate · Real ${
+                        request.finance?.constant_dollar_cost_year ?? 'unavailable'
+                    } USD · ${
+                        request.finance?.project_life_years ?? result.project_life_years ?? 'unavailable'
+                    } years`;
+            }
+            technoeconomicRenderStandaloneScenario(job, result);
+            const provenance = technoeconomicElements.standaloneProvenance;
+            if (provenance) {
+                provenance.replaceChildren();
+                for (const [label, value] of [
+                    ['Annual source', job.source_annual_job_id
+                        || request.source_annual_job_id],
+                    ['TEA job', job.job_id],
+                    ['Contract', result.calculation_contract_version],
+                    ['Source snapshot SHA-256', result.source_snapshot_sha256],
+                ]) {
+                    if (value !== null && value !== undefined && String(value).trim()) {
+                        technoeconomicStandaloneAppendDefinition(provenance, label, String(value));
+                    }
+                }
+            }
+            const source = technoeconomicSources.find(
+                (item) => item?.source_annual_job_id === job.source_annual_job_id
+            ) || technoeconomicStandaloneSelectedSource();
+            technoeconomicRenderStandaloneBridge(source, result);
+            const manifest = technoeconomicPlainObject(
+                technoeconomicPlainObject(job.artifacts).exports
+            );
+            const entries = technoeconomicPlainObject(manifest.artifacts);
+            const safe = (artifactId) => technoeconomicSafeArtifactUrl(
+                job.job_id, artifactId, technoeconomicPlainObject(entries[artifactId]).url
+            );
+            const cdfUrl = safe('cdf_plot');
+            technoeconomicSetPlot(
+                technoeconomicElements.standaloneCdfPlot,
+                technoeconomicElements.standaloneCdfFallback,
+                cdfUrl,
+                'The verified standalone commercial LCOE CDF chart is not available.'
+            );
+            technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, cdfUrl);
+            technoeconomicSetDownload(
+                technoeconomicElements.standaloneCsvLink, safe('csv_bundle')
+            );
+            technoeconomicSetDownload(
+                technoeconomicElements.standaloneXlsxLink, safe('xlsx_workbook')
+            );
+            if (technoeconomicElements.standaloneSubmitButton) {
+                technoeconomicElements.standaloneSubmitButton.textContent = 'Recalculate';
+            }
+        }
+
+        function technoeconomicRenderPairedResult(job, result) {
+            const pairedResult = technoeconomicPlainObject(result.paired_commercial);
+            const pairedSystems = technoeconomicPlainObject(pairedResult.systems);
+            const summaries = Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(
+                ({key}) => {
+                    const rootSummary = technoeconomicStandaloneMetricSummary(
+                        result, TECHNOECONOMIC_PAIRED_METRICS[key].lcoe
+                    );
+                    const nested = technoeconomicPlainObject(pairedSystems[key]);
+                    return [key, rootSummary.status
+                        ? rootSummary
+                        : Object.keys(technoeconomicPlainObject(nested.percentiles)).length
+                            ? {status: 'available', percentiles: nested.percentiles}
+                            : rootSummary];
+                }
+            ));
+            const values = Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(({key}) => [
+                key,
+                Object.fromEntries(['p10', 'p50', 'p90'].map((percentile) => [
+                    percentile,
+                    technoeconomicStandalonePercentile(summaries[key], percentile),
+                ])),
+            ]));
+            const available = TECHNOECONOMIC_PAIRED_SYSTEMS.every(
+                ({key}) => summaries[key].status === 'available'
+            );
+            if (technoeconomicElements.standaloneResults) {
+                technoeconomicElements.standaloneResults.dataset.state = available
+                    ? 'done' : 'unavailable';
+            }
+            if (technoeconomicElements.standaloneResultStatus) {
+                technoeconomicElements.standaloneResultStatus.textContent =
+                    'Completed paired server calculation. Modeled result, not a validated forecast.';
+            }
+            if (technoeconomicElements.standaloneInterpretation) {
+                const solectriaP50 = values.solectria.p50;
+                const solarEdgeP50 = values.solaredge.p50;
+                const rootDeltaSummary = technoeconomicStandaloneMetricSummary(
+                    result, TECHNOECONOMIC_PAIRED_LCOE_DELTA_METRIC
+                );
+                const nestedDelta = technoeconomicPlainObject(
+                    pairedResult.lcoe_delta_se_minus_sol
+                );
+                const deltaSummary = rootDeltaSummary.status
+                    ? rootDeltaSummary
+                    : Object.keys(technoeconomicPlainObject(nestedDelta.percentiles)).length
+                        ? {status: 'available', percentiles: nestedDelta.percentiles}
+                        : rootDeltaSummary;
+                const deltaP50 = technoeconomicStandalonePercentile(deltaSummary, 'p50');
+                technoeconomicElements.standaloneInterpretation.textContent =
+                    solectriaP50 === null || solarEdgeP50 === null
+                        ? 'Both system LCOE populations are required for comparison.'
+                        : `P50: Solectria ${
+                            technoeconomicStandaloneFormatLcoePerMwh(solectriaP50)
+                        }; SolarEdge ${
+                            technoeconomicStandaloneFormatLcoePerMwh(solarEdgeP50)
+                        }${deltaP50 === null ? '.' : `; SolarEdge minus Solectria ${
+                            technoeconomicStandaloneFormatLcoePerMwh(deltaP50)
+                        }.`}`;
+            }
+            const body = technoeconomicElements.standalonePercentileBody;
+            if (body) {
+                body.replaceChildren();
+                for (const [key, label] of [
+                    ['p10', 'P10'], ['p50', 'P50 (median)'], ['p90', 'P90'],
+                ]) {
+                    const row = technoeconomicNode('tr');
+                    row.dataset.percentile = key;
+                    row.append(
+                        technoeconomicNode('th', {text: label, scope: 'row'}),
+                        technoeconomicNode('td', {
+                            text: technoeconomicStandaloneFormatLcoePerMwh(
+                                values.solectria[key]
+                            ),
+                        }),
+                        technoeconomicNode('td', {
+                            text: technoeconomicStandaloneFormatLcoePerMwh(
+                                values.solaredge[key]
+                            ),
+                        })
+                    );
+                    body.appendChild(row);
+                }
+            }
+            const request = technoeconomicPlainObject(job.request);
+            if (technoeconomicElements.standaloneRunContext) {
+                technoeconomicElements.standaloneRunContext.textContent =
+                    `${technoeconomicFormatNumber(
+                        result.realization_count ?? request.n, 0
+                    )} trials · Real discount rate · Real ${
+                        request.finance?.constant_dollar_cost_year ?? 'unavailable'
+                    } USD · ${
+                        request.finance?.project_life_years ?? result.project_life_years
+                            ?? 'unavailable'
+                    } years`;
+            }
+            technoeconomicRenderStandaloneScenario(job, result);
+            const provenance = technoeconomicElements.standaloneProvenance;
+            if (provenance) {
+                provenance.replaceChildren();
+                for (const [label, value] of [
+                    ['Annual source', job.source_annual_job_id
+                        || request.source_annual_job_id],
+                    ['TEA job', job.job_id],
+                    ['Contract', result.calculation_contract_version],
+                    ['Source snapshot SHA-256', result.source_snapshot_sha256],
+                ]) {
+                    if (value !== null && value !== undefined && String(value).trim()) {
+                        technoeconomicStandaloneAppendDefinition(provenance, label, String(value));
+                    }
+                }
+            }
+            const source = technoeconomicSources.find(
+                (item) => item?.source_annual_job_id === job.source_annual_job_id
+            ) || technoeconomicStandaloneSelectedSource();
+            technoeconomicRenderStandaloneBridge(source, result);
+            const manifest = technoeconomicPlainObject(
+                technoeconomicPlainObject(job.artifacts).exports
+            );
+            const entries = technoeconomicPlainObject(manifest.artifacts);
+            const safe = (artifactId) => technoeconomicSafeArtifactUrl(
+                job.job_id, artifactId, technoeconomicPlainObject(entries[artifactId]).url
+            );
+            const cdfUrl = safe('cdf_plot');
+            technoeconomicSetPlot(
+                technoeconomicElements.standaloneCdfPlot,
+                technoeconomicElements.standaloneCdfFallback,
+                cdfUrl,
+                'The verified paired commercial LCOE CDF chart is not available.'
+            );
+            technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, cdfUrl);
+            technoeconomicSetDownload(
+                technoeconomicElements.standaloneCsvLink, safe('csv_bundle')
+            );
+            technoeconomicSetDownload(
+                technoeconomicElements.standaloneXlsxLink, safe('xlsx_workbook')
+            );
+            if (technoeconomicElements.standaloneSubmitButton) {
+                technoeconomicElements.standaloneSubmitButton.textContent = 'Recalculate';
+            }
+        }
+
+        function technoeconomicClearStandaloneResult() {
+            if (technoeconomicElements.standaloneResults) {
+                technoeconomicElements.standaloneResults.dataset.state = 'empty';
+            }
+            if (technoeconomicElements.standaloneResultStatus) {
+                technoeconomicElements.standaloneResultStatus.textContent =
+                    'Complete the assumptions, then calculate. Results are modeled, not a validated forecast.';
+            }
+            if (technoeconomicElements.standaloneInterpretation) {
+                technoeconomicElements.standaloneInterpretation.textContent =
+                    'A completed server result is required before the probability distribution can be interpreted.';
+            }
+            technoeconomicElements.standalonePercentileBody?.replaceChildren();
+            technoeconomicSetPlot(
+                technoeconomicElements.standaloneCdfPlot,
+                technoeconomicElements.standaloneCdfFallback,
+                null,
+                'The verified CDF chart will appear after a completed calculation.'
+            );
+            technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, null);
+            technoeconomicSetDownload(technoeconomicElements.standaloneCsvLink, null);
+            technoeconomicSetDownload(technoeconomicElements.standaloneXlsxLink, null);
+            technoeconomicElements.standaloneProvenance?.replaceChildren();
+            if (technoeconomicElements.standaloneSubmitButton) {
+                technoeconomicElements.standaloneSubmitButton.textContent = 'Calculate LCOE';
+            }
+            technoeconomicRenderStandaloneDraft();
+        }
+
         function technoeconomicReadGuidedForm() {
             const read = (element) => element?.value || '';
             const commercialEnabled = technoeconomicDomElement(
@@ -1110,8 +2816,17 @@
 
         function technoeconomicRenderEntryMode() {
             const guided = technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE;
+            const standaloneWorkspace = Boolean(technoeconomicElements.standaloneResults);
+            if (standaloneWorkspace
+                && typeof document === 'object'
+                && typeof document.querySelectorAll === 'function') {
+                document.querySelectorAll('.tea-legacy-v3-workspace').forEach((panel) => {
+                    panel.hidden = true;
+                    panel.setAttribute('inert', '');
+                });
+            }
             if (technoeconomicElements.guidedPanel) {
-                technoeconomicElements.guidedPanel.hidden = !guided;
+                technoeconomicElements.guidedPanel.hidden = standaloneWorkspace || !guided;
             }
             if (technoeconomicElements.advancedDetails) {
                 technoeconomicElements.advancedDetails.hidden = true;
@@ -1121,7 +2836,7 @@
                 technoeconomicElements.entryModeRow.hidden = guided;
             }
             if (technoeconomicElements.submitPanel) {
-                technoeconomicElements.submitPanel.hidden = !guided;
+                technoeconomicElements.submitPanel.hidden = standaloneWorkspace || !guided;
             }
             if (technoeconomicElements.useGuidedButton) {
                 technoeconomicElements.useGuidedButton.hidden = guided;
@@ -1228,6 +2943,7 @@
 
         function technoeconomicNode(tag, options = {}, children = []) {
             const node = document.createElement(tag);
+            if (options.id) node.id = options.id;
             if (options.className) node.className = options.className;
             if (options.text !== undefined) node.textContent = String(options.text);
             if (options.type) node.type = options.type;
@@ -1237,6 +2953,8 @@
             if (options.disabled !== undefined) node.disabled = Boolean(options.disabled);
             if (options.checked !== undefined) node.checked = Boolean(options.checked);
             if (options.placeholder) node.placeholder = options.placeholder;
+            if (options.htmlFor) node.htmlFor = options.htmlFor;
+            if (options.inputmode) node.setAttribute('inputmode', options.inputmode);
             if (options.min !== undefined) node.min = String(options.min);
             if (options.max !== undefined) node.max = String(options.max);
             if (options.step !== undefined) node.step = String(options.step);
@@ -2029,7 +3747,8 @@
             }
             clearTimeout(technoeconomicDraftSaveTimer);
             technoeconomicDraftSaveTimer = setTimeout(() => {
-                const saved = technoeconomicPersistDraft();
+                const saved = technoeconomicPersistDraft()
+                    && technoeconomicPersistStandaloneDraft();
                 if (typeof saveDashboardState === 'function') saveDashboardState();
                 if (technoeconomicElements.draftStatus) {
                     technoeconomicElements.draftStatus.textContent = saved
@@ -2228,8 +3947,9 @@
                 technoeconomicPushError(errors, `${path}.citation.user_supplied_content_sha256`,
                     'Use exactly 64 lowercase hexadecimal characters.');
             }
+            const explicitlyAccepted = evidence.explicit_acceptance === true;
             let rationale = null;
-            if (provisional) {
+            if (provisional || explicitlyAccepted) {
                 if (evidence.explicit_acceptance !== true) {
                     technoeconomicPushError(errors, `${path}.explicit_acceptance`,
                         'Explicit acceptance is required for provisional evidence.');
@@ -2267,8 +3987,8 @@
                         `${path}.citation.metadata_only_rationale`, errors
                     ),
                 },
-                explicit_acceptance: provisional ? evidence.explicit_acceptance === true : null,
-                acceptance_rationale: provisional ? rationale : null,
+                explicit_acceptance: explicitlyAccepted ? true : null,
+                acceptance_rationale: explicitlyAccepted ? rationale : null,
             };
         }
 
@@ -3536,39 +5256,61 @@
         function technoeconomicRenderSourceOptions(selectedId = '') {
             const select = technoeconomicElements.sourceSelect;
             if (!select) return;
-            select.replaceChildren(technoeconomicNode('option', {
-                value: '', text: 'Select a verified Annual Simulation',
-            }));
             const ordered = [...technoeconomicSources].sort((left, right) =>
                 String(right.provenance?.completed_at || '').localeCompare(
                     String(left.provenance?.completed_at || '')
                 ));
-            for (const source of ordered) {
-                const years = Array.isArray(source.eligible_years)
-                    ? ` | ${source.eligible_years.join(', ')}` : '';
-                const label = `${source.source_annual_job_id}${years}${
-                    source.eligible === true ? '' : ` | ineligible: ${source.reason_code || 'verification failed'}`
-                }`;
-                const option = technoeconomicNode('option', {
-                    value: source.source_annual_job_id, text: label,
-                    disabled: source.eligible !== true,
-                });
-                select.appendChild(option);
-            }
-            if (selectedId && !ordered.some((source) => source.source_annual_job_id === selectedId)) {
-                technoeconomicEnsureSourceOption(selectedId);
-            }
-            select.value = selectedId;
+            const resolvedSelectedId = selectedId
+                || technoeconomicElements.standaloneSourceSelect?.value
+                || ordered.find((source) => source.eligible === true)?.source_annual_job_id
+                || '';
+            const populate = (target) => {
+                if (!target) return;
+                target.replaceChildren(technoeconomicNode('option', {
+                    value: '', text: 'Select a completed, verified Annual Simulation',
+                }));
+                for (const source of ordered) {
+                    const years = Array.isArray(source.eligible_years)
+                        ? ` | ${source.eligible_years.join(', ')}` : '';
+                    const label = `${source.source_annual_job_id}${years}${
+                        source.eligible === true ? '' : ` | ineligible: ${source.reason_code || 'verification failed'}`
+                    }`;
+                    target.appendChild(technoeconomicNode('option', {
+                        value: source.source_annual_job_id, text: label,
+                        disabled: source.eligible !== true,
+                    }));
+                }
+                if (resolvedSelectedId
+                    && !ordered.some((source) => source.source_annual_job_id === resolvedSelectedId)) {
+                    target.appendChild(technoeconomicNode('option', {
+                        value: resolvedSelectedId,
+                        text: `${resolvedSelectedId} | refresh required`,
+                    }));
+                }
+                target.value = resolvedSelectedId;
+            };
+            populate(select);
+            populate(technoeconomicElements.standaloneSourceSelect);
             technoeconomicRenderSelectedSource();
+            technoeconomicRenderStandaloneDraft();
+            if (technoeconomicJob?.state === 'done' && technoeconomicJob.result) {
+                renderTechnoeconomicJobResult(technoeconomicJob);
+            }
         }
 
         async function refreshTechnoeconomicSources(options = {}) {
             const revision = ++technoeconomicSourceRequestRevision;
             if (technoeconomicSourceAbortController) technoeconomicSourceAbortController.abort();
             technoeconomicSourceAbortController = new AbortController();
-            const selectedId = options.selectedId ?? technoeconomicElements.sourceSelect?.value ?? '';
+            const selectedId = options.selectedId
+                ?? technoeconomicElements.standaloneSourceSelect?.value
+                ?? technoeconomicElements.sourceSelect?.value
+                ?? '';
             if (technoeconomicElements.refreshSourcesButton) {
                 technoeconomicElements.refreshSourcesButton.disabled = true;
+            }
+            if (technoeconomicElements.standaloneRefreshSourcesButton) {
+                technoeconomicElements.standaloneRefreshSourcesButton.disabled = true;
             }
             technoeconomicSetSourceState(
                 'loading', 'Checking Annual Simulation sources',
@@ -3604,6 +5346,10 @@
                     && technoeconomicElements.refreshSourcesButton) {
                     technoeconomicElements.refreshSourcesButton.disabled = false;
                 }
+                if (revision === technoeconomicSourceRequestRevision
+                    && technoeconomicElements.standaloneRefreshSourcesButton) {
+                    technoeconomicElements.standaloneRefreshSourcesButton.disabled = false;
+                }
             }
         }
 
@@ -3621,6 +5367,50 @@
                 technoeconomicNode('strong', {text: value})
             );
             return item;
+        }
+
+        function technoeconomicConfirmationGroup(title, items, options = {}) {
+            const section = technoeconomicNode('section', {
+                className: `tea-confirm-group${options.className ? ` ${options.className}` : ''}`,
+            });
+            const rows = technoeconomicNode('div', {className: 'tea-confirm-group-rows'});
+            rows.append(...items);
+            section.append(
+                technoeconomicNode('h4', {text: title}),
+                rows
+            );
+            if (options.trailing) section.append(options.trailing);
+            return section;
+        }
+
+        function technoeconomicConfirmationSystem(system, label, items) {
+            const section = technoeconomicNode('article', {className: 'tea-confirm-system'});
+            section.dataset.system = system;
+            section.append(technoeconomicNode('h5', {text: label}), ...items);
+            return section;
+        }
+
+        function technoeconomicConfirmationReadinessItem(title, description, status) {
+            const heading = technoeconomicNode('div', {className: 'tea-confirm-readiness-heading'});
+            heading.append(
+                technoeconomicNode('strong', {text: title}),
+                technoeconomicNode('span', {
+                    className: 'tea-confirm-readiness-status', text: status,
+                })
+            );
+            const item = technoeconomicNode('article', {className: 'tea-confirm-readiness-item'});
+            item.append(heading, technoeconomicNode('p', {text: description}));
+            return item;
+        }
+
+        function technoeconomicRenderConfirmationReadiness(items) {
+            const readiness = technoeconomicElements.confirmReadiness;
+            if (!readiness) return;
+            readiness.replaceChildren(...items.map((item) => (
+                technoeconomicConfirmationReadinessItem(
+                    item.title, item.description, item.status
+                )
+            )));
         }
 
         function technoeconomicReviewDistribution(value) {
@@ -3734,8 +5524,203 @@
                 : `${technoeconomicFormatNumber(installed, 1)} Wdc`;
         }
 
+        function technoeconomicRenderStandaloneConfirmation(serialized, sourceSummary) {
+            const payload = serialized.payload;
+            const standalone = technoeconomicPlainObject(payload.standalone_commercial);
+            const paired = technoeconomicPlainObject(payload.paired_commercial);
+            const commercial = Object.keys(paired).length ? paired : standalone;
+            const pairedSystems = Array.isArray(paired.systems) ? paired.systems : [];
+            const targetWatts = Number(commercial.target_capacity)
+                * (commercial.target_capacity_unit === 'mw' ? 1000000 : 1000);
+            const systems = pairedSystems.length ? pairedSystems : [{
+                technology: 'solaredge', cost_lines: standalone.cost_lines,
+            }];
+            const costLineCount = systems.reduce(
+                (count, system) => count + system.cost_lines.length, 0
+            );
+            const provisionalCount = serialized.provisionalEvidenceCount;
+
+            technoeconomicRenderConfirmationReadiness([
+                {
+                    title: 'Source locked', status: 'Locked',
+                    description: 'The Previous Annual Simulation source is verified and frozen.',
+                },
+                {
+                    title: 'Scale & sampling', status: 'Set',
+                    description: 'Commercial scale, LHS realizations, sampling seed, and contract are set.',
+                },
+                {
+                    title: 'Finance reviewed', status: 'Reviewed',
+                    description: 'Financial assumptions are frozen in the selected constant-dollar year.',
+                },
+                {
+                    title: 'Cost evidence accepted', status: 'Accepted',
+                    description: provisionalCount
+                        ? `${provisionalCount} provisional evidence record${
+                            provisionalCount === 1 ? ' is' : 's are'
+                        } accepted for this request.`
+                        : 'All submitted cost-line evidence is recorded with this request.',
+                },
+            ]);
+
+            const summary = technoeconomicElements.confirmSummary;
+            if (summary) {
+                const sourceItems = [
+                    technoeconomicSummaryItem('Annual source', payload.source_annual_job_id),
+                    technoeconomicSummaryItem('Status', 'Verified prior run (frozen)'),
+                    technoeconomicSummaryItem(
+                        'Frozen source snapshot SHA-256',
+                        sourceSummary.source_snapshot_sha256 || 'Re-verified by server at submission'
+                    ),
+                    technoeconomicSummaryItem(
+                        'Eligible weather years',
+                        sourceSummary.eligible_years.join(', ') || 'Re-verified by server at submission'
+                    ),
+                    technoeconomicSummaryItem(
+                        'Weather-year allocation', 'Balanced seeded paired-year allocation'
+                    ),
+                    technoeconomicSummaryItem(
+                        'Frozen Solectria applied capacity',
+                        pairedSystems.length
+                            ? technoeconomicConfirmationCapacity(sourceSummary, 'solectria', true)
+                            : 'Not part of this v4 job'
+                    ),
+                    technoeconomicSummaryItem(
+                        'Frozen SolarEdge applied capacity',
+                        technoeconomicConfirmationCapacity(sourceSummary, 'solaredge', true)
+                    ),
+                ];
+                const scaleItems = [
+                    technoeconomicSummaryItem(
+                        'Analysis', pairedSystems.length
+                            ? 'Paired commercial Solectria and SolarEdge LCOE'
+                            : 'Standalone commercial SolarEdge LCOE'
+                    ),
+                    technoeconomicSummaryItem(
+                        'Commercial target capacity',
+                        technoeconomicStandaloneFormatCapacity(
+                            targetWatts, commercial.target_rating_basis, {forceMw: true}
+                        )
+                    ),
+                    technoeconomicSummaryItem(
+                        'Frozen source scale',
+                        technoeconomicStandaloneScaleText(sourceSummary, targetWatts)
+                    ),
+                    technoeconomicSummaryItem(
+                        'Energy transfer',
+                        `${technoeconomicHumanize(commercial.transfer_method)}; ${commercial.transfer_rationale}`
+                    ),
+                    technoeconomicSummaryItem(
+                        'Sampling method', 'Seeded Latin Hypercube Sampling (LHS)'
+                    ),
+                    technoeconomicSummaryItem(
+                        'Sampling contract', TECHNOECONOMIC_SAMPLING_VERSION
+                    ),
+                    technoeconomicSummaryItem('Realizations', payload.n.toLocaleString('en-US')),
+                    technoeconomicSummaryItem('Sampling seed', String(payload.seed)),
+                ];
+                const financeItems = [
+                    technoeconomicSummaryItem(
+                        'Constant-dollar year', String(payload.finance.constant_dollar_cost_year)
+                    ),
+                    technoeconomicSummaryItem(
+                        'Project life', `${payload.finance.project_life_years} years`
+                    ),
+                    technoeconomicSummaryItem(
+                        'Real discount rate',
+                        `${technoeconomicStandaloneDistributionDisplay(
+                            payload.finance.real_discount_rate.distribution, 100
+                        )}%`
+                    ),
+                    technoeconomicSummaryItem(
+                        'Annual module degradation',
+                        `${technoeconomicStandaloneDistributionDisplay(
+                            payload.shared_degradation.annual_rate.distribution, 100
+                        )}%`
+                    ),
+                ];
+                const costSummaryItems = [
+                    technoeconomicSummaryItem(
+                        'Commercial cost lines', String(costLineCount)
+                    ),
+                    technoeconomicSummaryItem(
+                        'Evidence records', String(serialized.evidenceCount)
+                    ),
+                ];
+                const systemGrid = technoeconomicNode('div', {
+                    className: 'tea-confirm-system-grid',
+                });
+                systems.forEach((system) => {
+                    const label = technoeconomicPairedSystem(system.technology)?.label
+                        || technoeconomicHumanize(system.technology);
+                    const costItems = [];
+                    system.cost_lines.forEach((line, index) => {
+                        const years = line.timing === 'scheduled_year_end'
+                            ? `; years ${line.occurrence_years.join(', ')}` : '';
+                        costItems.push(technoeconomicSummaryItem(
+                            `Cost line ${index + 1}: ${line.label}`,
+                            `${technoeconomicHumanize(line.timing)}; ${
+                                technoeconomicStandaloneCostReview(
+                                    line, commercial.target_rating_basis,
+                                    payload.finance.constant_dollar_cost_year
+                                )
+                            }${years}; evidence: ${technoeconomicReviewEvidence(line.evidence)}`
+                        ));
+                    });
+                    systemGrid.append(technoeconomicConfirmationSystem(
+                        system.technology, label, costItems
+                    ));
+                });
+                summary.replaceChildren(
+                    technoeconomicConfirmationGroup(
+                        'Previous Annual Simulation source', sourceItems
+                    ),
+                    technoeconomicConfirmationGroup(
+                        'Commercial scale & sampling', scaleItems
+                    ),
+                    technoeconomicConfirmationGroup('Financial assumptions', financeItems),
+                    technoeconomicConfirmationGroup('System costs', costSummaryItems, {
+                        className: 'tea-confirm-costs-group', trailing: systemGrid,
+                    })
+                );
+            }
+            if (technoeconomicElements.confirmProvisional) {
+                technoeconomicElements.confirmProvisional.hidden = provisionalCount === 0;
+                technoeconomicElements.confirmProvisional.textContent = provisionalCount
+                    ? `${provisionalCount} provisional evidence record${
+                        provisionalCount === 1 ? '' : 's'
+                    } included. The accepted records are frozen with this request and remain available for audit.`
+                    : '';
+            }
+            technoeconomicRenderErrors(technoeconomicElements.confirmError, []);
+        }
+
         function technoeconomicRenderConfirmation(serialized, sourceSummary) {
             const payload = serialized.payload;
+            if (payload.paired_commercial || payload.standalone_commercial) {
+                technoeconomicRenderStandaloneConfirmation(serialized, sourceSummary);
+                return;
+            }
+            technoeconomicRenderConfirmationReadiness([
+                {
+                    title: 'Source locked', status: 'Locked',
+                    description: 'The Previous Annual Simulation source is verified and frozen.',
+                },
+                {
+                    title: 'Analysis & sampling', status: 'Set',
+                    description: 'The analysis basis, LHS realizations, and sampling seed are set.',
+                },
+                {
+                    title: 'Finance reviewed', status: 'Reviewed',
+                    description: 'Financial and degradation assumptions are frozen for submission.',
+                },
+                {
+                    title: 'Evidence accepted', status: 'Accepted',
+                    description: serialized.provisionalEvidenceCount
+                        ? 'Recorded provisional evidence acceptances are included.'
+                        : 'All submitted evidence is recorded with this request.',
+                },
+            ]);
             const summary = technoeconomicElements.confirmSummary;
             if (summary) {
                 const items = [
@@ -3744,6 +5729,8 @@
                         sourceSummary.source_snapshot_sha256 || 'Re-verified by server at submission'),
                     technoeconomicSummaryItem('Eligible weather years',
                         sourceSummary.eligible_years.join(', ') || 'Re-verified by server at submission'),
+                    technoeconomicSummaryItem('Weather-year allocation',
+                        'Balanced seeded paired-year allocation'),
                     technoeconomicSummaryItem(
                         payload.capacity_normalization
                             ? 'Frozen Solectria applied capacity' : 'Frozen Solectria capacity',
@@ -3762,8 +5749,12 @@
                         payload.capacity_normalization || 'Legacy installed-Wdc contract'),
                     technoeconomicSummaryItem('Basis', payload.basis === 'solartac_site'
                         ? 'SolarTAC site as-built' : 'Commercial representative'),
+                    technoeconomicSummaryItem('Sampling method',
+                        'Seeded Latin Hypercube Sampling (LHS)'),
+                    technoeconomicSummaryItem('Sampling contract',
+                        TECHNOECONOMIC_SAMPLING_VERSION),
                     technoeconomicSummaryItem('Realizations', payload.n.toLocaleString('en-US')),
-                    technoeconomicSummaryItem('Seed', String(payload.seed)),
+                    technoeconomicSummaryItem('Sampling seed', String(payload.seed)),
                     technoeconomicSummaryItem('Constant-dollar year', String(
                         payload.finance.constant_dollar_cost_year
                     )),
@@ -3880,7 +5871,9 @@
                         ));
                     });
                 }
-                summary.replaceChildren(...items);
+                summary.replaceChildren(
+                    technoeconomicConfirmationGroup('Request details', items)
+                );
             }
             if (technoeconomicElements.confirmProvisional) {
                 const count = serialized.provisionalEvidenceCount;
@@ -3892,35 +5885,70 @@
             technoeconomicRenderErrors(technoeconomicElements.confirmError, []);
         }
 
+        function technoeconomicFinishAssumptionsClose() {
+            const trigger = technoeconomicAssumptionsTrigger
+                || technoeconomicElements.standaloneEditAssumptionsButton;
+            if (technoeconomicAssumptionsReturnFocus) {
+                trigger?.focus?.({preventScroll: true});
+            }
+            technoeconomicAssumptionsTrigger = null;
+            technoeconomicAssumptionsReturnFocus = true;
+        }
+
+        function technoeconomicOpenAssumptionsDialog(trigger) {
+            const dialog = technoeconomicElements.standaloneAssumptionsDialog;
+            if (!dialog) return false;
+            if (!dialog.open) {
+                technoeconomicAssumptionsTrigger = trigger?.focus
+                    ? trigger
+                    : technoeconomicElements.standaloneEditAssumptionsButton;
+                technoeconomicAssumptionsReturnFocus = true;
+                if (typeof dialog.showModal === 'function') dialog.showModal();
+                else dialog.setAttribute('open', '');
+            }
+            technoeconomicElements.standaloneSourceSelect?.focus?.({preventScroll: true});
+            return true;
+        }
+
+        function technoeconomicCloseAssumptionsDialog(options = {}) {
+            const dialog = technoeconomicElements.standaloneAssumptionsDialog;
+            if (!dialog?.open) return false;
+            technoeconomicAssumptionsReturnFocus = options.restoreFocus !== false;
+            if (typeof dialog.close === 'function') dialog.close();
+            else {
+                dialog.removeAttribute('open');
+                technoeconomicFinishAssumptionsClose();
+            }
+            return true;
+        }
+
         function technoeconomicOpenConfirmation(event) {
             event?.preventDefault();
+            const errorElement = technoeconomicElements.standaloneFormErrors
+                || technoeconomicElements.formErrors;
             if (technoeconomicLifecycleRequestInFlight || technoeconomicSubmissionRequestInFlight) {
-                technoeconomicRenderErrors(technoeconomicElements.formErrors, [{
+                technoeconomicRenderErrors(errorElement, [{
                     path: '',
                     message: 'Wait for the current technoeconomic job action to finish before reviewing another submission.',
                 }]);
-                technoeconomicElements.formErrors?.focus();
+                errorElement?.focus();
                 return;
             }
             if (['queued', 'running'].includes(technoeconomicJob?.state)) {
-                technoeconomicRenderErrors(technoeconomicElements.formErrors, [{
+                technoeconomicRenderErrors(errorElement, [{
                     path: '',
                     message: 'Wait for or cancel the active technoeconomic job before queueing another.',
                 }]);
-                technoeconomicElements.formErrors?.focus();
+                errorElement?.focus();
                 return;
             }
-            const guidedErrors = technoeconomicGuidedFormErrors();
-            if (guidedErrors.length) {
-                technoeconomicRenderErrors(technoeconomicElements.formErrors, guidedErrors);
-                technoeconomicElements.formErrors?.focus();
-                return;
-            }
-            const draft = getTechnoeconomicFormState();
-            const serialized = serializeTechnoeconomicRequest(draft, {sources: technoeconomicSources});
-            technoeconomicRenderErrors(technoeconomicElements.formErrors, serialized.errors);
+            const serialized = technoeconomicSerializeStandaloneRequest({
+                sources: technoeconomicSources,
+            });
+            technoeconomicRenderErrors(errorElement, serialized.errors);
             if (!serialized.valid) {
-                technoeconomicElements.formErrors?.focus();
+                technoeconomicOpenAssumptionsDialog(event?.submitter);
+                errorElement?.focus();
                 return;
             }
             const frozenPayload = technoeconomicDeepFreeze(
@@ -3939,6 +5967,7 @@
                 evidenceCount: serialized.evidenceCount,
                 provisionalEvidenceCount: serialized.provisionalEvidenceCount,
             };
+            technoeconomicCloseAssumptionsDialog({restoreFocus: false});
             technoeconomicRenderConfirmation(serialized, sourceSummary);
             const dialog = technoeconomicElements.confirmDialog;
             if (dialog?.showModal) dialog.showModal();
@@ -4041,6 +6070,9 @@
             if (technoeconomicElements.submitButton) {
                 technoeconomicElements.submitButton.disabled = mutationInFlight;
             }
+            if (technoeconomicElements.standaloneSubmitButton) {
+                technoeconomicElements.standaloneSubmitButton.disabled = mutationInFlight || active;
+            }
             if (job.error) technoeconomicRenderApiError(
                 technoeconomicElements.jobError,
                 {code: 'job_failed', message: String(job.error), fields: []}
@@ -4090,12 +6122,18 @@
             if (technoeconomicElements?.submitButton) {
                 technoeconomicElements.submitButton.disabled = false;
             }
+            if (technoeconomicElements?.standaloneSubmitButton) {
+                technoeconomicElements.standaloneSubmitButton.disabled = false;
+            }
             if (technoeconomicElements?.confirmSubmitButton) {
                 technoeconomicElements.confirmSubmitButton.disabled = false;
                 technoeconomicElements.confirmSubmitButton.textContent = 'Confirm and queue';
             }
             if (technoeconomicElements?.confirmCancelButton) {
                 technoeconomicElements.confirmCancelButton.disabled = false;
+            }
+            if (technoeconomicElements?.confirmCloseButton) {
+                technoeconomicElements.confirmCloseButton.disabled = false;
             }
         }
 
@@ -4224,8 +6262,14 @@
             if (technoeconomicElements.confirmCancelButton) {
                 technoeconomicElements.confirmCancelButton.disabled = true;
             }
+            if (technoeconomicElements.confirmCloseButton) {
+                technoeconomicElements.confirmCloseButton.disabled = true;
+            }
             if (technoeconomicElements.submitButton) {
                 technoeconomicElements.submitButton.disabled = true;
+            }
+            if (technoeconomicElements.standaloneSubmitButton) {
+                technoeconomicElements.standaloneSubmitButton.disabled = true;
             }
             if (technoeconomicJob) technoeconomicRenderJob(technoeconomicJob);
             try {
@@ -4262,8 +6306,14 @@
                     if (technoeconomicElements.confirmCancelButton) {
                         technoeconomicElements.confirmCancelButton.disabled = false;
                     }
+                    if (technoeconomicElements.confirmCloseButton) {
+                        technoeconomicElements.confirmCloseButton.disabled = false;
+                    }
                     if (technoeconomicElements.submitButton) {
                         technoeconomicElements.submitButton.disabled = false;
+                    }
+                    if (technoeconomicElements.standaloneSubmitButton) {
+                        technoeconomicElements.standaloneSubmitButton.disabled = false;
                     }
                     if (technoeconomicJob) technoeconomicRenderJob(technoeconomicJob);
                 }
@@ -4988,6 +7038,22 @@
                 if (technoeconomicElements.results) technoeconomicElements.results.hidden = true;
                 return;
             }
+            const contractVersion = result.calculation_contract_version
+                || job.request?.calculation_contract_version;
+            const standaloneV4 = contractVersion === TECHNOECONOMIC_STANDALONE_CONTRACT_VERSION;
+            const pairedV5 = contractVersion === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION;
+            if (standaloneV4 || pairedV5) {
+                if (technoeconomicElements.results) technoeconomicElements.results.hidden = true;
+                if (technoeconomicElements.standaloneResults) {
+                    technoeconomicElements.standaloneResults.hidden = false;
+                }
+                if (pairedV5) technoeconomicRenderPairedResult(job, result);
+                else technoeconomicRenderStandaloneResult(job, result);
+                return;
+            }
+            if (technoeconomicElements.standaloneResults) {
+                technoeconomicElements.standaloneResults.hidden = true;
+            }
             technoeconomicRenderDecision(result);
             technoeconomicRenderResultSummary(job, result);
             technoeconomicRenderCommercialScaling(result);
@@ -5089,6 +7155,10 @@
 
         function technoeconomicClearResults() {
             if (technoeconomicElements.results) technoeconomicElements.results.hidden = true;
+            if (technoeconomicElements.standaloneResults) {
+                technoeconomicElements.standaloneResults.hidden = false;
+            }
+            technoeconomicClearStandaloneResult();
             for (const root of [
                 technoeconomicElements.decisionMetrics,
                 technoeconomicElements.resultSummary, technoeconomicElements.metricSummary,
@@ -5157,11 +7227,19 @@
                 if (typeof localStorage === 'object') {
                     try {
                         localStorage.removeItem(TECHNOECONOMIC_DRAFT_STORAGE_KEY);
+                        localStorage.removeItem(TECHNOECONOMIC_STANDALONE_DRAFT_STORAGE_KEY);
+                        localStorage.removeItem(
+                            TECHNOECONOMIC_STANDALONE_PREVIOUS_DRAFT_STORAGE_KEY
+                        );
+                        localStorage.removeItem(
+                            TECHNOECONOMIC_STANDALONE_LEGACY_DRAFT_STORAGE_KEY
+                        );
                     } catch (_error) {
                         // A reset still succeeds when local storage is unavailable.
                     }
                 }
                 applyTechnoeconomicFormState(technoeconomicDefaultDraft());
+                technoeconomicStandaloneApplyDraft(technoeconomicStandaloneDefaultDraft());
                 technoeconomicDraftRevision += 1;
             }
             if (options.refreshSources !== false) refreshTechnoeconomicSources();
@@ -5171,10 +7249,17 @@
             if (technoeconomicWorkspaceInitialized || typeof document !== 'object'
                 || !technoeconomicElements?.form) return;
             technoeconomicWorkspaceInitialized = true;
+            technoeconomicStandaloneInitializeEditors();
+            const standaloneDraft = technoeconomicLoadStandaloneDraft();
+            if (standaloneDraft) technoeconomicStandaloneApplyDraft(standaloneDraft);
+            else if (technoeconomicElements.standaloneAccept) {
+                technoeconomicElements.standaloneAccept.checked = false;
+            }
             const localDraft = technoeconomicLoadLocalDraft();
             applyTechnoeconomicFormState(localDraft || technoeconomicDefaultDraft());
             technoeconomicElements.form.addEventListener('submit', technoeconomicOpenConfirmation);
             technoeconomicElements.form.addEventListener('input', (event) => {
+                technoeconomicClearStandaloneAcceptance(event.target);
                 const commercialAccept = technoeconomicDomElement(
                     'technoeconomicGuidedCommercialAccept'
                 );
@@ -5207,9 +7292,20 @@
                     && technoeconomicElements.guidedPanel?.contains(event.target)) {
                     technoeconomicRenderGuidedEstimates();
                 }
+                if (technoeconomicElements.standaloneAssumptionsDialog?.contains(event.target)) {
+                    technoeconomicRenderStandaloneDraft();
+                }
                 technoeconomicMarkDraftChanged();
             });
             technoeconomicElements.form.addEventListener('change', (event) => {
+                technoeconomicClearStandaloneAcceptance(event.target);
+                if (event.target === technoeconomicElements.standaloneSourceSelect) {
+                    if (technoeconomicElements.sourceSelect) {
+                        technoeconomicElements.sourceSelect.value = event.target.value;
+                    }
+                    technoeconomicRenderSelectedSource();
+                    technoeconomicRenderStandaloneDraft();
+                }
                 if (event.target === technoeconomicElements.sourceSelect) {
                     technoeconomicCloseStaleAdvancedPreview();
                     technoeconomicRenderSelectedSource();
@@ -5236,6 +7332,12 @@
                 ) || event.target === technoeconomicDomElement(
                     'technoeconomicGuidedCommercialCostTiming'
                 )) technoeconomicRenderGuidedCommercialControls();
+                for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                    if (event.target === technoeconomicPairedSystemElements(key).replacementEnabled) {
+                        technoeconomicStandaloneRenderReplacement(key);
+                        technoeconomicRenderStandaloneDraft();
+                    }
+                }
                 technoeconomicMarkDraftChanged();
             });
             technoeconomicElements.costLines?.addEventListener('click', (event) => {
@@ -5265,10 +7367,34 @@
             technoeconomicElements.refreshSourcesButton?.addEventListener(
                 'click', () => refreshTechnoeconomicSources()
             );
+            technoeconomicElements.standaloneRefreshSourcesButton?.addEventListener(
+                'click', () => refreshTechnoeconomicSources()
+            );
             technoeconomicElements.openAnnualButton?.addEventListener('click', () => {
                 if (typeof switchMode === 'function') switchMode('annual');
             });
+            technoeconomicElements.standaloneOpenAnnualButton?.addEventListener('click', () => {
+                if (typeof switchMode === 'function') switchMode('annual');
+            });
+            technoeconomicElements.standaloneEditAssumptionsButton?.addEventListener(
+                'click', (event) => technoeconomicOpenAssumptionsDialog(event.currentTarget)
+            );
+            technoeconomicElements.standaloneAssumptionsCloseButton?.addEventListener(
+                'click', () => technoeconomicCloseAssumptionsDialog()
+            );
+            technoeconomicElements.standaloneAssumptionsFooterCloseButton?.addEventListener(
+                'click', () => technoeconomicCloseAssumptionsDialog()
+            );
+            technoeconomicElements.standaloneAssumptionsDialog?.addEventListener('cancel', () => {
+                technoeconomicAssumptionsReturnFocus = true;
+            });
+            technoeconomicElements.standaloneAssumptionsDialog?.addEventListener('close', () => {
+                technoeconomicFinishAssumptionsClose();
+            });
             technoeconomicElements.confirmCancelButton?.addEventListener(
+                'click', technoeconomicCloseConfirmation
+            );
+            technoeconomicElements.confirmCloseButton?.addEventListener(
                 'click', technoeconomicCloseConfirmation
             );
             technoeconomicElements.confirmSubmitButton?.addEventListener(
@@ -5290,4 +7416,5 @@
             technoeconomicElements.retryButton?.addEventListener('click', technoeconomicRetryJob);
             technoeconomicElements.deleteButton?.addEventListener('click', technoeconomicDeleteJob);
             technoeconomicRenderSelectedSource();
+            technoeconomicRenderStandaloneDraft();
         }

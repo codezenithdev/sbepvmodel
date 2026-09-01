@@ -60,6 +60,22 @@ COMMERCIAL_SCALING_CSV_FORMAT_VERSION = "technoeconomic-csv-v3"
 COMMERCIAL_SCALING_CSV_BUNDLE_SCHEMA_VERSION = "technoeconomic-csv-bundle-v3"
 COMMERCIAL_SCALING_XLSX_SCHEMA_VERSION = "technoeconomic-xlsx-v3"
 
+STANDALONE_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION = (
+    "technoeconomic-exports-manifest-v4"
+)
+STANDALONE_COMMERCIAL_CSV_FORMAT_VERSION = "technoeconomic-csv-v4"
+STANDALONE_COMMERCIAL_CSV_BUNDLE_SCHEMA_VERSION = (
+    "technoeconomic-csv-bundle-v4"
+)
+STANDALONE_COMMERCIAL_XLSX_SCHEMA_VERSION = "technoeconomic-xlsx-v4"
+
+PAIRED_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION = (
+    "technoeconomic-exports-manifest-v5"
+)
+PAIRED_COMMERCIAL_CSV_FORMAT_VERSION = "technoeconomic-csv-v5"
+PAIRED_COMMERCIAL_CSV_BUNDLE_SCHEMA_VERSION = "technoeconomic-csv-bundle-v5"
+PAIRED_COMMERCIAL_XLSX_SCHEMA_VERSION = "technoeconomic-xlsx-v5"
+
 CSV_BUNDLE_FILENAME = "technoeconomic-results-csv-v1.zip"
 XLSX_FILENAME = "technoeconomic-results-v1.xlsx"
 CDF_PLOT_FILENAME = "technoeconomic-cdf-v1.png"
@@ -104,6 +120,32 @@ def export_contract_versions(calculation_contract_version: str) -> dict[str, str
             "csv_bundle": COMMERCIAL_SCALING_CSV_BUNDLE_SCHEMA_VERSION,
             "csv_bundle_manifest_filename": "csv-bundle-manifest-v3.json",
             "xlsx": COMMERCIAL_SCALING_XLSX_SCHEMA_VERSION,
+            "png": PNG_SCHEMA_VERSION,
+            "xlsx_logical_hash": XLSX_LOGICAL_HASH_VERSION,
+        }
+    if (
+        calculation_contract_version
+        == technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    ):
+        return {
+            "manifest": PAIRED_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION,
+            "csv_format": PAIRED_COMMERCIAL_CSV_FORMAT_VERSION,
+            "csv_bundle": PAIRED_COMMERCIAL_CSV_BUNDLE_SCHEMA_VERSION,
+            "csv_bundle_manifest_filename": "csv-bundle-manifest-v5.json",
+            "xlsx": PAIRED_COMMERCIAL_XLSX_SCHEMA_VERSION,
+            "png": PNG_SCHEMA_VERSION,
+            "xlsx_logical_hash": XLSX_LOGICAL_HASH_VERSION,
+        }
+    if (
+        calculation_contract_version
+        == technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    ):
+        return {
+            "manifest": STANDALONE_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION,
+            "csv_format": STANDALONE_COMMERCIAL_CSV_FORMAT_VERSION,
+            "csv_bundle": STANDALONE_COMMERCIAL_CSV_BUNDLE_SCHEMA_VERSION,
+            "csv_bundle_manifest_filename": "csv-bundle-manifest-v4.json",
+            "xlsx": STANDALONE_COMMERCIAL_XLSX_SCHEMA_VERSION,
             "png": PNG_SCHEMA_VERSION,
             "xlsx_logical_hash": XLSX_LOGICAL_HASH_VERSION,
         }
@@ -164,6 +206,58 @@ CHART_CONTRACTS: dict[str, dict[str, Any]] = {
         "non_color_cues": ["median line", "open percentile band"],
         "filename": CONVERGENCE_PLOT_FILENAME,
     },
+}
+
+STANDALONE_COMMERCIAL_CDF_CHART_CONTRACT_ID = (
+    "standalone_commercial_solaredge_lcoe_cdf_v1"
+)
+STANDALONE_COMMERCIAL_CHART_CONTRACTS: dict[str, dict[str, Any]] = {
+    STANDALONE_COMMERCIAL_CDF_CHART_CONTRACT_ID: {
+        "question": "What is the probability distribution of commercial SolarEdge LCOE?",
+        "family": "distribution",
+        "variant": "single_right_continuous_empirical_cdf",
+        "fields": ["value", "cumulative_probability"],
+        "population": "finite standalone commercial SolarEdge LCOE realizations",
+        "denominator": "shown in the panel subtitle",
+        "palette_policy": "single-root preferred",
+        "palette": [_BLUE, _INK, _GRID],
+        "non_color_cues": ["direct metric title", "P10/P50/P90 neighbors"],
+        "render_point_cap": 1200,
+        "filename": CDF_PLOT_FILENAME,
+    },
+    "sensitivity_v1": CHART_CONTRACTS["sensitivity_v1"],
+    "convergence_v1": CHART_CONTRACTS["convergence_v1"],
+}
+
+PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID = "paired_commercial_lcoe_cdf_v3"
+PAIRED_COMMERCIAL_CHART_CONTRACTS: dict[str, dict[str, Any]] = {
+    PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID: {
+        "question": (
+            "How do the commercial Solectria and SolarEdge lifecycle LCOE "
+            "distributions compare?"
+        ),
+        "family": "distribution_comparison",
+        "variant": "paired_right_continuous_empirical_cdf_decision_view",
+        "fields": ["technology", "value", "cumulative_probability"],
+        "source_value_unit": "constant USD/kWh_AC",
+        "display_value_unit": "constant-dollar-year USD/MWh_AC",
+        "display_value_transform": "source value multiplied by 1000",
+        "probability_display": "percent",
+        "population": "finite paired commercial lifecycle LCOE realizations",
+        "denominator": "shown for each technology",
+        "palette_policy": "two named systems with non-color line cues",
+        "palette": [_GOLD, _BLUE, _INK, _GRID],
+        "non_color_cues": [
+            "Solectria dashed line",
+            "SolarEdge solid line",
+            "direct curve labels",
+            "P10/P50/P90 value rows with P50 chart markers",
+        ],
+        "render_point_cap_per_metric": 1200,
+        "filename": CDF_PLOT_FILENAME,
+    },
+    "sensitivity_v1": CHART_CONTRACTS["sensitivity_v1"],
+    "convergence_v1": CHART_CONTRACTS["convergence_v1"],
 }
 
 
@@ -448,6 +542,65 @@ def _compact_cdf_points_for_binding(value: Any) -> Any:
     return value
 
 
+def _standalone_headline_projection(
+    summary: Mapping[str, Any],
+    *,
+    maximum_points: int = 1200,
+) -> dict[str, Any]:
+    """Rebuild the worker's bounded standalone-commercial ECDF projection."""
+
+    cdf = summary.get("cdf")
+    if not isinstance(cdf, Mapping):
+        raise TechnoeconomicExportError(
+            "Standalone commercial headline CDF is unavailable"
+        )
+    values = list(cdf.get("values") or [])
+    probabilities = list(cdf.get("cumulative_probability") or [])
+    if not values or len(values) != len(probabilities):
+        raise TechnoeconomicExportError(
+            "Standalone commercial headline CDF is invalid"
+        )
+    count = len(values)
+    if count <= maximum_points:
+        indexes = np.arange(count, dtype=np.int64)
+    else:
+        required = {0, count - 1}
+        probability_vector = np.asarray(probabilities, dtype=np.float64)
+        for quantile in (0.10, 0.50, 0.90):
+            index = int(np.searchsorted(probability_vector, quantile, side="left"))
+            for neighbor in (index - 1, index, index + 1):
+                if 0 <= neighbor < count:
+                    required.add(neighbor)
+        if len(required) > maximum_points:
+            raise TechnoeconomicExportError(
+                "Standalone commercial CDF display cap is too small"
+            )
+        selected = set(required)
+        remaining = maximum_points - len(required)
+        if remaining:
+            selected.update(
+                np.linspace(0, count - 1, remaining, dtype=np.int64).tolist()
+            )
+        indexes = np.asarray(sorted(selected), dtype=np.int64)
+    full_identity = {
+        "values": values,
+        "cumulative_count": list(cdf.get("cumulative_count") or []),
+        "cumulative_probability": probabilities,
+        "population_count": cdf.get("population_count"),
+    }
+    return {
+        "population_count": cdf.get("population_count"),
+        "source_point_count": count,
+        "display_point_count": int(len(indexes)),
+        "values": [values[int(index)] for index in indexes],
+        "cumulative_probability": [
+            probabilities[int(index)] for index in indexes
+        ],
+        "full_cdf_sha256": _canonical_json_sha256(full_identity),
+        "full_storage": "sealed_calculation_payload",
+    }
+
+
 def _applied_capacity_authority(
     submission_provenance: Mapping[str, Any],
 ) -> dict[str, Mapping[str, Any]]:
@@ -554,13 +707,27 @@ def _verify_routine_result(
         calculation_contract_version
         == technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
     )
+    standalone_commercial_contract = (
+        calculation_contract_version
+        == technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    )
+    paired_commercial_contract = (
+        calculation_contract_version
+        == technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    )
     applied_capacity_contract = calculation_contract_version in {
         technoeconomic_kernel.CALCULATION_CONTRACT_VERSION,
         technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
     }
     expected = {
         "schema_version": (
-            3
+            5
+            if paired_commercial_contract
+            else 4
+            if standalone_commercial_contract
+            else 3
             if commercial_scaling_contract
             else (2 if applied_capacity_contract else 1)
         ),
@@ -634,6 +801,153 @@ def _verify_routine_result(
             ),
             "marginal_cost_timing": scaling.get("marginal_cost_timing"),
             "transfer_method": scaling.get("transfer_method"),
+        }
+    if standalone_commercial_contract:
+        standalone = request_payload.get("standalone_commercial") or {}
+        if not isinstance(standalone, Mapping):
+            raise TechnoeconomicExportError(
+                "Frozen standalone-commercial request is invalid"
+            )
+        unit_multiplier = {"kw": 1_000.0, "mw": 1_000_000.0}.get(
+            standalone.get("target_capacity_unit")
+        )
+        if unit_multiplier is None:
+            raise TechnoeconomicExportError(
+                "Frozen standalone-commercial target unit is invalid"
+            )
+        authority = _applied_capacity_authority(submission_provenance)
+        source = authority["solaredge"]
+        target_capacity_w = float(standalone.get("target_capacity")) * unit_multiplier
+        headline_metric_id = technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE
+        summaries = metadata.get("summaries") or {}
+        headline = summaries.get(headline_metric_id) if isinstance(summaries, Mapping) else None
+        if not isinstance(headline, Mapping) or not isinstance(
+            headline.get("percentiles"), Mapping
+        ):
+            raise TechnoeconomicExportError(
+                "Sealed standalone-commercial headline summary is invalid"
+            )
+        expected["standalone_commercial"] = {
+            "technology": "solaredge",
+            "target_capacity_w": target_capacity_w,
+            "target_rating_basis": standalone.get("target_rating_basis"),
+            "source_applied_capacity_w": source.get("applied_capacity_w"),
+            "source_rating_basis": source.get("rating_basis"),
+            "capacity_scale_factor": (
+                target_capacity_w / float(source.get("applied_capacity_w"))
+            ),
+            "transfer_method": standalone.get("transfer_method"),
+            "constant_dollar_cost_year": (
+                (request_payload.get("finance") or {}).get(
+                    "constant_dollar_cost_year"
+                )
+            ),
+            "headline_metric_id": headline_metric_id,
+            "unit": "constant_usd_per_kwh_ac",
+            "percentiles": headline.get("percentiles"),
+            "cdf": _standalone_headline_projection(headline),
+            "commercial_cost_line_summaries": (
+                summaries.get("commercial_cost_line_summaries") or []
+            ),
+        }
+    if paired_commercial_contract:
+        paired = request_payload.get("paired_commercial") or {}
+        if not isinstance(paired, Mapping):
+            raise TechnoeconomicExportError(
+                "Frozen paired-commercial request is invalid"
+            )
+        unit_multiplier = {"kw": 1_000.0, "mw": 1_000_000.0}.get(
+            paired.get("target_capacity_unit")
+        )
+        if unit_multiplier is None:
+            raise TechnoeconomicExportError(
+                "Frozen paired-commercial target unit is invalid"
+            )
+        target_capacity_w = float(paired.get("target_capacity")) * unit_multiplier
+        request_systems = paired.get("systems") or []
+        if not isinstance(request_systems, list):
+            raise TechnoeconomicExportError(
+                "Frozen paired-commercial systems are invalid"
+            )
+        request_system_map = {
+            str(system.get("technology")): system
+            for system in request_systems
+            if isinstance(system, Mapping)
+        }
+        if set(request_system_map) != {"solectria", "solaredge"}:
+            raise TechnoeconomicExportError(
+                "Frozen paired-commercial systems are incomplete"
+            )
+        authority = _applied_capacity_authority(submission_provenance)
+        summaries = metadata.get("summaries") or {}
+        if not isinstance(summaries, Mapping):
+            raise TechnoeconomicExportError(
+                "Sealed paired-commercial summaries are invalid"
+            )
+        cost_summaries = summaries.get("paired_commercial_cost_line_summaries") or []
+        if not isinstance(cost_summaries, list):
+            raise TechnoeconomicExportError(
+                "Sealed paired-commercial cost-line summaries are invalid"
+            )
+        field_contracts = {
+            "solectria": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+            "solaredge": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+        }
+        paired_system_results: dict[str, Any] = {}
+        for technology in ("solectria", "solaredge"):
+            headline_metric_id = field_contracts[technology]
+            headline = summaries.get(headline_metric_id)
+            if not isinstance(headline, Mapping) or not isinstance(
+                headline.get("percentiles"), Mapping
+            ):
+                raise TechnoeconomicExportError(
+                    f"Sealed paired-commercial {technology} headline summary is invalid"
+                )
+            source = authority[technology]
+            source_w = float(source.get("applied_capacity_w"))
+            system_cost_summaries = [
+                item
+                for item in cost_summaries
+                if isinstance(item, Mapping)
+                and item.get("technology") == technology
+            ]
+            if len(system_cost_summaries) != len(
+                request_system_map[technology].get("cost_lines") or []
+            ):
+                raise TechnoeconomicExportError(
+                    f"Sealed paired-commercial {technology} cost summaries are incomplete"
+                )
+            paired_system_results[technology] = {
+                "technology": technology,
+                "source_applied_capacity_w": source.get("applied_capacity_w"),
+                "source_rating_basis": source.get("rating_basis"),
+                "capacity_scale_factor": target_capacity_w / source_w,
+                "headline_metric_id": headline_metric_id,
+                "unit": "constant_usd_per_kwh_ac",
+                "percentiles": headline.get("percentiles"),
+                "cdf": _standalone_headline_projection(headline),
+                "commercial_cost_line_summaries": system_cost_summaries,
+            }
+        delta_metric_id = technoeconomic_kernel.COMMERCIAL_PAIRED_FIELD_LCOE_DELTA
+        delta_headline = summaries.get(delta_metric_id)
+        if not isinstance(delta_headline, Mapping) or not isinstance(
+            delta_headline.get("percentiles"), Mapping
+        ):
+            raise TechnoeconomicExportError(
+                "Sealed paired-commercial LCOE-delta summary is invalid"
+            )
+        expected["paired_commercial"] = {
+            "target_capacity_w": target_capacity_w,
+            "target_rating_basis": paired.get("target_rating_basis"),
+            "transfer_method": paired.get("transfer_method"),
+            "constant_dollar_cost_year": finance.get("constant_dollar_cost_year"),
+            "systems": paired_system_results,
+            "lcoe_delta_se_minus_sol": {
+                "headline_metric_id": delta_metric_id,
+                "unit": "constant_usd_per_kwh_ac",
+                "percentiles": delta_headline.get("percentiles"),
+                "cdf": _standalone_headline_projection(delta_headline),
+            },
         }
     for key in expected:
         if key not in routine_result:
@@ -1011,6 +1325,94 @@ def _input_rows(
                 applied_capacity_contract=applied_capacity_contract,
             ),
         )
+    standalone = request.get("standalone_commercial")
+    if isinstance(standalone, Mapping):
+        commercial_lines = standalone.get("cost_lines") or []
+        if not isinstance(commercial_lines, list):
+            raise TechnoeconomicExportError(
+                "Frozen standalone commercial cost lines are invalid"
+            )
+        for line in sorted(
+            commercial_lines,
+            key=lambda item: str(item.get("input_id")),
+        ):
+            if not isinstance(line, Mapping):
+                raise TechnoeconomicExportError(
+                    "A frozen standalone commercial cost line is invalid"
+                )
+            yield (
+                line.get("input_id"),
+                "standalone_commercial_cost",
+                line.get("label"),
+                "solaredge_only",
+                line.get("cost_category"),
+                line.get("unit"),
+                *_distribution_columns(line.get("distribution") or {}),
+                line.get("unit"),
+                line.get("unit"),
+                "direct_target_capacity_scaling",
+                line.get("constant_dollar_cost_year"),
+                *_currency_normalization_columns(None),
+                *_coverage_columns(line.get("coverage_ids") or []),
+                *_coverage_columns([]),
+                *_evidence_columns(line.get("evidence")),
+                *_input_contract_columns(request),
+                *_input_normalization_receipt_columns(
+                    None,
+                    applied_capacity_contract=applied_capacity_contract,
+                ),
+            )
+    paired = request.get("paired_commercial")
+    if isinstance(paired, Mapping):
+        paired_systems = paired.get("systems") or []
+        if not isinstance(paired_systems, list):
+            raise TechnoeconomicExportError(
+                "Frozen paired commercial systems are invalid"
+            )
+        for system in sorted(
+            paired_systems,
+            key=lambda item: str(item.get("technology")),
+        ):
+            if not isinstance(system, Mapping):
+                raise TechnoeconomicExportError(
+                    "A frozen paired commercial system is invalid"
+                )
+            technology = str(system.get("technology"))
+            commercial_lines = system.get("cost_lines") or []
+            if not isinstance(commercial_lines, list):
+                raise TechnoeconomicExportError(
+                    f"Frozen paired commercial {technology} cost lines are invalid"
+                )
+            for line in sorted(
+                commercial_lines,
+                key=lambda item: str(item.get("input_id")),
+            ):
+                if not isinstance(line, Mapping):
+                    raise TechnoeconomicExportError(
+                        "A frozen paired commercial cost line is invalid"
+                    )
+                yield (
+                    line.get("input_id"),
+                    "paired_commercial_cost",
+                    line.get("label"),
+                    f"{technology}_only",
+                    line.get("cost_category"),
+                    line.get("unit"),
+                    *_distribution_columns(line.get("distribution") or {}),
+                    line.get("unit"),
+                    line.get("unit"),
+                    "direct_target_capacity_scaling",
+                    line.get("constant_dollar_cost_year"),
+                    *_currency_normalization_columns(None),
+                    *_coverage_columns(line.get("coverage_ids") or []),
+                    *_coverage_columns([]),
+                    *_evidence_columns(line.get("evidence")),
+                    *_input_contract_columns(request),
+                    *_input_normalization_receipt_columns(
+                        None,
+                        applied_capacity_contract=applied_capacity_contract,
+                    ),
+                )
     transfer = request.get("commercial_transfer")
     reference_design = request.get("commercial_reference_design")
     if isinstance(reference_design, Mapping):
@@ -1445,6 +1847,25 @@ CDF_COLUMNS = (
     "p95",
 )
 
+STANDALONE_COMMERCIAL_CDF_COLUMNS = (
+    "metric_id",
+    "status",
+    "reason",
+    "population_count",
+    "point_index",
+    "value_constant_usd_per_kwh_ac",
+    "cumulative_count",
+    "cumulative_probability",
+    "p10",
+    "p50",
+    "p90",
+)
+
+PAIRED_COMMERCIAL_CDF_COLUMNS = (
+    "technology",
+    *STANDALONE_COMMERCIAL_CDF_COLUMNS,
+)
+
 
 def _metric_summaries(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
     summaries = metadata.get("summaries")
@@ -1495,6 +1916,120 @@ def _cdf_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
                 percentiles.get("p5"),
                 percentiles.get("p50"),
                 percentiles.get("p95"),
+            )
+
+
+def _standalone_commercial_cdf_rows(
+    metadata: Mapping[str, Any],
+) -> Iterator[tuple[Any, ...]]:
+    metric_id = technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE
+    summary = _metric_summaries(metadata).get(metric_id)
+    if not isinstance(summary, Mapping):
+        raise TechnoeconomicExportError(
+            "Standalone commercial LCOE summary is missing"
+        )
+    percentiles = summary.get("percentiles") or {}
+    cdf = summary.get("cdf")
+    if not isinstance(cdf, Mapping):
+        yield (
+            metric_id,
+            summary.get("status"),
+            summary.get("reason"),
+            summary.get("count", 0),
+            None,
+            None,
+            None,
+            None,
+            percentiles.get("p10"),
+            percentiles.get("p50"),
+            percentiles.get("p90"),
+        )
+        return
+    values = cdf.get("values") or []
+    counts = cdf.get("cumulative_count") or []
+    probabilities = cdf.get("cumulative_probability") or []
+    if not (len(values) == len(counts) == len(probabilities)):
+        raise TechnoeconomicExportError(
+            "Sealed standalone commercial CDF arrays are inconsistent"
+        )
+    for index, (value, count, probability) in enumerate(
+        zip(values, counts, probabilities),
+        start=1,
+    ):
+        yield (
+            metric_id,
+            summary.get("status"),
+            summary.get("reason"),
+            cdf.get("population_count"),
+            index,
+            value,
+            count,
+            probability,
+            percentiles.get("p10"),
+            percentiles.get("p50"),
+            percentiles.get("p90"),
+        )
+
+
+def _paired_commercial_cdf_rows(
+    metadata: Mapping[str, Any],
+) -> Iterator[tuple[Any, ...]]:
+    metric_contracts = (
+        (
+            "solectria",
+            technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+        ),
+        ("solaredge", technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE),
+    )
+    summaries = _metric_summaries(metadata)
+    for technology, metric_id in metric_contracts:
+        summary = summaries.get(metric_id)
+        if not isinstance(summary, Mapping):
+            raise TechnoeconomicExportError(
+                f"Paired commercial {technology} LCOE summary is missing"
+            )
+        percentiles = summary.get("percentiles") or {}
+        cdf = summary.get("cdf")
+        if not isinstance(cdf, Mapping):
+            yield (
+                technology,
+                metric_id,
+                summary.get("status"),
+                summary.get("reason"),
+                summary.get("count", 0),
+                None,
+                None,
+                None,
+                None,
+                percentiles.get("p10"),
+                percentiles.get("p50"),
+                percentiles.get("p90"),
+            )
+            continue
+        values = cdf.get("values") or []
+        counts = cdf.get("cumulative_count") or []
+        probabilities = cdf.get("cumulative_probability") or []
+        if not (len(values) == len(counts) == len(probabilities)):
+            raise TechnoeconomicExportError(
+                f"Sealed paired commercial {technology} CDF arrays are inconsistent"
+            )
+        for index, (value, count, probability) in enumerate(
+            zip(values, counts, probabilities),
+            start=1,
+        ):
+            yield (
+                technology,
+                metric_id,
+                summary.get("status"),
+                summary.get("reason"),
+                cdf.get("population_count"),
+                index,
+                value,
+                count,
+                probability,
+                percentiles.get("p10"),
+                percentiles.get("p50"),
+                percentiles.get("p90"),
             )
 
 
@@ -1608,6 +2143,185 @@ def _per_year_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
             record.get("reason"),
             _canonical_json_text(record.get("energy_class_counts") or {}),
             _canonical_json_text(record.get("energy_class_probabilities") or {}),
+            *(flattened.get(name) for name in metric_columns),
+        )
+
+
+STANDALONE_COMMERCIAL_PER_YEAR_BASE_COLUMNS = (
+    "year",
+    "source_solaredge_predicted_kwh_ac",
+    "source_solaredge_installed_wdc",
+    "source_solaredge_applied_capacity_w",
+    "source_solaredge_rating_basis",
+    "source_solaredge_specific_kwh_ac_per_applied_w_year",
+    "commercial_target_capacity_w",
+    "commercial_target_rating_basis",
+    "commercial_capacity_scale_factor_target_w_per_source_w",
+    "commercial_transfer_method",
+    "commercial_scaled_target_year1_energy_kwh_ac",
+    "realization_count",
+    "realization_share",
+    "reason",
+)
+
+
+def _standalone_commercial_per_year_columns(
+    metadata: Mapping[str, Any],
+) -> tuple[str, ...]:
+    rows = metadata.get("per_weather_year") or []
+    metric_ids = sorted(
+        {
+            str(metric_id)
+            for row in rows
+            if isinstance(row, Mapping)
+            for metric_id in (row.get("metrics") or {})
+        }
+    )
+    suffixes = ("status", "reason", "count", "p10", "p50", "p90")
+    return STANDALONE_COMMERCIAL_PER_YEAR_BASE_COLUMNS + tuple(
+        f"{metric_id}::{suffix}" for metric_id in metric_ids for suffix in suffixes
+    )
+
+
+def _standalone_commercial_per_year_rows(
+    metadata: Mapping[str, Any],
+) -> Iterator[tuple[Any, ...]]:
+    columns = _standalone_commercial_per_year_columns(metadata)
+    metric_columns = columns[len(STANDALONE_COMMERCIAL_PER_YEAR_BASE_COLUMNS) :]
+    rows = metadata.get("per_weather_year") or []
+    for record in sorted(rows, key=lambda row: int(row.get("year"))):
+        metrics = record.get("metrics") or {}
+        flattened: dict[str, Any] = {}
+        for metric_id, summary in metrics.items():
+            percentiles = summary.get("percentiles") or {}
+            flattened.update(
+                {
+                    f"{metric_id}::status": summary.get("status"),
+                    f"{metric_id}::reason": summary.get("reason"),
+                    f"{metric_id}::count": summary.get("count"),
+                    f"{metric_id}::p10": percentiles.get("p10"),
+                    f"{metric_id}::p50": percentiles.get("p50"),
+                    f"{metric_id}::p90": percentiles.get("p90"),
+                }
+            )
+        yield (
+            record.get("year"),
+            record.get("source_se_predicted_kwh_ac"),
+            record.get("solaredge_installed_wdc"),
+            record.get("solaredge_applied_w"),
+            record.get("solaredge_source_rating_basis"),
+            record.get("source_se_specific_kwh_ac_per_applied_w_year"),
+            record.get("commercial_target_capacity_w"),
+            record.get("commercial_target_rating_basis"),
+            record.get("commercial_capacity_scale_factor_target_w_per_source_w"),
+            record.get("commercial_transfer_method"),
+            record.get("commercial_source_year1_energy_solaredge_kwh_ac"),
+            record.get("realization_count"),
+            record.get("realization_share"),
+            record.get("reason"),
+            *(flattened.get(name) for name in metric_columns),
+        )
+
+
+PAIRED_COMMERCIAL_PER_YEAR_BASE_COLUMNS = (
+    "year",
+    "commercial_target_capacity_w",
+    "commercial_target_rating_basis",
+    "commercial_transfer_method",
+    "solectria_source_predicted_kwh_ac",
+    "solectria_installed_wdc",
+    "solectria_source_applied_capacity_w",
+    "solectria_source_rating_basis",
+    "solectria_source_specific_kwh_ac_per_applied_w_year",
+    "solectria_capacity_scale_factor_target_w_per_source_w",
+    "solectria_target_year1_energy_kwh_ac",
+    "solaredge_source_predicted_kwh_ac",
+    "solaredge_installed_wdc",
+    "solaredge_source_applied_capacity_w",
+    "solaredge_source_rating_basis",
+    "solaredge_source_specific_kwh_ac_per_applied_w_year",
+    "solaredge_capacity_scale_factor_target_w_per_source_w",
+    "solaredge_target_year1_energy_kwh_ac",
+    "realization_count",
+    "realization_share",
+    "reason",
+)
+
+
+def _paired_commercial_per_year_columns(
+    metadata: Mapping[str, Any],
+) -> tuple[str, ...]:
+    rows = metadata.get("per_weather_year") or []
+    metric_ids = sorted(
+        {
+            str(metric_id)
+            for row in rows
+            if isinstance(row, Mapping)
+            for metric_id in (row.get("metrics") or {})
+        }
+    )
+    suffixes = ("status", "reason", "count", "p10", "p50", "p90")
+    return PAIRED_COMMERCIAL_PER_YEAR_BASE_COLUMNS + tuple(
+        f"{metric_id}::{suffix}" for metric_id in metric_ids for suffix in suffixes
+    )
+
+
+def _paired_commercial_per_year_rows(
+    metadata: Mapping[str, Any],
+) -> Iterator[tuple[Any, ...]]:
+    columns = _paired_commercial_per_year_columns(metadata)
+    metric_columns = columns[len(PAIRED_COMMERCIAL_PER_YEAR_BASE_COLUMNS) :]
+    rows = metadata.get("per_weather_year") or []
+    for record in sorted(rows, key=lambda row: int(row.get("year"))):
+        systems = record.get("systems") or {}
+        if not isinstance(systems, Mapping) or set(systems) != {
+            "solectria",
+            "solaredge",
+        }:
+            raise TechnoeconomicExportError(
+                "Sealed paired-commercial per-year systems are invalid"
+            )
+        metrics = record.get("metrics") or {}
+        flattened: dict[str, Any] = {}
+        for metric_id, summary in metrics.items():
+            percentiles = summary.get("percentiles") or {}
+            flattened.update(
+                {
+                    f"{metric_id}::status": summary.get("status"),
+                    f"{metric_id}::reason": summary.get("reason"),
+                    f"{metric_id}::count": summary.get("count"),
+                    f"{metric_id}::p10": percentiles.get("p10"),
+                    f"{metric_id}::p50": percentiles.get("p50"),
+                    f"{metric_id}::p90": percentiles.get("p90"),
+                }
+            )
+        system_values: list[Any] = []
+        for technology in ("solectria", "solaredge"):
+            system = systems.get(technology) or {}
+            if not isinstance(system, Mapping):
+                raise TechnoeconomicExportError(
+                    "Sealed paired-commercial per-year system is invalid"
+                )
+            system_values.extend(
+                (
+                    system.get("source_predicted_kwh_ac"),
+                    system.get("installed_wdc"),
+                    system.get("source_applied_capacity_w"),
+                    system.get("source_rating_basis"),
+                    system.get("source_specific_kwh_ac_per_applied_w_year"),
+                    system.get("capacity_scale_factor_target_w_per_source_w"),
+                    system.get("target_year1_energy_kwh_ac"),
+                )
+            )
+        yield (
+            record.get("year"),
+            record.get("commercial_target_capacity_w"),
+            record.get("commercial_target_rating_basis"),
+            record.get("commercial_transfer_method"),
+            *system_values,
+            record.get("realization_count"),
+            record.get("realization_share"),
+            record.get("reason"),
             *(flattened.get(name) for name in metric_columns),
         )
 
@@ -1960,6 +2674,8 @@ def _metric_fields_for_result(
     if contract_version in {
         technoeconomic_kernel.CALCULATION_CONTRACT_VERSION,
         technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
     }:
         return technoeconomic_kernel.APPLIED_METRIC_FIELDS
     raise TechnoeconomicExportError(
@@ -1980,6 +2696,8 @@ def _build_checks(
     ) in {
         technoeconomic_kernel.CALCULATION_CONTRACT_VERSION,
         technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
     }
     expected_rows = routine_result.get("realization_count")
     if not isinstance(expected_rows, int) or isinstance(expected_rows, bool):
@@ -2010,9 +2728,19 @@ def _build_checks(
             )
         )
         if len(population):
-            calculated = np.quantile(population, [0.05, 0.5, 0.95], method="linear")
             percentiles = summary.get("percentiles") or {}
-            for index, quantile in enumerate(("p5", "p50", "p95")):
+            if {"p10", "p50", "p90"} <= set(percentiles):
+                quantile_names = ("p10", "p50", "p90")
+                quantile_values = (0.10, 0.50, 0.90)
+            else:
+                quantile_names = ("p5", "p50", "p95")
+                quantile_values = (0.05, 0.50, 0.95)
+            calculated = np.quantile(
+                population,
+                quantile_values,
+                method="linear",
+            )
+            for index, quantile in enumerate(quantile_names):
                 expected = percentiles.get(quantile)
                 if expected is None:
                     checks.append(
@@ -2848,7 +3576,1207 @@ def _build_checks(
                 ),
             )
         )
+    if (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    ):
+        standalone_names = (
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_TARGET_CAPACITY,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_YEAR1_ENERGY,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_EA_ENERGY,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_INITIAL_COST,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_RECURRING_PV_COST,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_SCHEDULED_PV_COST,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_EA_COST,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+        )
+        missing = [name for name in standalone_names if name not in calculation.by_name]
+        if missing:
+            raise TechnoeconomicExportError(
+                "Standalone-commercial realization fields are missing: "
+                f"{missing!r}"
+            )
+        standalone = routine_result.get("standalone_commercial") or {}
+        receipt = submission_provenance.get("standalone_commercial_receipt") or {}
+        if not isinstance(standalone, Mapping) or not isinstance(receipt, Mapping):
+            raise TechnoeconomicExportError(
+                "Standalone-commercial result or immutable receipt is invalid"
+            )
+        target_w = float(standalone.get("target_capacity_w"))
+        source_w = float(standalone.get("source_applied_capacity_w"))
+        checks.extend(
+            [
+                _numeric_check(
+                    "standalone_target_capacity_receipt",
+                    target_w,
+                    float(receipt.get("target_capacity_w")),
+                    tolerance=0.0,
+                    notes="Canonical target watts equal the immutable v4 receipt.",
+                ),
+                _numeric_check(
+                    "standalone_source_capacity_receipt",
+                    source_w,
+                    float((receipt.get("source_capacity") or {}).get("applied_capacity_w")),
+                    tolerance=0.0,
+                    notes="SolarEdge source watts equal the immutable Annual-capacity receipt.",
+                ),
+                _numeric_check(
+                    "standalone_capacity_scale_factor",
+                    float(standalone.get("capacity_scale_factor")),
+                    target_w / source_w,
+                    tolerance=0.0,
+                    notes="The commercial scale factor is target W divided by source applied W.",
+                ),
+            ]
+        )
+        checks.append(
+            (
+                "standalone_rating_basis_bridge",
+                standalone.get("target_rating_basis"),
+                standalone.get("source_rating_basis"),
+                None,
+                None,
+                "OK"
+                if standalone.get("target_rating_basis")
+                == standalone.get("source_rating_basis")
+                == receipt.get("target_rating_basis")
+                else "FAIL",
+                "Source and target use the same frozen rating basis.",
+            )
+        )
+
+        target_column = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_TARGET_CAPACITY
+            ],
+            dtype=np.float64,
+        )
+        checks.append(
+            _numeric_check(
+                "standalone_target_capacity_realizations",
+                float(np.max(np.abs(target_column - target_w))),
+                0.0,
+                tolerance=0.0,
+                notes="Every realization uses the frozen commercial target capacity.",
+            )
+        )
+        scale_column = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR
+            ],
+            dtype=np.float64,
+        )
+        checks.append(
+            _numeric_check(
+                "standalone_capacity_scale_factor_realizations",
+                float(np.max(np.abs(scale_column - target_w / source_w))),
+                0.0,
+                tolerance=0.0,
+                notes=(
+                    "Every realization records the exact target-W/source-W "
+                    "capacity bridge."
+                ),
+            )
+        )
+        energy_pairs = (
+            (
+                "standalone_year1_energy_scaling",
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_YEAR1_ENERGY,
+                fields.year1_se,
+            ),
+            (
+                "standalone_lifecycle_energy_scaling",
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY,
+                fields.pv_energy_se,
+            ),
+            (
+                "standalone_equivalent_annual_energy_scaling",
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_EA_ENERGY,
+                fields.ea_energy_se,
+            ),
+        )
+        for check_id, commercial_name, normalized_name in energy_pairs:
+            actual = np.asarray(
+                calculation.by_name[commercial_name],
+                dtype=np.float64,
+            )
+            normalized = np.asarray(
+                calculation.by_name[normalized_name],
+                dtype=np.float64,
+            )
+            checks.append(
+                _numeric_check(
+                    check_id,
+                    float(np.max(np.abs(actual - normalized * target_w))),
+                    0.0,
+                    tolerance=_binary64_tie_out_tolerance(actual),
+                    notes="Commercial SolarEdge energy equals normalized source energy times target watts.",
+                )
+            )
+
+        expected_initial = np.zeros(calculation.row_count, dtype=np.float64)
+        expected_recurring = np.zeros(calculation.row_count, dtype=np.float64)
+        expected_scheduled = np.zeros(calculation.row_count, dtype=np.float64)
+        discount_column = "SampledInput::finance.discount-rate"
+        if discount_column not in calculation.by_name:
+            raise TechnoeconomicExportError(
+                "Standalone-commercial discount-rate samples are missing"
+            )
+        discount_rate = np.asarray(
+            calculation.by_name[discount_column],
+            dtype=np.float64,
+        )
+        line_summaries = {
+            str(item.get("input_id")): item
+            for item in standalone.get("commercial_cost_line_summaries") or []
+            if isinstance(item, Mapping)
+        }
+        receipt_lines = receipt.get("cost_lines") or []
+        if not isinstance(receipt_lines, list) or not receipt_lines:
+            raise TechnoeconomicExportError(
+                "Standalone-commercial cost receipt is incomplete"
+            )
+        category_counts = {
+            category: sum(
+                isinstance(line, Mapping)
+                and line.get("cost_category") == category
+                for line in receipt_lines
+            )
+            for category in (
+                "full_initial_capex",
+                "full_annual_om",
+                "scheduled_replacement",
+            )
+        }
+        required_categories_ok = (
+            receipt.get("cost_stack_completeness") == "full_system"
+            and category_counts["full_initial_capex"] == 1
+            and category_counts["full_annual_om"] == 1
+            and receipt.get("cost_category_counts") == category_counts
+        )
+        checks.append(
+            (
+                "standalone_full_system_cost_categories",
+                _canonical_json_text(category_counts),
+                _canonical_json_text(
+                    {
+                        "full_initial_capex": 1,
+                        "full_annual_om": 1,
+                        "scheduled_replacement": category_counts[
+                            "scheduled_replacement"
+                        ],
+                    }
+                ),
+                None,
+                None,
+                "OK" if required_categories_ok else "FAIL",
+                "The immutable v4 receipt proves one full CAPEX and one full annual O&M category.",
+            )
+        )
+        for line in receipt_lines:
+            if not isinstance(line, Mapping):
+                raise TechnoeconomicExportError(
+                    "A standalone-commercial cost receipt line is invalid"
+                )
+            input_id = str(line.get("input_id"))
+            sample_name = f"SampledInput::{input_id}"
+            if sample_name not in calculation.by_name:
+                raise TechnoeconomicExportError(
+                    f"Standalone-commercial sampled input {input_id!r} is missing"
+                )
+            total_cost = np.asarray(
+                calculation.by_name[sample_name],
+                dtype=np.float64,
+            ) * target_w
+            timing = line.get("timing")
+            if timing == "initial_t0":
+                expected_initial += total_cost
+            elif timing == "annual_year_end":
+                expected_recurring += total_cost / crf
+            elif timing == "scheduled_year_end":
+                discount_sum = np.zeros(calculation.row_count, dtype=np.float64)
+                for year in line.get("occurrence_years") or []:
+                    discount_sum += np.exp(
+                        -int(year) * np.log1p(discount_rate)
+                    )
+                expected_scheduled += total_cost * discount_sum
+            else:
+                raise TechnoeconomicExportError(
+                    "Standalone-commercial cost timing receipt is invalid"
+                )
+            line_summary = line_summaries.get(input_id)
+            if not isinstance(line_summary, Mapping):
+                raise TechnoeconomicExportError(
+                    f"Standalone-commercial summary for {input_id!r} is missing"
+                )
+            coverage_matches = (
+                line_summary.get("cost_category") == line.get("cost_category")
+                and list(line_summary.get("coverage_ids") or [])
+                == list(line.get("coverage_ids") or [])
+            )
+            checks.append(
+                (
+                    f"standalone_cost_line_coverage::{input_id}",
+                    _canonical_json_text(
+                        {
+                            "cost_category": line_summary.get("cost_category"),
+                            "coverage_ids": list(
+                                line_summary.get("coverage_ids") or []
+                            ),
+                        }
+                    ),
+                    _canonical_json_text(
+                        {
+                            "cost_category": line.get("cost_category"),
+                            "coverage_ids": list(line.get("coverage_ids") or []),
+                        }
+                    ),
+                    None,
+                    None,
+                    "OK" if coverage_matches else "FAIL",
+                    "Sealed calculation summaries retain immutable category and coverage identity.",
+                )
+            )
+            year_authorities = {
+                "receipt": receipt.get("constant_dollar_cost_year"),
+                "receipt_line": line.get("constant_dollar_cost_year"),
+                "routine_result": standalone.get("constant_dollar_cost_year"),
+                "sealed_summary": line_summary.get(
+                    "constant_dollar_cost_year"
+                ),
+            }
+            expected_year = receipt.get("constant_dollar_cost_year")
+            year_matches = (
+                isinstance(expected_year, int)
+                and not isinstance(expected_year, bool)
+                and all(value == expected_year for value in year_authorities.values())
+            )
+            checks.append(
+                (
+                    f"standalone_cost_line_constant_dollar_year::{input_id}",
+                    _canonical_json_text(year_authorities),
+                    _canonical_json_text(
+                        {key: expected_year for key in year_authorities}
+                    ),
+                    None,
+                    None,
+                    "OK" if year_matches else "FAIL",
+                    "The request, immutable receipt, durable result, and sealed "
+                    "cost-line summary assert the same constant-dollar year.",
+                )
+            )
+            expected_percentiles = np.quantile(
+                total_cost,
+                [0.10, 0.50, 0.90],
+                method="linear",
+            )
+            recorded_percentiles = line_summary.get("percentiles") or {}
+            for index, percentile in enumerate(("p10", "p50", "p90")):
+                checks.append(
+                    _numeric_check(
+                        f"standalone_cost_line_percentile::{input_id}::{percentile}",
+                        float(expected_percentiles[index]),
+                        float(recorded_percentiles.get(percentile)),
+                        tolerance=1e-12
+                        * max(1.0, abs(float(expected_percentiles[index]))),
+                        notes="Commercial cost-line percentile is recomputed from sampled target totals.",
+                    )
+                )
+
+        cost_pairs = (
+            (
+                "standalone_initial_cost_stack",
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_INITIAL_COST,
+                expected_initial,
+            ),
+            (
+                "standalone_recurring_cost_stack",
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_RECURRING_PV_COST,
+                expected_recurring,
+            ),
+            (
+                "standalone_scheduled_cost_stack",
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_SCHEDULED_PV_COST,
+                expected_scheduled,
+            ),
+        )
+        for check_id, field_name, expected_values in cost_pairs:
+            actual = np.asarray(calculation.by_name[field_name], dtype=np.float64)
+            checks.append(
+                _numeric_check(
+                    check_id,
+                    float(np.max(np.abs(actual - expected_values))),
+                    0.0,
+                    tolerance=_binary64_tie_out_tolerance(actual),
+                    notes="Commercial lifecycle cost component ties to its sampled inputs and timing.",
+                )
+            )
+        lifecycle_cost = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST
+            ],
+            dtype=np.float64,
+        )
+        equivalent_cost = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_EA_COST
+            ],
+            dtype=np.float64,
+        )
+        component_total = expected_initial + expected_recurring + expected_scheduled
+        checks.extend(
+            [
+                _numeric_check(
+                    "standalone_lifecycle_cost_component_sum",
+                    float(np.max(np.abs(lifecycle_cost - component_total))),
+                    0.0,
+                    tolerance=_binary64_tie_out_tolerance(lifecycle_cost),
+                    notes="Lifecycle cost equals initial, recurring, and scheduled present-value components.",
+                ),
+                _numeric_check(
+                    "standalone_equivalent_annual_cost_crf",
+                    float(np.max(np.abs(equivalent_cost - crf * lifecycle_cost))),
+                    0.0,
+                    tolerance=_binary64_tie_out_tolerance(equivalent_cost),
+                    notes="Equivalent-annual cost equals CRF times lifecycle cost.",
+                ),
+            ]
+        )
+        lifecycle_energy = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY
+            ],
+            dtype=np.float64,
+        )
+        equivalent_energy = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_EA_ENERGY
+            ],
+            dtype=np.float64,
+        )
+        lcoe = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE
+            ],
+            dtype=np.float64,
+        )
+        checks.extend(
+            [
+                _numeric_check(
+                    "standalone_lcoe_lifecycle_ratio",
+                    float(np.max(np.abs(lcoe - lifecycle_cost / lifecycle_energy))),
+                    0.0,
+                    tolerance=_binary64_tie_out_tolerance(lcoe),
+                    notes="Standalone SolarEdge LCOE equals lifecycle cost divided by lifecycle energy.",
+                ),
+                _numeric_check(
+                    "standalone_lcoe_equivalent_annual_ratio",
+                    float(np.max(np.abs(lcoe - equivalent_cost / equivalent_energy))),
+                    0.0,
+                    tolerance=_binary64_tie_out_tolerance(lcoe),
+                    notes="Standalone SolarEdge LCOE also equals the equivalent-annual ratio.",
+                ),
+            ]
+        )
+    if (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    ):
+        paired = routine_result.get("paired_commercial") or {}
+        receipt = submission_provenance.get("paired_commercial_receipt") or {}
+        if not isinstance(paired, Mapping) or not isinstance(receipt, Mapping):
+            raise TechnoeconomicExportError(
+                "Paired-commercial result or immutable receipt is invalid"
+            )
+        paired_systems = paired.get("systems") or {}
+        receipt_systems = receipt.get("systems") or {}
+        if (
+            not isinstance(paired_systems, Mapping)
+            or not isinstance(receipt_systems, Mapping)
+            or set(paired_systems) != {"solectria", "solaredge"}
+            or set(receipt_systems) != {"solectria", "solaredge"}
+        ):
+            raise TechnoeconomicExportError(
+                "Paired-commercial system authority is incomplete"
+            )
+        target_w = float(paired.get("target_capacity_w"))
+        checks.extend(
+            [
+                _numeric_check(
+                    "paired_target_capacity_receipt",
+                    target_w,
+                    float(receipt.get("target_capacity_w")),
+                    tolerance=0.0,
+                    notes="Canonical target watts equal the immutable v5 receipt.",
+                ),
+                (
+                    "paired_target_rating_basis_receipt",
+                    paired.get("target_rating_basis"),
+                    receipt.get("target_rating_basis"),
+                    None,
+                    None,
+                    (
+                        "OK"
+                        if paired.get("target_rating_basis")
+                        == receipt.get("target_rating_basis")
+                        else "FAIL"
+                    ),
+                    "Both commercial systems share one frozen target rating basis.",
+                ),
+                (
+                    "paired_transfer_method_receipt",
+                    paired.get("transfer_method"),
+                    receipt.get("transfer_method"),
+                    None,
+                    None,
+                    (
+                        "OK"
+                        if paired.get("transfer_method")
+                        == receipt.get("transfer_method")
+                        else "FAIL"
+                    ),
+                    "The durable result retains the approved direct-scaling method.",
+                ),
+            ]
+        )
+        discount_column = "SampledInput::finance.discount-rate"
+        if discount_column not in calculation.by_name:
+            raise TechnoeconomicExportError(
+                "Paired-commercial discount-rate samples are missing"
+            )
+        discount_rate = np.asarray(
+            calculation.by_name[discount_column],
+            dtype=np.float64,
+        )
+        annuity_factor = np.asarray(
+            calculation.by_name["AnnuityFactor_years"],
+            dtype=np.float64,
+        )
+        crf = np.asarray(
+            calculation.by_name["CapitalRecoveryFactor_per_year"],
+            dtype=np.float64,
+        )
+        system_field_contracts = {
+            "solectria": {
+                "target": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_TARGET_CAPACITY,
+                "scale": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_CAPACITY_SCALE_FACTOR,
+                "year1": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_YEAR1_ENERGY,
+                "lifecycle_energy": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LIFECYCLE_ENERGY,
+                "ea_energy": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_EA_ENERGY,
+                "initial": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_INITIAL_COST,
+                "recurring": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_RECURRING_PV_COST,
+                "scheduled": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_SCHEDULED_PV_COST,
+                "lifecycle_cost": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LIFECYCLE_COST,
+                "ea_cost": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_EA_COST,
+                "lcoe": technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+                "normalized_year1": fields.year1_sol,
+                "normalized_lifecycle_energy": fields.pv_energy_sol,
+                "normalized_ea_energy": fields.ea_energy_sol,
+            },
+            "solaredge": {
+                "target": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_TARGET_CAPACITY,
+                "scale": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR,
+                "year1": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_YEAR1_ENERGY,
+                "lifecycle_energy": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY,
+                "ea_energy": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_EA_ENERGY,
+                "initial": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_INITIAL_COST,
+                "recurring": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_RECURRING_PV_COST,
+                "scheduled": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_SCHEDULED_PV_COST,
+                "lifecycle_cost": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST,
+                "ea_cost": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_EA_COST,
+                "lcoe": technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+                "normalized_year1": fields.year1_se,
+                "normalized_lifecycle_energy": fields.pv_energy_se,
+                "normalized_ea_energy": fields.ea_energy_se,
+            },
+        }
+        for technology in ("solectria", "solaredge"):
+            system = paired_systems[technology]
+            system_receipt = receipt_systems[technology]
+            if not isinstance(system, Mapping) or not isinstance(
+                system_receipt, Mapping
+            ):
+                raise TechnoeconomicExportError(
+                    "Paired-commercial system authority is invalid"
+                )
+            source_receipt = system_receipt.get("source_capacity") or {}
+            if not isinstance(source_receipt, Mapping):
+                raise TechnoeconomicExportError(
+                    "Paired-commercial source-capacity receipt is invalid"
+                )
+            source_w = float(system.get("source_applied_capacity_w"))
+            scale_factor = target_w / source_w
+            checks.extend(
+                [
+                    _numeric_check(
+                        f"paired_{technology}_source_capacity_receipt",
+                        source_w,
+                        float(source_receipt.get("applied_capacity_w")),
+                        tolerance=0.0,
+                        notes="Source watts equal the frozen Annual-capacity receipt.",
+                    ),
+                    _numeric_check(
+                        f"paired_{technology}_capacity_scale_factor",
+                        float(system.get("capacity_scale_factor")),
+                        scale_factor,
+                        tolerance=0.0,
+                        notes="Scale factor equals common target W divided by source W.",
+                    ),
+                    (
+                        f"paired_{technology}_rating_basis_bridge",
+                        system.get("source_rating_basis"),
+                        paired.get("target_rating_basis"),
+                        None,
+                        None,
+                        (
+                            "OK"
+                            if system.get("source_rating_basis")
+                            == source_receipt.get("rating_basis")
+                            == paired.get("target_rating_basis")
+                            else "FAIL"
+                        ),
+                        "Source and target use the same frozen rating basis.",
+                    ),
+                ]
+            )
+            names = system_field_contracts[technology]
+            missing = [
+                name
+                for name in names.values()
+                if name not in calculation.by_name
+            ]
+            if missing:
+                raise TechnoeconomicExportError(
+                    f"Paired-commercial {technology} realization fields are "
+                    f"missing: {missing!r}"
+                )
+            target_values = np.asarray(
+                calculation.by_name[names["target"]], dtype=np.float64
+            )
+            scale_values = np.asarray(
+                calculation.by_name[names["scale"]], dtype=np.float64
+            )
+            checks.extend(
+                [
+                    _numeric_check(
+                        f"paired_{technology}_target_capacity_realizations",
+                        float(np.max(np.abs(target_values - target_w))),
+                        0.0,
+                        tolerance=0.0,
+                        notes="Every realization uses the common target capacity.",
+                    ),
+                    _numeric_check(
+                        f"paired_{technology}_scale_realizations",
+                        float(np.max(np.abs(scale_values - scale_factor))),
+                        0.0,
+                        tolerance=0.0,
+                        notes="Every realization retains its system-specific capacity bridge.",
+                    ),
+                ]
+            )
+            for suffix, actual_name, normalized_name in (
+                ("year1", names["year1"], names["normalized_year1"]),
+                (
+                    "lifecycle",
+                    names["lifecycle_energy"],
+                    names["normalized_lifecycle_energy"],
+                ),
+                ("equivalent_annual", names["ea_energy"], names["normalized_ea_energy"]),
+            ):
+                actual = np.asarray(
+                    calculation.by_name[actual_name], dtype=np.float64
+                )
+                normalized = np.asarray(
+                    calculation.by_name[normalized_name], dtype=np.float64
+                )
+                checks.append(
+                    _numeric_check(
+                        f"paired_{technology}_{suffix}_energy_scaling",
+                        float(np.max(np.abs(actual - normalized * target_w))),
+                        0.0,
+                        tolerance=_binary64_tie_out_tolerance(actual),
+                        notes="Commercial energy equals source-normalized energy times target watts.",
+                    )
+                )
+
+            expected_initial = np.zeros(calculation.row_count, dtype=np.float64)
+            expected_recurring = np.zeros(calculation.row_count, dtype=np.float64)
+            expected_scheduled = np.zeros(calculation.row_count, dtype=np.float64)
+            receipt_lines = system_receipt.get("cost_lines") or []
+            if not isinstance(receipt_lines, list) or not receipt_lines:
+                raise TechnoeconomicExportError(
+                    f"Paired-commercial {technology} cost receipt is incomplete"
+                )
+            line_summaries = {
+                str(item.get("input_id")): item
+                for item in system.get("commercial_cost_line_summaries") or []
+                if isinstance(item, Mapping)
+            }
+            for line in receipt_lines:
+                if not isinstance(line, Mapping):
+                    raise TechnoeconomicExportError(
+                        "A paired-commercial cost receipt line is invalid"
+                    )
+                input_id = str(line.get("input_id"))
+                sample_name = f"SampledInput::{input_id}"
+                if sample_name not in calculation.by_name:
+                    raise TechnoeconomicExportError(
+                        f"Paired-commercial samples for {input_id!r} are missing"
+                    )
+                total_cost = (
+                    np.asarray(calculation.by_name[sample_name], dtype=np.float64)
+                    * target_w
+                )
+                timing = line.get("timing")
+                if timing == "initial_t0":
+                    expected_initial += total_cost
+                elif timing == "annual_year_end":
+                    expected_recurring += total_cost * annuity_factor
+                elif timing == "scheduled_year_end":
+                    discount_sum = np.zeros(calculation.row_count, dtype=np.float64)
+                    for year in line.get("occurrence_years") or []:
+                        discount_sum += np.exp(-int(year) * np.log1p(discount_rate))
+                    expected_scheduled += total_cost * discount_sum
+                else:
+                    raise TechnoeconomicExportError(
+                        "Paired-commercial cost timing receipt is invalid"
+                    )
+                line_summary = line_summaries.get(input_id)
+                if not isinstance(line_summary, Mapping):
+                    raise TechnoeconomicExportError(
+                        f"Paired-commercial summary for {input_id!r} is missing"
+                    )
+                identity_matches = (
+                    line_summary.get("technology") == technology
+                    and line_summary.get("cost_category")
+                    == line.get("cost_category")
+                    and list(line_summary.get("coverage_ids") or [])
+                    == list(line.get("coverage_ids") or [])
+                    and line_summary.get("constant_dollar_cost_year")
+                    == line.get("constant_dollar_cost_year")
+                    == paired.get("constant_dollar_cost_year")
+                    == receipt.get("constant_dollar_cost_year")
+                )
+                checks.append(
+                    (
+                        f"paired_{technology}_cost_line_identity::{input_id}",
+                        _canonical_json_text(
+                            {
+                                "technology": line_summary.get("technology"),
+                                "cost_category": line_summary.get("cost_category"),
+                                "coverage_ids": list(
+                                    line_summary.get("coverage_ids") or []
+                                ),
+                                "constant_dollar_cost_year": line_summary.get(
+                                    "constant_dollar_cost_year"
+                                ),
+                            }
+                        ),
+                        _canonical_json_text(
+                            {
+                                "technology": technology,
+                                "cost_category": line.get("cost_category"),
+                                "coverage_ids": list(line.get("coverage_ids") or []),
+                                "constant_dollar_cost_year": receipt.get(
+                                    "constant_dollar_cost_year"
+                                ),
+                            }
+                        ),
+                        None,
+                        None,
+                        "OK" if identity_matches else "FAIL",
+                        "Cost-line system, coverage, category, and dollar year retain immutable identity.",
+                    )
+                )
+                expected_percentiles = np.quantile(
+                    total_cost,
+                    [0.10, 0.50, 0.90],
+                    method="linear",
+                )
+                recorded_percentiles = line_summary.get("percentiles") or {}
+                for index, percentile in enumerate(("p10", "p50", "p90")):
+                    checks.append(
+                        _numeric_check(
+                            f"paired_{technology}_cost_line_percentile::{input_id}::{percentile}",
+                            float(expected_percentiles[index]),
+                            float(recorded_percentiles.get(percentile)),
+                            tolerance=1e-12
+                            * max(1.0, abs(float(expected_percentiles[index]))),
+                            notes="Cost-line percentile is recomputed from sampled target totals.",
+                        )
+                    )
+            for component, field_name, expected_values in (
+                ("initial", names["initial"], expected_initial),
+                ("recurring", names["recurring"], expected_recurring),
+                ("scheduled", names["scheduled"], expected_scheduled),
+            ):
+                actual = np.asarray(
+                    calculation.by_name[field_name], dtype=np.float64
+                )
+                checks.append(
+                    _numeric_check(
+                        f"paired_{technology}_{component}_cost_stack",
+                        float(np.max(np.abs(actual - expected_values))),
+                        0.0,
+                        tolerance=_binary64_tie_out_tolerance(actual),
+                        notes="Cost component ties to sampled inputs and timing.",
+                    )
+                )
+            lifecycle_cost = np.asarray(
+                calculation.by_name[names["lifecycle_cost"]], dtype=np.float64
+            )
+            equivalent_cost = np.asarray(
+                calculation.by_name[names["ea_cost"]], dtype=np.float64
+            )
+            lifecycle_energy = np.asarray(
+                calculation.by_name[names["lifecycle_energy"]], dtype=np.float64
+            )
+            equivalent_energy = np.asarray(
+                calculation.by_name[names["ea_energy"]], dtype=np.float64
+            )
+            lcoe = np.asarray(calculation.by_name[names["lcoe"]], dtype=np.float64)
+            component_total = expected_initial + expected_recurring + expected_scheduled
+            checks.extend(
+                [
+                    _numeric_check(
+                        f"paired_{technology}_lifecycle_cost_component_sum",
+                        float(np.max(np.abs(lifecycle_cost - component_total))),
+                        0.0,
+                        tolerance=_binary64_tie_out_tolerance(lifecycle_cost),
+                        notes="Lifecycle cost equals initial, recurring, and scheduled present values.",
+                    ),
+                    _numeric_check(
+                        f"paired_{technology}_equivalent_annual_cost_crf",
+                        float(np.max(np.abs(equivalent_cost - crf * lifecycle_cost))),
+                        0.0,
+                        tolerance=_binary64_tie_out_tolerance(equivalent_cost),
+                        notes="Equivalent-annual cost equals CRF times lifecycle cost.",
+                    ),
+                    _numeric_check(
+                        f"paired_{technology}_lcoe_lifecycle_ratio",
+                        float(np.max(np.abs(lcoe - lifecycle_cost / lifecycle_energy))),
+                        0.0,
+                        tolerance=_binary64_tie_out_tolerance(lcoe),
+                        notes="Lifecycle LCOE equals lifecycle cost divided by lifecycle energy.",
+                    ),
+                    _numeric_check(
+                        f"paired_{technology}_lcoe_equivalent_annual_ratio",
+                        float(np.max(np.abs(lcoe - equivalent_cost / equivalent_energy))),
+                        0.0,
+                        tolerance=_binary64_tie_out_tolerance(lcoe),
+                        notes="Lifecycle LCOE also equals the equivalent-annual ratio.",
+                    ),
+                ]
+            )
+        solectria_lcoe = np.asarray(
+            calculation.by_name[
+                technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE
+            ],
+            dtype=np.float64,
+        )
+        solaredge_lcoe = np.asarray(
+            calculation.by_name[technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE],
+            dtype=np.float64,
+        )
+        lcoe_delta = np.asarray(
+            calculation.by_name[technoeconomic_kernel.COMMERCIAL_PAIRED_FIELD_LCOE_DELTA],
+            dtype=np.float64,
+        )
+        checks.append(
+            _numeric_check(
+                "paired_lcoe_delta_se_minus_sol",
+                float(np.max(np.abs(lcoe_delta - (solaredge_lcoe - solectria_lcoe)))),
+                0.0,
+                tolerance=_binary64_tie_out_tolerance(lcoe_delta),
+                notes="The comparison diagnostic is SolarEdge LCOE minus Solectria LCOE per realization.",
+            )
+        )
+
+        energy_rows = {
+            int(row.get("year")): row
+            for row in source_snapshot.get("eligible_paired_energy_rows") or []
+            if isinstance(row, Mapping)
+        }
+        per_year_rows = calculation.metadata.get("per_weather_year") or []
+        assigned_count = 0
+        for record in per_year_rows:
+            if not isinstance(record, Mapping):
+                raise TechnoeconomicExportError(
+                    "Paired-commercial per-year summary is invalid"
+                )
+            year = int(record.get("year"))
+            assigned_count += int(record.get("realization_count") or 0)
+            source_row = energy_rows.get(year)
+            systems = record.get("systems") or {}
+            if source_row is None or not isinstance(systems, Mapping):
+                raise TechnoeconomicExportError(
+                    "Paired-commercial per-year source authority is incomplete"
+                )
+            checks.extend(
+                [
+                    _numeric_check(
+                        f"paired_per_year_{year}_target_capacity",
+                        float(record.get("commercial_target_capacity_w")),
+                        target_w,
+                        tolerance=0.0,
+                        notes="Per-year rows retain the common commercial target.",
+                    ),
+                    (
+                        f"paired_per_year_{year}_target_rating_basis",
+                        record.get("commercial_target_rating_basis"),
+                        paired.get("target_rating_basis"),
+                        None,
+                        None,
+                        (
+                            "OK"
+                            if record.get("commercial_target_rating_basis")
+                            == paired.get("target_rating_basis")
+                            else "FAIL"
+                        ),
+                        "Per-year rows retain the common target rating basis.",
+                    ),
+                    (
+                        f"paired_per_year_{year}_transfer_method",
+                        record.get("commercial_transfer_method"),
+                        paired.get("transfer_method"),
+                        None,
+                        None,
+                        (
+                            "OK"
+                            if record.get("commercial_transfer_method")
+                            == paired.get("transfer_method")
+                            else "FAIL"
+                        ),
+                        "Per-year rows retain the approved transfer method.",
+                    ),
+                ]
+            )
+            for technology, source_key in (
+                ("solectria", "sol_predicted_kwh"),
+                ("solaredge", "se_predicted_kwh"),
+            ):
+                system = systems.get(technology) or {}
+                source_w = float(
+                    paired_systems[technology].get("source_applied_capacity_w")
+                )
+                source_energy = float(source_row.get(source_key))
+                checks.extend(
+                    [
+                        _numeric_check(
+                            f"paired_per_year_{year}_{technology}_source_capacity",
+                            float(system.get("source_applied_capacity_w")),
+                            source_w,
+                            tolerance=0.0,
+                            notes="Per-year source capacity equals the frozen system authority.",
+                        ),
+                        _numeric_check(
+                            f"paired_per_year_{year}_{technology}_scale_factor",
+                            float(
+                                system.get(
+                                    "capacity_scale_factor_target_w_per_source_w"
+                                )
+                            ),
+                            target_w / source_w,
+                            tolerance=0.0,
+                            notes="Per-year scale factor is target W divided by source W.",
+                        ),
+                        (
+                            f"paired_per_year_{year}_{technology}_rating_basis",
+                            system.get("source_rating_basis"),
+                            paired_systems[technology].get("source_rating_basis"),
+                            None,
+                            None,
+                            (
+                                "OK"
+                                if system.get("source_rating_basis")
+                                == paired_systems[technology].get(
+                                    "source_rating_basis"
+                                )
+                                else "FAIL"
+                            ),
+                            "Per-year source rating basis equals the frozen bridge.",
+                        ),
+                        _numeric_check(
+                            f"paired_per_year_{year}_{technology}_source_energy",
+                            float(system.get("source_predicted_kwh_ac")),
+                            source_energy,
+                            tolerance=0.0,
+                            notes="Per-year source energy equals the frozen paired row.",
+                        ),
+                        _numeric_check(
+                            f"paired_per_year_{year}_{technology}_specific_energy",
+                            float(
+                                system.get(
+                                    "source_specific_kwh_ac_per_applied_w_year"
+                                )
+                            ),
+                            source_energy / source_w,
+                            tolerance=0.0,
+                            notes="Per-year specific energy uses the system's source capacity.",
+                        ),
+                        _numeric_check(
+                            f"paired_per_year_{year}_{technology}_target_energy",
+                            float(system.get("target_year1_energy_kwh_ac")),
+                            source_energy / source_w * target_w,
+                            tolerance=0.0,
+                            notes="Per-year target energy uses direct system-specific capacity scaling.",
+                        ),
+                    ]
+                )
+        checks.append(
+            _numeric_check(
+                "paired_per_year_realization_partition",
+                assigned_count,
+                calculation.row_count,
+                tolerance=0.0,
+                notes="Per-year realization counts partition the paired sample exactly once.",
+            )
+        )
     return checks
+
+
+STANDALONE_COMMERCIAL_SUMMARY_COLUMNS = (
+    "record_type",
+    "technology",
+    "input_id",
+    "label",
+    "cost_category",
+    "coverage_ids_json",
+    "timing",
+    "input_unit",
+    "occurrence_years_json",
+    "target_capacity_w",
+    "target_rating_basis",
+    "source_applied_capacity_w",
+    "source_rating_basis",
+    "capacity_scale_factor",
+    "transfer_method",
+    "constant_dollar_cost_year",
+    "metric_id",
+    "metric_unit",
+    "p10",
+    "p50",
+    "p90",
+    "evidence_subject",
+)
+
+
+def _standalone_commercial_summary_rows(
+    request_payload: Mapping[str, Any],
+    submission_provenance: Mapping[str, Any],
+    routine_result: Mapping[str, Any],
+) -> Iterator[tuple[Any, ...]]:
+    request = request_payload.get("standalone_commercial") or {}
+    receipt = submission_provenance.get("standalone_commercial_receipt") or {}
+    result = routine_result.get("standalone_commercial") or {}
+    if not all(isinstance(item, Mapping) for item in (request, receipt, result)):
+        raise TechnoeconomicExportError(
+            "Standalone-commercial summary authority is invalid"
+        )
+    percentiles = result.get("percentiles") or {}
+    yield (
+        "headline",
+        result.get("technology"),
+        None,
+        "Commercial SolarEdge lifecycle LCOE",
+        None,
+        "[]",
+        None,
+        None,
+        "[]",
+        result.get("target_capacity_w"),
+        result.get("target_rating_basis"),
+        result.get("source_applied_capacity_w"),
+        result.get("source_rating_basis"),
+        result.get("capacity_scale_factor"),
+        result.get("transfer_method"),
+        receipt.get("constant_dollar_cost_year"),
+        result.get("headline_metric_id"),
+        result.get("unit"),
+        percentiles.get("p10"),
+        percentiles.get("p50"),
+        percentiles.get("p90"),
+        receipt.get("energy_scaling_evidence_subject"),
+    )
+    request_lines = {
+        str(line.get("input_id")): line
+        for line in request.get("cost_lines") or []
+        if isinstance(line, Mapping)
+    }
+    for summary in result.get("commercial_cost_line_summaries") or []:
+        if not isinstance(summary, Mapping):
+            raise TechnoeconomicExportError(
+                "Standalone-commercial cost-line summary is invalid"
+            )
+        input_id = str(summary.get("input_id"))
+        line = request_lines.get(input_id) or {}
+        line_percentiles = summary.get("percentiles") or {}
+        yield (
+            "cost_line",
+            result.get("technology"),
+            input_id,
+            summary.get("label"),
+            summary.get("cost_category"),
+            _canonical_json_text(list(summary.get("coverage_ids") or [])),
+            summary.get("timing"),
+            line.get("unit"),
+            _canonical_json_text(list(summary.get("occurrence_years") or [])),
+            result.get("target_capacity_w"),
+            result.get("target_rating_basis"),
+            result.get("source_applied_capacity_w"),
+            result.get("source_rating_basis"),
+            result.get("capacity_scale_factor"),
+            result.get("transfer_method"),
+            line.get("constant_dollar_cost_year"),
+            None,
+            summary.get("total_unit"),
+            line_percentiles.get("p10"),
+            line_percentiles.get("p50"),
+            line_percentiles.get("p90"),
+            f"standalone-commercial-cost:{input_id}",
+        )
+
+
+PAIRED_COMMERCIAL_SUMMARY_COLUMNS = STANDALONE_COMMERCIAL_SUMMARY_COLUMNS
+
+
+def _paired_commercial_summary_rows(
+    request_payload: Mapping[str, Any],
+    submission_provenance: Mapping[str, Any],
+    routine_result: Mapping[str, Any],
+) -> Iterator[tuple[Any, ...]]:
+    request = request_payload.get("paired_commercial") or {}
+    receipt = submission_provenance.get("paired_commercial_receipt") or {}
+    result = routine_result.get("paired_commercial") or {}
+    if not all(isinstance(item, Mapping) for item in (request, receipt, result)):
+        raise TechnoeconomicExportError(
+            "Paired-commercial summary authority is invalid"
+        )
+    request_systems = {
+        str(system.get("technology")): system
+        for system in request.get("systems") or []
+        if isinstance(system, Mapping)
+    }
+    result_systems = result.get("systems") or {}
+    receipt_systems = receipt.get("systems") or {}
+    if set(request_systems) != {"solectria", "solaredge"} or not isinstance(
+        result_systems, Mapping
+    ) or set(result_systems) != {"solectria", "solaredge"} or not isinstance(
+        receipt_systems, Mapping
+    ) or set(receipt_systems) != {"solectria", "solaredge"}:
+        raise TechnoeconomicExportError(
+            "Paired-commercial summary systems are incomplete"
+        )
+    for technology in ("solectria", "solaredge"):
+        system_result = result_systems[technology]
+        system_receipt = receipt_systems[technology]
+        if not isinstance(system_result, Mapping) or not isinstance(
+            system_receipt, Mapping
+        ):
+            raise TechnoeconomicExportError(
+                "Paired-commercial summary system is invalid"
+            )
+        percentiles = system_result.get("percentiles") or {}
+        label = "Solectria" if technology == "solectria" else "SolarEdge"
+        yield (
+            "headline",
+            technology,
+            None,
+            f"Commercial {label} lifecycle LCOE",
+            None,
+            "[]",
+            None,
+            None,
+            "[]",
+            result.get("target_capacity_w"),
+            result.get("target_rating_basis"),
+            system_result.get("source_applied_capacity_w"),
+            system_result.get("source_rating_basis"),
+            system_result.get("capacity_scale_factor"),
+            result.get("transfer_method"),
+            result.get("constant_dollar_cost_year"),
+            system_result.get("headline_metric_id"),
+            system_result.get("unit"),
+            percentiles.get("p10"),
+            percentiles.get("p50"),
+            percentiles.get("p90"),
+            system_receipt.get("system_evidence_subject"),
+        )
+        request_lines = {
+            str(line.get("input_id")): line
+            for line in request_systems[technology].get("cost_lines") or []
+            if isinstance(line, Mapping)
+        }
+        receipt_lines = {
+            str(line.get("input_id")): line
+            for line in system_receipt.get("cost_lines") or []
+            if isinstance(line, Mapping)
+        }
+        for summary in system_result.get("commercial_cost_line_summaries") or []:
+            if not isinstance(summary, Mapping):
+                raise TechnoeconomicExportError(
+                    "Paired-commercial cost-line summary is invalid"
+                )
+            input_id = str(summary.get("input_id"))
+            line = request_lines.get(input_id) or {}
+            line_percentiles = summary.get("percentiles") or {}
+            yield (
+                "cost_line",
+                technology,
+                input_id,
+                summary.get("label"),
+                summary.get("cost_category"),
+                _canonical_json_text(list(summary.get("coverage_ids") or [])),
+                summary.get("timing"),
+                line.get("unit"),
+                _canonical_json_text(list(summary.get("occurrence_years") or [])),
+                result.get("target_capacity_w"),
+                result.get("target_rating_basis"),
+                system_result.get("source_applied_capacity_w"),
+                system_result.get("source_rating_basis"),
+                system_result.get("capacity_scale_factor"),
+                result.get("transfer_method"),
+                line.get("constant_dollar_cost_year"),
+                None,
+                summary.get("total_unit"),
+                line_percentiles.get("p10"),
+                line_percentiles.get("p50"),
+                line_percentiles.get("p90"),
+                (receipt_lines.get(input_id) or {}).get("evidence_subject"),
+            )
+    delta = result.get("lcoe_delta_se_minus_sol") or {}
+    if not isinstance(delta, Mapping):
+        raise TechnoeconomicExportError(
+            "Paired-commercial LCOE-delta summary is invalid"
+        )
+    percentiles = delta.get("percentiles") or {}
+    yield (
+        "diagnostic",
+        "se_minus_sol",
+        None,
+        "Commercial lifecycle LCOE delta, SolarEdge minus Solectria",
+        None,
+        "[]",
+        None,
+        None,
+        "[]",
+        result.get("target_capacity_w"),
+        result.get("target_rating_basis"),
+        None,
+        None,
+        None,
+        result.get("transfer_method"),
+        result.get("constant_dollar_cost_year"),
+        delta.get("headline_metric_id"),
+        delta.get("unit"),
+        percentiles.get("p10"),
+        percentiles.get("p50"),
+        percentiles.get("p90"),
+        "paired-commercial:lcoe-delta",
+    )
 
 
 def _build_tables(
@@ -2866,8 +4794,18 @@ def _build_tables(
     ) in {
         technoeconomic_kernel.CALCULATION_CONTRACT_VERSION,
         technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+        technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
     }
-    return (
+    standalone_contract = (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    )
+    paired_contract = (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    )
+    leading_tables = (
         _Table(
             "realizations.csv",
             "Realizations",
@@ -2917,17 +4855,75 @@ def _build_tables(
             TRANSFER_COLUMNS,
             lambda: _transfer_rows(request_payload, submission_provenance),
         ),
+    )
+    standalone_tables = (
+        (
+            _Table(
+                "standalone-commercial-summary.csv",
+                "Commercial LCOE",
+                STANDALONE_COMMERCIAL_SUMMARY_COLUMNS,
+                lambda: _standalone_commercial_summary_rows(
+                    request_payload,
+                    submission_provenance,
+                    routine_result,
+                ),
+            ),
+        )
+        if standalone_contract
+        else ()
+    )
+    paired_tables = (
+        (
+            _Table(
+                "paired-commercial-summary.csv",
+                "Commercial LCOE",
+                PAIRED_COMMERCIAL_SUMMARY_COLUMNS,
+                lambda: _paired_commercial_summary_rows(
+                    request_payload,
+                    submission_provenance,
+                    routine_result,
+                ),
+            ),
+        )
+        if paired_contract
+        else ()
+    )
+    trailing_tables = (
         _Table(
             "metric-cdfs.csv",
             "Metric CDFs",
-            CDF_COLUMNS,
-            lambda: _cdf_rows(calculation.metadata),
+            (
+                PAIRED_COMMERCIAL_CDF_COLUMNS
+                if paired_contract
+                else STANDALONE_COMMERCIAL_CDF_COLUMNS
+                if standalone_contract
+                else CDF_COLUMNS
+            ),
+            (
+                (lambda: _paired_commercial_cdf_rows(calculation.metadata))
+                if paired_contract
+                else (lambda: _standalone_commercial_cdf_rows(calculation.metadata))
+                if standalone_contract
+                else (lambda: _cdf_rows(calculation.metadata))
+            ),
         ),
         _Table(
             "per-year-summary.csv",
             "Per-Year Summary",
-            _per_year_columns(calculation.metadata),
-            lambda: _per_year_rows(calculation.metadata),
+            (
+                _paired_commercial_per_year_columns(calculation.metadata)
+                if paired_contract
+                else _standalone_commercial_per_year_columns(calculation.metadata)
+                if standalone_contract
+                else _per_year_columns(calculation.metadata)
+            ),
+            (
+                (lambda: _paired_commercial_per_year_rows(calculation.metadata))
+                if paired_contract
+                else (lambda: _standalone_commercial_per_year_rows(calculation.metadata))
+                if standalone_contract
+                else (lambda: _per_year_rows(calculation.metadata))
+            ),
         ),
         _Table(
             "sensitivity.csv",
@@ -2960,6 +4956,7 @@ def _build_tables(
             lambda: iter(checks),
         ),
     )
+    return leading_tables + standalone_tables + paired_tables + trailing_tables
 
 
 def _csv_scalar(value: Any) -> str:
@@ -3294,12 +5291,238 @@ def _new_logical_sheet_hash() -> Any:
     return digest
 
 
+def _write_standalone_summary_sheet(
+    workbook: openpyxl.Workbook,
+    routine_result: Mapping[str, Any],
+    checks: Sequence[Sequence[Any]],
+) -> tuple[int, int, str]:
+    sheet = workbook.create_sheet("Summary")
+    logical_digest = _new_logical_sheet_hash()
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A5"
+    for letter, width in {"A": 52, "B": 36, "C": 28, "D": 66}.items():
+        sheet.column_dimensions[letter].width = width
+    title_values = ("Standalone Commercial SolarEdge LCOE", None, None, None)
+    title = _write_only_cell(sheet, title_values[0], section=True)
+    title.font = Font(name="Aptos Display", size=18, bold=True, color="FFFFFF")
+    title.fill = _HEADER_FILL
+    sheet.append(
+        [title, _write_only_cell(sheet, None), _write_only_cell(sheet, None), _write_only_cell(sheet, None)]
+    )
+    _update_logical_sheet_hash(logical_digest, title_values)
+    note_values = (
+        "Frozen numeric values are authoritative; formulas are display aids.",
+        None,
+        None,
+        "P10/P50/P90 are statistical quantiles of P(LCOE <= x).",
+    )
+    sheet.append([_write_only_cell(sheet, value) for value in note_values])
+    _update_logical_sheet_hash(logical_digest, note_values)
+    blank = (None, None, None, None)
+    sheet.append([_write_only_cell(sheet, None) for _ in range(4)])
+    _update_logical_sheet_hash(logical_digest, blank)
+    headers = ("Frozen authority", "Value", "Display formula/status", "Notes")
+    _append_header(sheet, headers)
+    _update_logical_sheet_hash(logical_digest, headers)
+    standalone = routine_result.get("standalone_commercial") or {}
+    percentiles = standalone.get("percentiles") or {}
+    all_passed = all(row[5] == "OK" for row in checks)
+    check_end_row = len(checks) + 1
+    realization_end_row = int(routine_result.get("realization_count") or 0) + 1
+    rows = [
+        ("Model status", "OK" if all_passed else "FAIL", f"=IF(COUNTIF('Checks'!F2:F{check_end_row},\"FAIL\")=0,\"OK\",\"FAIL\")", "Formula recalculates visible check status."),
+        ("Technology", standalone.get("technology"), None, "Standalone commercial technology."),
+        ("Target capacity (W)", standalone.get("target_capacity_w"), None, standalone.get("target_rating_basis")),
+        ("Source applied capacity (W)", standalone.get("source_applied_capacity_w"), None, standalone.get("source_rating_basis")),
+        ("Capacity scale factor", standalone.get("capacity_scale_factor"), None, "Target W divided by frozen source W."),
+        ("Transfer method", standalone.get("transfer_method"), None, "Direct scaling of verified SolarEdge specific energy."),
+        ("Realizations", routine_result.get("realization_count"), f"=ROWS('Realizations'!A2:A{realization_end_row})", "Sealed LHS realization count."),
+        ("Seed", routine_result.get("seed"), None, "Unsigned deterministic seed."),
+        ("Project life (years)", routine_result.get("project_life_years"), None, "Constant-real lifecycle horizon."),
+        ("Calculation contract", routine_result.get("calculation_contract_version"), None, "Pinned standalone calculation semantics."),
+        ("Sampling version", routine_result.get("sampling_version"), None, "Pinned LHS and weather allocation semantics."),
+    ]
+    for label, value, formula, notes in rows:
+        status = value if label == "Model status" else None
+        cells = [
+            _write_only_cell(sheet, label),
+            _write_only_cell(sheet, value, status=status),
+            _write_only_cell(sheet, formula),
+            _write_only_cell(sheet, notes),
+        ]
+        if isinstance(formula, str) and formula.startswith("="):
+            cells[2].data_type = "f"
+        sheet.append(cells)
+        _update_logical_sheet_hash(
+            logical_digest,
+            (label, value, formula, notes),
+            formula_indexes=frozenset({2}) if formula else frozenset(),
+        )
+    sheet.append([_write_only_cell(sheet, None) for _ in range(4)])
+    _update_logical_sheet_hash(logical_digest, blank)
+    section_values = ("Commercial SolarEdge LCOE percentiles", None, None, None)
+    section = _write_only_cell(sheet, section_values[0], section=True)
+    sheet.append(
+        [section, _write_only_cell(sheet, None), _write_only_cell(sheet, None), _write_only_cell(sheet, None)]
+    )
+    _update_logical_sheet_hash(logical_digest, section_values)
+    percentile_headers = ("Metric", "P10", "P50", "P90")
+    _append_header(sheet, percentile_headers)
+    _update_logical_sheet_hash(logical_digest, percentile_headers)
+    percentile_values = (
+        "Commercial SolarEdge lifecycle LCOE (constant USD/kWh_AC)",
+        percentiles.get("p10"),
+        percentiles.get("p50"),
+        percentiles.get("p90"),
+    )
+    sheet.append(
+        [
+            _write_only_cell(
+                sheet,
+                value,
+                number_format=_number_format_for_header(header, value),
+            )
+            for header, value in zip(percentile_headers, percentile_values)
+        ]
+    )
+    _update_logical_sheet_hash(logical_digest, percentile_values)
+    return len(rows) + 1, 4, logical_digest.hexdigest()
+
+
+def _write_paired_summary_sheet(
+    workbook: openpyxl.Workbook,
+    routine_result: Mapping[str, Any],
+    checks: Sequence[Sequence[Any]],
+) -> tuple[int, int, str]:
+    sheet = workbook.create_sheet("Summary")
+    logical_digest = _new_logical_sheet_hash()
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A5"
+    for letter, width in {"A": 52, "B": 36, "C": 28, "D": 66}.items():
+        sheet.column_dimensions[letter].width = width
+    row_count = 0
+
+    def append(values: Sequence[Any], *, header: bool = False) -> None:
+        nonlocal row_count
+        if header:
+            _append_header(sheet, values)
+        else:
+            sheet.append([_write_only_cell(sheet, value) for value in values])
+        _update_logical_sheet_hash(logical_digest, values)
+        row_count += 1
+
+    title_values = ("Paired Commercial Lifecycle LCOE", None, None, None)
+    title = _write_only_cell(sheet, title_values[0], section=True)
+    title.font = Font(name="Aptos Display", size=18, bold=True, color="FFFFFF")
+    title.fill = _HEADER_FILL
+    sheet.append(
+        [
+            title,
+            _write_only_cell(sheet, None),
+            _write_only_cell(sheet, None),
+            _write_only_cell(sheet, None),
+        ]
+    )
+    _update_logical_sheet_hash(logical_digest, title_values)
+    row_count += 1
+    append(
+        (
+            "Frozen numeric values are authoritative.",
+            None,
+            None,
+            "P10/P50/P90 are statistical quantiles of P(LCOE <= x).",
+        )
+    )
+    append((None, None, None, None))
+    append(("Frozen authority", "Value", "Status", "Notes"), header=True)
+
+    paired = routine_result.get("paired_commercial") or {}
+    systems = paired.get("systems") or {}
+    all_passed = all(row[5] == "OK" for row in checks)
+    authority_rows = [
+        ("Model status", "OK" if all_passed else "FAIL", None, "All export tie-outs."),
+        ("Target capacity (W)", paired.get("target_capacity_w"), None, paired.get("target_rating_basis")),
+        ("Transfer method", paired.get("transfer_method"), None, "Independent direct scaling from each frozen source."),
+        ("Constant-dollar year", paired.get("constant_dollar_cost_year"), None, "Shared by both cost stacks."),
+        ("Realizations", routine_result.get("realization_count"), None, "Sealed LHS realization count."),
+        ("Seed", routine_result.get("seed"), None, "Unsigned deterministic seed."),
+        ("Project life (years)", routine_result.get("project_life_years"), None, "Constant-real lifecycle horizon."),
+        ("Calculation contract", routine_result.get("calculation_contract_version"), None, "Pinned paired calculation semantics."),
+    ]
+    for technology in ("solectria", "solaredge"):
+        system = systems.get(technology) or {}
+        label = "Solectria" if technology == "solectria" else "SolarEdge"
+        authority_rows.extend(
+            (
+                (
+                    f"{label} source applied capacity (W)",
+                    system.get("source_applied_capacity_w"),
+                    None,
+                    system.get("source_rating_basis"),
+                ),
+                (
+                    f"{label} capacity scale factor",
+                    system.get("capacity_scale_factor"),
+                    None,
+                    "Target W divided by the same-rated source W.",
+                ),
+            )
+        )
+    for row in authority_rows:
+        append(row)
+    append((None, None, None, None))
+    append(("Commercial lifecycle LCOE percentiles", None, None, None))
+    percentile_headers = ("Metric", "P10", "P50", "P90")
+    append(percentile_headers, header=True)
+    for technology in ("solectria", "solaredge"):
+        system = systems.get(technology) or {}
+        percentiles = system.get("percentiles") or {}
+        label = "Solectria" if technology == "solectria" else "SolarEdge"
+        append(
+            (
+                f"Commercial {label} lifecycle LCOE (constant USD/kWh_AC)",
+                percentiles.get("p10"),
+                percentiles.get("p50"),
+                percentiles.get("p90"),
+            )
+        )
+    delta = paired.get("lcoe_delta_se_minus_sol") or {}
+    delta_percentiles = delta.get("percentiles") or {}
+    append(
+        (
+            "LCOE delta, SolarEdge minus Solectria (constant USD/kWh_AC)",
+            delta_percentiles.get("p10"),
+            delta_percentiles.get("p50"),
+            delta_percentiles.get("p90"),
+        )
+    )
+    return row_count, 4, logical_digest.hexdigest()
+
+
 def _write_summary_sheet(
     workbook: openpyxl.Workbook,
     routine_result: Mapping[str, Any],
     metadata: Mapping[str, Any],
     checks: Sequence[Sequence[Any]],
 ) -> tuple[int, int, str]:
+    if (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    ):
+        return _write_paired_summary_sheet(
+            workbook,
+            routine_result,
+            checks,
+        )
+    if (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    ):
+        return _write_standalone_summary_sheet(
+            workbook,
+            routine_result,
+            checks,
+        )
     sheet = workbook.create_sheet("Summary")
     logical_digest = _new_logical_sheet_hash()
     sheet.sheet_view.showGridLines = False
@@ -3565,6 +5788,29 @@ def _human_metric(
         technoeconomic_kernel.COMMERCIAL_FIELD_LIFECYCLE_MARGINAL_COST: "Commercial lifecycle marginal cost delta, SE − SOL (constant USD)",
         technoeconomic_kernel.COMMERCIAL_FIELD_EA_MARGINAL_COST: "Commercial equivalent-annual marginal cost delta, SE − SOL (constant USD/year)",
         technoeconomic_kernel.COMMERCIAL_FIELD_MARGINAL_LCOO: "Commercial marginal LCOO, SE − SOL (constant USD/kWh_AC)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_TARGET_CAPACITY: "Commercial SolarEdge target capacity (W)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR: "Commercial SolarEdge capacity scale factor (target W/source W)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_YEAR1_ENERGY: "Commercial SolarEdge first-year energy (kWh_AC)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY: "Commercial SolarEdge lifecycle energy (kWh_AC)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_EA_ENERGY: "Commercial SolarEdge equivalent-annual energy (kWh_AC/year)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_INITIAL_COST: "Commercial SolarEdge initial cost (constant USD)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_RECURRING_PV_COST: "Commercial SolarEdge recurring lifecycle cost (constant USD)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_SCHEDULED_PV_COST: "Commercial SolarEdge scheduled lifecycle cost (constant USD)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST: "Commercial SolarEdge lifecycle cost (constant USD)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_EA_COST: "Commercial SolarEdge equivalent-annual cost (constant USD/year)",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE: "Commercial SolarEdge lifecycle LCOE (constant USD/kWh_AC)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_TARGET_CAPACITY: "Commercial Solectria target capacity (W)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_CAPACITY_SCALE_FACTOR: "Commercial Solectria capacity scale factor (target W/source W)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_YEAR1_ENERGY: "Commercial Solectria first-year energy (kWh_AC)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LIFECYCLE_ENERGY: "Commercial Solectria lifecycle energy (kWh_AC)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_EA_ENERGY: "Commercial Solectria equivalent-annual energy (kWh_AC/year)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_INITIAL_COST: "Commercial Solectria initial cost (constant USD)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_RECURRING_PV_COST: "Commercial Solectria recurring lifecycle cost (constant USD)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_SCHEDULED_PV_COST: "Commercial Solectria scheduled lifecycle cost (constant USD)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LIFECYCLE_COST: "Commercial Solectria lifecycle cost (constant USD)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_EA_COST: "Commercial Solectria equivalent-annual cost (constant USD/year)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE: "Commercial Solectria lifecycle LCOE (constant USD/kWh_AC)",
+        technoeconomic_kernel.COMMERCIAL_PAIRED_FIELD_LCOE_DELTA: "Commercial lifecycle LCOE delta, SolarEdge minus Solectria (constant USD/kWh_AC)",
         "headline_positive_gain_lcoo": "Headline LCOO, SE − SOL (USD/kWh_AC; positive gain)",
         "signed_nonzero_lcoo": "Signed LCOO diagnostic, SE − SOL (USD/kWh_AC)",
         "lifecycle_lcoe_solectria": "Solectria lifecycle LCOE (USD/kWh_AC)",
@@ -3588,10 +5834,16 @@ def _plot_grid(count: int) -> tuple[int, int]:
     return rows, columns
 
 
-def _figure_axes(count: int, *, title: str, subtitle: str) -> tuple[Any, list[Any]]:
+def _figure_axes(
+    count: int,
+    *,
+    title: str,
+    subtitle: str,
+    single_panel: bool = False,
+) -> tuple[Any, list[Any]]:
     from matplotlib import pyplot as plt
 
-    rows, columns = _plot_grid(count)
+    rows, columns = (1, 1) if single_panel else _plot_grid(count)
     figure, axes = plt.subplots(rows, columns, figsize=(16, 10), squeeze=False)
     figure.patch.set_facecolor("white")
     figure.suptitle(title, x=0.04, y=0.98, ha="left", fontsize=17, fontweight="bold", color=_INK)
@@ -3606,10 +5858,19 @@ def _figure_axes(count: int, *, title: str, subtitle: str) -> tuple[Any, list[An
     return figure, flattened
 
 
-def _save_figure(figure: Any, path: Path) -> tuple[int, int]:
+def _save_figure(
+    figure: Any,
+    path: Path,
+    *,
+    layout_bottom: float = 0.035,
+) -> tuple[int, int]:
     from matplotlib import pyplot as plt
 
-    figure.tight_layout(rect=(0.035, 0.035, 0.98, 0.91), h_pad=2.4, w_pad=1.8)
+    figure.tight_layout(
+        rect=(0.035, layout_bottom, 0.98, 0.91),
+        h_pad=2.4,
+        w_pad=1.8,
+    )
     figure.savefig(
         path,
         dpi=100,
@@ -3620,36 +5881,369 @@ def _save_figure(figure: Any, path: Path) -> tuple[int, int]:
     return _png_dimensions(path)
 
 
+def _paired_cdf_subtitle(
+    available: Sequence[tuple[str, Mapping[str, Any]]],
+) -> str:
+    populations: list[int] = []
+    outcome_counts: list[int] = []
+    system_details: list[str] = []
+    labels = {
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE: "Solectria",
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE: "SolarEdge",
+    }
+    for metric_id, summary in available:
+        cdf = summary.get("cdf")
+        if not isinstance(cdf, Mapping):
+            continue
+        values = cdf.get("values") or []
+        population = int(cdf.get("population_count") or len(values))
+        outcome_count = len(values)
+        populations.append(population)
+        outcome_counts.append(outcome_count)
+        label = labels.get(metric_id, _human_metric(metric_id))
+        system_details.append(
+            f"{label}: {population:,} runs, {outcome_count:,} outcomes"
+        )
+    if (
+        len(populations) == 2
+        and len(set(populations)) == 1
+        and len(set(outcome_counts)) == 1
+    ):
+        return (
+            f"{populations[0]:,} runs per system • "
+            f"{outcome_counts[0]:,} distinct outcomes per system • "
+            "Exact empirical CDF"
+        )
+    if system_details:
+        return " • ".join((*system_details, "Exact empirical CDF"))
+    return "Exact empirical CDF"
+
+
+def _cdf_value_text(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if not math.isfinite(number):
+        return "—"
+    absolute = abs(number)
+    if absolute >= 10:
+        return f"{number:.2f}"
+    if absolute >= 1:
+        return f"{number:.3f}"
+    return f"{number:.4f}"
+
+
+def _paired_cdf_constant_dollar_year(metadata: Mapping[str, Any]) -> int | None:
+    provenance = metadata.get("kernel_provenance")
+    if not isinstance(provenance, Mapping):
+        return None
+    paired = provenance.get("commercial_paired")
+    if not isinstance(paired, Mapping):
+        return None
+    year = paired.get("constant_dollar_cost_year")
+    if (
+        not isinstance(year, int)
+        or isinstance(year, bool)
+        or year < 1900
+        or year > 3000
+    ):
+        return None
+    return year
+
+
+def _paired_cdf_display_lcoe(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return math.nan
+    if not math.isfinite(number):
+        return math.nan
+    return number * 1_000.0
+
+
 def _cdf_display_indices(
     probabilities: np.ndarray,
     *,
     maximum: int = 1200,
+    quantiles: tuple[float, ...] = (0.05, 0.5, 0.95),
 ) -> np.ndarray:
     count = len(probabilities)
     if count <= maximum:
         return np.arange(count, dtype=np.int64)
-    selected = set(np.linspace(0, count - 1, maximum, dtype=np.int64).tolist())
-    selected.update({0, count - 1})
-    for quantile in (0.05, 0.5, 0.95):
+    required = {0, count - 1}
+    for quantile in quantiles:
         index = int(np.searchsorted(probabilities, quantile, side="left"))
         for neighbor in (index - 1, index, index + 1):
             if 0 <= neighbor < count:
-                selected.add(neighbor)
+                required.add(neighbor)
+    if len(required) > maximum:
+        raise TechnoeconomicExportError("CDF display cap is too small")
+    selected = set(required)
+    remaining = maximum - len(required)
+    if remaining:
+        selected.update(
+            np.linspace(0, count - 1, remaining, dtype=np.int64).tolist()
+        )
     return np.asarray(sorted(selected), dtype=np.int64)
 
 
 def _render_cdf_plot(
     metadata: Mapping[str, Any],
     path: Path,
+    *,
+    headline_only: bool = False,
+    paired_headlines_only: bool = False,
 ) -> tuple[int, int, int, int]:
+    paired_metric_ids = (
+        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+    )
     available: list[tuple[str, Mapping[str, Any]]] = []
     for metric_id, summary in sorted(_metric_summaries(metadata).items()):
+        if paired_headlines_only and metric_id not in paired_metric_ids:
+            continue
+        if (
+            headline_only
+            and metric_id
+            != technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE
+        ):
+            continue
         if isinstance(summary, Mapping) and isinstance(summary.get("cdf"), Mapping):
             available.append((metric_id, summary))
+    if paired_headlines_only:
+        from matplotlib.ticker import PercentFormatter
+
+        available.sort(key=lambda item: paired_metric_ids.index(item[0]))
+        figure, axes = _figure_axes(
+            1,
+            title="Lifecycle LCOE comparison",
+            subtitle=_paired_cdf_subtitle(available),
+            single_panel=True,
+        )
+        axis = axes[0]
+        point_count = 0
+        display_point_count = 0
+        styles = {
+            technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE: (
+                "Solectria",
+                _GOLD,
+                "--",
+                0.90,
+            ),
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE: (
+                "SolarEdge",
+                _BLUE,
+                "-",
+                0.75,
+            ),
+        }
+        if not available:
+            axis.text(
+                0.5,
+                0.5,
+                "No finite paired LCOE populations",
+                ha="center",
+                va="center",
+                color=_INK,
+            )
+            axis.set_axis_off()
+        for metric_id, summary in available:
+            cdf = summary["cdf"]
+            values = np.asarray(cdf.get("values") or [], dtype=np.float64)
+            probability = np.asarray(
+                cdf.get("cumulative_probability") or [],
+                dtype=np.float64,
+            )
+            point_count += len(values)
+            display_indices = _cdf_display_indices(
+                probability,
+                quantiles=(0.10, 0.50, 0.90),
+            )
+            display_values = values[display_indices] * 1_000.0
+            display_probability = probability[display_indices]
+            display_point_count += len(display_indices)
+            label, color, linestyle, direct_label_probability = styles[metric_id]
+            axis.step(
+                display_values,
+                display_probability,
+                where="post",
+                color=color,
+                linestyle=linestyle,
+                linewidth=3.0,
+            )
+            percentiles = summary.get("percentiles") or {}
+            p50 = _paired_cdf_display_lcoe(percentiles.get("p50"))
+            if math.isfinite(p50):
+                axis.vlines(
+                    p50,
+                    0.0,
+                    0.5,
+                    color=color,
+                    linewidth=1.2,
+                    linestyle=":",
+                    alpha=0.9,
+                )
+                axis.scatter(
+                    [p50],
+                    [0.5],
+                    s=60,
+                    marker="o",
+                    facecolor="white",
+                    edgecolor=color,
+                    linewidth=2.2,
+                    zorder=4,
+                )
+            if len(display_values):
+                label_index = int(
+                    np.searchsorted(
+                        display_probability,
+                        direct_label_probability,
+                        side="left",
+                    )
+                )
+                label_index = min(label_index, len(display_values) - 1)
+                axis.annotate(
+                    label,
+                    xy=(
+                        display_values[label_index],
+                        display_probability[label_index],
+                    ),
+                    xytext=(12, 0),
+                    textcoords="offset points",
+                    color=color,
+                    fontsize=10,
+                    fontweight="bold",
+                    ha="left",
+                    va="center",
+                    annotation_clip=False,
+                    bbox={
+                        "facecolor": "white",
+                        "edgecolor": "none",
+                        "pad": 1.0,
+                    },
+                )
+        axis.axhline(0.5, color=_INK, linewidth=0.9, linestyle=":", alpha=0.7)
+        axis.set_ylim(0, 1.02)
+        axis.set_yticks(np.linspace(0.0, 1.0, 6))
+        axis.yaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
+        axis.margins(x=0.08)
+        constant_dollar_year = _paired_cdf_constant_dollar_year(metadata)
+        dollar_basis = (
+            f"real {constant_dollar_year} USD"
+            if constant_dollar_year is not None
+            else "constant USD"
+        )
+        axis.set_xlabel(
+            f"Lifecycle LCOE ({dollar_basis}/MWh AC)",
+            fontsize=9,
+            color=_INK,
+        )
+        axis.set_ylabel(
+            "Probability at or below this LCOE",
+            fontsize=9,
+            color=_INK,
+        )
+        summary_by_metric = dict(available)
+        percentile_rows = (
+            (
+                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+                0.095,
+            ),
+            (
+                technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+                0.055,
+            ),
+        )
+        medians: dict[str, float] = {}
+        for metric_id, row_y in percentile_rows:
+            summary = summary_by_metric.get(metric_id)
+            if not isinstance(summary, Mapping):
+                continue
+            label, color, _linestyle, _direct_probability = styles[metric_id]
+            percentiles = summary.get("percentiles") or {}
+            figure.text(
+                0.07,
+                row_y,
+                label,
+                ha="left",
+                va="center",
+                fontsize=10,
+                fontweight="bold",
+                color=color,
+            )
+            figure.text(
+                0.19,
+                row_y,
+                (
+                    "P10  "
+                    f"{_cdf_value_text(_paired_cdf_display_lcoe(percentiles.get('p10')))}"
+                    "      P50  "
+                    f"{_cdf_value_text(_paired_cdf_display_lcoe(percentiles.get('p50')))}"
+                    "      P90  "
+                    f"{_cdf_value_text(_paired_cdf_display_lcoe(percentiles.get('p90')))}"
+                    "   USD/MWh AC"
+                ),
+                ha="left",
+                va="center",
+                fontsize=10,
+                color=_INK,
+            )
+            median = _paired_cdf_display_lcoe(percentiles.get("p50"))
+            if math.isfinite(median):
+                medians[label] = median
+        if len(medians) == 2:
+            median_values = list(medians.values())
+            if math.isclose(
+                median_values[0],
+                median_values[1],
+                rel_tol=0.0,
+                abs_tol=1e-15,
+            ):
+                median_message = "Same median LCOE"
+            else:
+                lower_label = min(medians, key=lambda label: medians[label])
+                higher_label = max(medians, key=lambda label: medians[label])
+                median_gap = medians[higher_label] - medians[lower_label]
+                gap_text = (
+                    f"{median_gap:.2f}"
+                    if max(abs(value) for value in median_values) >= 10
+                    else _cdf_value_text(median_gap)
+                )
+                median_message = (
+                    f"Lower median: {lower_label} by {gap_text} USD/MWh AC"
+                )
+            figure.text(
+                0.69,
+                0.075,
+                median_message,
+                ha="left",
+                va="center",
+                fontsize=10,
+                fontweight="bold",
+                color=_INK,
+                bbox={
+                    "boxstyle": "round,pad=0.45",
+                    "facecolor": "#EEF4F2",
+                    "edgecolor": "none",
+                },
+            )
+        for unused in axes[1:]:
+            unused.set_visible(False)
+        width, height = _save_figure(figure, path, layout_bottom=0.16)
+        return width, height, point_count, display_point_count
     figure, axes = _figure_axes(
         len(available),
-        title="Technoeconomic metric empirical CDFs",
-        subtitle="Finite metric-specific populations; each panel states its denominator. Signed zero and negative values are retained.",
+        title=(
+            "Commercial SolarEdge lifecycle LCOE empirical CDF"
+            if headline_only
+            else "Technoeconomic metric empirical CDFs"
+        ),
+        subtitle=(
+            "Standalone commercial SolarEdge; P(X <= x), with P10/P50/P90 reported separately."
+            if headline_only
+            else "Finite metric-specific populations; each panel states its denominator. Signed zero and negative values are retained."
+        ),
     )
     point_count = 0
     display_point_count = 0
@@ -3661,7 +6255,10 @@ def _render_cdf_plot(
         values = np.asarray(cdf.get("values") or [], dtype=np.float64)
         probability = np.asarray(cdf.get("cumulative_probability") or [], dtype=np.float64)
         point_count += len(values)
-        display_indices = _cdf_display_indices(probability)
+        display_indices = _cdf_display_indices(
+            probability,
+            quantiles=(0.10, 0.50, 0.90) if headline_only else (0.05, 0.50, 0.95),
+        )
         display_values = values[display_indices]
         display_probability = probability[display_indices]
         display_point_count += len(display_indices)
@@ -3939,6 +6536,14 @@ def generate_technoeconomic_exports(
     schema_versions = export_contract_versions(
         str(routine_result.get("calculation_contract_version"))
     )
+    standalone_contract = (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    )
+    paired_contract = (
+        routine_result.get("calculation_contract_version")
+        == technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    )
     cancellation_check()
     attempt_directory = attempt_directory.resolve(strict=True)
     _confined(attempt_directory, config.OUTPUT_DIR.resolve(strict=True), label="Attempt directory")
@@ -4053,6 +6658,8 @@ def generate_technoeconomic_exports(
         width, height, row_count, display_count = _render_cdf_plot(
             calculation.metadata,
             cdf_pending,
+            headline_only=standalone_contract,
+            paired_headlines_only=paired_contract,
         )
         artifacts["cdf_plot"] = _publish_artifact(
             artifact_id="cdf_plot",
@@ -4068,7 +6675,13 @@ def generate_technoeconomic_exports(
                 "display_point_count": display_count,
                 "width_px": width,
                 "height_px": height,
-                "chart_contract_id": "cdf_v1",
+                "chart_contract_id": (
+                    PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID
+                    if paired_contract
+                    else STANDALONE_COMMERCIAL_CDF_CHART_CONTRACT_ID
+                    if standalone_contract
+                    else "cdf_v1"
+                ),
             },
         )
         width, height, row_count, display_count = _render_sensitivity_plot(
@@ -4158,7 +6771,13 @@ def generate_technoeconomic_exports(
             },
             "signed_metric_value_counts": _signed_metric_counts(calculation),
         },
-        "chart_contracts": CHART_CONTRACTS,
+        "chart_contracts": (
+            PAIRED_COMMERCIAL_CHART_CONTRACTS
+            if paired_contract
+            else STANDALONE_COMMERCIAL_CHART_CONTRACTS
+            if standalone_contract
+            else CHART_CONTRACTS
+        ),
     }
     manifest["manifest_sha256"] = _canonical_json_sha256(manifest)
     return manifest
@@ -4176,6 +6795,17 @@ __all__ = [
     "CHART_CONTRACTS",
     "CSV_FORMAT_VERSION",
     "EXPORT_MANIFEST_SCHEMA_VERSION",
+    "PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID",
+    "PAIRED_COMMERCIAL_CHART_CONTRACTS",
+    "PAIRED_COMMERCIAL_CSV_BUNDLE_SCHEMA_VERSION",
+    "PAIRED_COMMERCIAL_CSV_FORMAT_VERSION",
+    "PAIRED_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION",
+    "PAIRED_COMMERCIAL_XLSX_SCHEMA_VERSION",
+    "STANDALONE_COMMERCIAL_CHART_CONTRACTS",
+    "STANDALONE_COMMERCIAL_CSV_BUNDLE_SCHEMA_VERSION",
+    "STANDALONE_COMMERCIAL_CSV_FORMAT_VERSION",
+    "STANDALONE_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION",
+    "STANDALONE_COMMERCIAL_XLSX_SCHEMA_VERSION",
     "TechnoeconomicExportError",
     "XLSX_LOGICAL_HASH_VERSION",
     "export_contract_versions",

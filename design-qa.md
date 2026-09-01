@@ -143,3 +143,260 @@ No selected Option 2 or Option 3 raster mockup exists in the approved-plan folde
 - P3: when the product adopts a shared icon library, the text-only `More` disclosure can use its established overflow icon without changing behavior.
 
 final result: passed
+
+---
+
+# Technoeconomic v4 design QA
+
+## Reference
+
+- Selected mock: `C:\Users\Angushylesh(Shylesh)\.codex\generated_images\01a0598f-b949-75f3-840a-70a0723c04b4\exec-d03293a1-d76e-41e4-92cf-438694dd8cf4.png`
+- Native size: 1487 x 1058
+- Matched browser crop: `design-qa-assets/tea-v4-reference-crop-1472x971.png`
+
+## Implementation
+
+- Desktop capture: `design-qa-assets/tea-v4-implementation-1472x971.png`
+- Desktop browser content size: 1472 x 971
+- Mobile capture: `design-qa-assets/tea-v4-mobile-390x844.png`
+- Mobile browser content size: 390 x 844
+- Side-by-side check: `design-qa-assets/tea-v4-comparison.png`
+
+## Checks
+
+- The five-step calculation bridge matches the selected layout.
+- The completed CDF and percentile table appear before the scenario rail and job controls.
+- The source shows 125 kWac from the enabled clipping/curtailment limit.
+- The target shows 100 MWac and uses the same rating basis.
+- The completed run shows P10, P50, and P90 plus verified chart, CSV, and workbook links.
+- The mobile layout stacks without horizontal clipping. The CDF stays before scenario inputs.
+- Copy is short and plain. No ChatGPT or generated-content wording appears in the TEA screen.
+
+## Fix history
+
+- Hid the old v3 input panels in the v4 workspace.
+- Reduced vertical spacing to match the selected mock.
+- Moved the completed job card below the CDF so results stay first.
+- Replaced long-dash copy with plain punctuation.
+
+final result: passed
+
+---
+
+# Technoeconomic assumptions modal — design QA
+
+## Evidence
+
+- Source visual truth: `design-qa-assets/tea-v4-reference-crop-1472x971.png`, the selected TEA direction and its existing scenario-input rail.
+- Browser-rendered implementation: `design-qa-assets/tea-v4-assumptions-dialog-desktop.png`.
+- Mobile implementation: `design-qa-assets/tea-v4-assumptions-dialog-mobile.png`.
+- Full comparison input: `design-qa-assets/tea-v4-assumptions-dialog-comparison.png`.
+- Source pixels: 1472 × 971. Desktop implementation pixels: 1265 × 712. Mobile implementation pixels: 375 × 812.
+- Desktop browser viewport: normal 1280 × 720 in-app surface at DPR 1. Mobile test viewport: 390 × 844 CSS px at DPR 1; the in-app page surface captures 375 × 812 px.
+- State: the selected source shows the TEA result and Edit assumptions trigger. The implementation shows the requested modal open. The source did not define an open-modal state, so the comparison checks the new surface against the selected TEA typography, spacing, controls, colors, and hierarchy without claiming pixel equivalence for the new state.
+- Focused comparison: the full implementation capture is also the focused modal evidence because the modal occupies most of the viewport and its controls remain readable at original size. No additional crop was needed.
+
+## Findings
+
+- No actionable P0, P1, or P2 findings remain.
+- Fonts and typography: the modal keeps the dashboard font stack, teal eyebrow and section labels, compact helper text, and the selected TEA heading weights. Labels and long source text remain readable without overlap.
+- Spacing and layout rhythm: the modal is centered, the header and footer stay fixed, and only the input area scrolls. Desktop uses two-column field groups where space permits; mobile stacks them with consistent 16 px side padding.
+- Colors and visual tokens: the modal reuses the TEA surface, border, muted text, focus ring, teal primary action, and dim backdrop tokens. Contrast remains clear in the inspected states.
+- Image quality and asset fidelity: the modal needs no new imagery or icons. No placeholder image, custom SVG, CSS drawing, or decorative asset was added.
+- Copy and content: visible copy is short and direct: Edit assumptions, Close, and Review and calculate. The existing source, capacity, sampling, finance, cost, evidence, and acceptance fields are preserved.
+- Accessibility and behavior: the trigger declares a dialog target, the dialog has a heading and description, opening moves focus to the verified source, Close restores focus to Edit assumptions, invalid review keeps the modal open and focuses the error, and valid review closes it before opening the existing queue confirmation. Mobile controls are at least 44 px and no horizontal clipping is visible.
+- Browser health: final browser logs were empty.
+
+## Comparison history
+
+1. Initial modal capture — blocked.
+   - P2: the global reset removed the native dialog's automatic margins, placing the new modal at the upper-left edge instead of the center.
+   - Fix: added an explicit automatic margin while keeping the bounded width and height.
+2. Final comparison — passed.
+   - The revised desktop capture is centered, keeps the selected TEA visual language, preserves the result behind a clear backdrop, and keeps the action footer visible while the fields scroll. The mobile capture stacks fields and actions without horizontal clipping.
+
+## Primary interactions tested
+
+- Open Edit assumptions and focus the verified Annual Simulation source.
+- Close from the header and return focus to Edit assumptions.
+- Submit without acceptance; keep the modal open and focus the validation alert.
+- Accept the inputs and select Review and calculate; close the assumptions modal before opening the existing queue confirmation.
+- Cancel the queue confirmation without starting another job.
+- Inspect the open modal at desktop and 390 × 844 mobile viewports.
+
+## Implementation checklist
+
+- [x] Compact native modal replaces the inline assumptions disclosure.
+- [x] Existing TEA fields and calculation request remain unchanged.
+- [x] Fixed header and footer with a scrollable field area.
+- [x] Validation and review-and-calculate handoff.
+- [x] Keyboard focus return, mobile controls, and forced-color coverage.
+- [x] Browser captures, comparison input, focused tests, and frontend build.
+
+final result: passed
+
+---
+
+# Editable table-first assumptions dialog — design QA
+
+## Evidence
+
+- Selected visual truth: `C:\Users\Angushylesh(Shylesh)\.codex\generated_images\01a05da7-e5ec-7c60-b512-680a4e92ff81\exec-28f30c05-654f-4c8b-aca2-d4ce990485da.png`.
+- Browser-rendered desktop implementation: `design-qa-assets/tea-table-assumptions-desktop.png`.
+- Browser-rendered mobile implementation: `design-qa-assets/tea-table-assumptions-mobile.png`.
+- Full normalized comparison: `design-qa-assets/tea-table-assumptions-comparison.png`.
+- Focused modal comparison: `design-qa-assets/tea-table-assumptions-focused-comparison.png`.
+- Source pixels: 1672 × 941. Desktop implementation pixels: 1265 × 712. The source was normalized to 1265 × 712 for the full comparison; both have the same 16:9 composition.
+- Desktop browser viewport: 1280 × 720 CSS px at DPR 1.5; the in-app page surface captured 1265 × 712 pixels. Mobile test viewport: 390 × 844 CSS px; the page surface captured 375 × 812 pixels.
+- State: Technoeconomic Analysis selected, Scenario inputs visible behind the backdrop, and the editable assumptions dialog open at its first row.
+
+## Findings
+
+- No actionable P0, P1, or P2 findings remain.
+- Information architecture: the modal uses a semantic five-column table with Source & scale, Finance, System costs, and Evidence row groups. Shared assumptions appear once; Solectria and SolarEdge remain adjacent only where their values can differ.
+- Annual source semantics: the implementation intentionally corrects the concept mock. There is exactly one “Previous Annual Simulation source” selector for a previously completed, verified Annual Simulation, and it supplies paired energy and capacity for both systems. NREL 2024 ATB remains a cost preset and is not presented as the Annual Simulation source.
+- Editability: source, target capacity, trials, seed, project life, distribution choices and their dynamic parameters, both systems’ cost stacks, replacement options, evidence, and acceptance remain interactive. The contract-locked constant-dollar year is the only readonly field.
+- Typography, color, and rhythm: the implementation keeps the dashboard’s teal eyebrow, existing font stack, compact labels, system-specific Solectria/SolarEdge color accents, borders, surfaces, focus ring, and fixed action footer.
+- Responsive behavior: the desktop table keeps a sticky header and scrollable body. At 390 × 844, each assumption becomes a readable stacked card, shared markers are removed, source actions sit side by side, controls meet the 44 px mobile target, and no horizontal clipping is visible.
+- Accessibility and behavior: the real table has a caption, scoped column and row headers, labeled controls, dialog naming, visible focus, validation alert focus, and trigger focus restoration. Opening focuses the source selector; invalid review leaves the dialog open and focuses the error.
+- Browser health: the final warning/error log is empty.
+
+## Comparison history
+
+1. Initial desktop implementation — blocked.
+   - P2: browser-default inset input borders made editable fields look inconsistent with the selected design and the existing dashboard.
+   - Fix: normalized control background, border, text, height, readonly treatment, and focus ring inside the dialog.
+2. Initial mobile implementation — blocked.
+   - P2: the redundant Shared marker and vertically stacked source actions made the first card unnecessarily tall.
+   - Fix: hide the redundant marker in the mobile card layout and place Refresh sources and Open Annual Simulation side by side.
+3. Final comparison — passed.
+   - The full and focused inputs show the selected table-first hierarchy, fixed modal chrome, editable control language, paired system columns, and dashboard styling. The remaining density difference is intentional: the real UI preserves dynamic distributions, evidence gates, helper text, and one authoritative prior-Annual source instead of the mock’s duplicated shared values.
+
+## Primary interactions tested
+
+- Open Edit assumptions and focus the previous-Annual source selector.
+- Edit target capacity and dynamically switch discount and Solectria CAPEX distributions.
+- Enable a sourced replacement line and confirm its editable parameters appear.
+- Submit incomplete inputs; keep the dialog open and focus the validation alert.
+- Close and return focus to Edit assumptions.
+- Inspect desktop and 390 × 844 mobile layouts and verify an empty warning/error console.
+
+## Verification
+
+- [x] `python -m unittest -v tests.test_technoeconomic_frontend tests.test_dashboard_build` — 62 tests passed.
+- [x] `npm run typecheck` — passed with no diagnostics.
+- [x] `npm run build` — all Vinext/Vite build stages passed.
+
+final result: passed
+
+---
+
+# Sticky assumptions header and cost Distribution guide — design QA
+
+## Evidence
+
+- User issue reference: `design-qa-assets/tea-table-costs-user-reference.png`.
+- Browser-rendered desktop implementation at the same System costs state: `design-qa-assets/tea-table-sticky-header-costs.png`.
+- Browser-rendered mobile implementation: `design-qa-assets/tea-table-sticky-header-mobile.png`.
+- Combined before/after comparison: `design-qa-assets/tea-table-sticky-header-comparison.png`.
+- Source pixels: 1646 × 683. Desktop implementation pixels: 1265 × 712. The source was proportionally normalized to 712 px high for the 2997 × 758 comparison input.
+- Desktop browser viewport: 1280 × 720 CSS px at DPR 1.5; the in-app page surface captured 1265 × 712 pixels. Mobile test viewport: 390 × 844 CSS px; the page surface captured 375 × 812 pixels.
+- State: the assumptions dialog is scrolled from Finance into System costs, with the five column headings and the Distribution guide visible.
+- Focused comparison: the user attachment and implementation capture are already focused on the dense System costs region, so a second crop would not reveal additional detail.
+
+## Findings
+
+- No actionable P0, P1, or P2 findings remain.
+- Sticky table header: Assumption, Distribution, Solectria, SolarEdge, and Unit / status remain fixed at the top of the dialog body while the rows scroll underneath. Browser geometry confirms the first sticky header cell and scroll body share the same 111.33 px top position after scrolling.
+- Distribution column: the formerly sparse cell now explains that distributions are independent per system and provides aligned guide entries for Initial installed cost, Annual operations and maintenance, and Scheduled replacement. The actual editable selectors stay in the Solectria and SolarEdge columns, preserving the paired calculation contract.
+- Fonts and typography: the guide uses the existing compact table hierarchy and font stack; labels, helper copy, and cost controls remain readable without overlap.
+- Spacing and layout rhythm: the muted guide cell and divided entries occupy the tall cost row without competing with the two editable system columns. The sticky header retains the existing column widths and border rhythm.
+- Colors and visual tokens: the implementation reuses the dashboard surface-muted, border, text, muted text, Solectria amber, SolarEdge teal, and focus tokens.
+- Image quality and asset fidelity: the screen contains no new raster or illustrative assets; no placeholder, custom SVG, CSS drawing, or decorative replacement was introduced.
+- Copy and content: the guide states where each independent distribution is edited and does not imply a shared system-cost distribution.
+- Responsive behavior: at 390 × 844 the guide becomes a one-column list inside the System costs card, with no page-level horizontal overflow.
+- Accessibility and behavior: the guide is a labeled semantic list, the real selectors and parameter inputs remain unchanged, and selecting Uniform for Solectria CAPEX still creates two editable parameters.
+- Browser health: final warning/error logs are empty.
+
+## Comparison history
+
+1. User issue reference — blocked.
+   - P2: the five column headings scrolled away because the inner horizontal-overflow wrapper captured sticky positioning from the vertical modal scroller.
+   - P2: the Distribution cell contained only a short Per system note, leaving most of the tall cost row visually empty.
+2. Revised implementation — passed.
+   - Fix: the modal body now owns both horizontal and vertical scrolling, and each header cell is sticky with an opaque surface and stable stacking order.
+   - Fix: the Distribution cell now contains a structured three-part guide while the independent system selectors remain in their original DOM roots.
+   - Post-fix evidence: the combined comparison visibly retains all five headings over the scrolled cost rows and shows the populated guide beside the editable Solectria and SolarEdge controls.
+
+## Primary interactions tested
+
+- Scroll the assumptions table from Finance into System costs and confirm the column-header top remains equal to the scroll-body top.
+- Change Solectria initial-cost distribution from Fixed to Uniform and confirm two editable parameters appear; restore Fixed afterward.
+- Inspect the System costs guide at desktop and 390 × 844 mobile viewports.
+- Verify no page-level mobile overflow and an empty browser warning/error log.
+
+## Verification
+
+- [x] `python -m unittest -v tests.test_technoeconomic_frontend tests.test_dashboard_build` — 62 tests passed.
+- [x] `npm run typecheck` — passed with no diagnostics or warnings.
+- [x] `npm run build` — all Vinext/Vite stages passed without warnings or errors.
+
+final result: passed
+
+---
+
+# Option 2 submission confirmation — design QA
+
+## Evidence
+
+- Selected visual target: `C:\Users\Angushylesh(Shylesh)\.codex\generated_images\01a05da7-e5ec-7c60-b512-680a4e92ff81\exec-8deeea00-07b5-4031-85b2-87dbb1bac66f.png`.
+- Prior top-left implementation reference: `design-qa-assets/tea-existing-confirm-dialog-reference.png`.
+- Browser-rendered desktop implementation: `design-qa-assets/tea-confirm-option2-desktop.jpg`.
+- Browser-rendered mobile implementation: `design-qa-assets/tea-confirm-option2-mobile.jpg`.
+- Selected-target and implementation comparison input: `design-qa-assets/tea-confirm-option2-comparison.jpg`.
+- Desktop browser geometry: 940 × 890 CSS px modal in a 1487 × 1058 test viewport, centered at x = 266 and y = 84. The 1280 × 720 pass produced a 940 × 688 modal with a 500 px scroll body.
+- Mobile browser geometry: 390 × 844 CSS px test viewport; the confirmation has no horizontal body overflow and its fixed footer remains within the modal boundary.
+- State: a real verified Previous Annual Simulation source is selected, all editable assumptions are valid, provisional evidence is accepted, and the frozen request review is open before queueing.
+
+## Findings
+
+- No actionable P0, P1, or P2 findings remain.
+- Layout and centering: the native dialog now has explicit fixed centering, a bounded desktop frame, a fixed header, a scrollable review region, and a fixed action footer. It no longer inherits the global margin reset that placed the previous implementation at the upper-left corner.
+- Information architecture: the selected Option 2 structure is preserved as a left Request readiness rail and a right Frozen request review. The review is grouped into Previous Annual Simulation source, Commercial scale & sampling, Financial assumptions, and System costs.
+- Sampling accuracy: the confirmation explicitly states `Seeded Latin Hypercube Sampling (LHS)`, sampling contract `tea-lhs-v1`, the realization count, and the editable sampling seed. Weather years are separately labeled as a balanced seeded paired-year allocation because that assignment is not LHS.
+- Annual-source accuracy: the source is the completed, verified Previous Annual Simulation. The NREL ATB remains cost evidence and is not mislabeled as the Annual Simulation source.
+- Content integrity: the implementation does not invent the target mock's post-run P50 lifecycle totals before queueing. It preserves the actual frozen distributions, source hash, eligible years, applied capacities, transfer rationale, cost timing, and evidence details required for audit.
+- Typography and spacing: the modal follows the selected target's compact hierarchy, approximately one-third/two-thirds split, 22–28 px desktop padding, subtle dividers, restrained status treatment, and right-aligned footer actions. Long hashes and evidence copy wrap without overlap.
+- Colors and surfaces: the implementation reuses the product's teal accent, amber Solectria accent, muted surface, border, text, focus, and backdrop tokens. The target's decorative check icons are represented by explicit text status badges because the project has no icon library and no fabricated SVG/CSS icon was introduced.
+- Responsive behavior: at 390 × 844 the readiness rail, frozen-request groups, system cost columns, and footer actions stack into one column. The measured review-body `scrollWidth` equals `clientWidth`.
+- Accessibility and behavior: the dialog keeps its existing accessible name and description, the scroll region is keyboard focusable and labeled, header Close and Go back share the same safe close path, and Close/Go back are both disabled while a queue request is in flight. Escape remains blocked only during that in-flight state.
+- Image and asset fidelity: the confirmation requires no raster imagery. No placeholder imagery, custom SVG, emoji, CSS drawing, or decorative replacement was added.
+
+## Comparison history
+
+1. Existing confirmation — blocked.
+   - P1: the global margin reset removed native dialog centering, leaving the confirmation at the upper-left edge.
+   - P2: one flat two-column grid made source, sampling, finance, and cost evidence difficult to scan.
+   - P2: generic Monte Carlo wording did not expose the model's actual seeded LHS sampling contract.
+2. Selected Option 2 implementation — passed.
+   - Fix: explicit fixed centering and bounded height keep the modal centered at desktop and mobile sizes.
+   - Fix: fixed header/footer and a scrollable, labeled review body preserve context and actions for long frozen requests.
+   - Fix: readiness, source, sampling, finance, and paired system-cost groupings reproduce the selected review workflow using real pre-submission data.
+   - Fix: sampling method, contract, realization count, seed, and non-LHS weather allocation are independently disclosed.
+
+## Primary interactions tested
+
+- Complete a real source-backed assumptions request and open the queue confirmation.
+- Close from the header without queueing a job.
+- Verify Go back and header Close share the in-flight guard and re-enable after the request settles.
+- Inspect the full frozen source, LHS settings, finance, system-cost, evidence, and provisional-evidence disclosure.
+- Inspect the centered desktop modal and the 390 × 844 stacked mobile layout.
+
+## Verification
+
+- [x] `python -m unittest -v tests.test_technoeconomic_frontend tests.test_dashboard_build` — 62 tests passed.
+- [x] `npm run typecheck` — passed with no diagnostics.
+- [x] `npm run lint` — no errors; one pre-existing unused-catch warning remains in `frontend/js/07-autonomy-workspace.js`.
+- [x] `npm run build` — all Vinext/Vite build stages passed.
+
+final result: passed

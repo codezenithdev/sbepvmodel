@@ -1079,6 +1079,10 @@ def create_technoeconomic_job(
         request_payload.pop("capacity_normalization", None)
     if req.commercial_scaling is None:
         request_payload.pop("commercial_scaling", None)
+    if getattr(req, "standalone_commercial", None) is None:
+        request_payload.pop("standalone_commercial", None)
+    if getattr(req, "paired_commercial", None) is None:
+        request_payload.pop("paired_commercial", None)
     try:
         with state._ORCHESTRATION_LOCK:
             if state.AGENT_STORE.get_job(req.source_annual_job_id) is None:

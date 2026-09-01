@@ -40,6 +40,8 @@ SEALED_CALCULATION_SCHEMA_VERSION = 1
 ROUTINE_RESULT_SCHEMA_VERSION = 1
 APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION = 2
 COMMERCIAL_SCALING_ROUTINE_RESULT_SCHEMA_VERSION = 3
+STANDALONE_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION = 4
+PAIRED_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION = 5
 RESULT_PROVENANCE_SCHEMA_VERSION = 1
 SEALED_CALCULATION_FILENAME = "calculation_payload_v1.npz"
 _REQUIRED_EXPORT_ARTIFACT_IDS = frozenset(
@@ -94,6 +96,61 @@ def _compact_cdf_points(value: Any) -> Any:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_compact_cdf_points(item) for item in value]
     return _json_safe(value)
+
+
+def _headline_cdf_display(
+    summary: Mapping[str, Any],
+    *,
+    maximum_points: int = 1200,
+) -> dict[str, Any]:
+    """Return a deterministic bounded ECDF projection for routine UI polling."""
+
+    cdf = summary.get("cdf")
+    if not isinstance(cdf, Mapping):
+        raise ValueError("The standalone commercial headline CDF is unavailable")
+    values = list(cdf.get("values") or [])
+    probabilities = list(cdf.get("cumulative_probability") or [])
+    if not values or len(values) != len(probabilities):
+        raise ValueError("The standalone commercial headline CDF is invalid")
+    count = len(values)
+    if count <= maximum_points:
+        indexes = np.arange(count, dtype=np.int64)
+    else:
+        required = {0, count - 1}
+        probability_vector = np.asarray(probabilities, dtype=np.float64)
+        for quantile in (0.10, 0.50, 0.90):
+            index = int(np.searchsorted(probability_vector, quantile, side="left"))
+            for neighbor in (index - 1, index, index + 1):
+                if 0 <= neighbor < count:
+                    required.add(neighbor)
+        if len(required) > maximum_points:
+            raise ValueError("The standalone commercial CDF display cap is too small")
+        selected = set(required)
+        remaining = maximum_points - len(required)
+        if remaining:
+            selected.update(
+                np.linspace(0, count - 1, remaining, dtype=np.int64).tolist()
+            )
+        indexes = np.asarray(sorted(selected), dtype=np.int64)
+    full_identity = {
+        "values": values,
+        "cumulative_count": list(cdf.get("cumulative_count") or []),
+        "cumulative_probability": probabilities,
+        "population_count": cdf.get("population_count"),
+    }
+    return {
+        "population_count": _json_safe(cdf.get("population_count")),
+        "source_point_count": count,
+        "display_point_count": int(len(indexes)),
+        "values": [_json_safe(values[int(index)]) for index in indexes],
+        "cumulative_probability": [
+            _json_safe(probabilities[int(index)]) for index in indexes
+        ],
+        "full_cdf_sha256": hashlib.sha256(
+            _canonical_json_text(full_identity).encode("utf-8")
+        ).hexdigest(),
+        "full_storage": "sealed_calculation_payload",
+    }
 
 
 def _canonical_json_text(value: Any) -> str:
@@ -685,9 +742,19 @@ def _routine_result(
         request.calculation_contract_version
         == kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
     )
+    standalone_commercial_contract = (
+        request.calculation_contract_version
+        == kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    )
+    paired_commercial_contract = (
+        request.calculation_contract_version
+        == kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+    )
     applied_capacity_contract = request.calculation_contract_version in {
         kernel.CALCULATION_CONTRACT_VERSION,
         kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
+        kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+        kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
     }
     if request.basis == "solartac_site":
         transfer_status = "not_applicable"
@@ -705,7 +772,11 @@ def _routine_result(
         commercial_reference = None
     result = {
         "schema_version": (
-            COMMERCIAL_SCALING_ROUTINE_RESULT_SCHEMA_VERSION
+            PAIRED_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION
+            if paired_commercial_contract
+            else STANDALONE_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION
+            if standalone_commercial_contract
+            else COMMERCIAL_SCALING_ROUTINE_RESULT_SCHEMA_VERSION
             if commercial_scaling_contract
             else (
                 APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION
@@ -776,6 +847,171 @@ def _routine_result(
             "marginal_cost_input_id": scaling.marginal_cost_difference.input_id,
             "marginal_cost_timing": scaling.marginal_cost_timing,
             "transfer_method": scaling.transfer_method,
+        }
+    if standalone_commercial_contract:
+        standalone = request.standalone_commercial
+        source = applied_capacity_map.get("solaredge")
+        if standalone is None or source is None:
+            raise ValueError(
+                "The standalone-commercial result is missing its frozen inputs"
+            )
+        headline_metric_id = kernel.COMMERCIAL_STANDALONE_FIELD_LCOE
+        headline = calculation.summaries.get(headline_metric_id)
+        if not isinstance(headline, Mapping):
+            raise ValueError(
+                "The standalone-commercial result has no headline LCOE summary"
+            )
+        percentiles = headline.get("percentiles")
+        if not isinstance(percentiles, Mapping) or set(percentiles) != {
+            "p10",
+            "p50",
+            "p90",
+        }:
+            raise ValueError(
+                "The standalone-commercial headline percentiles are invalid"
+            )
+        capacity_scale_factor = (
+            standalone.target_capacity_w / source.applied_capacity_w
+        )
+        scale_values = calculation.realization_table.get(
+            kernel.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR
+        )
+        if scale_values is None or not np.all(
+            np.asarray(scale_values, dtype=np.float64) == capacity_scale_factor
+        ):
+            raise ValueError(
+                "The standalone-commercial capacity-scale realizations do not "
+                "match the frozen source/target bridge"
+            )
+        result["standalone_commercial"] = {
+            "technology": "solaredge",
+            "target_capacity_w": standalone.target_capacity_w,
+            "target_rating_basis": standalone.target_rating_basis,
+            "source_applied_capacity_w": source.applied_capacity_w,
+            "source_rating_basis": source.rating_basis,
+            "capacity_scale_factor": capacity_scale_factor,
+            "transfer_method": standalone.transfer_method,
+            "constant_dollar_cost_year": request.constant_dollar_cost_year,
+            "headline_metric_id": headline_metric_id,
+            "unit": "constant_usd_per_kwh_ac",
+            "percentiles": _json_safe(percentiles),
+            "cdf": _headline_cdf_display(headline),
+            "commercial_cost_line_summaries": _json_safe(
+                calculation.summaries.get("commercial_cost_line_summaries") or []
+            ),
+        }
+    if paired_commercial_contract:
+        paired = request.paired_commercial
+        if paired is None or set(applied_capacity_map) != {"solectria", "solaredge"}:
+            raise ValueError(
+                "The paired-commercial result is missing its frozen inputs"
+            )
+        system_specs = {system.technology: system for system in paired.systems}
+        if set(system_specs) != {"solectria", "solaredge"}:
+            raise ValueError(
+                "The paired-commercial result must contain Solectria and SolarEdge"
+            )
+        field_contracts = {
+            "solectria": (
+                kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_CAPACITY_SCALE_FACTOR,
+                kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+            ),
+            "solaredge": (
+                kernel.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR,
+                kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+            ),
+        }
+        cost_line_summaries = calculation.summaries.get(
+            "paired_commercial_cost_line_summaries"
+        ) or []
+        if not isinstance(cost_line_summaries, Sequence) or isinstance(
+            cost_line_summaries, (str, bytes, bytearray)
+        ):
+            raise ValueError(
+                "The paired-commercial cost-line summaries are invalid"
+            )
+        systems: dict[str, Any] = {}
+        for technology in ("solectria", "solaredge"):
+            scale_field, headline_metric_id = field_contracts[technology]
+            source = applied_capacity_map[technology]
+            headline = calculation.summaries.get(headline_metric_id)
+            if not isinstance(headline, Mapping):
+                raise ValueError(
+                    f"The paired-commercial {technology} result has no headline "
+                    "LCOE summary"
+                )
+            percentiles = headline.get("percentiles")
+            if not isinstance(percentiles, Mapping) or set(percentiles) != {
+                "p10",
+                "p50",
+                "p90",
+            }:
+                raise ValueError(
+                    f"The paired-commercial {technology} headline percentiles "
+                    "are invalid"
+                )
+            capacity_scale_factor = (
+                paired.target_capacity_w / source.applied_capacity_w
+            )
+            scale_values = calculation.realization_table.get(scale_field)
+            if scale_values is None or not np.all(
+                np.asarray(scale_values, dtype=np.float64)
+                == capacity_scale_factor
+            ):
+                raise ValueError(
+                    f"The paired-commercial {technology} capacity-scale "
+                    "realizations do not match the frozen source/target bridge"
+                )
+            system_cost_summaries = [
+                item
+                for item in cost_line_summaries
+                if isinstance(item, Mapping)
+                and item.get("technology") == technology
+            ]
+            expected_line_count = len(system_specs[technology].cost_lines)
+            if len(system_cost_summaries) != expected_line_count:
+                raise ValueError(
+                    f"The paired-commercial {technology} cost-line summaries "
+                    "are incomplete"
+                )
+            systems[technology] = {
+                "technology": technology,
+                "source_applied_capacity_w": source.applied_capacity_w,
+                "source_rating_basis": source.rating_basis,
+                "capacity_scale_factor": capacity_scale_factor,
+                "headline_metric_id": headline_metric_id,
+                "unit": "constant_usd_per_kwh_ac",
+                "percentiles": _json_safe(percentiles),
+                "cdf": _headline_cdf_display(headline),
+                "commercial_cost_line_summaries": _json_safe(
+                    system_cost_summaries
+                ),
+            }
+        result["paired_commercial"] = {
+            "target_capacity_w": paired.target_capacity_w,
+            "target_rating_basis": paired.target_rating_basis,
+            "transfer_method": paired.transfer_method,
+            "constant_dollar_cost_year": request.constant_dollar_cost_year,
+            "systems": systems,
+        }
+        delta_metric_id = kernel.COMMERCIAL_PAIRED_FIELD_LCOE_DELTA
+        delta_headline = calculation.summaries.get(delta_metric_id)
+        if not isinstance(delta_headline, Mapping):
+            raise ValueError(
+                "The paired-commercial result has no LCOE-delta summary"
+            )
+        delta_percentiles = delta_headline.get("percentiles")
+        if not isinstance(delta_percentiles, Mapping) or set(
+            delta_percentiles
+        ) != {"p10", "p50", "p90"}:
+            raise ValueError(
+                "The paired-commercial LCOE-delta percentiles are invalid"
+            )
+        result["paired_commercial"]["lcoe_delta_se_minus_sol"] = {
+            "headline_metric_id": delta_metric_id,
+            "unit": "constant_usd_per_kwh_ac",
+            "percentiles": _json_safe(delta_percentiles),
+            "cdf": _headline_cdf_display(delta_headline),
         }
     return result
 
@@ -1224,6 +1460,7 @@ def _run_technoeconomic_job(
 __all__ = [
     "APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION",
     "COMMERCIAL_SCALING_ROUTINE_RESULT_SCHEMA_VERSION",
+    "PAIRED_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION",
     "RESULT_PROVENANCE_SCHEMA_VERSION",
     "ROUTINE_RESULT_SCHEMA_VERSION",
     "SEALED_CALCULATION_SCHEMA_VERSION",

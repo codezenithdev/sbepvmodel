@@ -9,6 +9,11 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+from sbepv.agent.technoeconomic_tool_contract import (
+    TECHNOECONOMIC_EVIDENCE_SECTIONS,
+    TECHNOECONOMIC_EVIDENCE_TOOL_NAME,
+)
+
 
 SCENARIO_OVERRIDE_FIELDS = (
     "mode",
@@ -199,6 +204,37 @@ PARAMETER_SWEEP_TOOL = {
             },
         },
         "required": list(PARAMETER_SWEEP_FIELDS),
+        "additionalProperties": False,
+    },
+}
+
+
+TECHNOECONOMIC_EVIDENCE_TOOL = {
+    "type": "function",
+    "name": TECHNOECONOMIC_EVIDENCE_TOOL_NAME,
+    "description": (
+        "Read one bounded, server-authoritative evidence section from the completed "
+        "Technoeconomic Analysis job currently visible in the dashboard. The tool "
+        "is read-only and is already bound to that visible job. Use metric_id only "
+        "with the metric section. Never ask for or supply a job id."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "section": {
+                "type": "string",
+                "enum": list(TECHNOECONOMIC_EVIDENCE_SECTIONS),
+            },
+            "metric_id": {
+                "type": ["string", "null"],
+                "description": (
+                    "Exact saved metric id for the metric section; null for all "
+                    "other sections or to list available metric ids."
+                ),
+            },
+        },
+        "required": ["section", "metric_id"],
         "additionalProperties": False,
     },
 }

@@ -2948,6 +2948,81 @@ def build_technoeconomic_kernel_request(
             transfer_method=request.commercial_scaling.transfer_method,
         )
 
+    standalone_commercial: (
+        technoeconomic_kernel.StandaloneCommercialSpec | None
+    ) = None
+    if request.standalone_commercial is not None:
+        capacity_multiplier = (
+            1_000.0
+            if request.standalone_commercial.target_capacity_unit == "kw"
+            else 1_000_000.0
+        )
+        standalone_commercial = technoeconomic_kernel.StandaloneCommercialSpec(
+            target_capacity_w=(
+                request.standalone_commercial.target_capacity
+                * capacity_multiplier
+            ),
+            target_rating_basis=(
+                request.standalone_commercial.target_rating_basis
+            ),
+            cost_lines=tuple(
+                technoeconomic_kernel.CommercialCostLineSpec(
+                    input_id=line.input_id,
+                    label=line.label,
+                    cost_category=line.cost_category,
+                    coverage_ids=tuple(line.coverage_ids),
+                    timing=line.timing,
+                    distribution=_kernel_distribution(
+                        line.input_id,
+                        line.distribution,
+                    ),
+                    constant_dollar_cost_year=line.constant_dollar_cost_year,
+                    occurrence_years=tuple(line.occurrence_years),
+                )
+                for line in request.standalone_commercial.cost_lines
+            ),
+            transfer_method=request.standalone_commercial.transfer_method,
+        )
+
+    paired_commercial: technoeconomic_kernel.PairedCommercialSpec | None = None
+    if request.paired_commercial is not None:
+        capacity_multiplier = (
+            1_000.0
+            if request.paired_commercial.target_capacity_unit == "kw"
+            else 1_000_000.0
+        )
+        paired_commercial = technoeconomic_kernel.PairedCommercialSpec(
+            target_capacity_w=(
+                request.paired_commercial.target_capacity * capacity_multiplier
+            ),
+            target_rating_basis=request.paired_commercial.target_rating_basis,
+            systems=tuple(
+                technoeconomic_kernel.PairedCommercialSystemSpec(
+                    technology=system.technology,
+                    cost_lines=tuple(
+                        technoeconomic_kernel.CommercialCostLineSpec(
+                            input_id=line.input_id,
+                            label=line.label,
+                            cost_category=line.cost_category,
+                            coverage_ids=tuple(line.coverage_ids),
+                            timing=line.timing,
+                            distribution=_kernel_distribution(
+                                line.input_id,
+                                line.distribution,
+                            ),
+                            constant_dollar_cost_year=(
+                                line.constant_dollar_cost_year
+                            ),
+                            occurrence_years=tuple(line.occurrence_years),
+                        )
+                        for line in system.cost_lines
+                    ),
+                )
+                for system in request.paired_commercial.systems
+            ),
+            transfer_method=request.paired_commercial.transfer_method,
+        )
+
     kernel_request = technoeconomic_kernel.TechnoeconomicRequest(
         basis=request.basis,
         n=request.n,
@@ -2967,6 +3042,14 @@ def build_technoeconomic_kernel_request(
         applied_capacities=applied_capacities,
         transfer=transfer,
         commercial_scaling=commercial_scaling,
+        standalone_commercial=standalone_commercial,
+        paired_commercial=paired_commercial,
+        constant_dollar_cost_year=(
+            request.finance.constant_dollar_cost_year
+            if request.standalone_commercial is not None
+            or request.paired_commercial is not None
+            else None
+        ),
         commercial_reference_wdc=(
             request.commercial_reference_design.reference_wdc
             if request.commercial_reference_design is not None
@@ -2974,7 +3057,11 @@ def build_technoeconomic_kernel_request(
         ),
         cost_stack_completeness=request.cost_stack_completeness,
         calculation_contract_version=(
-            technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
+            technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+            if request.paired_commercial is not None
+            else technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+            if request.standalone_commercial is not None
+            else technoeconomic_kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION
             if request.commercial_scaling is not None
             else technoeconomic_kernel.CALCULATION_CONTRACT_VERSION
             if request.capacity_normalization
@@ -3036,6 +3123,44 @@ def _evidence_receipt(
                 request.commercial_scaling.evidence,
             )
         )
+    if request.standalone_commercial is not None:
+        subjects.append(
+            (
+                "standalone-commercial:energy-scaling",
+                request.standalone_commercial.evidence,
+            )
+        )
+        subjects.extend(
+            (
+                f"standalone-commercial-cost:{line.input_id}",
+                line.evidence,
+            )
+            for line in request.standalone_commercial.cost_lines
+        )
+    if request.paired_commercial is not None:
+        subjects.append(
+            (
+                "paired-commercial:energy-scaling",
+                request.paired_commercial.evidence,
+            )
+        )
+        for system in request.paired_commercial.systems:
+            subjects.append(
+                (
+                    f"paired-commercial-system:{system.technology}",
+                    system.evidence,
+                )
+            )
+            subjects.extend(
+                (
+                    (
+                        "paired-commercial-cost:"
+                        f"{system.technology}:{line.input_id}"
+                    ),
+                    line.evidence,
+                )
+                for line in system.cost_lines
+            )
 
     subjects.extend(
         (
@@ -3405,6 +3530,237 @@ def _commercial_scaling_receipt(
     }
 
 
+def _standalone_commercial_receipt(
+    request: TechnoeconomicSubmissionRequest,
+    kernel_request: technoeconomic_kernel.TechnoeconomicRequest,
+) -> dict[str, Any] | None:
+    standalone = request.standalone_commercial
+    if standalone is None:
+        return None
+    kernel_standalone = kernel_request.standalone_commercial
+    if kernel_standalone is None:  # guarded by strict kernel/request equivalence
+        _fail(
+            "standalone_commercial_missing",
+            "Validated kernel request has no standalone commercial specification.",
+        )
+    applied = {
+        item.system: item for item in (kernel_request.applied_capacities or ())
+    }
+    source = applied.get("solaredge")
+    if source is None:
+        _fail(
+            "standalone_commercial_source_capacity_missing",
+            "Standalone commercial scaling has no frozen SolarEdge capacity.",
+        )
+    source_field = (
+        "source_snapshot.source_annual_job.request.curtailment_limit_kw"
+        if source.rating_basis == "ac_operating_limit"
+        else (
+            "source_snapshot.capacity_manifest.systems."
+            "solaredge.installed_wdc"
+        )
+    )
+    cost_lines = [
+        {
+            "input_id": line.input_id,
+            "label": line.label,
+            "cost_category": line.cost_category,
+            "coverage_ids": sorted(line.coverage_ids),
+            "timing": line.timing,
+            "unit": line.unit,
+            "distribution": line.distribution.model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+            "occurrence_years": list(line.occurrence_years),
+            "constant_dollar_cost_year": line.constant_dollar_cost_year,
+            "evidence_subject": f"standalone-commercial-cost:{line.input_id}",
+        }
+        for line in standalone.cost_lines
+    ]
+    return {
+        "status": "validated",
+        "technology": standalone.technology,
+        "submitted_target_capacity": {
+            "value": standalone.target_capacity,
+            "unit": standalone.target_capacity_unit,
+        },
+        "target_capacity_w": kernel_standalone.target_capacity_w,
+        "target_rating_basis": kernel_standalone.target_rating_basis,
+        "source_capacity": {
+            "system": "solaredge",
+            "applied_capacity_w": source.applied_capacity_w,
+            "rating_basis": source.rating_basis,
+            "selection_method": (
+                "enabled_positive_annual_curtailment_else_installed_dc"
+            ),
+            "source_field": source_field,
+        },
+        "capacity_scale_factor": (
+            kernel_standalone.target_capacity_w / source.applied_capacity_w
+        ),
+        "transfer_method": kernel_standalone.transfer_method,
+        "transfer_rationale": standalone.transfer_rationale,
+        "energy_scaling_evidence_subject": (
+            "standalone-commercial:energy-scaling"
+        ),
+        "constant_dollar_cost_year": request.finance.constant_dollar_cost_year,
+        "cost_stack_completeness": request.cost_stack_completeness,
+        "required_cost_categories": [
+            "full_initial_capex",
+            "full_annual_om",
+        ],
+        "cost_category_counts": {
+            category: sum(
+                line.cost_category == category for line in standalone.cost_lines
+            )
+            for category in (
+                "full_initial_capex",
+                "full_annual_om",
+                "scheduled_replacement",
+            )
+        },
+        "coverage_overlap_rule": (
+            "same scheduled coverage ID may not occur in multiple lines at "
+            "the same occurrence year"
+        ),
+        "cost_stack_unit_contract": {
+            "initial_t0": "constant_usd_per_target_w",
+            "annual_year_end": "constant_usd_per_target_w_year",
+            "scheduled_year_end": "constant_usd_per_target_w",
+        },
+        "cost_lines": cost_lines,
+    }
+
+
+def _paired_commercial_receipt(
+    request: TechnoeconomicSubmissionRequest,
+    kernel_request: technoeconomic_kernel.TechnoeconomicRequest,
+) -> dict[str, Any] | None:
+    paired = request.paired_commercial
+    if paired is None:
+        return None
+    kernel_paired = kernel_request.paired_commercial
+    if kernel_paired is None:  # guarded by strict kernel/request equivalence
+        _fail(
+            "paired_commercial_missing",
+            "Validated kernel request has no paired commercial specification.",
+        )
+    applied = {
+        item.system: item for item in (kernel_request.applied_capacities or ())
+    }
+    kernel_systems = {
+        system.technology: system for system in kernel_paired.systems
+    }
+    submitted_systems = {
+        system.technology: system for system in paired.systems
+    }
+    if set(applied) != {"solectria", "solaredge"} or set(kernel_systems) != {
+        "solectria",
+        "solaredge",
+    }:
+        _fail(
+            "paired_commercial_source_capacity_missing",
+            "Paired commercial scaling requires both frozen system capacities.",
+        )
+    systems: dict[str, Any] = {}
+    for technology in ("solectria", "solaredge"):
+        source = applied[technology]
+        submitted = submitted_systems[technology]
+        kernel_system = kernel_systems[technology]
+        source_field = (
+            "source_snapshot.source_annual_job.request.curtailment_limit_kw"
+            if source.rating_basis == "ac_operating_limit"
+            else (
+                "source_snapshot.capacity_manifest.systems."
+                f"{technology}.installed_wdc"
+            )
+        )
+        cost_lines = [
+            {
+                "input_id": line.input_id,
+                "label": line.label,
+                "cost_category": line.cost_category,
+                "coverage_ids": sorted(line.coverage_ids),
+                "timing": line.timing,
+                "unit": line.unit,
+                "distribution": line.distribution.model_dump(
+                    mode="json",
+                    exclude_none=True,
+                ),
+                "occurrence_years": list(line.occurrence_years),
+                "constant_dollar_cost_year": line.constant_dollar_cost_year,
+                "evidence_subject": (
+                    f"paired-commercial-cost:{technology}:{line.input_id}"
+                ),
+            }
+            for line in submitted.cost_lines
+        ]
+        systems[technology] = {
+            "technology": technology,
+            "source_capacity": {
+                "system": technology,
+                "applied_capacity_w": source.applied_capacity_w,
+                "rating_basis": source.rating_basis,
+                "selection_method": (
+                    "enabled_positive_annual_curtailment_else_installed_dc"
+                ),
+                "source_field": source_field,
+            },
+            "capacity_scale_factor": (
+                kernel_paired.target_capacity_w / source.applied_capacity_w
+            ),
+            "system_evidence_subject": (
+                f"paired-commercial-system:{technology}"
+            ),
+            "cost_category_counts": {
+                category: sum(
+                    line.cost_category == category
+                    for line in submitted.cost_lines
+                )
+                for category in (
+                    "full_initial_capex",
+                    "full_annual_om",
+                    "scheduled_replacement",
+                )
+            },
+            "cost_lines": cost_lines,
+            "kernel_cost_input_ids": [
+                line.input_id for line in kernel_system.cost_lines
+            ],
+        }
+    return {
+        "status": "validated",
+        "submitted_target_capacity": {
+            "value": paired.target_capacity,
+            "unit": paired.target_capacity_unit,
+        },
+        "target_capacity_w": kernel_paired.target_capacity_w,
+        "target_rating_basis": kernel_paired.target_rating_basis,
+        "transfer_method": kernel_paired.transfer_method,
+        "transfer_rationale": paired.transfer_rationale,
+        "energy_scaling_evidence_subject": "paired-commercial:energy-scaling",
+        "weather_pairing": "same_frozen_weather_year_per_realization",
+        "constant_dollar_cost_year": request.finance.constant_dollar_cost_year,
+        "cost_stack_completeness": request.cost_stack_completeness,
+        "required_cost_categories_per_system": [
+            "full_initial_capex",
+            "full_annual_om",
+        ],
+        "coverage_overlap_rule": (
+            "coverage IDs must be disjoint between lines within one system unless "
+            "both lines are scheduled replacements at disjoint occurrence years"
+        ),
+        "cost_stack_unit_contract": {
+            "initial_t0": "constant_usd_per_target_w",
+            "annual_year_end": "constant_usd_per_target_w_year",
+            "scheduled_year_end": "constant_usd_per_target_w",
+        },
+        "systems": systems,
+        "sign_convention": "SolarEdge minus Solectria",
+    }
+
+
 def _transfer_receipt(request: TechnoeconomicSubmissionRequest) -> dict[str, Any]:
     if request.basis == "solartac_site":
         return {
@@ -3509,12 +3865,28 @@ def build_technoeconomic_submission_provenance(
         # Preserve v1/v2 durable request hashes from before this optional v3
         # workflow existed.
         canonical_request.pop("commercial_scaling", None)
+    if request.standalone_commercial is None:
+        # Preserve every v1-v3 durable request hash from before the standalone
+        # v4 workflow existed.
+        canonical_request.pop("standalone_commercial", None)
+    if request.paired_commercial is None:
+        # Preserve every v1-v4 durable request hash from before the paired v5
+        # workflow existed.
+        canonical_request.pop("paired_commercial", None)
     normalization = _normalization_receipt(request, supplied_kernel)
     overlap = _overlap_receipt(request, supplied_kernel)
     evidence = _evidence_receipt(request)
     transfer = _transfer_receipt(request)
     commercial_reference = _commercial_reference_receipt(request)
     commercial_scaling = _commercial_scaling_receipt(request, supplied_kernel)
+    standalone_commercial = _standalone_commercial_receipt(
+        request,
+        supplied_kernel,
+    )
+    paired_commercial = _paired_commercial_receipt(
+        request,
+        supplied_kernel,
+    )
     receipts = {
         "normalization": normalization,
         "overlap": overlap,
@@ -3523,9 +3895,17 @@ def build_technoeconomic_submission_provenance(
     }
     if commercial_scaling is not None:
         receipts["commercial_scaling"] = commercial_scaling
+    if standalone_commercial is not None:
+        receipts["standalone_commercial"] = standalone_commercial
+    if paired_commercial is not None:
+        receipts["paired_commercial"] = paired_commercial
     provenance = {
         "schema_version": (
-            3
+            5
+            if paired_commercial is not None
+            else 4
+            if standalone_commercial is not None
+            else 3
             if commercial_scaling is not None
             else 2
             if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
@@ -3548,7 +3928,11 @@ def build_technoeconomic_submission_provenance(
         "calculation_contract_version": supplied_kernel.calculation_contract_version,
         "sampling_version": supplied_kernel.sampling_version,
         "request_schema": (
-            "technoeconomic-submission-v3"
+            "technoeconomic-submission-v5"
+            if paired_commercial is not None
+            else "technoeconomic-submission-v4"
+            if standalone_commercial is not None
+            else "technoeconomic-submission-v3"
             if commercial_scaling is not None
             else "technoeconomic-submission-v2"
             if request.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
@@ -3574,6 +3958,16 @@ def build_technoeconomic_submission_provenance(
         provenance["commercial_scaling_receipt"] = commercial_scaling
         provenance["commercial_scaling_receipt_sha256"] = canonical_json_sha256(
             commercial_scaling
+        )
+    if standalone_commercial is not None:
+        provenance["standalone_commercial_receipt"] = standalone_commercial
+        provenance["standalone_commercial_receipt_sha256"] = canonical_json_sha256(
+            standalone_commercial
+        )
+    if paired_commercial is not None:
+        provenance["paired_commercial_receipt"] = paired_commercial
+        provenance["paired_commercial_receipt_sha256"] = canonical_json_sha256(
+            paired_commercial
         )
     return provenance
 

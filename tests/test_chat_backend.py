@@ -1,5 +1,6 @@
 import base64
 from datetime import datetime
+import json
 import os
 import sys
 import types
@@ -289,7 +290,7 @@ class TechnoeconomicChatContextTests(unittest.TestCase):
 
         self.assertEqual("solartac_site", context["analysis_basis"])
         self.assertEqual({"lcoe": {"p50": 0.078}}, context["summaries"])
-        self.assertEqual("technoeconomic-chat-context-v2", context["schema_version"])
+        self.assertEqual("technoeconomic-chat-context-v3", context["schema_version"])
 
     def test_unfinished_job_reports_state_without_economics(self):
         with patch.object(
@@ -337,6 +338,31 @@ class TechnoeconomicChatContextTests(unittest.TestCase):
         self.assertNotIn("sensitivity", context)
         self.assertIn("sensitivity", context["omitted_for_length"])
         self.assertEqual({"lcoe": {"p50": 0.078}}, context["summaries"])
+
+    def test_technoeconomic_base_context_never_exceeds_hard_byte_limit(self):
+        oversized = {
+            "analysis_basis": "commercial_representative",
+            "calculation_contract_version": "tea-calculation-v5",
+            "summaries": {
+                f"metric_{index}": {"percentiles": {"p50": "x" * 2_000}}
+                for index in range(30)
+            },
+            "convergence": {"checkpoints": ["y" * 2_000 for _ in range(20)]},
+        }
+        with patch.object(
+            state.AGENT_STORE,
+            "get_technoeconomic_job",
+            return_value=self.durable_job(result=oversized),
+        ):
+            context = chat._technoeconomic_chat_context(self.visible_config())
+
+        self.assertLessEqual(
+            len(json.dumps(context, default=str)),
+            chat._TECHNOECONOMIC_CONTEXT_MAX_BYTES,
+        )
+        self.assertIn("evidence_tool", context)
+        self.assertIn("convergence", context["omitted_for_length"])
+        self.assertIn("summaries", context["omitted_for_length"])
 
 
 class DashboardDeploymentTests(unittest.TestCase):

@@ -24,7 +24,9 @@ from sbepv.worker import run_technoeconomic
 from tests.test_technoeconomic_api import (
     _applied_site_request_payload,
     _commercial_scaling_request_payload,
+    _paired_commercial_request_payload,
     _site_request_payload,
+    _standalone_commercial_request_payload,
 )
 
 
@@ -100,6 +102,8 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         # fixture byte-for-byte representative of that historical shape.
         self.request_payload.pop("capacity_normalization", None)
         self.request_payload.pop("commercial_scaling", None)
+        self.request_payload.pop("standalone_commercial", None)
+        self.request_payload.pop("paired_commercial", None)
         kernel_request = tea_api.build_technoeconomic_kernel_request(
             self.request_payload,
             self.snapshot,
@@ -358,6 +362,8 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
                 n=8,
             )
         ).model_dump(mode="json", exclude_none=False)
+        request_payload.pop("standalone_commercial", None)
+        request_payload.pop("paired_commercial", None)
         request = tea_api.build_technoeconomic_kernel_request(
             request_payload,
             snapshot,
@@ -427,6 +433,8 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         request_payload = TechnoeconomicSubmissionRequest.model_validate(
             payload
         ).model_dump(mode="json", exclude_none=False)
+        request_payload.pop("standalone_commercial", None)
+        request_payload.pop("paired_commercial", None)
         request = tea_api.build_technoeconomic_kernel_request(
             request_payload,
             snapshot,
@@ -477,6 +485,189 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
             result["commercial_scaling"],
         )
 
+    def test_v4_routine_result_exposes_capacity_bridge_percentiles_and_cdf(self) -> None:
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        payload = _standalone_commercial_request_payload(n=16)
+        payload["source_annual_job_id"] = self.source_id
+        request_payload = TechnoeconomicSubmissionRequest.model_validate(
+            payload
+        ).model_dump(mode="json", exclude_none=False)
+        request_payload.pop("paired_commercial", None)
+        request = tea_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": tea_api.canonical_json_sha256(snapshot),
+            },
+            request,
+        )
+        calculation = run_technoeconomic.kernel.run_technoeconomic(request)
+        artifact = {
+            "schema_version": 1,
+            "artifact_kind": "sealed_technoeconomic_calculation",
+            "media_type": "application/x-npz",
+            "sha256": "a" * 64,
+            "byte_count": 1,
+            "row_count": 16,
+            "column_count": len(calculation.realization_table),
+            "pickle_allowed": False,
+            "public": False,
+        }
+
+        result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            artifact,
+            provenance,
+        )
+
+        self.assertEqual(4, result["schema_version"])
+        standalone = result["standalone_commercial"]
+        self.assertEqual("solaredge", standalone["technology"])
+        self.assertEqual(100_000_000.0, standalone["target_capacity_w"])
+        self.assertEqual(125_000.0, standalone["source_applied_capacity_w"])
+        self.assertEqual("ac_operating_limit", standalone["target_rating_basis"])
+        self.assertEqual("ac_operating_limit", standalone["source_rating_basis"])
+        self.assertEqual(800.0, standalone["capacity_scale_factor"])
+        self.assertEqual(2026, standalone["constant_dollar_cost_year"])
+        self.assertEqual({"p10", "p50", "p90"}, set(standalone["percentiles"]))
+        self.assertEqual(3, len(standalone["commercial_cost_line_summaries"]))
+        capex_summary = next(
+            line
+            for line in standalone["commercial_cost_line_summaries"]
+            if line["input_id"] == "commercial.solaredge.capex"
+        )
+        self.assertEqual("full_initial_capex", capex_summary["cost_category"])
+        self.assertEqual(
+            ["commercial.solaredge.full-initial-system"],
+            capex_summary["coverage_ids"],
+        )
+        self.assertEqual(2026, capex_summary["constant_dollar_cost_year"])
+        cdf = standalone["cdf"]
+        self.assertEqual(16, cdf["population_count"])
+        self.assertEqual(16, cdf["source_point_count"])
+        self.assertEqual(16, cdf["display_point_count"])
+        self.assertEqual("sealed_calculation_payload", cdf["full_storage"])
+        self.assertEqual(64, len(cdf["full_cdf_sha256"]))
+        np.testing.assert_array_equal(
+            calculation.realization_table[
+                run_technoeconomic.kernel.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR
+            ],
+            np.full(16, 800.0),
+        )
+
+    def test_v5_routine_result_exposes_both_commercial_headlines(self) -> None:
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        payload = _paired_commercial_request_payload(n=16)
+        payload["source_annual_job_id"] = self.source_id
+        request_payload = TechnoeconomicSubmissionRequest.model_validate(
+            payload
+        ).model_dump(mode="json", exclude_none=False)
+        request = tea_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": tea_api.canonical_json_sha256(snapshot),
+            },
+            request,
+        )
+        calculation = run_technoeconomic.kernel.run_technoeconomic(request)
+        artifact = {
+            "schema_version": 1,
+            "artifact_kind": "sealed_technoeconomic_calculation",
+            "media_type": "application/x-npz",
+            "sha256": "a" * 64,
+            "byte_count": 1,
+            "row_count": 16,
+            "column_count": len(calculation.realization_table),
+            "pickle_allowed": False,
+            "public": False,
+        }
+
+        result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            artifact,
+            provenance,
+        )
+
+        self.assertEqual(5, result["schema_version"])
+        paired = result["paired_commercial"]
+        self.assertEqual(100_000_000.0, paired["target_capacity_w"])
+        self.assertEqual("ac_operating_limit", paired["target_rating_basis"])
+        self.assertEqual("direct_capacity_scaling", paired["transfer_method"])
+        self.assertEqual(2026, paired["constant_dollar_cost_year"])
+        self.assertEqual({"solectria", "solaredge"}, set(paired["systems"]))
+        for technology in ("solectria", "solaredge"):
+            system = paired["systems"][technology]
+            self.assertEqual(125_000.0, system["source_applied_capacity_w"])
+            self.assertEqual("ac_operating_limit", system["source_rating_basis"])
+            self.assertEqual(800.0, system["capacity_scale_factor"])
+            self.assertEqual({"p10", "p50", "p90"}, set(system["percentiles"]))
+            self.assertEqual(16, system["cdf"]["population_count"])
+            self.assertEqual(16, system["cdf"]["source_point_count"])
+            self.assertEqual(3, len(system["commercial_cost_line_summaries"]))
+            self.assertEqual(
+                {technology},
+                {
+                    line["technology"]
+                    for line in system["commercial_cost_line_summaries"]
+                },
+            )
+        delta = paired["lcoe_delta_se_minus_sol"]
+        self.assertEqual(
+            run_technoeconomic.kernel.COMMERCIAL_PAIRED_FIELD_LCOE_DELTA,
+            delta["headline_metric_id"],
+        )
+        self.assertEqual({"p10", "p50", "p90"}, set(delta["percentiles"]))
+        self.assertEqual(16, delta["cdf"]["population_count"])
+        for field_name in (
+            run_technoeconomic.kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_CAPACITY_SCALE_FACTOR,
+            run_technoeconomic.kernel.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR,
+        ):
+            np.testing.assert_array_equal(
+                calculation.realization_table[field_name],
+                np.full(16, 800.0),
+            )
+
+        point_count = 1_500
+        full_summary = {
+            "cdf": {
+                "values": list(range(point_count)),
+                "cumulative_count": list(range(1, point_count + 1)),
+                "cumulative_probability": [
+                    (index + 1) / point_count for index in range(point_count)
+                ],
+                "population_count": point_count,
+            }
+        }
+        capped = run_technoeconomic._headline_cdf_display(full_summary)
+        self.assertLessEqual(capped["display_point_count"], 1_200)
+        self.assertEqual(point_count, capped["source_point_count"])
+        self.assertEqual(0, capped["values"][0])
+        self.assertEqual(point_count - 1, capped["values"][-1])
+        self.assertEqual(capped, run_technoeconomic._headline_cdf_display(full_summary))
+
     def test_v2_retry_replays_frozen_request_through_complete_worker(self) -> None:
         self.store.cancel_technoeconomic_job(self.job_id)
         snapshot = deepcopy(self.snapshot)
@@ -491,6 +682,8 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
             _applied_site_request_payload(source_id=self.source_id, n=8)
         ).model_dump(mode="json", exclude_none=False)
         request_payload.pop("commercial_scaling", None)
+        request_payload.pop("standalone_commercial", None)
+        request_payload.pop("paired_commercial", None)
         kernel_request = tea_api.build_technoeconomic_kernel_request(
             request_payload,
             snapshot,
@@ -572,6 +765,8 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         request_payload = TechnoeconomicSubmissionRequest.model_validate(
             payload
         ).model_dump(mode="json", exclude_none=False)
+        request_payload.pop("standalone_commercial", None)
+        request_payload.pop("paired_commercial", None)
         request_sha256 = tea_api.canonical_json_sha256(request_payload)
         kernel_request = tea_api.build_technoeconomic_kernel_request(
             request_payload,

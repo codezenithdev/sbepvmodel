@@ -233,6 +233,155 @@ def commercial_scaling_request(
     )
 
 
+def commercial_cost_line(
+    input_id,
+    value_or_distribution,
+    timing,
+    *,
+    years=(),
+    cost_category=None,
+    coverage_ids=None,
+    constant_dollar_cost_year=2022,
+):
+    distribution = (
+        value_or_distribution
+        if isinstance(value_or_distribution, tea.DistributionSpec)
+        else fixed(input_id, value_or_distribution)
+    )
+    return tea.CommercialCostLineSpec(
+        input_id=input_id,
+        label=input_id,
+        cost_category=(
+            cost_category
+            or {
+                "initial_t0": "full_initial_capex",
+                "annual_year_end": "full_annual_om",
+                "scheduled_year_end": "scheduled_replacement",
+            }.get(timing, "full_initial_capex")
+        ),
+        coverage_ids=tuple(coverage_ids or (input_id,)),
+        timing=timing,
+        distribution=distribution,
+        constant_dollar_cost_year=constant_dollar_cost_year,
+        occurrence_years=tuple(years),
+    )
+
+
+def standalone_commercial_request(
+    *,
+    n=1,
+    target_capacity_w=100_000_000.0,
+    applied_w=125_000.0,
+    rating_basis="ac_operating_limit",
+    project_life_years=1,
+    rows=None,
+    costs=None,
+    discount_rate=None,
+    degradation=None,
+):
+    request = applied_capacity_request(
+        applied_w=applied_w,
+        rating_basis=rating_basis,
+    )
+    standalone_costs = tuple(
+        costs
+        or (
+            commercial_cost_line("commercial.se.capex", 1.0, "initial_t0"),
+            commercial_cost_line(
+                "commercial.se.om",
+                0.02,
+                "annual_year_end",
+            ),
+            commercial_cost_line(
+                "commercial.se.replacement",
+                0.10,
+                "scheduled_year_end",
+                years=(1,),
+            ),
+        )
+    )
+    return replace(
+        request,
+        n=n,
+        project_life_years=project_life_years,
+        paired_energy_rows=tuple(rows or request.paired_energy_rows),
+        cost_lines=(),
+        discount_rate=discount_rate or fixed("finance.discount-rate", 0),
+        shared_degradation=(
+            degradation or fixed("energy.shared-degradation", 0)
+        ),
+        calculation_contract_version=(
+            tea.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+        ),
+        standalone_commercial=tea.StandaloneCommercialSpec(
+            target_capacity_w=target_capacity_w,
+            target_rating_basis=rating_basis,
+            cost_lines=standalone_costs,
+        ),
+        constant_dollar_cost_year=2022,
+    )
+
+
+def paired_commercial_request(
+    *,
+    n=1,
+    target_capacity_w=100_000_000.0,
+    applied_w=125_000.0,
+    project_life_years=1,
+    sol_costs=None,
+    se_costs=None,
+    discount_rate=None,
+    degradation=None,
+):
+    request = applied_capacity_request(applied_w=applied_w)
+    return replace(
+        request,
+        n=n,
+        project_life_years=project_life_years,
+        cost_lines=(),
+        discount_rate=discount_rate or fixed("finance.discount-rate", 0),
+        shared_degradation=degradation or fixed("energy.shared-degradation", 0),
+        calculation_contract_version=(
+            tea.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+        ),
+        paired_commercial=tea.PairedCommercialSpec(
+            target_capacity_w=target_capacity_w,
+            target_rating_basis="ac_operating_limit",
+            systems=(
+                tea.PairedCommercialSystemSpec(
+                    technology="solectria",
+                    cost_lines=tuple(
+                        sol_costs
+                        or (
+                            commercial_cost_line(
+                                "commercial.sol.capex", 0.8, "initial_t0"
+                            ),
+                            commercial_cost_line(
+                                "commercial.sol.om", 0.01, "annual_year_end"
+                            ),
+                        )
+                    ),
+                ),
+                tea.PairedCommercialSystemSpec(
+                    technology="solaredge",
+                    cost_lines=tuple(
+                        se_costs
+                        or (
+                            commercial_cost_line(
+                                "commercial.se.capex", 1.0, "initial_t0"
+                            ),
+                            commercial_cost_line(
+                                "commercial.se.om", 0.02, "annual_year_end"
+                            ),
+                        )
+                    ),
+                ),
+            ),
+        ),
+        constant_dollar_cost_year=2022,
+    )
+
+
 def commercial_request(*, n=1, rows=None, transfer=True, costs=None):
     cost_lines = costs or (
         cost_line(
@@ -785,6 +934,348 @@ class CapacityAndRequestValidationTests(unittest.TestCase):
             tea.TechnoeconomicValidationError, "commercial marginal LCOO"
         ):
             tea.validate_request(overflowing)
+
+    def test_v4_is_version_isolated_and_allows_no_legacy_site_cost_stack(self):
+        request = standalone_commercial_request()
+        validated = tea.validate_request(request)
+        self.assertEqual(validated.cost_lines, ())
+        self.assertIsNotNone(validated.standalone_commercial)
+        self.assertEqual(2022, validated.constant_dollar_cost_year)
+        self.assertTrue(
+            all(
+                line.constant_dollar_cost_year == 2022
+                for line in validated.standalone_commercial.cost_lines
+            )
+        )
+
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "must not define legacy site cost_lines",
+        ):
+            tea.validate_request(
+                replace(
+                    request,
+                    cost_lines=(
+                        cost_line(
+                            "legacy.inert",
+                            1,
+                            "solaredge_only",
+                            "initial_capex",
+                            0,
+                            1,
+                        ),
+                    ),
+                )
+            )
+
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "v4 requires standalone_commercial",
+        ):
+            tea.validate_request(replace(request, standalone_commercial=None))
+
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "Only tea-calculation-v4",
+        ):
+            tea.validate_request(
+                replace(
+                    applied_capacity_request(),
+                    standalone_commercial=request.standalone_commercial,
+                )
+            )
+
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "Only tea-calculation-v3",
+        ):
+            tea.validate_request(
+                replace(
+                    request,
+                    commercial_scaling=commercial_scaling_request().commercial_scaling,
+                )
+            )
+
+    def test_v4_validates_target_basis_cost_ids_timings_and_years(self):
+        request = standalone_commercial_request(project_life_years=2)
+        spec = request.standalone_commercial
+        self.assertIsNotNone(spec)
+
+        invalid_specs = (
+            (replace(spec, target_capacity_w=0), "must be strictly positive"),
+            (
+                replace(spec, target_rating_basis="dc_installed_nameplate"),
+                "target rating basis must match",
+            ),
+            (
+                replace(spec, transfer_method="unsupported"),
+                "direct_capacity_scaling",
+            ),
+            (replace(spec, cost_lines=()), "at least one.*cost line"),
+        )
+        for invalid_spec, message in invalid_specs:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                tea.TechnoeconomicValidationError,
+                message,
+            ):
+                tea.validate_request(
+                    replace(request, standalone_commercial=invalid_spec)
+                )
+
+        invalid_lines = (
+            (
+                commercial_cost_line("commercial.bad", 1, "initial_t0", years=(1,)),
+                "Only scheduled_year_end",
+            ),
+            (
+                commercial_cost_line("commercial.bad", 1, "scheduled_year_end"),
+                "requires at least one occurrence year",
+            ),
+            (
+                commercial_cost_line(
+                    "commercial.bad",
+                    1,
+                    "scheduled_year_end",
+                    years=(2, 1),
+                ),
+                "strictly increasing",
+            ),
+            (
+                commercial_cost_line(
+                    "commercial.bad",
+                    1,
+                    "scheduled_year_end",
+                    years=(3,),
+                ),
+                "within project years",
+            ),
+        )
+        for invalid_line, message in invalid_lines:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                tea.TechnoeconomicValidationError,
+                message,
+            ):
+                tea.validate_request(
+                    replace(
+                        request,
+                        standalone_commercial=replace(
+                            spec,
+                            cost_lines=(invalid_line,),
+                        ),
+                    )
+                )
+
+        duplicate = commercial_cost_line(
+            "commercial.duplicate",
+            1,
+            "initial_t0",
+        )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "input IDs must be unique",
+        ):
+            tea.validate_request(
+                replace(
+                    request,
+                    standalone_commercial=replace(
+                        spec,
+                        cost_lines=(duplicate, duplicate),
+                    ),
+                )
+            )
+
+        capex, annual_om, scheduled = spec.cost_lines
+        duplicate_capex = replace(
+            capex,
+            input_id="commercial.se.capex.duplicate",
+            distribution=fixed("commercial.se.capex.duplicate", 1),
+            coverage_ids=("commercial.se.capex.duplicate",),
+        )
+        category_cases = (
+            ((annual_om, scheduled), "exactly one full_initial_capex"),
+            ((capex, scheduled), "exactly one full_annual_om"),
+            (
+                (capex, annual_om, scheduled, duplicate_capex),
+                "exactly one full_initial_capex",
+            ),
+        )
+        for lines, message in category_cases:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                tea.TechnoeconomicValidationError,
+                message,
+            ):
+                tea.validate_request(
+                    replace(
+                        request,
+                        standalone_commercial=replace(spec, cost_lines=lines),
+                    )
+                )
+
+        duplicate_scheduled = replace(
+            scheduled,
+            input_id="commercial.se.replacement.duplicate",
+            distribution=fixed("commercial.se.replacement.duplicate", 0.1),
+        )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "coverage must not overlap",
+        ):
+            tea.validate_request(
+                replace(
+                    request,
+                    standalone_commercial=replace(
+                        spec,
+                        cost_lines=(
+                            capex,
+                            annual_om,
+                            scheduled,
+                            duplicate_scheduled,
+                        ),
+                    ),
+                )
+            )
+
+        mismatched_year = replace(capex, constant_dollar_cost_year=2023)
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "request constant-dollar cost year",
+        ):
+            tea.validate_request(
+                replace(
+                    request,
+                    standalone_commercial=replace(
+                        spec,
+                        cost_lines=(mismatched_year, annual_om, scheduled),
+                    ),
+                )
+            )
+
+    def test_v4_canonical_payload_is_new_only_for_v4(self):
+        legacy_payload = tea.canonical_request_payload(golden_request())
+        v2_payload = tea.canonical_request_payload(applied_capacity_request())
+        v3_payload = tea.canonical_request_payload(commercial_scaling_request())
+        v4_payload = tea.canonical_request_payload(standalone_commercial_request())
+
+        for payload in (legacy_payload, v2_payload, v3_payload):
+            self.assertNotIn("standalone_commercial", payload)
+        self.assertIn("standalone_commercial", v4_payload)
+        self.assertEqual(2022, v4_payload["constant_dollar_cost_year"])
+        self.assertEqual(
+            2022,
+            v4_payload["standalone_commercial"]["cost_lines"][0][
+                "constant_dollar_cost_year"
+            ],
+        )
+        self.assertNotIn("commercial_scaling", v4_payload)
+        self.assertEqual(
+            v4_payload["calculation_contract_version"],
+            tea.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+        )
+
+    def test_all_contracts_reject_sensitivity_source_predictor_input_ids(self):
+        for reserved_id in sorted(tea.SENSITIVITY_SOURCE_INPUT_IDS):
+            for base in (
+                golden_request(),
+                applied_capacity_request(),
+                commercial_scaling_request(),
+            ):
+                lines = list(base.cost_lines)
+                lines[0] = replace(
+                    lines[0],
+                    input_id=reserved_id,
+                    distribution=fixed(reserved_id, 1),
+                )
+                with self.subTest(
+                    reserved_id=reserved_id,
+                    contract=base.calculation_contract_version,
+                ), self.assertRaisesRegex(
+                    tea.TechnoeconomicValidationError,
+                    "reserved",
+                ):
+                    tea.validate_request(replace(base, cost_lines=tuple(lines)))
+
+            v4 = standalone_commercial_request()
+            standalone = v4.standalone_commercial
+            self.assertIsNotNone(standalone)
+            commercial_lines = list(standalone.cost_lines)
+            commercial_lines[0] = replace(
+                commercial_lines[0],
+                input_id=reserved_id,
+                distribution=fixed(reserved_id, 1),
+            )
+            with self.subTest(
+                reserved_id=reserved_id,
+                contract=v4.calculation_contract_version,
+            ), self.assertRaisesRegex(
+                tea.TechnoeconomicValidationError,
+                "reserved",
+            ):
+                tea.validate_request(
+                    replace(
+                        v4,
+                        standalone_commercial=replace(
+                            standalone,
+                            cost_lines=tuple(commercial_lines),
+                        ),
+                    )
+                )
+
+    def test_v4_support_wide_overflow_is_rejected_before_execution(self):
+        request = standalone_commercial_request(
+            costs=(
+                commercial_cost_line(
+                    "commercial.se.capex",
+                    1e308,
+                    "initial_t0",
+                ),
+                commercial_cost_line(
+                    "commercial.se.om",
+                    0,
+                    "annual_year_end",
+                ),
+            ),
+        )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "standalone commercial SolarEdge initial cost",
+        ):
+            tea.validate_request(request)
+
+    def test_v4_scheduled_discount_proof_and_execution_share_boundary_arithmetic(self):
+        intensity = float(
+            np.nextafter(np.finfo(np.float64).max / 8.0, math.inf)
+        )
+        request = standalone_commercial_request(
+            target_capacity_w=1.0,
+            project_life_years=3,
+            costs=(
+                commercial_cost_line(
+                    "commercial.se.capex",
+                    0,
+                    "initial_t0",
+                ),
+                commercial_cost_line(
+                    "commercial.se.om",
+                    0,
+                    "annual_year_end",
+                ),
+                commercial_cost_line(
+                    "commercial.se.replacement",
+                    intensity,
+                    "scheduled_year_end",
+                    years=(3,),
+                ),
+            ),
+            discount_rate=fixed("finance.discount-rate", -0.5),
+        )
+
+        tea.validate_request(request)
+        result = tea.run_technoeconomic(request)
+        scheduled = result.realization_table[
+            tea.COMMERCIAL_STANDALONE_FIELD_SCHEDULED_PV_COST
+        ][0]
+        self.assertTrue(math.isfinite(scheduled))
+        self.assertEqual(scheduled, intensity * tea._scheduled_discount_factor(-0.5, 3))
 
     def test_v2_dc_fallback_must_match_installed_manifests(self):
         request = applied_capacity_request(
@@ -1482,6 +1973,361 @@ class LifecycleCalculationTests(unittest.TestCase):
             tea.COMMERCIAL_ZERO_ENERGY_REASON,
         )
 
+    def test_v5_is_version_isolated_and_requires_both_complete_systems(self):
+        request = paired_commercial_request()
+        validated = tea.validate_request(request)
+        self.assertEqual(
+            [system.technology for system in validated.paired_commercial.systems],
+            ["solectria", "solaredge"],
+        )
+        payload = tea.canonical_request_payload(validated)
+        self.assertIn("paired_commercial", payload)
+        self.assertNotIn("standalone_commercial", payload)
+        self.assertNotIn(
+            "paired_commercial",
+            tea.canonical_request_payload(standalone_commercial_request()),
+        )
+
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "v5 requires paired_commercial",
+        ):
+            tea.validate_request(replace(request, paired_commercial=None))
+        duplicate = replace(
+            request.paired_commercial,
+            systems=(
+                request.paired_commercial.systems[0],
+                replace(
+                    request.paired_commercial.systems[1],
+                    technology="solectria",
+                ),
+            ),
+        )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "exactly one Solectria and one SolarEdge",
+        ):
+            tea.validate_request(replace(request, paired_commercial=duplicate))
+
+        solectria = request.paired_commercial.systems[0]
+        annual_om = next(
+            line
+            for line in solectria.cost_lines
+            if line.cost_category == "full_annual_om"
+        )
+        overlapping_replacement = commercial_cost_line(
+            "commercial.sol.replacement",
+            0.1,
+            "scheduled_year_end",
+            years=(1,),
+            coverage_ids=annual_om.coverage_ids,
+        )
+        overlapping_system = replace(
+            solectria,
+            cost_lines=solectria.cost_lines + (overlapping_replacement,),
+        )
+        overlapping_pair = replace(
+            request.paired_commercial,
+            systems=(overlapping_system, request.paired_commercial.systems[1]),
+        )
+        with self.assertRaisesRegex(
+            tea.TechnoeconomicValidationError,
+            "coverage IDs must be disjoint",
+        ):
+            tea.validate_request(
+                replace(request, paired_commercial=overlapping_pair)
+            )
+
+    def test_v5_scales_both_systems_and_reports_paired_lcoe_delta(self):
+        result = tea.run_technoeconomic(paired_commercial_request())
+        row = result.realization_table
+        target = 100_000_000.0
+        expected_sol_energy = 172_263 / 125_000 * target
+        expected_se_energy = 174_227 / 125_000 * target
+        expected_sol_cost = target * 0.81
+        expected_se_cost = target * 1.02
+        expected_sol_lcoe = expected_sol_cost / expected_sol_energy
+        expected_se_lcoe = expected_se_cost / expected_se_energy
+        expected_delta = expected_se_lcoe - expected_sol_lcoe
+
+        self.assertEqual(
+            row[tea.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_YEAR1_ENERGY][0],
+            expected_sol_energy,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_YEAR1_ENERGY][0],
+            expected_se_energy,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LIFECYCLE_COST][0],
+            expected_sol_cost,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST][0],
+            expected_se_cost,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE][0],
+            expected_sol_lcoe,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_LCOE][0],
+            expected_se_lcoe,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_PAIRED_FIELD_LCOE_DELTA][0],
+            expected_delta,
+        )
+        self.assertEqual(
+            result.summaries[
+                tea.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE
+            ]["cdf"]["population_count"],
+            1,
+        )
+        self.assertEqual(
+            result.summaries[tea.COMMERCIAL_STANDALONE_FIELD_LCOE]["cdf"][
+                "population_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            {
+                summary["technology"]
+                for summary in result.summaries[
+                    "paired_commercial_cost_line_summaries"
+                ]
+            },
+            {"solectria", "solaredge"},
+        )
+        self.assertEqual(
+            result.per_weather_year[0]["systems"]["solectria"][
+                "target_year1_energy_kwh_ac"
+            ],
+            expected_sol_energy,
+        )
+        self.assertEqual(
+            result.per_weather_year[0]["systems"]["solaredge"][
+                "target_year1_energy_kwh_ac"
+            ],
+            expected_se_energy,
+        )
+        self.assertEqual(
+            set(result.sensitivity),
+            {
+                "commercial_solectria_lifecycle_lcoe",
+                "commercial_solaredge_lifecycle_lcoe",
+                "commercial_lifecycle_lcoe_delta_se_minus_sol",
+            },
+        )
+        self.assertEqual(
+            result.provenance["commercial_paired"]["weather_pairing"],
+            "same_frozen_weather_year_per_realization",
+        )
+
+    def test_v4_scales_solaredge_energy_and_ties_standalone_lifecycle_lcoe(self):
+        result = tea.run_technoeconomic(standalone_commercial_request())
+        row = result.realization_table
+
+        expected_year1_energy = 174_227 / 125_000 * 100_000_000
+        expected_initial = 100_000_000.0
+        expected_recurring = 2_000_000.0
+        expected_scheduled = 10_000_000.0
+        expected_lifecycle_cost = (
+            expected_initial + expected_recurring + expected_scheduled
+        )
+        expected_lcoe = expected_lifecycle_cost / expected_year1_energy
+
+        self.assertEqual(expected_year1_energy, 139_381_600)
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_TARGET_CAPACITY][0],
+            100_000_000,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR][0],
+            800,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_YEAR1_ENERGY][0],
+            expected_year1_energy,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY][0],
+            expected_year1_energy,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_EA_ENERGY][0],
+            expected_year1_energy,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_INITIAL_COST][0],
+            expected_initial,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_RECURRING_PV_COST][0],
+            expected_recurring,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_SCHEDULED_PV_COST][0],
+            expected_scheduled,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST][0],
+            expected_lifecycle_cost,
+        )
+        self.assertEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_EA_COST][0],
+            expected_lifecycle_cost,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_LCOE][0],
+            expected_lcoe,
+        )
+
+        summary = result.summaries[tea.COMMERCIAL_STANDALONE_FIELD_LCOE]
+        self.assertEqual(
+            summary["percentiles"],
+            {"p10": expected_lcoe, "p50": expected_lcoe, "p90": expected_lcoe},
+        )
+        self.assertEqual(summary["cdf"]["population_count"], 1)
+        self.assertNotIn(tea.FIELD_LCOE_SE, result.summaries)
+        self.assertEqual(
+            [line["input_id"] for line in result.summaries["commercial_cost_line_summaries"]],
+            [
+                "commercial.se.capex",
+                "commercial.se.om",
+                "commercial.se.replacement",
+            ],
+        )
+        self.assertEqual(
+            result.summaries["commercial_cost_line_summaries"][1]["total_unit"],
+            "USD/year",
+        )
+
+        per_year = result.per_weather_year[0]
+        self.assertNotIn("source_sol_predicted_kwh_ac", per_year)
+        self.assertEqual(
+            per_year[
+                "commercial_capacity_scale_factor_target_w_per_source_w"
+            ],
+            800,
+        )
+        self.assertEqual(
+            per_year["commercial_source_year1_energy_solaredge_kwh_ac"],
+            expected_year1_energy,
+        )
+        provenance = result.provenance["commercial_standalone"]
+        self.assertEqual(provenance["system"], "solaredge")
+        self.assertEqual(provenance["source_applied_capacity_w"], 125_000)
+        self.assertEqual(
+            provenance["capacity_scale_factor_target_w_per_source_w"],
+            800,
+        )
+        self.assertEqual(provenance["source_rating_basis"], "ac_operating_limit")
+        self.assertEqual(
+            set(result.sensitivity),
+            {"commercial_solaredge_lifecycle_lcoe"},
+        )
+        self.assertEqual(
+            set(result.convergence["metric_absolute_tolerances"]),
+            {
+                tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST,
+                tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY,
+                tea.COMMERCIAL_STANDALONE_FIELD_LCOE,
+            },
+        )
+
+    def test_v4_discounts_annual_and_scheduled_costs_at_exact_timings(self):
+        target = 100_000_000.0
+        rate = 0.05
+        life = 20
+        costs = (
+            commercial_cost_line("commercial.se.capex", 1.0, "initial_t0"),
+            commercial_cost_line("commercial.se.om", 0.02, "annual_year_end"),
+            commercial_cost_line(
+                "commercial.se.replacement",
+                0.10,
+                "scheduled_year_end",
+                years=(10,),
+            ),
+        )
+        request = standalone_commercial_request(
+            target_capacity_w=target,
+            project_life_years=life,
+            costs=costs,
+            discount_rate=fixed("finance.discount-rate", rate),
+            degradation=fixed("energy.shared-degradation", 0.005),
+        )
+        result = tea.run_technoeconomic(request)
+        row = result.realization_table
+        annuity, crf = tea.annuity_factor_and_crf(rate, life)
+        energy_factor = tea.lifecycle_energy_factor(rate, 0.005, life)
+        expected_recurring = target * 0.02 * annuity
+        expected_scheduled = target * 0.10 / ((1 + rate) ** 10)
+        expected_cost = target + expected_recurring + expected_scheduled
+        expected_energy = 174_227 / 125_000 * target * energy_factor
+
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_RECURRING_PV_COST][0],
+            expected_recurring,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_SCHEDULED_PV_COST][0],
+            expected_scheduled,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST][0],
+            expected_cost,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_EA_COST][0],
+            crf * expected_cost,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY][0],
+            expected_energy,
+        )
+        self.assertAlmostEqual(
+            row[tea.COMMERCIAL_STANDALONE_FIELD_LCOE][0],
+            expected_cost / expected_energy,
+        )
+
+    def test_v4_commercial_outputs_ignore_solectria_and_use_dc_nameplate_fallback(self):
+        base = standalone_commercial_request()
+        altered = replace(
+            base,
+            paired_energy_rows=(
+                tea.PairedEnergyRow(2021, 1.0, 174_227.0),
+            ),
+        )
+        base_result = tea.run_technoeconomic(base)
+        altered_result = tea.run_technoeconomic(altered)
+        for field_name in (
+            tea.COMMERCIAL_STANDALONE_FIELD_YEAR1_ENERGY,
+            tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY,
+            tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST,
+            tea.COMMERCIAL_STANDALONE_FIELD_LCOE,
+        ):
+            np.testing.assert_array_equal(
+                base_result.realization_table[field_name],
+                altered_result.realization_table[field_name],
+            )
+
+        dc_request = standalone_commercial_request(
+            applied_w=GOLDEN_WDC,
+            rating_basis="dc_installed_nameplate",
+        )
+        dc_result = tea.run_technoeconomic(dc_request)
+        self.assertAlmostEqual(
+            dc_result.realization_table[
+                tea.COMMERCIAL_STANDALONE_FIELD_YEAR1_ENERGY
+            ][0],
+            174_227 / GOLDEN_WDC * 100_000_000,
+        )
+        self.assertEqual(
+            dc_result.provenance["commercial_standalone"]["source_rating_basis"],
+            "dc_installed_nameplate",
+        )
+
     def test_v2_dc_nameplate_fallback_uses_installed_capacity(self):
         request = applied_capacity_request(
             applied_w=GOLDEN_WDC,
@@ -1544,6 +2390,34 @@ class LifecycleCalculationTests(unittest.TestCase):
                 "CommercialLifecycleMarginalCostDelta_se_minus_sol_USD",
                 "CommercialEquivalentAnnualMarginalCostDelta_se_minus_sol_USD_per_year",
                 "CommercialMarginalLCOO_se_minus_sol_USD_per_kWh_AC",
+            ),
+        )
+        self.assertEqual(
+            (
+                tea.COMMERCIAL_STANDALONE_FIELD_TARGET_CAPACITY,
+                tea.COMMERCIAL_STANDALONE_FIELD_CAPACITY_SCALE_FACTOR,
+                tea.COMMERCIAL_STANDALONE_FIELD_YEAR1_ENERGY,
+                tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY,
+                tea.COMMERCIAL_STANDALONE_FIELD_EA_ENERGY,
+                tea.COMMERCIAL_STANDALONE_FIELD_INITIAL_COST,
+                tea.COMMERCIAL_STANDALONE_FIELD_RECURRING_PV_COST,
+                tea.COMMERCIAL_STANDALONE_FIELD_SCHEDULED_PV_COST,
+                tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST,
+                tea.COMMERCIAL_STANDALONE_FIELD_EA_COST,
+                tea.COMMERCIAL_STANDALONE_FIELD_LCOE,
+            ),
+            (
+                "CommercialSolarEdgeTargetCapacity_W",
+                "CommercialSolarEdgeCapacityScaleFactor_target_W_per_source_W",
+                "CommercialSolarEdgeYear1Energy_kWh_AC",
+                "CommercialSolarEdgeLifecycleEnergy_kWh_AC",
+                "CommercialSolarEdgeEquivalentAnnualEnergy_kWh_AC_per_year",
+                "CommercialSolarEdgeInitialCost_USD",
+                "CommercialSolarEdgeRecurringLifecycleCost_USD",
+                "CommercialSolarEdgeScheduledLifecycleCost_USD",
+                "CommercialSolarEdgeLifecycleCost_USD",
+                "CommercialSolarEdgeEquivalentAnnualCost_USD_per_year",
+                "CommercialSolarEdgeLifecycleLCOE_USD_per_kWh_AC",
             ),
         )
 
@@ -1964,6 +2838,61 @@ class SummaryAndSensitivityTests(unittest.TestCase):
         self.assertEqual(model["exclusions"]["cost.shared.capex"]["reason"], "no_structural_effect")
         self.assertEqual(model["exclusions"]["finance.discount-rate"]["reason"], "fixed_input")
 
+    def test_v4_sensitivity_is_standalone_and_excludes_solectria_source(self):
+        costs = (
+            commercial_cost_line(
+                "commercial.se.capex",
+                tea.DistributionSpec(
+                    "commercial.se.capex",
+                    "uniform",
+                    low=0.8,
+                    high=1.2,
+                ),
+                "initial_t0",
+            ),
+            commercial_cost_line(
+                "commercial.se.om",
+                0,
+                "annual_year_end",
+            ),
+        )
+        rows = (
+            tea.PairedEnergyRow(2019, 50_000, 160_000),
+            tea.PairedEnergyRow(2020, 500_000, 180_000),
+        )
+        request = standalone_commercial_request(
+            n=64,
+            project_life_years=20,
+            rows=rows,
+            costs=costs,
+            discount_rate=tea.DistributionSpec(
+                "finance.discount-rate",
+                "uniform",
+                low=0.03,
+                high=0.07,
+            ),
+            degradation=tea.DistributionSpec(
+                "energy.shared-degradation",
+                "uniform",
+                low=0.003,
+                high=0.007,
+            ),
+        )
+        result = tea.run_technoeconomic(request)
+        self.assertEqual(
+            set(result.sensitivity),
+            {"commercial_solaredge_lifecycle_lcoe"},
+        )
+        model = result.sensitivity["commercial_solaredge_lifecycle_lcoe"]
+        self.assertEqual(
+            model["exclusions"]["energy.source.solectria_specific"]["reason"],
+            "no_structural_effect",
+        )
+        self.assertNotEqual(
+            model["exclusions"].get("commercial.se.capex", {}).get("reason"),
+            "no_structural_effect",
+        )
+
     def test_cost_delta_sensitivity_excludes_finance_for_initial_only_costs(self):
         costs = (
             cost_line(
@@ -2121,6 +3050,20 @@ class SummaryAndSensitivityTests(unittest.TestCase):
                 "lcoe_and_lcoo_USD_per_kWh_AC": 0.0001,
                 "lifecycle_cost_USD_per_Wdc": 0.0001,
                 "lifecycle_energy_kWh_AC_per_Wdc": 0.0001,
+            },
+        )
+
+        commercial_provenance = tea.run_technoeconomic(
+            standalone_commercial_request()
+        ).provenance
+        self.assertEqual(
+            commercial_provenance["convergence_contract"][
+                "absolute_quantile_tolerances"
+            ],
+            {
+                tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_COST: 0.01,
+                tea.COMMERCIAL_STANDALONE_FIELD_LIFECYCLE_ENERGY: 0.001,
+                tea.COMMERCIAL_STANDALONE_FIELD_LCOE: 0.0001,
             },
         )
 

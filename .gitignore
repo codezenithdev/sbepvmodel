@@ -34,3 +34,5 @@ dist/
 *.tsbuildinfo
 *.tgz
 .gstack/
+
+designs-qa-assets/      

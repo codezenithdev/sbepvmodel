@@ -573,7 +573,10 @@ The proposed `tea-lhs-v1` sampling version pins:
 
 The exact version-1 domain-purpose strings are `lhs-jitter`, `lhs-permutation`,
 `weather-extra-permutation`, and `weather-assignment-permutation`; the reserved
-weather stable ID is `weather.year`. After evaluating `(k + jitter) / n`, binary64
+weather stable ID is `weather.year`. The sensitivity source-predictor IDs
+`energy.source.solectria_specific` and `energy.source.solaredge_specific` are also
+reserved and cannot be supplied as cost, finance, degradation, or transfer input
+IDs. After evaluating `(k + jitter) / n`, binary64
 rounding is checked against the exact stratum bounds `k/n` and `(k+1)/n`. A value on
 or outside either bound is moved with `nextafter` to the nearest representable value
 strictly inside that stratum. This repair is part of `tea-lhs-v1`, because open
@@ -1842,3 +1845,274 @@ stable ID, input timing and PV/EA conversion, units, sign convention, and null-r
 rule. Request hashing includes the complete commercial specification only for
 version 3; literal version-1 and version-2 canonical payloads omit the new defaulted
 field so their historical hashes and retry comparisons remain unchanged.
+
+## 17. Version 4 addendum — standalone commercial SolarEdge LCOE
+
+Contract `tea-calculation-v4` adds the commercial decision output clarified in the
+2026-08-31 review: a standalone SolarEdge commercial lifecycle LCOE distribution.
+It does not divide a SolarEdge-minus-Solectria marginal cost by an incremental
+energy difference, and it does not present version-3 marginal LCOO as commercial
+SolarEdge LCOE. Solectria data may remain in the frozen Annual source and in older
+result contracts, but no Solectria energy or cost enters a version-4 commercial
+formula.
+
+Version 4 is valid only for `basis = solartac_site` with
+`capacity_normalization = annual_applied_capacity_v1`. It requires one
+`StandaloneCommercialSpec`, forbids the version-3 `CommercialScalingSpec`, and
+keeps version-1 through version-3 request hashes and result semantics unchanged.
+Legacy two-system site cost lines are not a user input to the standalone
+commercial calculation.
+
+### 17.1 Frozen source-capacity authority
+
+The source capacity is selected only from the immutable completed Annual
+Simulation request and verified capacity manifest:
+
+```text
+if curtailment_enabled is true and curtailment_limit_kw is finite and > 0:
+    P_source,SE = curtailment_limit_kw * 1,000
+    source rating basis = ac_operating_limit
+else:
+    P_source,SE = verified SolarEdge installed_wdc
+    source rating basis = dc_installed_nameplate
+```
+
+The commercial target is finite and strictly positive and must use the same
+explicit rating basis. Thus a frozen 125 kW clipping/curtailment limit produces an
+AC-normalized source and, for a 100 MW target, a 100 MWac target. When that limit is
+not enabled and positive, the current verified model manifest supplies the exact
+nameplate value (139,180.8 Wdc at approval time) and the target is DC-rated. Neither
+125 kW nor 139,180.8 W is a kernel constant.
+
+### 17.2 SolarEdge energy bridge
+
+For each sampled eligible weather year `y`:
+
+```text
+q_SE,y = E_SE,y / P_source,SE
+
+E_commercial,SE,year1,y = q_SE,y * P_target
+E_commercial,SE,PV      = E_commercial,SE,year1,y * F_E(r,g,L)
+E_commercial,SE,EA      = CRF(r,L) * E_commercial,SE,PV
+```
+
+`E_SE,y` is the SolarEdge AC-energy result sealed by the selected Annual
+Simulation. The weather-year allocation, real discount rate `r`, shared module
+degradation `g`, project life `L`, lifecycle energy factor `F_E`, and capital
+recovery factor `CRF` retain their earlier definitions. The transfer method is
+`direct_capacity_scaling`; it assumes that the source SolarEdge specific energy is
+representative of the target and records that limitation in provenance. It does
+not claim that the commercial target reproduces the SolarTAC physical design.
+
+### 17.3 Standalone commercial cost lines
+
+Every version-4 commercial cost line has a stable ID, label, nonnegative sampled
+distribution, evidence record, explicit integer `constant_dollar_cost_year`, canonical target-rating
+basis, a nonempty unique set of stable `coverage_ids`, and exactly one category and
+timing contract:
+
+- `full_initial_capex`: exactly one required line, `initial_t0`, USD per target W
+  incurred once at `t=0`;
+- `full_annual_om`: exactly one required line, `annual_year_end`, USD per target
+  W-year incurred at each year-end `t=1..L`; and
+- `scheduled_replacement`: zero or more optional lines, `scheduled_year_end`, USD
+  per target W incurred at each listed year-end.
+
+The `full_system` completeness assertion is valid only when exactly one
+`full_initial_capex` and exactly one `full_annual_om` line survive validation;
+renaming a duplicate input does not evade this rule. A scheduled replacement may
+reuse a coverage ID at distinct occurrence years, but two scheduled lines may not
+contain both the same coverage ID and the same occurrence year. This rejects double
+counting while permitting separately evidenced replacements of the same component
+at different years.
+
+Every line's `constant_dollar_cost_year` must exactly equal
+`finance.constant_dollar_cost_year`; omission or mismatch fails validation in both
+the submission schema and pure calculation kernel. The line assertion is retained
+in the canonical request hash, provenance, immutable receipt, and exports.
+
+Scheduled occurrence years are unique sorted integers in `[1, L]`. Initial and
+annual lines cannot carry occurrence years. For a sampled line intensity `x_l`:
+
+```text
+PV_C_initial,l   = P_target * x_l
+PV_C_annual,l    = P_target * x_l * AF(r,L)
+PV_C_scheduled,l = P_target * x_l * sum(exp(-t*log1p(r)) for t in occurrence_years_l)
+
+C_commercial,SE,PV = sum(PV_C_l)
+C_commercial,SE,EA = CRF(r,L) * C_commercial,SE,PV
+```
+
+The occurrence-year rule permits an evidenced optimizer or inverter replacement
+without silently spreading it across every operating year. The interface must not
+invent such a replacement: omitting the line means it is visibly not included.
+Aggregate benchmarks and component lines cannot overlap, and all inputs retain the
+evidence and explicit-acceptance gates defined in Section 5.5.
+
+### 17.4 Standalone commercial SolarEdge LCOE and distribution
+
+For every realization with positive finite lifecycle energy:
+
+```text
+CommercialSolarEdgeLCOE = C_commercial,SE,PV / E_commercial,SE,PV
+                        = C_commercial,SE,EA / E_commercial,SE,EA
+```
+
+The authoritative unit is constant-real `USD/kWh_AC`; the dashboard may display
+`USD/MWh_AC` by multiplying by 1,000. Target capacity cancels algebraically from the
+ratio when all costs use the same target-W basis, but target totals remain required
+outputs and tie-outs. The primary result is the complete right-continuous empirical
+CDF over all finite realizations. The visible P10, P50, and P90 values are Type-7
+sample quantiles and are secondary checks, not substitutes for the CDF. The word
+“central” has no statistical meaning in this contract and is not used as an input
+label.
+
+### 17.5 Required outputs, checks, and provenance
+
+Version 4 records, at minimum, the target and source capacities and rating basis,
+capacity scale factor, year-one/lifecycle/equivalent-annual SolarEdge energy,
+initial/annual/scheduled lifecycle cost components, total lifecycle and
+equivalent-annual cost, and standalone commercial SolarEdge LCOE. Commercial cost
+draws remain explicit sampled-input columns with their category and coverage
+identities. Per-weather-year records use a dedicated version-4 shape and expose the
+SolarEdge source applied capacity and rating basis, source energy and normalized
+specific energy, target capacity and rating basis, capacity scale factor, transfer
+method, scaled target energy, realization share, and conditional P10/P50/P90
+metrics. They do not reuse the legacy two-system P5/P50/P95 shape.
+
+Independent export checks recompute the source-to-target bridge, discounting of all
+three cost timings, lifecycle and equivalent-annual energy, both equal LCOE ratios,
+Type-7 P10/P50/P90 values, and full empirical-CDF identity. The single headline CDF
+is exported with the tabular bundle and workbook. A bounded display series may be
+included in the routine result for the dashboard, while the sealed calculation
+payload and exports retain the full population.
+
+Provenance freezes the selected Annual job and eligible weather years, source and
+target capacity authority, transfer method and formula, complete commercial cost
+lines and evidence, finance/degradation inputs, sampling and numerical fingerprints,
+percentile and CDF algorithms, calculation contract, and all request/result/export
+hashes. Unknown timing, basis mismatch, missing evidence acceptance, nonpositive
+capacity or energy, invalid occurrence years, cost overlap, nonfinite support, and
+unprovable binary64 bounds fail closed before a durable job is queued.
+
+## 18. Version 5 addendum — paired commercial Solectria and SolarEdge LCOE
+
+Contract `tea-calculation-v5` extends the standalone commercial method to both
+SolarTAC technologies. It produces two independent full-system commercial
+lifecycle LCOE distributions at one common target capacity and rating basis.
+Version 5 is additive: versions 1 through 4 retain their exact request hashes,
+calculations, routine-result schemas, exports, and historical interpretation.
+
+Version 5 is valid only for `basis = solartac_site` and
+`capacity_normalization = annual_applied_capacity_v1`. It requires one
+`PairedCommercialSpec` containing exactly one Solectria and one SolarEdge system
+specification, and forbids version-3 commercial scaling and version-4 standalone
+commercial blocks. Top-level legacy site cost lines are empty.
+
+### 18.1 Same target, paired weather, separate source normalization
+
+For each realization, both systems use the same frozen weather-year row. The
+commercial target capacity `P_target` and its rating basis are also shared. Source
+capacity remains authoritative per system:
+
+```text
+if the frozen Annual clipping/curtailment limit is enabled, finite, and positive:
+    P_source,SOL = P_source,SE = limit_kW * 1,000
+    source and target rating basis = ac_operating_limit
+else:
+    P_source,SOL = verified Solectria installed_wdc
+    P_source,SE  = verified SolarEdge installed_wdc
+    source and target rating basis = dc_installed_nameplate
+```
+
+For `s` in `{Solectria, SolarEdge}` and sampled weather year `y`:
+
+```text
+q_s,y = E_source,s,y / P_source,s
+capacity_scale_s = P_target / P_source,s
+E_target,s,year1,y = q_s,y * P_target
+E_target,s,PV = E_target,s,year1,y * F_E(r,g,L)
+E_target,s,EA = CRF(r,L) * E_target,s,PV
+```
+
+The two source capacities are separate authorities even if numerically equal.
+Energy or capacity from one system may never be substituted for the other. The
+transfer method remains `direct_capacity_scaling` and records its representativeness
+limitation; it is not a physical redesign of either commercial plant.
+
+### 18.2 Per-system full cost stacks
+
+Each `PairedCommercialSystemSpec` has its own complete, evidenced commercial cost
+lines. Within each system, exactly one `full_initial_capex` line and one
+`full_annual_om` line are required; zero or more `scheduled_replacement` lines are
+permitted. Category, timing, units, constant-dollar year, occurrence years, and
+coverage-overlap rules are exactly those in Section 17.3. Stable sampled-input IDs
+are unique across the two systems.
+
+For each system, version 5 applies the version-4 cost equations independently:
+
+```text
+C_s,PV = sum(initial_t0_s)
+         + sum(annual_year_end_s * AF(r,L))
+         + sum(scheduled_s,t * exp(-t*log1p(r)))
+C_s,EA = CRF(r,L) * C_s,PV
+```
+
+The project life, discount-rate draw, degradation draw, target capacity, target
+rating basis, and constant-dollar cost year are shared. Cost distributions and
+evidence are system-specific. No Solectria-specific cost or scheduled replacement
+may be created without a source or a visibly accepted provisional assumption. A
+generic benchmark must remain labeled generic and does not prove a vendor-specific
+cost difference.
+
+### 18.3 Two LCOE headlines and signed diagnostic
+
+For both systems with positive finite lifecycle energy:
+
+```text
+CommercialSolectriaLCOE = C_SOL,PV / E_SOL,PV = C_SOL,EA / E_SOL,EA
+CommercialSolarEdgeLCOE = C_SE,PV  / E_SE,PV  = C_SE,EA  / E_SE,EA
+
+CommercialLCOEDelta_se_minus_sol =
+    CommercialSolarEdgeLCOE - CommercialSolectriaLCOE
+```
+
+The two standalone LCOEs are the decision headlines. The signed delta is an audit
+and comparison diagnostic; it is not marginal LCOO and is not computed by dividing
+cost and energy differences. All three use constant-real `USD/kWh_AC` and retain
+negative delta values.
+
+Each system headline has a complete right-continuous empirical CDF and Type-7 P10,
+P50, and P90. The exported comparison chart overlays only the two standalone LCOE
+CDFs on one honest axis and uses both color and line style. The signed delta remains
+available in realizations, summaries, and integrity checks rather than being
+presented as a third technology curve.
+
+### 18.4 Required result and export contract
+
+The routine result has schema version 5 and one `paired_commercial` block. Common
+fields freeze target capacity and basis, transfer method, and constant-dollar year.
+The nested `systems` mapping contains one record per technology with source applied
+capacity and basis, capacity scale factor, headline metric ID and unit, P10/P50/P90,
+a bounded display CDF tied by hash to the full sealed CDF, and that system's cost-line
+summaries. A separate signed-delta summary is retained.
+
+The sealed realization table reuses every version-4 SolarEdge commercial field and
+adds the exact Solectria mirror fields plus
+`CommercialLifecycleLCOEDelta_se_minus_sol_USD_per_kWh_AC`. Per-weather-year records
+include the common target and transfer fields; nested Solectria and SolarEdge source
+energy, installed and applied capacity, rating basis, specific energy, scale factor,
+and target year-one energy; realization count/share; and conditional P10/P50/P90
+metrics.
+
+Version-5 exports use distinct manifest, CSV-bundle, and workbook schema IDs. They
+contain both headline and per-system cost-line summaries, both full LCOE CDF
+populations, the paired CDF chart, paired per-weather-year rows, sampled inputs,
+realizations, provenance, and integrity checks. Checks independently recompute each
+system's source bridge, target totals, three cost timings, lifecycle and equivalent-
+annual energy/cost, both LCOE identities, cost-line and headline percentiles, full
+CDF identities, the signed per-realization LCOE delta, and the exact weather-year
+partition.
+
+The authoritative product summary is
+`docs/TECHNOECONOMIC_V5_PRODUCT_REQUIREMENTS.md`.

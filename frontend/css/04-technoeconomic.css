@@ -7,6 +7,49 @@
             display: none !important;
         }
 
+        body.dashboard-mode-technoeconomic .workspace {
+            padding-top: 18px;
+        }
+
+        body.dashboard-mode-technoeconomic .top-nav,
+        body.dashboard-mode-technoeconomic .header {
+            margin-bottom: 12px;
+        }
+
+        body.dashboard-mode-technoeconomic .header-copy {
+            padding: 18px 20px;
+        }
+
+        body.dashboard-mode-technoeconomic .eyebrow {
+            margin-bottom: 5px;
+        }
+
+        body.dashboard-mode-technoeconomic .header-title {
+            font-size: clamp(26px, 3vw, 34px);
+        }
+
+        body.dashboard-mode-technoeconomic .header-title-row {
+            margin-bottom: 8px;
+        }
+
+        body.dashboard-mode-technoeconomic .mode-tabs {
+            margin-bottom: 10px;
+            padding: 3px;
+        }
+
+        body.dashboard-mode-technoeconomic .mode-tab {
+            padding: 6px 16px;
+        }
+
+        body.dashboard-mode-technoeconomic .controls-bar.tea-workspace {
+            margin-bottom: 0;
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            box-shadow: none;
+        }
+
         .tea-workspace {
             padding: 0;
             overflow: visible;
@@ -991,6 +1034,7 @@
         .tea-guided-ranges > summary:focus-visible,
         .tea-advanced-workspace > summary:focus-visible,
         .tea-table-region:focus-visible,
+        .tea-confirm-scroll:focus-visible,
         .tea-switch-row:focus-within,
         .tea-checkbox-row:focus-within {
             outline: 3px solid rgba(15, 118, 110, 0.24);
@@ -1696,10 +1740,16 @@
         }
 
         .tea-confirm-dialog {
-            width: min(680px, calc(100vw - 32px));
-            max-height: min(86vh, 820px);
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: min(940px, calc(100vw - 40px));
+            height: min(890px, calc(100dvh - 32px));
+            max-height: calc(100dvh - 32px);
+            margin: 0;
             padding: 0;
-            overflow: auto;
+            overflow: hidden;
+            transform: translate(-50%, -50%);
             border: 1px solid var(--border-strong);
             border-radius: 12px;
             background: var(--surface);
@@ -1707,33 +1757,1464 @@
             box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
         }
 
-        .tea-confirm-dialog::backdrop {
+        .tea-confirm-dialog::backdrop,
+        .tea-assumptions-dialog::backdrop {
             background: rgba(15, 23, 42, 0.58);
         }
 
         .tea-confirm-content {
-            padding: 22px;
+            height: 100%;
+        }
+
+        .tea-confirm-shell {
+            display: grid;
+            min-height: 0;
+            grid-template-rows: auto minmax(0, 1fr) auto;
+        }
+
+        .tea-confirm-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 22px 28px 18px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .tea-confirm-header > div {
+            min-width: 0;
+        }
+
+        .tea-confirm-header h2 {
+            margin: 4px 0 5px;
+            color: var(--text);
+            font-size: 22px;
+            line-height: 1.25;
+        }
+
+        .tea-confirm-header p:last-child {
+            max-width: 680px;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .tea-confirm-header > .tea-button {
+            flex: 0 0 auto;
+        }
+
+        .tea-confirm-scroll {
+            min-height: 0;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+        }
+
+        .tea-confirm-review-grid {
+            display: grid;
+            min-width: 0;
+            grid-template-columns: minmax(250px, 302px) minmax(0, 1fr);
+        }
+
+        .tea-confirm-readiness {
+            min-width: 0;
+            padding: 22px 26px;
+            border-right: 1px solid var(--border);
+            background: #fbfcfc;
+        }
+
+        .tea-confirm-readiness h3,
+        .tea-confirm-review > h3 {
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 850;
+            line-height: 1.35;
+        }
+
+        .tea-confirm-readiness-list {
+            display: grid;
+            margin-top: 12px;
+        }
+
+        .tea-confirm-readiness-item {
+            display: grid;
+            min-width: 0;
+            gap: 6px;
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tea-confirm-readiness-item:last-child {
+            border-bottom: 0;
+        }
+
+        .tea-confirm-readiness-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .tea-confirm-readiness-heading strong {
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 850;
+            line-height: 1.35;
+        }
+
+        .tea-confirm-readiness-status {
+            display: inline-flex;
+            min-height: 22px;
+            align-items: center;
+            padding: 3px 8px;
+            border: 1px solid #add4ce;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+            font-size: 9px;
+            font-weight: 850;
+            letter-spacing: 0.04em;
+            line-height: 1;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .tea-confirm-readiness-item > p {
+            color: var(--muted-strong);
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        .tea-confirm-review {
+            min-width: 0;
+            padding: 22px 28px 8px;
         }
 
         .tea-confirm-summary {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 1px;
-            overflow: hidden;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: var(--border);
+            min-width: 0;
+            margin-top: 10px;
         }
 
-        .tea-confirm-summary > div {
+        .tea-confirm-group {
             min-width: 0;
-            padding: 12px;
-            background: var(--surface-muted);
+            padding: 15px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tea-confirm-group:first-child {
+            padding-top: 8px;
+        }
+
+        .tea-confirm-group:last-child {
+            border-bottom: 0;
+        }
+
+        .tea-confirm-group > h4 {
+            margin-bottom: 9px;
+            color: var(--text);
+            font-size: 11px;
+            font-weight: 850;
+            line-height: 1.4;
+        }
+
+        .tea-confirm-group-rows {
+            display: grid;
+            gap: 8px;
+        }
+
+        .tea-summary-item {
+            display: grid;
+            min-width: 0;
+            grid-template-columns: minmax(128px, 0.52fr) minmax(0, 1.48fr);
+            align-items: start;
+            gap: 16px;
             overflow-wrap: anywhere;
         }
 
+        .tea-summary-item > span,
+        .tea-summary-item > strong {
+            min-width: 0;
+            font-size: 10px;
+            line-height: 1.45;
+        }
+
+        .tea-summary-item > span {
+            color: var(--muted-strong);
+            font-weight: 760;
+        }
+
+        .tea-summary-item > strong {
+            color: var(--text);
+            font-weight: 520;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .tea-confirm-system-grid {
+            display: grid;
+            min-width: 0;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 18px;
+            margin-top: 12px;
+        }
+
+        .tea-confirm-system {
+            min-width: 0;
+            padding-top: 10px;
+            border-top: 3px solid #d59b4d;
+        }
+
+        .tea-confirm-system[data-system="solaredge"] {
+            border-top-color: var(--accent);
+        }
+
+        .tea-confirm-system > h5 {
+            margin-bottom: 9px;
+            color: #a75d00;
+            font-size: 11px;
+            font-weight: 850;
+            line-height: 1.35;
+        }
+
+        .tea-confirm-system[data-system="solaredge"] > h5 {
+            color: var(--accent-strong);
+        }
+
+        .tea-confirm-system .tea-summary-item {
+            grid-template-columns: 1fr;
+            gap: 2px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tea-confirm-system .tea-summary-item:last-child {
+            border-bottom: 0;
+        }
+
+        .tea-confirm-system .tea-summary-item > span {
+            color: var(--text);
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        .tea-confirm-system .tea-summary-item > strong {
+            color: var(--muted-strong);
+            font-size: 9px;
+            line-height: 1.5;
+        }
+
+        .tea-confirm-notices {
+            display: grid;
+            gap: 10px;
+            padding: 0 20px 18px;
+        }
+
+        .tea-confirm-notices > .tea-inline-note,
+        .tea-confirm-notices > .tea-alert {
+            margin-top: 0;
+        }
+
         .tea-confirm-actions {
-            margin-top: 18px;
+            justify-content: flex-end;
+            margin-top: 0;
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .tea-confirm-actions .tea-button {
+            min-height: 44px;
+        }
+
+        .tea-standalone-workspace {
+            gap: 12px;
+            padding: 0;
+            background: transparent;
+        }
+
+        .tea-calculation-bridge {
+            order: 1;
+            padding: 13px 16px 12px;
+        }
+
+        .tea-calculation-bridge > .tea-section-heading {
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .tea-calculation-bridge .tea-section-heading h3 {
+            color: var(--accent-strong);
+            font-size: 12px;
+            font-weight: 850;
+            letter-spacing: 0.07em;
+            line-height: 1.25;
+            text-transform: uppercase;
+        }
+
+        .tea-job-panel {
+            order: 3;
+        }
+
+        .tea-standalone-primary {
+            display: grid;
+            order: 2;
+            min-width: 0;
+            grid-template-columns: minmax(0, 2.35fr) minmax(285px, 0.9fr);
+            gap: 12px;
+        }
+
+        .tea-standalone-cdf-card,
+        .tea-scenario-rail {
+            min-width: 0;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+        }
+
+        .tea-bridge-steps {
+            display: grid;
+            grid-template-columns:
+                minmax(155px, 1.22fr) auto minmax(135px, 0.95fr) auto
+                minmax(145px, 1fr) auto minmax(135px, 0.95fr) auto minmax(135px, 0.95fr);
+            align-items: stretch;
+            gap: 8px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .tea-bridge-card {
+            display: flex;
+            min-width: 0;
+            min-height: 150px;
+            flex-direction: column;
+            gap: 6px;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: #fbfcfc;
+        }
+
+        .tea-bridge-system-values {
+            display: grid;
+            gap: 5px;
+            margin: 0;
+        }
+
+        .tea-bridge-system-values > div {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+            align-items: baseline;
+        }
+
+        .tea-bridge-system-values dt {
+            color: var(--muted);
+            font-size: 10px;
+        }
+
+        .tea-bridge-system-values dd {
+            margin: 0;
+            color: var(--text);
+            font-size: 10px;
+            font-weight: 800;
+            text-align: right;
+        }
+
+        .tea-bridge-card-heading {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tea-bridge-card-heading h4 {
+            color: var(--accent-strong);
+            font-size: 13px;
+            font-weight: 850;
+            line-height: 1.25;
+        }
+
+        .tea-bridge-number {
+            display: inline-flex;
+            width: 24px;
+            height: 24px;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+            border: 1px solid #add4ce;
+            border-radius: 50%;
+            background: #eaf7f5;
+            color: var(--accent-strong);
+            font-size: 11px;
+            font-weight: 850;
+        }
+
+        .tea-bridge-card p,
+        .tea-bridge-card span {
+            color: var(--muted-strong);
+            font-size: 11px;
+            line-height: 1.4;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-bridge-card > strong {
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 820;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-bridge-verification {
+            color: #196b45 !important;
+            font-weight: 760;
+        }
+
+        .tea-bridge-equation {
+            display: block;
+            padding: 7px 0;
+            border-bottom: 1px solid var(--border-strong);
+            color: var(--text) !important;
+            text-align: center;
+            font-style: italic;
+        }
+
+        .tea-bridge-connector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent-strong);
+            font-size: 9px;
+            font-weight: 840;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .tea-bridge-footer {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+            margin-top: 8px;
+            padding: 0 4px;
+            color: var(--muted-strong);
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .tea-bridge-footer p:first-child {
+            max-width: 68%;
+        }
+
+        .tea-standalone-result-heading {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px 18px 12px;
+        }
+
+        .tea-standalone-result-heading h3 {
+            color: var(--text);
+            font-size: 18px;
+            line-height: 1.25;
+        }
+
+        .tea-standalone-result-heading p:not(.tea-step-label) {
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .tea-standalone-result-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .tea-standalone-result-actions .tea-button {
+            min-height: 36px;
+            padding: 7px 10px;
+        }
+
+        .tea-standalone-result-body {
+            display: grid;
+            min-width: 0;
+            grid-template-columns: minmax(0, 1.8fr) minmax(220px, 0.82fr);
+            border-top: 1px solid var(--border);
+        }
+
+        .tea-standalone-cdf-figure {
+            display: grid;
+            min-width: 0;
+            align-content: start;
+            gap: 8px;
+            margin: 0;
+            padding: 18px;
+            border-right: 1px solid var(--border);
+        }
+
+        .tea-standalone-cdf-figure img {
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            max-height: 620px;
+            object-fit: contain;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: #ffffff;
+        }
+
+        .tea-standalone-cdf-figure figcaption {
+            color: var(--muted);
+            font-size: 10px;
+            line-height: 1.45;
+        }
+
+        .tea-standalone-interpretation {
+            display: grid;
+            min-width: 0;
+            align-content: start;
+            gap: 16px;
+            padding: 18px 14px;
+        }
+
+        .tea-standalone-interpretation h4,
+        .tea-scenario-rail h3,
+        .tea-scenario-rail h4,
+        .tea-assumptions-dialog h4 {
+            color: var(--accent-strong);
+            font-size: 12px;
+            font-weight: 840;
+            line-height: 1.35;
+        }
+
+        .tea-standalone-interpretation p {
+            margin-top: 8px;
+            color: var(--muted-strong);
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        .tea-standalone-percentile-table {
+            min-width: 0;
+        }
+
+        .tea-standalone-percentile-table th,
+        .tea-standalone-percentile-table td {
+            padding: 8px 9px;
+        }
+
+        .tea-standalone-percentile-table tr[data-percentile="p50"] {
+            background: var(--accent-soft);
+            font-weight: 820;
+        }
+
+        .tea-standalone-run-context,
+        .tea-standalone-disclaimer {
+            margin: 0 18px;
+            padding-top: 10px;
+            color: var(--muted);
+            font-size: 10px;
+            line-height: 1.45;
+        }
+
+        .tea-standalone-run-context {
+            border-top: 1px solid var(--border);
+        }
+
+        .tea-standalone-provenance {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 6px 16px;
+            margin: 0;
+            padding: 12px 18px;
+            border-top: 1px solid var(--border);
+        }
+
+        .tea-standalone-provenance > div {
+            min-width: 0;
+        }
+
+        .tea-standalone-provenance dt {
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 760;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .tea-standalone-provenance dd {
+            margin: 2px 0 0;
+            color: var(--text);
+            font-size: 11px;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-standalone-disclaimer {
+            padding-bottom: 16px;
+            font-style: italic;
+        }
+
+        .tea-scenario-rail {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tea-scenario-summary-section {
+            padding: 16px 18px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tea-scenario-summary {
+            display: grid;
+            gap: 7px;
+            margin-top: 10px;
+        }
+
+        .tea-scenario-summary > div {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
+            gap: 9px;
+            align-items: start;
+        }
+
+        .tea-scenario-summary dt,
+        .tea-scenario-summary dd {
+            font-size: 10px;
+            line-height: 1.4;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-scenario-summary dt {
+            color: var(--muted-strong);
+            font-weight: 760;
+        }
+
+        .tea-scenario-summary dd {
+            margin: 0;
+            color: var(--text);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .tea-scenario-actions {
+            display: grid;
+            gap: 8px;
+            padding: 14px 18px;
+        }
+
+        .tea-scenario-actions .tea-button {
+            width: 100%;
+        }
+
+        .tea-paired-cost-summary {
+            display: grid;
+            gap: 10px;
+        }
+
+        .tea-paired-cost-summary > section {
+            min-width: 0;
+            padding-left: 9px;
+            border-left: 3px solid #d5dedc;
+        }
+
+        .tea-paired-cost-summary > section:first-child {
+            border-left-color: #d59b4d;
+        }
+
+        .tea-paired-cost-summary > section:last-child {
+            border-left-color: var(--accent);
+        }
+
+        .tea-paired-cost-summary h5 {
+            margin-bottom: 5px;
+            color: var(--text);
+            font-size: 11px;
+            font-weight: 850;
+        }
+
+        .tea-assumptions-dialog {
+            width: min(1120px, calc(100vw - 40px));
+            height: min(820px, calc(100dvh - 32px));
+            max-height: calc(100dvh - 32px);
+            margin: auto;
+            padding: 0;
+            overflow: hidden;
+            border: 1px solid var(--border-strong);
+            border-radius: 12px;
+            background: var(--surface);
+            color: var(--text);
+            box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+        }
+
+        .tea-assumptions-dialog-shell {
+            display: grid;
+            grid-template-rows: auto minmax(0, 1fr) auto;
+            height: 100%;
+            max-height: inherit;
+        }
+
+        .tea-assumptions-dialog-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+            padding: 16px 24px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tea-assumptions-dialog-header > div {
+            min-width: 0;
+        }
+
+        .tea-assumptions-dialog-header h2 {
+            margin: 3px 0 4px;
+            color: var(--text);
+            font-size: 20px;
+            line-height: 1.25;
+        }
+
+        .tea-assumptions-dialog-header p:last-child {
+            max-width: 560px;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        .tea-assumptions-dialog-header > .tea-button {
+            flex: 0 0 auto;
+        }
+
+        .tea-standalone-assumptions-body {
+            display: block;
+            min-height: 0;
+            padding: 0;
+            overflow: auto;
+            overscroll-behavior: contain;
+        }
+
+        .tea-standalone-assumptions-body > .tea-alert {
+            margin: 12px 16px;
+        }
+
+        .tea-assumptions-table-region {
+            min-width: 0;
+            overflow: visible;
+        }
+
+        .tea-assumptions-table {
+            width: 100%;
+            min-width: 980px;
+            border-spacing: 0;
+            border-collapse: separate;
+            table-layout: fixed;
+        }
+
+        .tea-assumptions-table caption {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .tea-assumptions-table thead {
+            background: var(--surface);
+        }
+
+        .tea-assumptions-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 4;
+            padding: 9px 12px;
+            border-right: 1px solid var(--border);
+            border-bottom: 1px solid var(--border-strong);
+            background: var(--surface);
+            box-shadow: 0 1px 0 var(--border-strong);
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 820;
+            letter-spacing: 0.01em;
+            text-align: left;
+        }
+
+        .tea-assumptions-table thead th:nth-child(1) {
+            width: 22%;
+            padding-left: 24px;
+        }
+
+        .tea-assumptions-table thead th:nth-child(2) {
+            width: 14%;
+        }
+
+        .tea-assumptions-table thead th:nth-child(3),
+        .tea-assumptions-table thead th:nth-child(4) {
+            width: 25%;
+        }
+
+        .tea-assumptions-table thead th:nth-child(5) {
+            width: 14%;
+            border-right: 0;
+        }
+
+        .tea-system-column-heading-sol {
+            color: #a86810 !important;
+        }
+
+        .tea-system-column-heading-se {
+            color: var(--accent-strong) !important;
+        }
+
+        .tea-assumption-group-heading th {
+            padding: 7px 24px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+            font-size: 12px;
+            font-weight: 850;
+            text-align: left;
+        }
+
+        .tea-assumption-row > th,
+        .tea-assumption-row > td {
+            min-width: 0;
+            padding: 7px 12px;
+            border-right: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        .tea-assumption-row > th {
+            padding-left: 24px;
+            color: var(--text);
+            font-size: 11px;
+            font-weight: 800;
+            line-height: 1.35;
+            text-align: left;
+        }
+
+        .tea-assumption-row > th > label,
+        .tea-assumption-row > th > small {
+            display: block;
+        }
+
+        .tea-assumption-row > th > small,
+        .tea-assumption-row > td > small {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 9px;
+            font-weight: 500;
+            line-height: 1.35;
+        }
+
+        .tea-assumption-row > td:last-child {
+            border-right: 0;
+        }
+
+        .tea-assumption-row input:not([type="checkbox"]):not([type="radio"]),
+        .tea-assumption-row select {
+            width: 100%;
+            min-height: 34px;
+            padding: 5px 9px;
+            border: 1px solid var(--border-strong);
+            border-radius: 5px;
+            outline: none;
+            background: var(--surface);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 12px;
+        }
+
+        .tea-assumption-row textarea {
+            width: 100%;
+            min-height: 54px;
+            padding: 7px 9px;
+            border: 1px solid var(--border-strong);
+            border-radius: 5px;
+            outline: none;
+            background: var(--surface);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 12px;
+            resize: vertical;
+        }
+
+        .tea-assumption-row input:not([type="checkbox"]):not([type="radio"]):focus,
+        .tea-assumption-row select:focus,
+        .tea-assumption-row textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+        }
+
+        .tea-assumption-row input[readonly] {
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+        }
+
+        .tea-assumption-row .tea-field {
+            gap: 3px;
+        }
+
+        .tea-assumption-row .tea-input-with-unit > span {
+            min-width: 44px;
+            font-size: 10px;
+        }
+
+        .tea-shared-value-label,
+        .tea-locked-value-label,
+        .tea-required-value-label {
+            display: inline-flex;
+            align-items: center;
+            min-height: 26px;
+            color: var(--muted-strong);
+            font-size: 9px;
+            font-weight: 820;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .tea-locked-value-label {
+            color: var(--muted);
+        }
+
+        .tea-required-value-label {
+            color: var(--warning);
+        }
+
+        .tea-assumption-meta-cell strong,
+        .tea-assumption-meta-cell small {
+            display: block;
+        }
+
+        .tea-assumption-meta-cell strong {
+            color: var(--muted-strong);
+            font-size: 10px;
+            font-weight: 820;
+            line-height: 1.35;
+        }
+
+        .tea-assumption-meta-cell small {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 9px;
+            line-height: 1.35;
+        }
+
+        .tea-assumption-source-row .tea-assumption-actions {
+            flex-wrap: nowrap;
+            gap: 6px;
+            margin-top: 0;
+        }
+
+        .tea-assumption-source-row .tea-assumption-shared-cell > .tea-field {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .tea-assumption-source-row .tea-assumption-actions .tea-button {
+            min-height: 30px;
+            padding: 6px 9px;
+            font-size: 10px;
+        }
+
+        .tea-assumption-row > .tea-assumption-shared-cell {
+            padding-right: 14px;
+            padding-left: 14px;
+        }
+
+        .tea-assumption-row.tea-v4-distribution .tea-v4-distribution-parameters {
+            margin-top: 0;
+        }
+
+        .tea-assumption-cost-row > th,
+        .tea-assumption-cost-row > td {
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }
+
+        .tea-assumption-cost-distribution-cell {
+            background: var(--surface-muted);
+        }
+
+        .tea-cost-distribution-guide {
+            display: flex;
+            min-height: 100%;
+            flex-direction: column;
+        }
+
+        .tea-cost-distribution-guide > small {
+            color: var(--muted);
+            font-size: 9px;
+            line-height: 1.4;
+        }
+
+        .tea-cost-distribution-guide ul {
+            display: grid;
+            flex: 1;
+            grid-template-rows: repeat(2, minmax(86px, 1fr)) minmax(64px, auto);
+            margin: 10px -12px -10px;
+            padding: 0;
+            border-top: 1px solid var(--border);
+            list-style: none;
+        }
+
+        .tea-cost-distribution-guide li {
+            display: flex;
+            min-width: 0;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .tea-cost-distribution-guide li:last-child {
+            border-bottom: 0;
+        }
+
+        .tea-cost-distribution-guide li strong,
+        .tea-cost-distribution-guide li small {
+            display: block;
+        }
+
+        .tea-cost-distribution-guide li strong {
+            color: var(--text);
+            font-size: 9px;
+            font-weight: 800;
+            line-height: 1.35;
+        }
+
+        .tea-cost-distribution-guide li small {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 8px;
+            line-height: 1.4;
+        }
+
+        .tea-system-cost-cell {
+            background: #fffdfa;
+        }
+
+        .tea-system-cost-cell-se {
+            background: #fbfefd;
+        }
+
+        .tea-assumption-cost-row .tea-paired-system-cost-card {
+            gap: 7px;
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+        }
+
+        .tea-assumption-cost-row .tea-paired-system-cost-card > h5 {
+            display: none;
+        }
+
+        .tea-assumption-cost-row .tea-standalone-cost-lines {
+            gap: 0;
+        }
+
+        .tea-assumption-cost-row .tea-v4-cost-line {
+            padding: 8px 0 10px;
+            border: 0;
+            border-bottom: 1px solid var(--border);
+            border-radius: 0;
+            background: transparent;
+        }
+
+        .tea-assumption-cost-row .tea-v4-cost-line:first-child {
+            padding-top: 0;
+        }
+
+        .tea-assumption-cost-row .tea-v4-cost-line-heading {
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .tea-assumption-cost-row .tea-v4-cost-line-heading h5 {
+            font-size: 10px;
+            line-height: 1.3;
+        }
+
+        .tea-assumption-cost-row .tea-v4-cost-line-heading p {
+            display: none;
+        }
+
+        .tea-assumption-cost-row .tea-contract-badge {
+            padding: 3px 6px;
+            font-size: 8px;
+        }
+
+        .tea-assumption-cost-row .tea-v4-distribution-parameters {
+            grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+            gap: 5px;
+            margin-top: 5px;
+        }
+
+        .tea-assumption-cost-row .tea-switch-row {
+            margin-top: 1px;
+            padding: 8px 0 0;
+            border: 0;
+            background: transparent;
+        }
+
+        .tea-assumption-benchmark-row td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tea-assumption-benchmark-row .tea-benchmark-preset {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+        }
+
+        .tea-assumption-benchmark-row .tea-benchmark-preset h4,
+        .tea-assumption-benchmark-row .tea-benchmark-preset p {
+            margin: 0;
+            font-size: 9px;
+            line-height: 1.35;
+        }
+
+        .tea-assumption-acceptance-cell .tea-checkbox-row {
+            padding: 4px 0;
+            border: 0;
+            background: transparent;
+        }
+
+        .tea-assumptions-validation-summary {
+            margin: 0 auto 0 0;
+            color: var(--muted-strong);
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .tea-standalone-assumptions-body > section {
+            display: grid;
+            gap: 10px;
+        }
+
+        .tea-assumption-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .tea-standalone-field-grid,
+        .tea-standalone-distribution-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .tea-v4-distribution,
+        .tea-v4-cost-line {
+            min-width: 0;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+        }
+
+        .tea-v4-distribution > legend {
+            padding: 0 4px;
+            color: var(--text);
+            font-size: 11px;
+            font-weight: 820;
+        }
+
+        .tea-v4-distribution-parameters {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .tea-standalone-cost-lines {
+            display: grid;
+            gap: 10px;
+        }
+
+        .tea-paired-system-cost-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .tea-paired-system-cost-card {
+            display: grid;
+            min-width: 0;
+            align-content: start;
+            gap: 10px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-top: 3px solid #d59b4d;
+            border-radius: 9px;
+            background: var(--surface-muted);
+        }
+
+        .tea-paired-system-cost-card-se {
+            border-top-color: var(--accent);
+        }
+
+        .tea-paired-system-cost-card > h5 {
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 850;
+        }
+
+        .tea-paired-system-cost-card .tea-v4-cost-line {
+            background: var(--surface);
+        }
+
+        .tea-v4-cost-line-heading {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .tea-v4-cost-line-heading p {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .tea-benchmark-preset {
+            padding: 13px;
+            border: 1px solid #b8d7d3;
+            border-radius: 8px;
+            background: var(--accent-soft);
+        }
+
+        .tea-benchmark-preset p {
+            color: var(--muted-strong);
+            font-size: 10px;
+            line-height: 1.5;
+        }
+
+        .tea-benchmark-preset a {
+            color: var(--accent-strong);
+            font-weight: 780;
+        }
+
+        .tea-standalone-evidence {
+            padding-top: 2px;
+            border-top: 1px solid var(--border);
+        }
+
+        .tea-assumptions-dialog-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            min-height: 64px;
+            padding: 12px 24px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .tea-calculation-bridge:focus-within,
+        .tea-standalone-cdf-card:focus-within,
+        .tea-scenario-rail:focus-within {
+            border-color: #79b8b0;
+        }
+
+        @media (max-width: 1080px) {
+            .tea-bridge-steps {
+                grid-template-columns: repeat(5, minmax(0, 1fr));
+            }
+
+            .tea-bridge-connector {
+                display: none;
+            }
+
+            .tea-standalone-primary {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-scenario-rail {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .tea-scenario-actions {
+                grid-column: 1 / -1;
+            }
+        }
+
+        @media (max-width: 900px) {
+            .tea-assumptions-dialog {
+                width: calc(100vw - 24px);
+                height: calc(100dvh - 24px);
+                max-height: calc(100dvh - 24px);
+            }
+
+            .tea-assumptions-table {
+                display: block;
+                min-width: 0;
+            }
+
+            .tea-assumptions-table thead {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                padding: 0;
+                overflow: hidden;
+                clip: rect(0, 0, 0, 0);
+                white-space: nowrap;
+                border: 0;
+            }
+
+            .tea-assumptions-table thead th {
+                position: static;
+            }
+
+            .tea-assumptions-table tbody {
+                display: block;
+            }
+
+            .tea-assumption-group-heading,
+            .tea-assumption-group-heading th {
+                display: block;
+                width: auto;
+            }
+
+            .tea-assumption-group-heading th {
+                padding: 9px 16px;
+            }
+
+            .tea-assumption-row {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                margin: 10px 12px;
+                overflow: hidden;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--surface);
+            }
+
+            .tea-assumption-row > th,
+            .tea-assumption-row > td {
+                display: block;
+                width: auto;
+                padding: 10px 12px;
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .tea-assumption-row > th {
+                grid-column: 1 / -1;
+                padding-left: 12px;
+                background: var(--surface-muted);
+            }
+
+            .tea-assumption-row > td::before {
+                display: block;
+                margin-bottom: 5px;
+                color: var(--muted);
+                content: attr(data-label);
+                font-size: 9px;
+                font-weight: 820;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+            }
+
+            .tea-assumption-row > .tea-assumption-shared-cell,
+            .tea-assumption-row > .tea-assumption-meta-cell,
+            .tea-assumption-row > .tea-assumption-acceptance-cell {
+                grid-column: 1 / -1;
+            }
+
+            .tea-assumption-row > .tea-assumption-shared-marker {
+                display: none;
+            }
+
+            .tea-assumption-source-row .tea-assumption-shared-cell > .tea-field {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-assumption-source-row .tea-assumption-actions {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                margin-top: 3px;
+            }
+
+            .tea-assumption-source-row .tea-assumption-actions .tea-button {
+                width: auto;
+                min-height: 44px;
+            }
+
+            .tea-assumption-row > td:last-child {
+                border-bottom: 0;
+            }
+
+            .tea-assumption-cost-row > td {
+                grid-column: 1 / -1;
+            }
+
+            .tea-cost-distribution-guide ul {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                grid-template-rows: none;
+                margin-bottom: 0;
+            }
+
+            .tea-cost-distribution-guide li {
+                min-height: 0;
+                border-right: 1px solid var(--border);
+                border-bottom: 0;
+            }
+
+            .tea-cost-distribution-guide li:last-child {
+                border-right: 0;
+            }
+
+            .tea-assumption-cost-row > .tea-system-cost-cell-sol {
+                grid-column: 1;
+            }
+
+            .tea-assumption-cost-row > .tea-system-cost-cell-se {
+                grid-column: 2;
+            }
+
+            .tea-assumption-cost-row .tea-paired-system-cost-card > h5 {
+                display: block;
+                margin-bottom: 2px;
+            }
+
+            .tea-assumption-benchmark-row,
+            .tea-assumption-benchmark-row td {
+                display: block;
+                width: auto;
+            }
+
+            .tea-assumption-benchmark-row td {
+                padding: 0 12px 10px;
+            }
+
+            .tea-assumption-benchmark-row .tea-benchmark-preset {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-assumptions-validation-summary {
+                max-width: 280px;
+            }
         }
 
         @media (max-width: 760px) {
@@ -1799,9 +3280,62 @@
                 grid-column: auto;
             }
 
+            .tea-confirm-review-grid,
+            .tea-confirm-system-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-confirm-readiness {
+                padding: 18px 20px;
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .tea-confirm-readiness-list {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0 18px;
+            }
+
+            .tea-confirm-review {
+                padding: 18px 20px 6px;
+            }
+
             .tea-download-panel .tea-action-row,
             .tea-submit-panel .tea-action-row {
                 justify-content: flex-start;
+            }
+
+            .tea-bridge-steps,
+            .tea-scenario-rail,
+            .tea-standalone-result-body,
+            .tea-standalone-field-grid,
+            .tea-standalone-distribution-grid,
+            .tea-paired-system-cost-grid,
+            .tea-standalone-provenance {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-bridge-card {
+                min-height: 0;
+            }
+
+            .tea-bridge-footer,
+            .tea-standalone-result-heading {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .tea-standalone-result-actions {
+                justify-content: flex-start;
+            }
+
+            .tea-bridge-footer p:first-child {
+                max-width: none;
+            }
+
+            .tea-standalone-cdf-figure {
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
             }
 
             .tea-submit-panel > .tea-action-row {
@@ -1824,8 +3358,7 @@
             .tea-decision-grid,
             .tea-metric-grid,
             .tea-tradeoff-grid,
-            .tea-result-section,
-            .tea-confirm-content {
+            .tea-result-section {
                 padding: 16px;
             }
 
@@ -1882,6 +3415,11 @@
                 grid-template-columns: 1fr;
             }
 
+            .tea-v4-distribution-parameters,
+            .tea-scenario-summary > div {
+                grid-template-columns: 1fr;
+            }
+
             .tea-subsection-heading,
             .tea-system-cost-heading,
             .tea-yearly-energy-heading {
@@ -1917,6 +3455,13 @@
                 width: 100%;
             }
 
+            .tea-scenario-actions .tea-button,
+            .tea-assumption-actions .tea-button,
+            #technoeconomicStandaloneCdfLink {
+                width: 100%;
+                min-height: 44px;
+            }
+
             .tea-field input:not([type="checkbox"]):not([type="radio"]),
             .tea-field select,
             .tea-field textarea,
@@ -1935,6 +3480,13 @@
                 font-size: 16px;
             }
 
+            .tea-assumptions-dialog input:not([type="checkbox"]):not([type="radio"]),
+            .tea-assumptions-dialog select,
+            .tea-assumptions-dialog textarea {
+                min-height: 44px;
+                font-size: 16px;
+            }
+
             .tea-table {
                 min-width: 720px;
             }
@@ -1944,9 +3496,115 @@
                 padding: 10px;
             }
 
-            .tea-confirm-dialog {
+            .tea-confirm-dialog,
+            .tea-assumptions-dialog {
                 width: calc(100vw - 20px);
                 max-height: calc(100dvh - 20px);
+            }
+
+            .tea-confirm-dialog {
+                height: calc(100dvh - 20px);
+            }
+
+            .tea-confirm-header {
+                gap: 12px;
+                padding: 16px;
+            }
+
+            .tea-confirm-header h2 {
+                font-size: 19px;
+            }
+
+            .tea-confirm-header p:last-child {
+                font-size: 11px;
+            }
+
+            .tea-confirm-readiness,
+            .tea-confirm-review {
+                padding-right: 16px;
+                padding-left: 16px;
+            }
+
+            .tea-confirm-readiness-list,
+            .tea-confirm-system-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-summary-item {
+                grid-template-columns: 1fr;
+                gap: 2px;
+            }
+
+            .tea-confirm-notices {
+                padding-right: 16px;
+                padding-left: 16px;
+            }
+
+            .tea-confirm-footer {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 8px;
+                padding: 12px 16px;
+            }
+
+            .tea-assumptions-dialog-header,
+            .tea-standalone-assumptions-body {
+                padding-right: 16px;
+                padding-left: 16px;
+            }
+
+            .tea-standalone-assumptions-body {
+                padding-right: 0;
+                padding-left: 0;
+            }
+
+            .tea-assumption-row {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .tea-assumption-row > td,
+            .tea-assumption-cost-row > .tea-system-cost-cell-sol,
+            .tea-assumption-cost-row > .tea-system-cost-cell-se {
+                grid-column: 1;
+            }
+
+            .tea-assumption-row > .tea-assumption-shared-cell,
+            .tea-assumption-row > .tea-assumption-meta-cell,
+            .tea-assumption-row > .tea-assumption-acceptance-cell {
+                grid-column: 1;
+            }
+
+            .tea-cost-distribution-guide ul {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-cost-distribution-guide li {
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .tea-cost-distribution-guide li:last-child {
+                border-bottom: 0;
+            }
+
+            .tea-assumptions-dialog-header {
+                gap: 10px;
+            }
+
+            .tea-assumptions-dialog-actions {
+                align-items: stretch;
+                flex-direction: column;
+                padding: 14px 16px;
+            }
+
+            .tea-assumptions-validation-summary {
+                width: 100%;
+                max-width: none;
+            }
+
+            .tea-assumptions-dialog-actions .tea-button {
+                width: 100%;
+                min-height: 44px;
             }
         }
 
@@ -1980,6 +3638,19 @@
             .tea-guided-acceptance,
             .tea-guided-commercial-acceptance,
             .tea-commercial-result-section,
+            .tea-calculation-bridge,
+            .tea-bridge-card,
+            .tea-standalone-cdf-card,
+            .tea-scenario-rail,
+            .tea-v4-distribution,
+            .tea-v4-cost-line,
+            .tea-benchmark-preset,
+            .tea-assumptions-dialog,
+            .tea-confirm-dialog,
+            .tea-confirm-system,
+            .tea-confirm-readiness-status,
+            .tea-assumptions-table-region,
+            .tea-assumption-row,
             .tea-advanced-workspace,
             .tea-status-pill,
             .tea-button,

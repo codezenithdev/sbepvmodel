@@ -203,6 +203,13 @@ TECHNOECONOMIC_REALIZATION_COLUMN_OVERHEAD = 48
 # V3 emits eight additional fixed commercial-scaling result/audit columns.  Keep
 # this incremental so v1/v2 admission behavior remains byte-for-byte compatible.
 TECHNOECONOMIC_COMMERCIAL_SCALING_REALIZATION_COLUMN_OVERHEAD = 8
+# V4 adds eleven fixed standalone-commercial result columns while its sampled
+# commercial cost inputs are counted individually below.  Keep this separate so
+# admission behavior for every v1-v3 payload is unchanged.
+TECHNOECONOMIC_STANDALONE_COMMERCIAL_REALIZATION_COLUMN_OVERHEAD = 11
+# V5 retains all eleven SolarEdge columns, adds their eleven Solectria mirrors,
+# and adds the paired per-realization LCOE delta.
+TECHNOECONOMIC_PAIRED_COMMERCIAL_REALIZATION_COLUMN_OVERHEAD = 23
 TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS = 8_000_000
 # Forward stepwise rank regression repeatedly fits expanding predictor sets.  The
 # deterministic n*p^2 gate is a conservative lower-bound proxy for that work.
@@ -682,6 +689,214 @@ class CommercialScalingRequest(StrictTechnoeconomicRequest):
         return self
 
 
+class StandaloneCommercialCostLineRequest(StrictTechnoeconomicRequest):
+    """One sourced commercial SolarEdge cost intensity and payment timing."""
+
+    input_id: StableTechnoeconomicId
+    label: NonemptyTechnoeconomicText
+    cost_category: Literal[
+        "full_initial_capex",
+        "full_annual_om",
+        "scheduled_replacement",
+    ]
+    coverage_ids: list[StableTechnoeconomicId] = Field(
+        min_length=1,
+        max_length=256,
+    )
+    timing: Literal[
+        "initial_t0",
+        "annual_year_end",
+        "scheduled_year_end",
+    ]
+    unit: Literal[
+        "constant_usd_per_target_w",
+        "constant_usd_per_target_w_year",
+    ]
+    distribution: TechnoeconomicDistributionRequest
+    constant_dollar_cost_year: Annotated[int, Field(ge=1900, le=3000)]
+    occurrence_years: list[Annotated[int, Field(ge=1)]] = Field(
+        default_factory=list,
+        max_length=256,
+    )
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_cost_timing(self) -> "StandaloneCommercialCostLineRequest":
+        category_contract = {
+            "full_initial_capex": (
+                "initial_t0",
+                "constant_usd_per_target_w",
+            ),
+            "full_annual_om": (
+                "annual_year_end",
+                "constant_usd_per_target_w_year",
+            ),
+            "scheduled_replacement": (
+                "scheduled_year_end",
+                "constant_usd_per_target_w",
+            ),
+        }
+        expected_timing, expected_unit = category_contract[self.cost_category]
+        if self.timing != expected_timing or self.unit != expected_unit:
+            raise ValueError(
+                f"{self.cost_category} requires timing={expected_timing!r} and "
+                f"unit={expected_unit!r}"
+            )
+        if len(set(self.coverage_ids)) != len(self.coverage_ids):
+            raise ValueError("commercial cost coverage IDs must be unique per line")
+        if self.timing == "scheduled_year_end":
+            if not self.occurrence_years:
+                raise ValueError(
+                    "scheduled commercial costs require at least one occurrence year"
+                )
+            if self.occurrence_years != sorted(set(self.occurrence_years)):
+                raise ValueError(
+                    "scheduled commercial occurrence years must be unique and "
+                    "strictly increasing"
+                )
+        elif self.occurrence_years:
+            raise ValueError(
+                "only scheduled commercial costs may define occurrence years"
+            )
+        return self
+
+
+class StandaloneCommercialRequest(StrictTechnoeconomicRequest):
+    """Scale verified SolarEdge energy and a commercial cost stack to one size."""
+
+    technology: Literal["solaredge"]
+    target_capacity: FinitePositiveFloat
+    target_capacity_unit: Literal["kw", "mw"]
+    target_rating_basis: Literal[
+        "ac_operating_limit",
+        "dc_installed_nameplate",
+    ]
+    transfer_method: Literal["direct_capacity_scaling"]
+    transfer_rationale: NonemptyTechnoeconomicText
+    evidence: TechnoeconomicEvidenceRequest
+    cost_lines: list[StandaloneCommercialCostLineRequest] = Field(
+        min_length=1,
+        max_length=1000,
+    )
+
+    @model_validator(mode="after")
+    def validate_standalone_contract(self) -> "StandaloneCommercialRequest":
+        multiplier = 1_000.0 if self.target_capacity_unit == "kw" else 1_000_000.0
+        if not math.isfinite(self.target_capacity * multiplier):
+            raise ValueError("commercial target capacity is not representable in watts")
+        identifiers = [line.input_id for line in self.cost_lines]
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("standalone commercial cost input IDs must be unique")
+        categories = [line.cost_category for line in self.cost_lines]
+        for required in ("full_initial_capex", "full_annual_om"):
+            if categories.count(required) != 1:
+                raise ValueError(
+                    "standalone commercial full-system costs require exactly one "
+                    f"{required} line"
+                )
+        scheduled = [
+            line
+            for line in self.cost_lines
+            if line.cost_category == "scheduled_replacement"
+        ]
+        for index, left in enumerate(scheduled):
+            for right in scheduled[index + 1 :]:
+                if set(left.coverage_ids) & set(right.coverage_ids) and set(
+                    left.occurrence_years
+                ) & set(right.occurrence_years):
+                    raise ValueError(
+                        "scheduled commercial replacement coverage must not "
+                        "overlap at the same occurrence year"
+                    )
+        return self
+
+
+class PairedCommercialSystemRequest(StrictTechnoeconomicRequest):
+    """One complete commercial system cost stack and its energy evidence."""
+
+    technology: Literal["solectria", "solaredge"]
+    evidence: TechnoeconomicEvidenceRequest
+    cost_lines: list[StandaloneCommercialCostLineRequest] = Field(
+        min_length=1,
+        max_length=1000,
+    )
+
+    @model_validator(mode="after")
+    def validate_system_cost_stack(self) -> "PairedCommercialSystemRequest":
+        identifiers = [line.input_id for line in self.cost_lines]
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("paired commercial cost input IDs must be unique per system")
+        categories = [line.cost_category for line in self.cost_lines]
+        for required in ("full_initial_capex", "full_annual_om"):
+            if categories.count(required) != 1:
+                raise ValueError(
+                    "paired commercial full-system costs require exactly one "
+                    f"{required} line per system"
+                )
+        for index, left in enumerate(self.cost_lines):
+            for right in self.cost_lines[index + 1 :]:
+                if not set(left.coverage_ids) & set(right.coverage_ids):
+                    continue
+                both_scheduled = (
+                    left.cost_category == "scheduled_replacement"
+                    and right.cost_category == "scheduled_replacement"
+                )
+                if both_scheduled and not (
+                    set(left.occurrence_years) & set(right.occurrence_years)
+                ):
+                    continue
+                if both_scheduled:
+                    raise ValueError(
+                        "scheduled paired commercial replacement coverage must not "
+                        "overlap at the same occurrence year within one system"
+                    )
+                raise ValueError(
+                    "paired commercial coverage IDs must be disjoint between cost "
+                    "lines unless both are scheduled replacements at disjoint years"
+                )
+        return self
+
+
+class PairedCommercialRequest(StrictTechnoeconomicRequest):
+    """Scale both verified systems to one common commercial target."""
+
+    target_capacity: FinitePositiveFloat
+    target_capacity_unit: Literal["kw", "mw"]
+    target_rating_basis: Literal[
+        "ac_operating_limit",
+        "dc_installed_nameplate",
+    ]
+    transfer_method: Literal["direct_capacity_scaling"]
+    transfer_rationale: NonemptyTechnoeconomicText
+    evidence: TechnoeconomicEvidenceRequest
+    systems: list[PairedCommercialSystemRequest] = Field(
+        min_length=2,
+        max_length=2,
+    )
+
+    @model_validator(mode="after")
+    def validate_paired_contract(self) -> "PairedCommercialRequest":
+        multiplier = 1_000.0 if self.target_capacity_unit == "kw" else 1_000_000.0
+        if not math.isfinite(self.target_capacity * multiplier):
+            raise ValueError("paired commercial target capacity is not representable in watts")
+        technologies = [system.technology for system in self.systems]
+        if len(set(technologies)) != 2 or set(technologies) != {
+            "solectria",
+            "solaredge",
+        }:
+            raise ValueError(
+                "paired commercial systems require exactly one Solectria and one SolarEdge"
+            )
+        identifiers = [
+            line.input_id
+            for system in self.systems
+            for line in system.cost_lines
+        ]
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("paired commercial cost input IDs must be globally unique")
+        return self
+
+
 class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
     source_annual_job_id: Annotated[
         str,
@@ -692,21 +907,70 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
     n: Annotated[int, Field(ge=1, le=100_000)]
     seed: Annotated[int, Field(ge=0, le=(1 << 64) - 1)]
     cost_stack_completeness: Literal["full_system"]
-    cost_lines: list[TechnoeconomicCostLineRequest] = Field(min_length=1, max_length=1000)
+    # V4 owns a separate commercial cost stack.  Defaulting the legacy stack to
+    # empty lets that request omit it, while the validator below continues to
+    # require at least one legacy line for v1-v3.
+    cost_lines: list[TechnoeconomicCostLineRequest] = Field(
+        default_factory=list,
+        max_length=1000,
+    )
     finance: TechnoeconomicFinanceRequest
     shared_degradation: SharedDegradationRequest
     commercial_reference_design: CommercialReferenceDesignRequest | None = None
     commercial_transfer: CommercialEnergyTransferRequest | None = None
     commercial_scaling: CommercialScalingRequest | None = None
+    standalone_commercial: StandaloneCommercialRequest | None = None
+    paired_commercial: PairedCommercialRequest | None = None
 
     @model_validator(mode="after")
     def validate_submission_contract(self) -> "TechnoeconomicSubmissionRequest":
         input_ids = [line.input_id for line in self.cost_lines]
+        standalone_lines = (
+            self.standalone_commercial.cost_lines
+            if self.standalone_commercial is not None
+            else []
+        )
+        paired_lines = [
+            line
+            for system in (
+                self.paired_commercial.systems
+                if self.paired_commercial is not None
+                else []
+            )
+            for line in system.cost_lines
+        ]
+        commercial_lines = standalone_lines + paired_lines
+        commercial_input_ids = [line.input_id for line in commercial_lines]
+        if (
+            self.standalone_commercial is not None
+            and self.paired_commercial is not None
+        ):
+            raise ValueError(
+                "standalone_commercial and paired_commercial are mutually exclusive"
+            )
+        if (
+            self.standalone_commercial is None
+            and self.paired_commercial is None
+            and not self.cost_lines
+        ):
+            raise ValueError("v1-v3 technoeconomic requests require legacy cost lines")
+        if self.standalone_commercial is not None and self.cost_lines:
+            raise ValueError(
+                "standalone_commercial owns its commercial cost lines; legacy "
+                "top-level cost_lines must be empty"
+            )
+        if self.paired_commercial is not None and self.cost_lines:
+            raise ValueError(
+                "paired_commercial owns its system cost lines; legacy top-level "
+                "cost_lines must be empty"
+            )
         if len(set(input_ids)) != len(input_ids):
             raise ValueError("cost input IDs must be unique")
         reserved = {
             "finance.discount-rate",
             "energy.shared-degradation",
+            "energy.source.solectria_specific",
+            "energy.source.solaredge_specific",
             "transfer.baseline",
             "transfer.incremental",
             "commercial.marginal-cost-difference",
@@ -715,6 +979,24 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
         collision = reserved & set(input_ids)
         if collision:
             raise ValueError(f"cost input IDs use reserved identifiers: {sorted(collision)}")
+        standalone_input_ids = [line.input_id for line in standalone_lines]
+        standalone_collision = reserved & set(standalone_input_ids)
+        if standalone_collision:
+            raise ValueError(
+                "standalone commercial cost input IDs use reserved identifiers: "
+                f"{sorted(standalone_collision)}"
+            )
+        paired_input_ids = [line.input_id for line in paired_lines]
+        paired_collision = reserved & set(paired_input_ids)
+        if paired_collision:
+            raise ValueError(
+                "paired commercial cost input IDs use reserved identifiers: "
+                f"{sorted(paired_collision)}"
+            )
+        if set(input_ids) & set(standalone_input_ids):
+            raise ValueError("legacy and standalone commercial input IDs must be disjoint")
+        if set(input_ids) & set(paired_input_ids):
+            raise ValueError("legacy and paired commercial input IDs must be disjoint")
         if any(
             line.constant_dollar_cost_year != self.finance.constant_dollar_cost_year
             for line in self.cost_lines
@@ -722,10 +1004,26 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
             raise ValueError(
                 "every cost line must use the finance constant-dollar cost year"
             )
+        if any(
+            line.constant_dollar_cost_year != self.finance.constant_dollar_cost_year
+            for line in commercial_lines
+        ):
+            raise ValueError(
+                "every standalone commercial cost line must use the finance "
+                "constant-dollar cost year"
+            )
         if self.finance.real_discount_rate.unit != "real_fraction_per_year":
             raise ValueError("real discount rate must use real_fraction_per_year")
         if self.shared_degradation.annual_rate.unit != "real_fraction_per_year":
             raise ValueError("shared degradation must use real_fraction_per_year")
+        if any(
+            year > self.finance.project_life_years
+            for line in commercial_lines
+            for year in line.occurrence_years
+        ):
+            raise ValueError(
+                "scheduled commercial occurrence years must fall within project life"
+            )
 
         if self.basis == "solartac_site":
             if self.commercial_reference_design is not None or self.commercial_transfer is not None:
@@ -768,10 +1066,44 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                     "commercial_scaling requires SolarTAC "
                     "capacity_normalization='annual_applied_capacity_v1'"
                 )
+            if self.standalone_commercial is not None:
+                if self.commercial_scaling is not None:
+                    raise ValueError(
+                        "commercial_scaling and standalone_commercial are mutually exclusive"
+                    )
+                if (
+                    self.capacity_normalization
+                    != ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+                ):
+                    raise ValueError(
+                        "standalone_commercial requires SolarTAC "
+                        "capacity_normalization='annual_applied_capacity_v1'"
+                    )
+            if self.paired_commercial is not None:
+                if self.commercial_scaling is not None:
+                    raise ValueError(
+                        "commercial_scaling and paired_commercial are mutually exclusive"
+                    )
+                if (
+                    self.capacity_normalization
+                    != ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+                ):
+                    raise ValueError(
+                        "paired_commercial requires SolarTAC "
+                        "capacity_normalization='annual_applied_capacity_v1'"
+                    )
         else:
+            if self.standalone_commercial is not None:
+                raise ValueError(
+                    "standalone_commercial is only valid for the SolarTAC site basis"
+                )
             if self.commercial_scaling is not None:
                 raise ValueError(
                     "commercial_scaling is only valid for the SolarTAC site basis"
+                )
+            if self.paired_commercial is not None:
+                raise ValueError(
+                    "paired_commercial is only valid for the SolarTAC site basis"
                 )
             if self.capacity_normalization is not None:
                 raise ValueError(
@@ -798,7 +1130,7 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                     "commercial representative costs must declare a sourced per-Wdc basis"
                 )
 
-        declared_input_count = len(self.cost_lines) + 2
+        declared_input_count = len(self.cost_lines) + len(commercial_lines) + 2
         if self.commercial_transfer is not None:
             declared_input_count += 2
         if self.commercial_scaling is not None:
@@ -809,6 +1141,14 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
         if self.commercial_scaling is not None:
             estimated_realization_columns += (
                 TECHNOECONOMIC_COMMERCIAL_SCALING_REALIZATION_COLUMN_OVERHEAD
+            )
+        if self.standalone_commercial is not None:
+            estimated_realization_columns += (
+                TECHNOECONOMIC_STANDALONE_COMMERCIAL_REALIZATION_COLUMN_OVERHEAD
+            )
+        if self.paired_commercial is not None:
+            estimated_realization_columns += (
+                TECHNOECONOMIC_PAIRED_COMMERCIAL_REALIZATION_COLUMN_OVERHEAD
             )
         realization_export_cells = self.n * estimated_realization_columns
         if realization_export_cells > TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS:
@@ -834,6 +1174,7 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
             )
         if self.commercial_scaling is not None:
             distributions.append(self.commercial_scaling.marginal_cost_difference)
+        distributions.extend(line.distribution for line in commercial_lines)
         nonfixed_predictor_count = sum(
             distribution.family != "fixed"
             and not (
@@ -881,6 +1222,10 @@ __all__ = [
     "SameYearCurrencyNormalizationRequest",
     "StrictRequest",
     "StrictTechnoeconomicRequest",
+    "StandaloneCommercialCostLineRequest",
+    "StandaloneCommercialRequest",
+    "PairedCommercialRequest",
+    "PairedCommercialSystemRequest",
     "TechnoeconomicCostLineRequest",
     "TechnoeconomicDistributionRequest",
     "TechnoeconomicEvidenceRequest",
