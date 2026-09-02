@@ -2,15 +2,6 @@
             display: none;
         }
 
-        .collect-data-nav-button {
-            width: 100%;
-            border: 0;
-            background: transparent;
-            font: inherit;
-            text-align: left;
-            cursor: pointer;
-        }
-
         body.dashboard-mode-collect-data .collect-data-only {
             display: block;
         }
@@ -240,6 +231,7 @@
         }
 
         .collect-data-status-heading,
+        .collect-data-section-heading,
         .collect-data-quality-heading {
             display: flex;
             align-items: flex-start;
@@ -248,9 +240,16 @@
         }
 
         .collect-data-status-heading h3,
+        .collect-data-section-heading h3,
         .collect-data-quality-heading h3 {
             color: var(--text);
             font-size: 16px;
+        }
+
+        .collect-data-status-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
         #collectDataProgressText {
@@ -258,6 +257,47 @@
             font-size: 13px;
             font-weight: 800;
             font-variant-numeric: tabular-nums;
+        }
+
+        .collect-data-collapse-toggle {
+            width: 40px;
+            height: 40px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border: 1px solid var(--border-strong);
+            border-radius: 9px;
+            background: var(--surface);
+            color: var(--muted-strong);
+            cursor: pointer;
+            transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+        }
+
+        .collect-data-collapse-toggle:hover {
+            border-color: rgba(15, 118, 110, 0.42);
+            background: var(--accent-soft);
+            color: var(--accent-strong);
+        }
+
+        .collect-data-collapse-toggle:focus-visible {
+            outline: 3px solid rgba(15, 118, 110, 0.24);
+            outline-offset: 2px;
+        }
+
+        .collect-data-collapse-chevron {
+            display: block;
+            font-size: 20px;
+            font-weight: 800;
+            line-height: 1;
+            transition: transform 0.16s ease;
+        }
+
+        .collect-data-collapse-toggle[aria-expanded="false"] .collect-data-collapse-chevron {
+            transform: rotate(180deg);
+        }
+
+        .collect-data-status.collapsed {
+            padding-bottom: 16px;
         }
 
         .collect-data-progress {
@@ -309,6 +349,54 @@
             margin-top: 18px;
             padding-top: 18px;
             border-top: 1px solid var(--border);
+        }
+
+        .collect-data-plots {
+            margin-top: 18px;
+            padding-top: 18px;
+            border-top: 1px solid var(--border);
+        }
+
+        .collect-data-plot-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+            margin-top: 14px;
+        }
+
+        .collect-data-plot-card {
+            min-width: 0;
+            margin: 0;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface-muted);
+        }
+
+        .collect-data-plot-card figcaption {
+            padding: 11px 13px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .collect-data-plot-card img {
+            display: block;
+            width: 100%;
+            height: auto;
+            background: #ffffff;
+        }
+
+        .collect-data-plot-note {
+            margin-top: 12px;
+            padding: 11px 13px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-muted);
+            color: var(--muted-strong);
+            font-size: 12px;
+            line-height: 1.45;
         }
 
         .collect-data-quality-state[data-status="issues_detected"] {
@@ -386,8 +474,13 @@
             }
 
             .collect-data-window-grid,
-            .collect-data-summary {
+            .collect-data-summary,
+            .collect-data-plot-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .collect-data-status-actions {
+                align-self: flex-end;
             }
 
             .collect-data-actions .run-button {
@@ -396,7 +489,8 @@
         }
 
         @media (prefers-reduced-motion: reduce) {
-            .collect-data-progress span {
+            .collect-data-progress span,
+            .collect-data-collapse-chevron {
                 transition: none;
             }
         }

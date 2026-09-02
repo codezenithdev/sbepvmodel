@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/data-collections", tags=["data collection"])
 
 _COLLECTION_ID_PATTERN = re.compile(r"^collect_[a-f0-9]{24}$")
+_COLLECTION_STORAGE_PATTERN = re.compile(
+    r"^(collect_[a-f0-9]{24})(?:\.(?:json|csv)|\.(?:measured-ac-power|cumulative-energy)\.png)$"
+)
 _COLLECTION_LOCK = threading.RLock()
 _ACTIVE_STATES = frozenset({"queued", "collecting"})
 _TERMINAL_STATES = frozenset({"completed", "failed"})
@@ -38,6 +41,11 @@ _TEMP_RECORD_PATTERN = re.compile(
 )
 _TEMP_RECORD_GRACE = timedelta(minutes=5)
 _DOWNLOAD_PINS: dict[str, int] = {}
+_PLOT_ROUTE_TO_KEY = {
+    "measured-ac-power": "measured_ac_power",
+    "cumulative-energy": "cumulative_energy",
+}
+_PLOT_KEY_TO_ROUTE = {value: key for key, value in _PLOT_ROUTE_TO_KEY.items()}
 
 
 def _collection_dir() -> Path:
@@ -56,6 +64,22 @@ def _record_path(collection_id: str) -> Path:
 
 def _output_path(collection_id: str) -> Path:
     return _collection_dir() / f"{_validated_collection_id(collection_id)}.csv"
+
+
+def _plot_path(collection_id: str, plot_key: str) -> Path:
+    route_name = _PLOT_KEY_TO_ROUTE.get(str(plot_key))
+    if route_name is None:
+        raise ValueError("Unknown data collection plot key")
+    return _collection_dir() / (
+        f"{_validated_collection_id(collection_id)}.{route_name}.png"
+    )
+
+
+def _collection_output_paths(collection_id: str) -> list[Path]:
+    return [
+        _output_path(collection_id),
+        *[_plot_path(collection_id, key) for key in _PLOT_KEY_TO_ROUTE],
+    ]
 
 
 def _utc_now() -> str:
@@ -129,6 +153,11 @@ def _remove_partial_output(path: Path) -> None:
         logger.warning("Could not remove partial data collection output %s", path.name)
 
 
+def _remove_collection_outputs(collection_id: str) -> None:
+    for path in _collection_output_paths(collection_id):
+        _remove_partial_output(path)
+
+
 def _request_sha256(request: dict[str, Any]) -> str:
     encoded = json.dumps(
         request,
@@ -177,12 +206,19 @@ def _stored_records_locked() -> list[dict[str, Any]]:
 def _delete_collection_locked(collection_id: str) -> bool:
     if _DOWNLOAD_PINS.get(collection_id, 0):
         return False
-    output = _output_path(collection_id)
     record_path = _record_path(collection_id)
-    try:
-        output.unlink(missing_ok=True)
-    except OSError as exc:
-        logger.warning("Could not prune data collection %s: %s", collection_id, exc)
+    deleted_outputs = True
+    for output in _collection_output_paths(collection_id):
+        try:
+            output.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "Could not prune data collection artifact %s: %s",
+                output.name,
+                exc,
+            )
+            deleted_outputs = False
+    if not deleted_outputs:
         return False
     try:
         record_path.unlink(missing_ok=True)
@@ -200,17 +236,17 @@ def _collection_storage_sizes_locked() -> dict[str, int]:
         return {}
     sizes: dict[str, int] = {}
     try:
-        for suffix in ("json", "csv"):
-            for path in directory.glob(f"collect_*.{suffix}"):
-                collection_id = path.stem
-                if not _COLLECTION_ID_PATTERN.fullmatch(collection_id):
-                    continue
-                try:
-                    sizes[collection_id] = (
-                        sizes.get(collection_id, 0) + path.stat().st_size
-                    )
-                except OSError:
-                    continue
+        for path in directory.glob("collect_*"):
+            match = _COLLECTION_STORAGE_PATTERN.fullmatch(path.name)
+            if match is None:
+                continue
+            collection_id = match.group(1)
+            try:
+                sizes[collection_id] = (
+                    sizes.get(collection_id, 0) + path.stat().st_size
+                )
+            except OSError:
+                continue
     except OSError as exc:
         logger.warning("Could not inspect data collection storage: %s", exc)
     return sizes
@@ -366,7 +402,7 @@ def reconcile_interrupted_collections() -> int:
             if record.get("state") not in _ACTIVE_STATES:
                 continue
             collection_id = str(record["collection_id"])
-            _remove_partial_output(_output_path(collection_id))
+            _remove_collection_outputs(collection_id)
             record.update(
                 {
                     "state": "failed",
@@ -425,6 +461,37 @@ class _PinnedFileResponse(FileResponse):
             _release_download_pin(self._collection_id)
 
 
+def _verified_artifact_locked(path: Path, expected_sha256: str) -> tuple[Path, str]:
+    try:
+        resolved = path.resolve(strict=True)
+        root = _collection_dir().resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="The collected data artifact is unavailable.",
+        ) from exc
+    if root not in resolved.parents or not resolved.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail="The collected data artifact is unavailable.",
+        )
+    try:
+        actual_sha256 = _sha256_file(resolved)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="The collected data artifact could not be verified.",
+        ) from exc
+    if not expected_sha256 or not hmac.compare_digest(
+        actual_sha256, expected_sha256
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="The collected data artifact failed integrity verification.",
+        )
+    return resolved, actual_sha256
+
+
 def _public_record(record: dict[str, Any]) -> dict[str, Any]:
     public = {
         "collection_id": record["collection_id"],
@@ -445,6 +512,16 @@ def _public_record(record: dict[str, Any]) -> dict[str, Any]:
             public_result["download_url"] = (
                 f"/api/data-collections/{record['collection_id']}/download"
             )
+            plots = public_result.get("plots")
+            if isinstance(plots, dict):
+                for plot_key, plot in plots.items():
+                    route_name = _PLOT_KEY_TO_ROUTE.get(str(plot_key))
+                    if route_name is None or not isinstance(plot, dict):
+                        continue
+                    plot["url"] = (
+                        f"/api/data-collections/{record['collection_id']}/plots/"
+                        f"{route_name}"
+                    )
         public["result"] = public_result
     return public
 
@@ -524,6 +601,50 @@ def _run_collection(collection_id: str) -> None:
             data_groups=internal["data_groups"],
             output_csv=output,
         )
+        plot_outputs = {
+            plot_key: _plot_path(collection_id, plot_key)
+            for plot_key in _PLOT_KEY_TO_ROUTE
+        }
+        selected_power = any(
+            group in {"solaredge", "solectria"}
+            for group in internal["data_groups"]
+        )
+        try:
+            rendered_plots = historian_collection.render_measurement_plots(
+                csv_path=output,
+                output_paths=plot_outputs,
+                interval_seconds=internal["interval_seconds"],
+                to_time=internal["to_iso"],
+            )
+        except Exception:
+            logger.exception(
+                "Measured plot rendering failed for standalone collection %s",
+                collection_id,
+            )
+            for path in plot_outputs.values():
+                _remove_partial_output(path)
+            rendered_plots = {}
+        stored_plots: dict[str, dict[str, Any]] = {}
+        for plot_key, metadata in rendered_plots.items():
+            if plot_key not in plot_outputs or not isinstance(metadata, dict):
+                continue
+            path = plot_outputs[plot_key]
+            if not path.is_file():
+                continue
+            canonical = historian_collection.MEASUREMENT_PLOT_METADATA[plot_key]
+            stored_plots[plot_key] = {
+                "title": canonical["title"],
+                "alt": canonical["alt"],
+                "series": list(metadata.get("series") or []),
+                "sha256": _sha256_file(path),
+            }
+        plot_status = (
+            "ready"
+            if stored_plots
+            else "unavailable"
+            if selected_power
+            else "not_applicable"
+        )
         with _COLLECTION_LOCK:
             within_quota, removed = _enforce_storage_quota_locked(
                 protected_collection_id=collection_id
@@ -535,7 +656,7 @@ def _run_collection(collection_id: str) -> None:
                 collection_id,
             )
         if not within_quota:
-            _remove_partial_output(output)
+            _remove_collection_outputs(collection_id)
             _update_record(
                 collection_id,
                 state="failed",
@@ -560,11 +681,13 @@ def _run_collection(collection_id: str) -> None:
                 **result,
                 "filename": _download_filename(record),
                 "sha256": _sha256_file(output),
+                "plot_status": plot_status,
+                "plots": stored_plots,
             },
             error=None,
         )
     except bazefield.BazefieldError as exc:
-        _remove_partial_output(output)
+        _remove_collection_outputs(collection_id)
         logger.warning(
             "Bazefield retrieval failed for standalone collection %s: %s",
             collection_id,
@@ -584,7 +707,7 @@ def _run_collection(collection_id: str) -> None:
             },
         )
     except Exception:
-        _remove_partial_output(output)
+        _remove_collection_outputs(collection_id)
         logger.exception("Standalone data collection %s failed", collection_id)
         try:
             _update_record(
@@ -722,34 +845,9 @@ def download_data_collection(collection_id: str) -> FileResponse:
             )
         result = record.get("result") or {}
         expected_sha256 = str(result.get("sha256") or "")
-        path = _output_path(collection_id)
-        try:
-            resolved = path.resolve(strict=True)
-            root = _collection_dir().resolve(strict=True)
-        except OSError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail="The collected data file is unavailable.",
-            ) from exc
-        if root not in resolved.parents or not resolved.is_file():
-            raise HTTPException(
-                status_code=409,
-                detail="The collected data file is unavailable.",
-            )
-        try:
-            actual_sha256 = _sha256_file(resolved)
-        except OSError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail="The collected data file could not be verified.",
-            ) from exc
-        if not expected_sha256 or not hmac.compare_digest(
-            actual_sha256, expected_sha256
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail="The collected data file failed integrity verification.",
-            )
+        resolved, actual_sha256 = _verified_artifact_locked(
+            _output_path(collection_id), expected_sha256
+        )
         _pin_download_locked(collection_id)
         filename = str(result.get("filename") or _download_filename(record))
     try:
@@ -758,6 +856,52 @@ def download_data_collection(collection_id: str) -> FileResponse:
             collection_id=collection_id,
             media_type="text/csv",
             filename=filename,
+            headers={
+                "Cache-Control": "private, no-store",
+                "ETag": f'"{actual_sha256}"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except Exception:
+        _release_download_pin(collection_id)
+        raise
+
+
+@router.get("/{collection_id}/plots/{plot_name}", response_class=FileResponse)
+def get_data_collection_plot(
+    collection_id: str,
+    plot_name: str,
+) -> FileResponse:
+    plot_key = _PLOT_ROUTE_TO_KEY.get(str(plot_name))
+    if plot_key is None:
+        raise HTTPException(status_code=404, detail="Unknown data collection plot")
+    with _COLLECTION_LOCK:
+        record = _load_record(collection_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Unknown data collection id")
+        if record.get("state") != "completed":
+            raise HTTPException(
+                status_code=409,
+                detail="The data collection plot is not available.",
+            )
+        result = record.get("result") or {}
+        plots = result.get("plots") or {}
+        plot = plots.get(plot_key) if isinstance(plots, dict) else None
+        if not isinstance(plot, dict):
+            raise HTTPException(
+                status_code=404,
+                detail="The data collection plot is not available.",
+            )
+        resolved, actual_sha256 = _verified_artifact_locked(
+            _plot_path(collection_id, plot_key),
+            str(plot.get("sha256") or ""),
+        )
+        _pin_download_locked(collection_id)
+    try:
+        return _PinnedFileResponse(
+            str(resolved),
+            collection_id=collection_id,
+            media_type="image/png",
             headers={
                 "Cache-Control": "private, no-store",
                 "ETag": f'"{actual_sha256}"',

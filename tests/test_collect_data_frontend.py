@@ -25,10 +25,15 @@ class CollectDataFrontendTests(unittest.TestCase):
 
     def test_standalone_collection_surface_assembles_once(self) -> None:
         for element_id in (
-            "collectDataNavLink",
+            "collectDataTab",
             "collectDataPanel",
             "collectDataForm",
             "collectDataStatus",
+            "collectDataCollapseToggle",
+            "collectDataStatusContent",
+            "collectDataPlots",
+            "collectDataAcPowerPlot",
+            "collectDataEnergyPlot",
             "collectDataQuality",
             "collectDataDownload",
         ):
@@ -39,10 +44,14 @@ class CollectDataFrontendTests(unittest.TestCase):
         self.assertIn('role="status"', self.markup)
         self.assertIn('role="alert"', self.markup)
         self.assertIn(
-            'id="collectDataNavLink" type="button" aria-label="Collect data" aria-controls="collectDataPanel"',
+            'id="collectDataTab" type="button" aria-pressed="false" aria-controls="collectDataPanel">Data Collection</button>',
             self.assembled,
         )
-        self.assertNotIn('id="collectDataTab"', self.assembled)
+        self.assertNotIn('id="collectDataNavLink"', self.assembled)
+        self.assertLess(
+            self.assembled.index('id="collectDataTab"'),
+            self.assembled.index('id="validationTab"'),
+        )
         for workflow_tab in (
             "validationTab",
             "annualTab",
@@ -50,6 +59,17 @@ class CollectDataFrontendTests(unittest.TestCase):
             "autonomyTab",
         ):
             self.assertEqual(self.assembled.count(f'id="{workflow_tab}"'), 1)
+
+    def test_requested_defaults_plots_and_collapse_are_wired(self) -> None:
+        self.assertIn("fromDate.value = '2025-12-12'", self.script)
+        self.assertIn("toDate.value = today", self.script)
+        self.assertIn("'/plots/'", self.script)
+        self.assertIn("measured-ac-power", self.script)
+        self.assertIn("cumulative-energy", self.script)
+        self.assertIn("collectDataSetCollapsed", self.script)
+        self.assertIn('aria-expanded="true"', self.markup)
+        self.assertIn(".collect-data-collapse-toggle", self.styles)
+        self.assertIn(".collect-data-plot-grid", self.styles)
 
     def test_script_uses_only_collection_endpoints_and_safe_rendering(self) -> None:
         self.assertIn("'/api/data-collections'", self.script)

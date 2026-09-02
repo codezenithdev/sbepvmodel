@@ -128,7 +128,7 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertLess(names.index(base[0]), names.index(redesign[0]))
 
     def test_autonomy_sources_assemble_exactly_once_and_preserve_existing_tabs(self):
-        """The fourth mode is additive and every canonical partial has one copy."""
+        """Each added mode preserves the others and every canonical partial has one copy."""
 
         assembled = dashboard.assemble_dashboard_html(PROJECT_ROOT)
         frontend = PROJECT_ROOT / "frontend"
@@ -155,6 +155,7 @@ class DashboardBuildTests(unittest.TestCase):
                 self.assertEqual(assembled.count(source), 1)
 
         tab_ids = (
+            "collectDataTab",
             "validationTab",
             "annualTab",
             "technoeconomicTab",
@@ -168,6 +169,7 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
 
         for label in (
+            "Data Collection",
             "Model Calibration",
             "Annual Simulation",
             "Technoeconomic Analysis",

@@ -137,6 +137,12 @@ export function isAllowedApiPath(path: string[]): boolean {
   if (path.length === 4) {
     return (
       (
+        path[0] === "data-collections" &&
+        isCollectionId(path[1]) &&
+        path[2] === "plots" &&
+        ["measured-ac-power", "cumulative-energy"].includes(path[3])
+      ) ||
+      (
         path[0] === "agent" &&
         isSafeId(path[2]) &&
         (

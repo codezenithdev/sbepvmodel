@@ -15,6 +15,8 @@
             progress: document.getElementById('collectDataProgress'),
             progressFill: document.getElementById('collectDataProgressFill'),
             progressText: document.getElementById('collectDataProgressText'),
+            collapseToggle: document.getElementById('collectDataCollapseToggle'),
+            statusContent: document.getElementById('collectDataStatusContent'),
             summary: document.getElementById('collectDataSummary'),
             rowCount: document.getElementById('collectDataRowCount'),
             seriesCount: document.getElementById('collectDataSeriesCount'),
@@ -23,6 +25,12 @@
             quality: document.getElementById('collectDataQuality'),
             qualityState: document.getElementById('collectDataQualityState'),
             issueList: document.getElementById('collectDataIssueList'),
+            plots: document.getElementById('collectDataPlots'),
+            acPowerCard: document.getElementById('collectDataAcPowerCard'),
+            acPowerPlot: document.getElementById('collectDataAcPowerPlot'),
+            energyCard: document.getElementById('collectDataEnergyCard'),
+            energyPlot: document.getElementById('collectDataEnergyPlot'),
+            plotNote: document.getElementById('collectDataPlotNote'),
             download: document.getElementById('collectDataDownload'),
         });
         let collectDataPollTimer = null;
@@ -45,7 +53,9 @@
                 tab.classList.remove('active');
                 tab.setAttribute('aria-pressed', 'false');
             });
-            setActiveNav(collectDataNavLink);
+            collectDataTab.classList.add('active');
+            collectDataTab.setAttribute('aria-pressed', 'true');
+            setActiveNav(operationsNavLink);
         }
 
         function collectDataRestoreWorkflowView() {
@@ -74,14 +84,43 @@
             });
         }
 
+        function collectDataSetCollapsed(collapsed) {
+            const shouldCollapse = !!collapsed;
+            if (shouldCollapse && collectDataElements.statusContent.contains(document.activeElement)) {
+                collectDataElements.collapseToggle.focus({ preventScroll: true });
+            }
+            collectDataElements.statusContent.hidden = shouldCollapse;
+            collectDataElements.status.classList.toggle('collapsed', shouldCollapse);
+            collectDataElements.collapseToggle.setAttribute('aria-expanded', String(!shouldCollapse));
+            const action = shouldCollapse ? 'Expand' : 'Collapse';
+            const label = action + ' collection details';
+            collectDataElements.collapseToggle.setAttribute('aria-label', label);
+            collectDataElements.collapseToggle.title = label;
+        }
+
         function collectDataResetDownload() {
             collectDataElements.download.hidden = true;
             collectDataElements.download.removeAttribute('href');
             collectDataElements.download.removeAttribute('download');
         }
 
+        function collectDataResetPlots() {
+            collectDataElements.plots.hidden = true;
+            collectDataElements.acPowerCard.hidden = true;
+            collectDataElements.energyCard.hidden = true;
+            collectDataElements.plotNote.hidden = true;
+            collectDataElements.plotNote.textContent = '';
+            collectDataElements.acPowerPlot.removeAttribute('src');
+            delete collectDataElements.acPowerPlot.dataset.collectionId;
+            collectDataElements.energyPlot.removeAttribute('src');
+            delete collectDataElements.energyPlot.dataset.collectionId;
+        }
+
         function collectDataClearResult() {
             collectDataResetDownload();
+            collectDataResetPlots();
+            collectDataSetCollapsed(false);
+            collectDataElements.collapseToggle.hidden = true;
             collectDataElements.status.hidden = true;
             collectDataElements.summary.hidden = true;
             collectDataElements.quality.hidden = true;
@@ -146,6 +185,46 @@
             collectDataElements.issueList.replaceChildren(...items);
         }
 
+        function collectDataRenderPlots(record, result) {
+            collectDataResetPlots();
+            collectDataElements.plots.hidden = false;
+            const collectionId = String(record?.collection_id || '');
+            const safeId = /^collect_[a-f0-9]{24}$/.test(collectionId) ? collectionId : null;
+            const plots = result?.plots && typeof result.plots === 'object' ? result.plots : {};
+            const definitions = [
+                {
+                    key: 'measured_ac_power',
+                    route: 'measured-ac-power',
+                    card: collectDataElements.acPowerCard,
+                    image: collectDataElements.acPowerPlot,
+                },
+                {
+                    key: 'cumulative_energy',
+                    route: 'cumulative-energy',
+                    card: collectDataElements.energyCard,
+                    image: collectDataElements.energyPlot,
+                },
+            ];
+            let rendered = 0;
+            if (safeId) {
+                definitions.forEach((definition) => {
+                    const metadata = plots[definition.key];
+                    const digest = String(metadata?.sha256 || '');
+                    if (!/^[a-f0-9]{64}$/.test(digest)) return;
+                    definition.image.dataset.collectionId = safeId;
+                    definition.image.src = '/api/data-collections/' + encodeURIComponent(safeId)
+                        + '/plots/' + definition.route + '?v=' + encodeURIComponent(digest.slice(0, 16));
+                    definition.card.hidden = false;
+                    rendered += 1;
+                });
+            }
+            if (rendered) return;
+            collectDataElements.plotNote.hidden = false;
+            collectDataElements.plotNote.textContent = result?.plot_status === 'not_applicable'
+                ? 'Select SolarEdge or Solectria power to generate measured power and energy plots.'
+                : 'Measured plots were unavailable for this collection. The CSV and quality report are still available.';
+        }
+
         function collectDataRender(record) {
             collectDataElements.status.hidden = false;
             collectDataElements.stateLabel.textContent = collectDataStateText(record?.state);
@@ -160,7 +239,9 @@
                 collectDataElements.seriesCount.textContent = Number((result.series || []).length).toLocaleString();
                 collectDataElements.completeness.textContent = Number(summary.usable_value_completeness_percent || 0).toLocaleString(undefined, { maximumFractionDigits: 1 }) + '%';
                 collectDataElements.issueCount.textContent = Number(quality.issue_count || 0).toLocaleString();
+                collectDataRenderPlots(record, result);
                 collectDataRenderQuality(quality);
+                collectDataElements.collapseToggle.hidden = false;
                 const safeId = /^collect_[a-f0-9]{24}$/.test(String(record.collection_id || ''))
                     ? record.collection_id
                     : null;
@@ -336,16 +417,31 @@
 
         function collectDataApplyDefaults() {
             const today = dateIsoInTimeZone();
-            collectDataElements.fromDate.value = shiftIsoDate(today, -1);
+            collectDataElements.fromDate.value = '2025-12-12';
             collectDataElements.toDate.value = today;
             collectDataElements.fromDate.max = today;
             collectDataElements.toDate.max = today;
         }
 
-        collectDataNavLink.addEventListener('click', openCollectDataView);
+        function collectDataHandlePlotError(image, card) {
+            image.addEventListener('error', () => {
+                if (image.dataset.collectionId !== collectDataActiveId) return;
+                card.hidden = true;
+                collectDataElements.plotNote.hidden = false;
+                collectDataElements.plotNote.textContent = 'One or more measured plots could not be loaded. The CSV and quality report are still available.';
+            });
+        }
+
+        collectDataTab.addEventListener('click', openCollectDataView);
         [operationsNavLink, pvModelNavLink].forEach((link) => {
             link.addEventListener('click', collectDataRestoreWorkflowView, true);
         });
+        collectDataElements.collapseToggle.addEventListener('click', () => {
+            const expanded = collectDataElements.collapseToggle.getAttribute('aria-expanded') === 'true';
+            collectDataSetCollapsed(expanded);
+        });
+        collectDataHandlePlotError(collectDataElements.acPowerPlot, collectDataElements.acPowerCard);
+        collectDataHandlePlotError(collectDataElements.energyPlot, collectDataElements.energyCard);
         collectDataElements.form.addEventListener('submit', collectDataSubmit);
         collectDataElements.form.addEventListener('input', collectDataInvalidateResult);
         collectDataElements.form.addEventListener('change', collectDataInvalidateResult);

@@ -66,6 +66,21 @@ class CollectDataApiTests(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def _fake_plots(**kwargs):
+        outputs = kwargs["output_paths"]
+        for plot_key, output in outputs.items():
+            Path(output).write_bytes(b"\x89PNG\r\n\x1a\n" + plot_key.encode("ascii"))
+        return {
+            plot_key: {
+                **collect_data.historian_collection.MEASUREMENT_PLOT_METADATA[
+                    plot_key
+                ],
+                "series": ["solaredge_measured_power"],
+            }
+            for plot_key in outputs
+        }
+
     def _request(self, **overrides):
         payload = {
             "from_date": "2026-06-01",
@@ -134,11 +149,18 @@ class CollectDataApiTests(unittest.TestCase):
         return record, output
 
     def test_collection_status_and_verified_download_are_isolated(self) -> None:
-        with patch.object(
-            collect_data.historian_collection,
-            "collect_historian_data",
-            side_effect=self._fake_collection,
-        ) as historian_call:
+        with (
+            patch.object(
+                collect_data.historian_collection,
+                "collect_historian_data",
+                side_effect=self._fake_collection,
+            ) as historian_call,
+            patch.object(
+                collect_data.historian_collection,
+                "render_measurement_plots",
+                side_effect=self._fake_plots,
+            ) as plot_call,
+        ):
             created = self.client.post("/api/data-collections", json=self._request())
 
         self.assertEqual(created.status_code, 202, created.text)
@@ -149,6 +171,8 @@ class CollectDataApiTests(unittest.TestCase):
         self.assertEqual(call["from_time"], "2026-06-01T06:00:00")
         self.assertEqual(call["to_time"], "2026-06-01T07:00:00")
         self.assertEqual(call["data_groups"], ["solaredge", "weather"])
+        plot_call.assert_called_once()
+        self.assertEqual(plot_call.call_args.kwargs["interval_seconds"], 3600)
         self.assertEqual(dict(state.JOBS), self.jobs_before)
 
         status = self.client.get(f"/api/data-collections/{collection_id}")
@@ -159,6 +183,15 @@ class CollectDataApiTests(unittest.TestCase):
         self.assertEqual(
             payload["result"]["download_url"],
             f"/api/data-collections/{collection_id}/download",
+        )
+        self.assertEqual(payload["result"]["plot_status"], "ready")
+        self.assertEqual(
+            payload["result"]["plots"]["measured_ac_power"]["url"],
+            f"/api/data-collections/{collection_id}/plots/measured-ac-power",
+        )
+        self.assertEqual(
+            payload["result"]["plots"]["cumulative_energy"]["url"],
+            f"/api/data-collections/{collection_id}/plots/cumulative-energy",
         )
         encoded = status.text
         self.assertNotIn(str(self.temporary), encoded)
@@ -174,6 +207,33 @@ class CollectDataApiTests(unittest.TestCase):
         self.assertEqual(download.headers["x-content-type-options"], "nosniff")
         self.assertIn("solaredge_measured_power", download.text)
         self.assertNotIn(collection_id, collect_data._DOWNLOAD_PINS)
+
+        for plot_name in ("measured-ac-power", "cumulative-energy"):
+            with self.subTest(plot_name=plot_name):
+                plot_response = self.client.get(
+                    f"/api/data-collections/{collection_id}/plots/{plot_name}"
+                )
+                self.assertEqual(plot_response.status_code, 200)
+                self.assertEqual(plot_response.headers["content-type"], "image/png")
+                self.assertTrue(plot_response.content.startswith(b"\x89PNG"))
+                self.assertEqual(
+                    plot_response.headers["x-content-type-options"], "nosniff"
+                )
+                self.assertNotIn(collection_id, collect_data._DOWNLOAD_PINS)
+
+        unknown_plot = self.client.get(
+            f"/api/data-collections/{collection_id}/plots/predicted-power"
+        )
+        self.assertEqual(unknown_plot.status_code, 404, unknown_plot.text)
+
+        collect_data._plot_path(collection_id, "measured_ac_power").write_bytes(
+            b"tampered plot"
+        )
+        tampered_plot = self.client.get(
+            f"/api/data-collections/{collection_id}/plots/measured-ac-power"
+        )
+        self.assertEqual(tampered_plot.status_code, 409, tampered_plot.text)
+        self.assertNotIn(str(self.temporary), tampered_plot.text)
 
         malformed_range = self.client.get(
             f"/api/data-collections/{collection_id}/download",
@@ -198,6 +258,36 @@ class CollectDataApiTests(unittest.TestCase):
         )
         self.assertEqual(tampered.status_code, 409, tampered.text)
         self.assertNotIn(str(self.temporary), tampered.text)
+
+    def test_plot_render_failure_does_not_discard_collected_csv(self) -> None:
+        with (
+            patch.object(
+                collect_data.historian_collection,
+                "collect_historian_data",
+                side_effect=self._fake_collection,
+            ),
+            patch.object(
+                collect_data.historian_collection,
+                "render_measurement_plots",
+                side_effect=RuntimeError("renderer unavailable"),
+            ),
+        ):
+            created = self.client.post("/api/data-collections", json=self._request())
+
+        self.assertEqual(created.status_code, 202, created.text)
+        collection_id = created.json()["collection_id"]
+        status = self.client.get(f"/api/data-collections/{collection_id}")
+        self.assertEqual(status.status_code, 200, status.text)
+        payload = status.json()
+        self.assertEqual(payload["state"], "completed")
+        self.assertEqual(payload["result"]["plot_status"], "unavailable")
+        self.assertEqual(payload["result"]["plots"], {})
+
+        download = self.client.get(
+            f"/api/data-collections/{collection_id}/download"
+        )
+        self.assertEqual(download.status_code, 200, download.text)
+        self.assertIn("solaredge_measured_power", download.text)
 
     def test_invalid_selection_and_window_fail_before_collection(self) -> None:
         with patch.object(
@@ -304,12 +394,17 @@ class CollectDataApiTests(unittest.TestCase):
         interrupted = self._store_record(interrupted_id, state_name="collecting")
         partial = collect_data._output_path(interrupted_id)
         partial.write_text("partial", encoding="utf-8")
+        partial_plot = collect_data._plot_path(
+            interrupted_id, "measured_ac_power"
+        )
+        partial_plot.write_bytes(b"partial plot")
 
         self.assertEqual(collect_data.reconcile_interrupted_collections(), 1)
         recovered = collect_data._load_record(interrupted_id)
         self.assertEqual(recovered["state"], "failed")
         self.assertEqual(recovered["error"]["code"], "collection_interrupted")
         self.assertFalse(partial.exists())
+        self.assertFalse(partial_plot.exists())
         self.assertEqual(dict(state.JOBS), self.jobs_before)
 
         old_id = "collect_333333333333333333333333"
@@ -329,6 +424,8 @@ class CollectDataApiTests(unittest.TestCase):
         collection_id = "collect_444444444444444444444444"
         self._store_record(collection_id, state_name="failed")
         record_path = collect_data._record_path(collection_id)
+        plot_path = collect_data._plot_path(collection_id, "cumulative_energy")
+        plot_path.write_bytes(b"plot bytes count toward the quota")
         self.assertGreater(record_path.stat().st_size, 1)
 
         with patch.object(config, "DATA_COLLECTION_MAX_STORAGE_BYTES", 1):
@@ -336,6 +433,7 @@ class CollectDataApiTests(unittest.TestCase):
 
         self.assertEqual(removed, 1)
         self.assertFalse(record_path.exists())
+        self.assertFalse(plot_path.exists())
 
     def test_retained_record_cap_prunes_oldest_terminal_record(self) -> None:
         older_id = "collect_555555555555555555555555"

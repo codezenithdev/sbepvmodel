@@ -31,6 +31,8 @@
 
         function switchMode(mode, persist = true) {
             document.body.classList.remove('dashboard-mode-collect-data');
+            collectDataTab.classList.remove('active');
+            collectDataTab.setAttribute('aria-pressed', 'false');
             activeView = ['annual', 'technoeconomic', 'autonomy'].includes(mode) ? mode : 'validation';
             activeMode = activeView === 'validation' ? 'validation' : 'annual';
             const annual = activeView === 'annual';
@@ -94,7 +96,7 @@
         }
 
         function setActiveNav(activeLink) {
-            [operationsNavLink, collectDataNavLink, pvModelNavLink].forEach((link) => {
+            [operationsNavLink, pvModelNavLink].forEach((link) => {
                 const active = link === activeLink;
                 link.classList.toggle('active', active);
                 if (active) {

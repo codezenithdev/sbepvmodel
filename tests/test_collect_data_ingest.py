@@ -183,6 +183,63 @@ class CollectDataIngestTests(unittest.TestCase):
         self.assertEqual(summary["usable_value_completeness_percent"], 0.0)
         self.assertEqual(summary["nonfinite_value_count"], 1)
 
+    def test_measurement_plots_contain_only_available_measured_series(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "collected.csv"
+            source.write_text(
+                "timestamp,solaredge_measured_power,solectria_measured_power,dni\n"
+                "2026-06-01 06:00:00,1000,2000,500\n"
+                "2026-06-01 07:00:00,3000,4000,600\n",
+                encoding="utf-8",
+            )
+            outputs = {
+                "measured_ac_power": root / "measured.png",
+                "cumulative_energy": root / "energy.png",
+            }
+
+            rendered = collection.render_measurement_plots(
+                csv_path=source,
+                output_paths=outputs,
+                interval_seconds=3600,
+                to_time="2026-06-01T08:00:00",
+            )
+
+            self.assertEqual(set(rendered), set(outputs))
+            for metadata in rendered.values():
+                self.assertEqual(
+                    metadata["series"],
+                    [
+                        "solaredge_measured_power",
+                        "solectria_measured_power",
+                    ],
+                )
+            for output in outputs.values():
+                self.assertTrue(output.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_measurement_plots_are_omitted_without_measured_power(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "weather.csv"
+            source.write_text(
+                "timestamp,dni\n2026-06-01 06:00:00,500\n",
+                encoding="utf-8",
+            )
+            outputs = {
+                "measured_ac_power": root / "measured.png",
+                "cumulative_energy": root / "energy.png",
+            }
+
+            rendered = collection.render_measurement_plots(
+                csv_path=source,
+                output_paths=outputs,
+                interval_seconds=3600,
+                to_time="2026-06-01T07:00:00",
+            )
+
+            self.assertEqual(rendered, {})
+            self.assertTrue(all(not output.exists() for output in outputs.values()))
+
     def test_quality_decoder_uses_composite_primary_bits(self) -> None:
         self.assertEqual(collection.primary_quality_label(524480), "good")
         self.assertEqual(collection.primary_quality_label(524352), "uncertain")

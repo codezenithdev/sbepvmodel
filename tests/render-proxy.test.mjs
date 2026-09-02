@@ -97,12 +97,16 @@ test("allows only exact standalone data collection routes", () => {
     ["data-collections"],
     ["data-collections", collectionId],
     ["data-collections", collectionId, "download"],
+    ["data-collections", collectionId, "plots", "measured-ac-power"],
+    ["data-collections", collectionId, "plots", "cumulative-energy"],
   ]) {
     assert.equal(isAllowedApiPath(path), true, `expected allowed: ${path.join("/")}`);
   }
   for (const path of [
     ["data-collections", "unsafe"],
     ["data-collections", collectionId, "delete"],
+    ["data-collections", collectionId, "plots", "predicted-power"],
+    ["data-collections", collectionId, "plots", "measured-ac-power", "extra"],
     ["data-collections", collectionId, "download", "extra"],
     ["data-collections", "collect_0123456789ABCDEF01234567"],
   ]) {

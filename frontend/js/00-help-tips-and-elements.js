@@ -92,6 +92,7 @@
         const iamAr = document.getElementById('iamAr');
         const iamArGroup = document.getElementById('iamArGroup');
         const excelLink = document.getElementById('excelLink');
+        const collectDataTab = document.getElementById('collectDataTab');
         const validationTab = document.getElementById('validationTab');
         const annualTab = document.getElementById('annualTab');
         const technoeconomicTab = document.getElementById('technoeconomicTab');
@@ -369,7 +370,6 @@
             distributionRangeMeta: document.getElementById('annualDistributionRangeMeta'),
         };
         const operationsNavLink = document.getElementById('operationsNavLink');
-        const collectDataNavLink = document.getElementById('collectDataNavLink');
         const pvModelNavLink = document.getElementById('pvModelNavLink');
         const STORAGE_KEY = 'sb-energy-dashboard-state-v1';
         const CHAT_HISTORY_STORAGE_KEY = 'sb-energy-solar-agent-conversations-v1';

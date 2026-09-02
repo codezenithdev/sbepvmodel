@@ -20,7 +20,7 @@
                         <div class="collect-data-window-grid">
                             <label class="control-field">
                                 <span class="date-label">Start date</span>
-                                <input class="date-input" id="collectDataFromDate" type="date" required>
+                                <input class="date-input" id="collectDataFromDate" type="date" value="2025-12-12" required>
                             </label>
                             <label class="control-field">
                                 <span class="date-label">Start time (24-hour)</span>
@@ -87,30 +87,59 @@
                             <p class="collect-data-status-label" id="collectDataStateLabel">Queued</p>
                             <h3 id="collectDataStage">Collection queued</h3>
                         </div>
-                        <span id="collectDataProgressText">0%</span>
-                    </div>
-                    <div class="collect-data-progress" id="collectDataProgress" role="progressbar" aria-label="Data collection progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                        <span id="collectDataProgressFill"></span>
-                    </div>
-
-                    <dl class="collect-data-summary" id="collectDataSummary" hidden>
-                        <div><dt>Rows</dt><dd id="collectDataRowCount">&mdash;</dd></div>
-                        <div><dt>Series</dt><dd id="collectDataSeriesCount">&mdash;</dd></div>
-                        <div><dt>Usable-value completeness</dt><dd id="collectDataCompleteness">&mdash;</dd></div>
-                        <div><dt>Quality issues</dt><dd id="collectDataIssueCount">&mdash;</dd></div>
-                    </dl>
-
-                    <section class="collect-data-quality" id="collectDataQuality" aria-labelledby="collectDataQualityHeading" hidden>
-                        <div class="collect-data-quality-heading">
-                            <div>
-                                <p class="collect-data-eyebrow">Read-only screening</p>
-                                <h3 id="collectDataQualityHeading">Data-quality report</h3>
-                            </div>
-                            <span class="collect-data-quality-state" id="collectDataQualityState"></span>
+                        <div class="collect-data-status-actions">
+                            <span id="collectDataProgressText">0%</span>
+                            <button class="collect-data-collapse-toggle" id="collectDataCollapseToggle" type="button"
+                                aria-expanded="true" aria-controls="collectDataStatusContent"
+                                aria-label="Collapse collection details" title="Collapse collection details" hidden>
+                                <span class="collect-data-collapse-chevron" aria-hidden="true">&uarr;</span>
+                            </button>
                         </div>
-                        <ul class="collect-data-issue-list" id="collectDataIssueList"></ul>
-                    </section>
+                    </div>
+                    <div class="collect-data-status-content" id="collectDataStatusContent">
+                        <div class="collect-data-progress" id="collectDataProgress" role="progressbar" aria-label="Data collection progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                            <span id="collectDataProgressFill"></span>
+                        </div>
 
-                    <a class="download-link collect-data-download" id="collectDataDownload" href="#" download hidden>Download collected CSV</a>
+                        <dl class="collect-data-summary" id="collectDataSummary" hidden>
+                            <div><dt>Rows</dt><dd id="collectDataRowCount">&mdash;</dd></div>
+                            <div><dt>Series</dt><dd id="collectDataSeriesCount">&mdash;</dd></div>
+                            <div><dt>Usable-value completeness</dt><dd id="collectDataCompleteness">&mdash;</dd></div>
+                            <div><dt>Quality issues</dt><dd id="collectDataIssueCount">&mdash;</dd></div>
+                        </dl>
+
+                        <section class="collect-data-plots" id="collectDataPlots" aria-labelledby="collectDataPlotsHeading" hidden>
+                            <div class="collect-data-section-heading">
+                                <div>
+                                    <p class="collect-data-eyebrow">Measured data only</p>
+                                    <h3 id="collectDataPlotsHeading">Power and energy</h3>
+                                </div>
+                            </div>
+                            <div class="collect-data-plot-grid" id="collectDataPlotGrid">
+                                <figure class="collect-data-plot-card" id="collectDataAcPowerCard" hidden>
+                                    <figcaption>Measured AC power</figcaption>
+                                    <img id="collectDataAcPowerPlot" alt="Measured AC power for the selected systems">
+                                </figure>
+                                <figure class="collect-data-plot-card" id="collectDataEnergyCard" hidden>
+                                    <figcaption>Measured cumulative energy</figcaption>
+                                    <img id="collectDataEnergyPlot" alt="Cumulative measured energy for the selected systems">
+                                </figure>
+                            </div>
+                            <p class="collect-data-plot-note" id="collectDataPlotNote" hidden></p>
+                        </section>
+
+                        <section class="collect-data-quality" id="collectDataQuality" aria-labelledby="collectDataQualityHeading" hidden>
+                            <div class="collect-data-quality-heading">
+                                <div>
+                                    <p class="collect-data-eyebrow">Read-only screening</p>
+                                    <h3 id="collectDataQualityHeading">Data-quality report</h3>
+                                </div>
+                                <span class="collect-data-quality-state" id="collectDataQualityState"></span>
+                            </div>
+                            <ul class="collect-data-issue-list" id="collectDataIssueList"></ul>
+                        </section>
+
+                        <a class="download-link collect-data-download" id="collectDataDownload" href="#" download hidden>Download collected CSV</a>
+                    </div>
                 </section>
             </section>

@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 from sbepv.ingest import bazefield
 
@@ -57,6 +58,22 @@ DOMAIN_BOUNDS = {
     "temp_air": (-40.0, 60.0),
     "wind_speed": (-0.1, 50.0),
 }
+
+MEASUREMENT_PLOT_METADATA = {
+    "measured_ac_power": {
+        "title": "Measured AC power",
+        "alt": "Measured AC power for the selected SolarEdge and Solectria series",
+    },
+    "cumulative_energy": {
+        "title": "Measured cumulative energy",
+        "alt": "Cumulative measured energy for the selected SolarEdge and Solectria series",
+    },
+}
+_MEASURED_POWER_SERIES = (
+    ("solaredge_measured_power", "SolarEdge measured", "#dc2626"),
+    ("solectria_measured_power", "Solectria measured", "#2563eb"),
+)
+_MAX_PLOT_POINTS = 4_000
 
 _PRIMARY_QUALITY_MASK = 0xC0
 _PRIMARY_GOOD = 0xC0
@@ -378,6 +395,128 @@ def _quality_report(
         "issue_count": len(issues),
         "summary": summary,
         "issues": issues,
+    }
+
+
+def render_measurement_plots(
+    *,
+    csv_path: str | os.PathLike[str],
+    output_paths: Mapping[str, str | os.PathLike[str]],
+    interval_seconds: int,
+    to_time: str,
+) -> dict[str, dict[str, Any]]:
+    """Render measured-only AC power and cumulative-energy PNGs.
+
+    The collection interval represents an interval-average power sample. Missing
+    or non-finite values remain gaps rather than being interpreted as zero energy.
+    """
+
+    import matplotlib.dates as mdates
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    import pandas as pd
+
+    interval_seconds = int(interval_seconds)
+    if interval_seconds <= 0:
+        raise ValueError("The plot interval must be positive.")
+    required_outputs = set(MEASUREMENT_PLOT_METADATA)
+    if not required_outputs.issubset(output_paths):
+        raise ValueError("Measurement plot output paths are incomplete.")
+
+    frame = pd.read_csv(csv_path)
+    if "timestamp" not in frame.columns:
+        raise ValueError("Collected CSV is missing the timestamp column.")
+    frame["_plot_time"] = pd.to_datetime(
+        frame["timestamp"], errors="coerce", utc=True
+    )
+    frame = frame.loc[frame["_plot_time"].notna()].copy()
+    if frame.empty:
+        return {}
+    frame.sort_values("_plot_time", inplace=True, kind="stable")
+    end_timestamp = pd.to_datetime(to_time, errors="raise", utc=True)
+    interval_durations = (
+        (end_timestamp - frame["_plot_time"])
+        .dt.total_seconds()
+        .clip(lower=0.0, upper=float(interval_seconds))
+    )
+    frame["_plot_time"] = frame["_plot_time"].dt.tz_convert(
+        ZoneInfo("America/Denver")
+    )
+
+    available: list[tuple[str, str, str]] = []
+    for column, label, color in _MEASURED_POWER_SERIES:
+        if column not in frame.columns:
+            continue
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        if frame[column].notna().any():
+            available.append((column, label, color))
+            frame[f"_{column}_energy_kwh"] = (
+                frame[column] * interval_durations / 3_600_000.0
+            ).cumsum(skipna=True)
+    if not available:
+        return {}
+
+    plot_frame = frame
+    if len(plot_frame.index) > _MAX_PLOT_POINTS:
+        last = len(plot_frame.index) - 1
+        positions = sorted(
+            {
+                round(index * last / (_MAX_PLOT_POINTS - 1))
+                for index in range(_MAX_PLOT_POINTS)
+            }
+        )
+        plot_frame = plot_frame.iloc[positions]
+
+    mountain_tz = ZoneInfo("America/Denver")
+
+    def render_one(
+        *,
+        plot_key: str,
+        title: str,
+        ylabel: str,
+        value_for: Any,
+    ) -> None:
+        destination = Path(output_paths[plot_key])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        figure = Figure(figsize=(14, 6), constrained_layout=True)
+        FigureCanvasAgg(figure)
+        axes = figure.subplots()
+        for column, label, color in available:
+            axes.plot(
+                plot_frame["_plot_time"],
+                value_for(column),
+                color=color,
+                linewidth=1.8,
+                label=label,
+            )
+        axes.set_title(title)
+        axes.set_xlabel("Time (Mountain)")
+        axes.set_ylabel(ylabel)
+        axes.grid(True, alpha=0.25)
+        axes.legend(loc="best")
+        axes.xaxis.set_major_formatter(
+            mdates.DateFormatter("%m-%d-%Y %H:%M", tz=mountain_tz)
+        )
+        figure.autofmt_xdate()
+        figure.savefig(destination, dpi=160)
+        figure.clear()
+
+    render_one(
+        plot_key="measured_ac_power",
+        title="Measured AC Power",
+        ylabel="Measured Power (kW)",
+        value_for=lambda column: plot_frame[column] / 1_000.0,
+    )
+    render_one(
+        plot_key="cumulative_energy",
+        title="Measured Cumulative Energy",
+        ylabel="Cumulative Energy (kWh)",
+        value_for=lambda column: plot_frame[f"_{column}_energy_kwh"],
+    )
+    series = [column for column, _label, _color in available]
+    return {
+        plot_key: {**metadata, "series": series}
+        for plot_key, metadata in MEASUREMENT_PLOT_METADATA.items()
     }
 
 
