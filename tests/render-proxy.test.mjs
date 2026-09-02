@@ -97,6 +97,7 @@ test("allows only exact standalone data collection routes", () => {
     ["data-collections"],
     ["data-collections", collectionId],
     ["data-collections", collectionId, "download"],
+    ["data-collections", collectionId, "download-xlsx"],
     ["data-collections", collectionId, "plots", "measured-ac-power"],
     ["data-collections", collectionId, "plots", "cumulative-energy"],
   ]) {
@@ -108,6 +109,7 @@ test("allows only exact standalone data collection routes", () => {
     ["data-collections", collectionId, "plots", "predicted-power"],
     ["data-collections", collectionId, "plots", "measured-ac-power", "extra"],
     ["data-collections", collectionId, "download", "extra"],
+    ["data-collections", collectionId, "download-xlsx", "extra"],
     ["data-collections", "collect_0123456789ABCDEF01234567"],
   ]) {
     assert.equal(isAllowedApiPath(path), false, `expected rejected: ${path.join("/")}`);

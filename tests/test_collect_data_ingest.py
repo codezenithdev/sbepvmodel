@@ -240,6 +240,59 @@ class CollectDataIngestTests(unittest.TestCase):
             self.assertEqual(rendered, {})
             self.assertTrue(all(not output.exists() for output in outputs.values()))
 
+    def test_collection_workbook_contains_data_and_two_measured_charts(self) -> None:
+        import openpyxl
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "collected.csv"
+            source.write_text(
+                "timestamp,solaredge_measured_power,solectria_measured_power,dni\n"
+                "2026-06-01 06:00:00,1000,2000,500\n"
+                "2026-06-01 07:00:00,3000,4000,600\n",
+                encoding="utf-8",
+            )
+            output = root / "collected.xlsx"
+
+            metadata = collection.write_collection_workbook(
+                csv_path=source,
+                output_path=output,
+                interval_seconds=3600,
+                to_time="2026-06-01T08:00:00",
+            )
+
+            self.assertEqual(metadata["sheet_count"], 3)
+            self.assertEqual(metadata["chart_count"], 2)
+            self.assertEqual(
+                metadata["series"],
+                ["solaredge_measured_power", "solectria_measured_power"],
+            )
+            workbook = openpyxl.load_workbook(output, data_only=False)
+            self.addCleanup(workbook.close)
+            self.assertEqual(
+                workbook.sheetnames,
+                ["Collected data", "Measured charts", "Chart data"],
+            )
+            self.assertEqual(
+                workbook["Collected data"]["A1"].value,
+                "timestamp",
+            )
+            self.assertEqual(workbook["Collected data"]["B2"].value, 1000)
+            self.assertEqual(workbook["Chart data"].sheet_state, "hidden")
+            self.assertEqual(
+                workbook["Chart data"]["B1"].value,
+                "SolarEdge measured power (kW)",
+            )
+            self.assertEqual(
+                workbook["Chart data"]["C1"].value,
+                "Solectria measured power (kW)",
+            )
+            self.assertAlmostEqual(workbook["Chart data"]["D3"].value, 4.0)
+            self.assertAlmostEqual(workbook["Chart data"]["E3"].value, 6.0)
+            charts = workbook["Measured charts"]._charts
+            self.assertEqual(len(charts), 2)
+            self.assertEqual([len(chart.series) for chart in charts], [2, 2])
+
     def test_quality_decoder_uses_composite_primary_bits(self) -> None:
         self.assertEqual(collection.primary_quality_label(524480), "good")
         self.assertEqual(collection.primary_quality_label(524352), "uncertain")

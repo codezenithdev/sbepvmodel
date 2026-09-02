@@ -31,7 +31,7 @@ router = APIRouter(prefix="/api/data-collections", tags=["data collection"])
 
 _COLLECTION_ID_PATTERN = re.compile(r"^collect_[a-f0-9]{24}$")
 _COLLECTION_STORAGE_PATTERN = re.compile(
-    r"^(collect_[a-f0-9]{24})(?:\.(?:json|csv)|\.(?:measured-ac-power|cumulative-energy)\.png)$"
+    r"^(collect_[a-f0-9]{24})(?:\.(?:json|csv|xlsx)|\.(?:measured-ac-power|cumulative-energy)\.png)$"
 )
 _COLLECTION_LOCK = threading.RLock()
 _ACTIVE_STATES = frozenset({"queued", "collecting"})
@@ -66,6 +66,10 @@ def _output_path(collection_id: str) -> Path:
     return _collection_dir() / f"{_validated_collection_id(collection_id)}.csv"
 
 
+def _xlsx_path(collection_id: str) -> Path:
+    return _collection_dir() / f"{_validated_collection_id(collection_id)}.xlsx"
+
+
 def _plot_path(collection_id: str, plot_key: str) -> Path:
     route_name = _PLOT_KEY_TO_ROUTE.get(str(plot_key))
     if route_name is None:
@@ -78,6 +82,7 @@ def _plot_path(collection_id: str, plot_key: str) -> Path:
 def _collection_output_paths(collection_id: str) -> list[Path]:
     return [
         _output_path(collection_id),
+        _xlsx_path(collection_id),
         *[_plot_path(collection_id, key) for key in _PLOT_KEY_TO_ROUTE],
     ]
 
@@ -512,6 +517,11 @@ def _public_record(record: dict[str, Any]) -> dict[str, Any]:
             public_result["download_url"] = (
                 f"/api/data-collections/{record['collection_id']}/download"
             )
+            workbook = public_result.get("workbook")
+            if isinstance(workbook, dict) and workbook.get("sha256"):
+                workbook["download_url"] = (
+                    f"/api/data-collections/{record['collection_id']}/download-xlsx"
+                )
             plots = public_result.get("plots")
             if isinstance(plots, dict):
                 for plot_key, plot in plots.items():
@@ -575,12 +585,14 @@ def _validated_request(
     return request, internal
 
 
-def _download_filename(record: dict[str, Any]) -> str:
+def _download_filename(record: dict[str, Any], extension: str = "csv") -> str:
+    if extension not in {"csv", "xlsx"}:
+        raise ValueError("Unsupported data collection download extension")
     request = record["request"]
     suffix = str(record["collection_id"]).removeprefix("collect_")[-8:]
     return (
         f"sbe-collected-data-{request['from_date']}-to-"
-        f"{request['to_date']}-{suffix}.csv"
+        f"{request['to_date']}-{suffix}.{extension}"
     )
 
 
@@ -645,6 +657,28 @@ def _run_collection(collection_id: str) -> None:
             if selected_power
             else "not_applicable"
         )
+        workbook_path = _xlsx_path(collection_id)
+        try:
+            workbook_metadata = historian_collection.write_collection_workbook(
+                csv_path=output,
+                output_path=workbook_path,
+                interval_seconds=internal["interval_seconds"],
+                to_time=internal["to_iso"],
+            )
+            stored_workbook: dict[str, Any] | None = {
+                "filename": _download_filename(record, "xlsx"),
+                "sha256": _sha256_file(workbook_path),
+                "sheet_count": int(workbook_metadata.get("sheet_count") or 0),
+                "chart_count": int(workbook_metadata.get("chart_count") or 0),
+                "series": list(workbook_metadata.get("series") or []),
+            }
+        except Exception:
+            logger.exception(
+                "Workbook generation failed for standalone collection %s",
+                collection_id,
+            )
+            _remove_partial_output(workbook_path)
+            stored_workbook = None
         with _COLLECTION_LOCK:
             within_quota, removed = _enforce_storage_quota_locked(
                 protected_collection_id=collection_id
@@ -666,7 +700,7 @@ def _run_collection(collection_id: str) -> None:
                 error={
                     "code": "collection_storage_limit",
                     "message": (
-                        "The collected CSV exceeded the storage reserved for "
+                        "The collected files exceeded the storage reserved for "
                         "standalone data collections. Try a shorter window."
                     ),
                 },
@@ -683,6 +717,8 @@ def _run_collection(collection_id: str) -> None:
                 "sha256": _sha256_file(output),
                 "plot_status": plot_status,
                 "plots": stored_plots,
+                "workbook_status": "ready" if stored_workbook else "unavailable",
+                "workbook": stored_workbook,
             },
             error=None,
         )
@@ -855,6 +891,52 @@ def download_data_collection(collection_id: str) -> FileResponse:
             str(resolved),
             collection_id=collection_id,
             media_type="text/csv",
+            filename=filename,
+            headers={
+                "Cache-Control": "private, no-store",
+                "ETag": f'"{actual_sha256}"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except Exception:
+        _release_download_pin(collection_id)
+        raise
+
+
+@router.get("/{collection_id}/download-xlsx", response_class=FileResponse)
+def download_data_collection_xlsx(collection_id: str) -> FileResponse:
+    with _COLLECTION_LOCK:
+        record = _load_record(collection_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Unknown data collection id")
+        if record.get("state") != "completed":
+            raise HTTPException(
+                status_code=409,
+                detail="The data collection is not available for download.",
+            )
+        result = record.get("result") or {}
+        workbook = result.get("workbook")
+        if not isinstance(workbook, dict):
+            raise HTTPException(
+                status_code=404,
+                detail="The data collection workbook is not available.",
+            )
+        resolved, actual_sha256 = _verified_artifact_locked(
+            _xlsx_path(collection_id),
+            str(workbook.get("sha256") or ""),
+        )
+        _pin_download_locked(collection_id)
+        filename = str(
+            workbook.get("filename") or _download_filename(record, "xlsx")
+        )
+    try:
+        return _PinnedFileResponse(
+            str(resolved),
+            collection_id=collection_id,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
             filename=filename,
             headers={
                 "Cache-Control": "private, no-store",

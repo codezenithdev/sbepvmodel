@@ -20,18 +20,17 @@
             summary: document.getElementById('collectDataSummary'),
             rowCount: document.getElementById('collectDataRowCount'),
             seriesCount: document.getElementById('collectDataSeriesCount'),
-            completeness: document.getElementById('collectDataCompleteness'),
-            issueCount: document.getElementById('collectDataIssueCount'),
-            quality: document.getElementById('collectDataQuality'),
-            qualityState: document.getElementById('collectDataQualityState'),
-            issueList: document.getElementById('collectDataIssueList'),
+            solarEdgeStatus: document.getElementById('collectDataSolarEdgeStatus'),
+            solectriaStatus: document.getElementById('collectDataSolectriaStatus'),
             plots: document.getElementById('collectDataPlots'),
             acPowerCard: document.getElementById('collectDataAcPowerCard'),
             acPowerPlot: document.getElementById('collectDataAcPowerPlot'),
             energyCard: document.getElementById('collectDataEnergyCard'),
             energyPlot: document.getElementById('collectDataEnergyPlot'),
             plotNote: document.getElementById('collectDataPlotNote'),
-            download: document.getElementById('collectDataDownload'),
+            downloads: document.getElementById('collectDataDownloads'),
+            csvDownload: document.getElementById('collectDataCsvDownload'),
+            xlsxDownload: document.getElementById('collectDataXlsxDownload'),
         });
         let collectDataPollTimer = null;
         let collectDataRevision = 0;
@@ -48,7 +47,7 @@
             );
             document.body.classList.add('dashboard-mode-collect-data');
             dashboardTitle.textContent = 'Collect Bazefield Data';
-            dashboardSubtitle.textContent = 'Retrieve selected site source data, inspect collection quality, and download the CSV without starting a model workflow.';
+            dashboardSubtitle.textContent = 'Retrieve measured SolarEdge and Solectria power, review the charts, and download CSV or XLSX without starting a model workflow.';
             [validationTab, annualTab, technoeconomicTab, autonomyTab].forEach((tab) => {
                 tab.classList.remove('active');
                 tab.setAttribute('aria-pressed', 'false');
@@ -99,9 +98,12 @@
         }
 
         function collectDataResetDownload() {
-            collectDataElements.download.hidden = true;
-            collectDataElements.download.removeAttribute('href');
-            collectDataElements.download.removeAttribute('download');
+            collectDataElements.downloads.hidden = true;
+            [collectDataElements.csvDownload, collectDataElements.xlsxDownload].forEach((link) => {
+                link.hidden = false;
+                link.removeAttribute('href');
+                link.removeAttribute('download');
+            });
         }
 
         function collectDataResetPlots() {
@@ -123,8 +125,6 @@
             collectDataElements.collapseToggle.hidden = true;
             collectDataElements.status.hidden = true;
             collectDataElements.summary.hidden = true;
-            collectDataElements.quality.hidden = true;
-            collectDataElements.issueList.replaceChildren();
         }
 
         function collectDataInvalidateResult() {
@@ -150,39 +150,6 @@
             if (state === 'failed') return 'Needs attention';
             if (state === 'collecting') return 'Collecting';
             return 'Queued';
-        }
-
-        function collectDataRenderQuality(quality) {
-            const report = quality && typeof quality === 'object' ? quality : {};
-            const issues = Array.isArray(report.issues) ? report.issues : [];
-            collectDataElements.quality.hidden = false;
-            collectDataElements.qualityState.dataset.status = report.status || 'clean';
-            collectDataElements.qualityState.textContent = issues.length
-                ? issues.length.toLocaleString() + (issues.length === 1 ? ' issue' : ' issues')
-                : 'No issues detected';
-            const items = [];
-            if (!issues.length) {
-                const item = document.createElement('li');
-                item.className = 'collect-data-issue clean';
-                const title = document.createElement('strong');
-                title.textContent = 'No collection-quality issues detected';
-                const detail = document.createElement('span');
-                detail.textContent = 'All selected series passed the timestamp, completeness, source-quality, and screening-bound checks.';
-                item.append(title, detail);
-                items.push(item);
-            } else {
-                issues.forEach((issue) => {
-                    const item = document.createElement('li');
-                    item.className = 'collect-data-issue';
-                    const title = document.createElement('strong');
-                    title.textContent = String(issue?.title || 'Data-quality issue');
-                    const detail = document.createElement('span');
-                    detail.textContent = String(issue?.message || 'Review this source-data issue.');
-                    item.append(title, detail);
-                    items.push(item);
-                });
-            }
-            collectDataElements.issueList.replaceChildren(...items);
         }
 
         function collectDataRenderPlots(record, result) {
@@ -222,7 +189,7 @@
             collectDataElements.plotNote.hidden = false;
             collectDataElements.plotNote.textContent = result?.plot_status === 'not_applicable'
                 ? 'Select SolarEdge or Solectria power to generate measured power and energy plots.'
-                : 'Measured plots were unavailable for this collection. The CSV and quality report are still available.';
+                : 'Measured plots were unavailable for this collection. The collected downloads are still available.';
         }
 
         function collectDataRender(record) {
@@ -232,24 +199,34 @@
             collectDataSetProgress(record?.progress);
             const result = record?.result;
             if (record?.state === 'completed' && result) {
-                const quality = result.quality || {};
-                const summary = quality.summary || {};
+                const seriesNames = new Set(
+                    (Array.isArray(result.series) ? result.series : [])
+                        .map((series) => String(series?.name || ''))
+                );
                 collectDataElements.summary.hidden = false;
                 collectDataElements.rowCount.textContent = Number(result.row_count || 0).toLocaleString();
                 collectDataElements.seriesCount.textContent = Number((result.series || []).length).toLocaleString();
-                collectDataElements.completeness.textContent = Number(summary.usable_value_completeness_percent || 0).toLocaleString(undefined, { maximumFractionDigits: 1 }) + '%';
-                collectDataElements.issueCount.textContent = Number(quality.issue_count || 0).toLocaleString();
+                collectDataElements.solarEdgeStatus.textContent = seriesNames.has('solaredge_measured_power') ? 'Included' : 'Not selected';
+                collectDataElements.solectriaStatus.textContent = seriesNames.has('solectria_measured_power') ? 'Included' : 'Not selected';
                 collectDataRenderPlots(record, result);
-                collectDataRenderQuality(quality);
                 collectDataElements.collapseToggle.hidden = false;
                 const safeId = /^collect_[a-f0-9]{24}$/.test(String(record.collection_id || ''))
                     ? record.collection_id
                     : null;
                 if (safeId) {
-                    collectDataElements.download.href = '/api/data-collections/' + encodeURIComponent(safeId) + '/download';
-                    const safeFilename = String(result.filename || 'sbe-collected-data.csv').replace(/[^A-Za-z0-9._-]/g, '_');
-                    collectDataElements.download.setAttribute('download', safeFilename);
-                    collectDataElements.download.hidden = false;
+                    const encodedId = encodeURIComponent(safeId);
+                    collectDataElements.csvDownload.href = '/api/data-collections/' + encodedId + '/download';
+                    const csvFilename = String(result.filename || 'sbe-collected-data.csv').replace(/[^A-Za-z0-9._-]/g, '_');
+                    collectDataElements.csvDownload.setAttribute('download', csvFilename);
+                    const workbook = result.workbook && typeof result.workbook === 'object' ? result.workbook : {};
+                    if (/^[a-f0-9]{64}$/.test(String(workbook.sha256 || ''))) {
+                        collectDataElements.xlsxDownload.href = '/api/data-collections/' + encodedId + '/download-xlsx';
+                        const xlsxFilename = String(workbook.filename || 'sbe-collected-data.xlsx').replace(/[^A-Za-z0-9._-]/g, '_');
+                        collectDataElements.xlsxDownload.setAttribute('download', xlsxFilename);
+                    } else {
+                        collectDataElements.xlsxDownload.hidden = true;
+                    }
+                    collectDataElements.downloads.hidden = false;
                 }
             }
             if (record?.state === 'failed') {
@@ -428,7 +405,7 @@
                 if (image.dataset.collectionId !== collectDataActiveId) return;
                 card.hidden = true;
                 collectDataElements.plotNote.hidden = false;
-                collectDataElements.plotNote.textContent = 'One or more measured plots could not be loaded. The CSV and quality report are still available.';
+                collectDataElements.plotNote.textContent = 'One or more measured plots could not be loaded. The collected downloads are still available.';
             });
         }
 

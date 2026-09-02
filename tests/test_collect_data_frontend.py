@@ -34,8 +34,11 @@ class CollectDataFrontendTests(unittest.TestCase):
             "collectDataPlots",
             "collectDataAcPowerPlot",
             "collectDataEnergyPlot",
-            "collectDataQuality",
-            "collectDataDownload",
+            "collectDataSolarEdgeStatus",
+            "collectDataSolectriaStatus",
+            "collectDataDownloads",
+            "collectDataCsvDownload",
+            "collectDataXlsxDownload",
         ):
             with self.subTest(element_id=element_id):
                 self.assertEqual(self.assembled.count(f'id="{element_id}"'), 1)
@@ -70,12 +73,20 @@ class CollectDataFrontendTests(unittest.TestCase):
         self.assertIn('aria-expanded="true"', self.markup)
         self.assertIn(".collect-data-collapse-toggle", self.styles)
         self.assertIn(".collect-data-plot-grid", self.styles)
+        self.assertIn('class="run-btn" id="collectDataSubmit"', self.markup)
+        self.assertIn("'/download-xlsx'", self.script)
+        self.assertIn("Download CSV", self.markup)
+        self.assertIn("Download XLSX with charts", self.markup)
+        self.assertIn("SolarEdge measured", self.markup)
+        self.assertIn("Solectria measured", self.markup)
+        self.assertNotIn("Read-only screening", self.markup)
+        self.assertNotIn("Data-quality report", self.markup)
+        self.assertNotIn("collectDataRenderQuality", self.script)
 
     def test_script_uses_only_collection_endpoints_and_safe_rendering(self) -> None:
         self.assertIn("'/api/data-collections'", self.script)
         self.assertIn("'/api/data-collections/'", self.script)
         self.assertIn("encodeURIComponent(collectionId)", self.script)
-        self.assertIn("replaceChildren", self.script)
         self.assertIn("textContent", self.script)
         self.assertIn("collectDataRevision", self.script)
         for forbidden in (

@@ -81,6 +81,15 @@ class CollectDataApiTests(unittest.TestCase):
             for plot_key in outputs
         }
 
+    @staticmethod
+    def _fake_workbook(**kwargs):
+        Path(kwargs["output_path"]).write_bytes(b"PK\x03\x04test-workbook")
+        return {
+            "sheet_count": 3,
+            "chart_count": 2,
+            "series": ["solaredge_measured_power"],
+        }
+
     def _request(self, **overrides):
         payload = {
             "from_date": "2026-06-01",
@@ -160,6 +169,11 @@ class CollectDataApiTests(unittest.TestCase):
                 "render_measurement_plots",
                 side_effect=self._fake_plots,
             ) as plot_call,
+            patch.object(
+                collect_data.historian_collection,
+                "write_collection_workbook",
+                side_effect=self._fake_workbook,
+            ) as workbook_call,
         ):
             created = self.client.post("/api/data-collections", json=self._request())
 
@@ -173,6 +187,10 @@ class CollectDataApiTests(unittest.TestCase):
         self.assertEqual(call["data_groups"], ["solaredge", "weather"])
         plot_call.assert_called_once()
         self.assertEqual(plot_call.call_args.kwargs["interval_seconds"], 3600)
+        workbook_call.assert_called_once()
+        self.assertEqual(
+            workbook_call.call_args.kwargs["interval_seconds"], 3600
+        )
         self.assertEqual(dict(state.JOBS), self.jobs_before)
 
         status = self.client.get(f"/api/data-collections/{collection_id}")
@@ -183,6 +201,12 @@ class CollectDataApiTests(unittest.TestCase):
         self.assertEqual(
             payload["result"]["download_url"],
             f"/api/data-collections/{collection_id}/download",
+        )
+        self.assertEqual(payload["result"]["workbook_status"], "ready")
+        self.assertEqual(payload["result"]["workbook"]["chart_count"], 2)
+        self.assertEqual(
+            payload["result"]["workbook"]["download_url"],
+            f"/api/data-collections/{collection_id}/download-xlsx",
         )
         self.assertEqual(payload["result"]["plot_status"], "ready")
         self.assertEqual(
@@ -206,6 +230,20 @@ class CollectDataApiTests(unittest.TestCase):
         self.assertIn("sbe-collected-data", download.headers["content-disposition"])
         self.assertEqual(download.headers["x-content-type-options"], "nosniff")
         self.assertIn("solaredge_measured_power", download.text)
+        self.assertNotIn(collection_id, collect_data._DOWNLOAD_PINS)
+
+        workbook_download = self.client.get(
+            f"/api/data-collections/{collection_id}/download-xlsx"
+        )
+        self.assertEqual(workbook_download.status_code, 200)
+        self.assertEqual(
+            workbook_download.headers["content-type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn(
+            ".xlsx", workbook_download.headers["content-disposition"]
+        )
+        self.assertTrue(workbook_download.content.startswith(b"PK\x03\x04"))
         self.assertNotIn(collection_id, collect_data._DOWNLOAD_PINS)
 
         for plot_name in ("measured-ac-power", "cumulative-energy"):
@@ -234,6 +272,13 @@ class CollectDataApiTests(unittest.TestCase):
         )
         self.assertEqual(tampered_plot.status_code, 409, tampered_plot.text)
         self.assertNotIn(str(self.temporary), tampered_plot.text)
+
+        collect_data._xlsx_path(collection_id).write_bytes(b"tampered workbook")
+        tampered_workbook = self.client.get(
+            f"/api/data-collections/{collection_id}/download-xlsx"
+        )
+        self.assertEqual(tampered_workbook.status_code, 409, tampered_workbook.text)
+        self.assertNotIn(str(self.temporary), tampered_workbook.text)
 
         malformed_range = self.client.get(
             f"/api/data-collections/{collection_id}/download",
@@ -271,6 +316,11 @@ class CollectDataApiTests(unittest.TestCase):
                 "render_measurement_plots",
                 side_effect=RuntimeError("renderer unavailable"),
             ),
+            patch.object(
+                collect_data.historian_collection,
+                "write_collection_workbook",
+                side_effect=self._fake_workbook,
+            ),
         ):
             created = self.client.post("/api/data-collections", json=self._request())
 
@@ -288,6 +338,45 @@ class CollectDataApiTests(unittest.TestCase):
         )
         self.assertEqual(download.status_code, 200, download.text)
         self.assertIn("solaredge_measured_power", download.text)
+
+    def test_workbook_failure_does_not_discard_collected_csv(self) -> None:
+        with (
+            patch.object(
+                collect_data.historian_collection,
+                "collect_historian_data",
+                side_effect=self._fake_collection,
+            ),
+            patch.object(
+                collect_data.historian_collection,
+                "render_measurement_plots",
+                side_effect=self._fake_plots,
+            ),
+            patch.object(
+                collect_data.historian_collection,
+                "write_collection_workbook",
+                side_effect=RuntimeError("workbook unavailable"),
+            ),
+        ):
+            created = self.client.post("/api/data-collections", json=self._request())
+
+        self.assertEqual(created.status_code, 202, created.text)
+        collection_id = created.json()["collection_id"]
+        status = self.client.get(f"/api/data-collections/{collection_id}")
+        self.assertEqual(status.status_code, 200, status.text)
+        payload = status.json()
+        self.assertEqual(payload["state"], "completed")
+        self.assertEqual(payload["result"]["workbook_status"], "unavailable")
+        self.assertIsNone(payload["result"]["workbook"])
+        self.assertNotIn("download-xlsx", status.text)
+
+        download = self.client.get(
+            f"/api/data-collections/{collection_id}/download"
+        )
+        self.assertEqual(download.status_code, 200, download.text)
+        unavailable = self.client.get(
+            f"/api/data-collections/{collection_id}/download-xlsx"
+        )
+        self.assertEqual(unavailable.status_code, 404, unavailable.text)
 
     def test_invalid_selection_and_window_fail_before_collection(self) -> None:
         with patch.object(
@@ -398,6 +487,8 @@ class CollectDataApiTests(unittest.TestCase):
             interrupted_id, "measured_ac_power"
         )
         partial_plot.write_bytes(b"partial plot")
+        partial_workbook = collect_data._xlsx_path(interrupted_id)
+        partial_workbook.write_bytes(b"partial workbook")
 
         self.assertEqual(collect_data.reconcile_interrupted_collections(), 1)
         recovered = collect_data._load_record(interrupted_id)
@@ -405,6 +496,7 @@ class CollectDataApiTests(unittest.TestCase):
         self.assertEqual(recovered["error"]["code"], "collection_interrupted")
         self.assertFalse(partial.exists())
         self.assertFalse(partial_plot.exists())
+        self.assertFalse(partial_workbook.exists())
         self.assertEqual(dict(state.JOBS), self.jobs_before)
 
         old_id = "collect_333333333333333333333333"
@@ -426,6 +518,8 @@ class CollectDataApiTests(unittest.TestCase):
         record_path = collect_data._record_path(collection_id)
         plot_path = collect_data._plot_path(collection_id, "cumulative_energy")
         plot_path.write_bytes(b"plot bytes count toward the quota")
+        workbook_path = collect_data._xlsx_path(collection_id)
+        workbook_path.write_bytes(b"workbook bytes count toward the quota")
         self.assertGreater(record_path.stat().st_size, 1)
 
         with patch.object(config, "DATA_COLLECTION_MAX_STORAGE_BYTES", 1):
@@ -434,6 +528,7 @@ class CollectDataApiTests(unittest.TestCase):
         self.assertEqual(removed, 1)
         self.assertFalse(record_path.exists())
         self.assertFalse(plot_path.exists())
+        self.assertFalse(workbook_path.exists())
 
     def test_retained_record_cap_prunes_oldest_terminal_record(self) -> None:
         older_id = "collect_555555555555555555555555"

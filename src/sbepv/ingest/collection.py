@@ -8,6 +8,7 @@ CSV writer while retaining source quality flags that the model CSV omits.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import csv
 from datetime import datetime, timezone
 import math
 import os
@@ -398,30 +399,23 @@ def _quality_report(
     }
 
 
-def render_measurement_plots(
+def _measurement_plot_frame(
     *,
     csv_path: str | os.PathLike[str],
-    output_paths: Mapping[str, str | os.PathLike[str]],
     interval_seconds: int,
     to_time: str,
-) -> dict[str, dict[str, Any]]:
-    """Render measured-only AC power and cumulative-energy PNGs.
+) -> tuple[Any, list[tuple[str, str, str]]]:
+    """Return bounded measured-power and cumulative-energy chart data.
 
     The collection interval represents an interval-average power sample. Missing
     or non-finite values remain gaps rather than being interpreted as zero energy.
     """
 
-    import matplotlib.dates as mdates
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
     import pandas as pd
 
     interval_seconds = int(interval_seconds)
     if interval_seconds <= 0:
         raise ValueError("The plot interval must be positive.")
-    required_outputs = set(MEASUREMENT_PLOT_METADATA)
-    if not required_outputs.issubset(output_paths):
-        raise ValueError("Measurement plot output paths are incomplete.")
 
     frame = pd.read_csv(csv_path)
     if "timestamp" not in frame.columns:
@@ -431,7 +425,7 @@ def render_measurement_plots(
     )
     frame = frame.loc[frame["_plot_time"].notna()].copy()
     if frame.empty:
-        return {}
+        return frame, []
     frame.sort_values("_plot_time", inplace=True, kind="stable")
     end_timestamp = pd.to_datetime(to_time, errors="raise", utc=True)
     interval_durations = (
@@ -454,7 +448,7 @@ def render_measurement_plots(
                 frame[column] * interval_durations / 3_600_000.0
             ).cumsum(skipna=True)
     if not available:
-        return {}
+        return frame, []
 
     plot_frame = frame
     if len(plot_frame.index) > _MAX_PLOT_POINTS:
@@ -466,6 +460,33 @@ def render_measurement_plots(
             }
         )
         plot_frame = plot_frame.iloc[positions]
+    return plot_frame, available
+
+
+def render_measurement_plots(
+    *,
+    csv_path: str | os.PathLike[str],
+    output_paths: Mapping[str, str | os.PathLike[str]],
+    interval_seconds: int,
+    to_time: str,
+) -> dict[str, dict[str, Any]]:
+    """Render measured-only AC power and cumulative-energy PNGs."""
+
+    import matplotlib.dates as mdates
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    required_outputs = set(MEASUREMENT_PLOT_METADATA)
+    if not required_outputs.issubset(output_paths):
+        raise ValueError("Measurement plot output paths are incomplete.")
+
+    plot_frame, available = _measurement_plot_frame(
+        csv_path=csv_path,
+        interval_seconds=interval_seconds,
+        to_time=to_time,
+    )
+    if not available:
+        return {}
 
     mountain_tz = ZoneInfo("America/Denver")
 
@@ -517,6 +538,232 @@ def render_measurement_plots(
     return {
         plot_key: {**metadata, "series": series}
         for plot_key, metadata in MEASUREMENT_PLOT_METADATA.items()
+    }
+
+
+def write_collection_workbook(
+    *,
+    csv_path: str | os.PathLike[str],
+    output_path: str | os.PathLike[str],
+    interval_seconds: int,
+    to_time: str,
+) -> dict[str, Any]:
+    """Create an XLSX containing the collected data and two measured charts."""
+
+    from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.chart import LineChart, Reference
+    from openpyxl.chart.axis import DateAxis
+    from openpyxl.chart.series import SeriesLabel
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    source = Path(csv_path)
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    plot_frame, available = _measurement_plot_frame(
+        csv_path=source,
+        interval_seconds=interval_seconds,
+        to_time=to_time,
+    )
+
+    workbook = Workbook(write_only=True)
+    workbook.properties.creator = "SBE PV Operations Dashboard"
+    workbook.properties.title = "Collected Bazefield data"
+    data_sheet = workbook.create_sheet("Collected data")
+    data_sheet.freeze_panes = "A2"
+    data_sheet.sheet_view.showGridLines = False
+
+    header_fill = PatternFill("solid", fgColor="0F766E")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    with source.open("r", newline="", encoding="utf-8-sig") as handle:
+        reader = csv.reader(handle)
+        try:
+            headers = next(reader)
+        except StopIteration:
+            headers = []
+        if not headers:
+            raise ValueError("Collected CSV is missing its header row.")
+        for index, header in enumerate(headers, start=1):
+            width = 22 if header == "timestamp" else 18 if "quality" in header else 28
+            data_sheet.column_dimensions[get_column_letter(index)].width = width
+
+        styled_headers = []
+        for header in headers:
+            cell = WriteOnlyCell(data_sheet, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            styled_headers.append(cell)
+        data_sheet.append(styled_headers)
+
+        row_count = 0
+        for raw_row in reader:
+            row_count += 1
+            padded = [*raw_row, *([""] * max(0, len(headers) - len(raw_row)))]
+            cells = []
+            for column, raw_value in zip(headers, padded[: len(headers)]):
+                value: Any = raw_value
+                number_format = None
+                if not raw_value:
+                    value = None
+                elif column == "timestamp":
+                    try:
+                        value = datetime.fromisoformat(raw_value)
+                        number_format = "yyyy-mm-dd hh:mm:ss"
+                    except ValueError:
+                        value = raw_value
+                elif not column.endswith("_quality"):
+                    try:
+                        numeric = float(raw_value)
+                    except (TypeError, ValueError, OverflowError):
+                        value = raw_value
+                    else:
+                        if not math.isfinite(numeric):
+                            value = None
+                        else:
+                            value = int(numeric) if numeric.is_integer() else numeric
+                            number_format = (
+                                "0" if isinstance(value, int) else "0.000"
+                            )
+                cell = WriteOnlyCell(data_sheet, value=value)
+                if number_format:
+                    cell.number_format = number_format
+                cells.append(cell)
+            data_sheet.append(cells)
+
+    last_column = get_column_letter(len(headers))
+    data_sheet.auto_filter.ref = f"A1:{last_column}{row_count + 1}"
+
+    charts_sheet = workbook.create_sheet("Measured charts")
+    charts_sheet.sheet_view.showGridLines = False
+    system_names = " and ".join(
+        label.removesuffix(" measured") for _column, label, _color in available
+    )
+    title = WriteOnlyCell(
+        charts_sheet,
+        value=(
+            f"Measured {system_names} performance"
+            if system_names
+            else "Measured system performance"
+        ),
+    )
+    title.font = Font(color="0F4C45", bold=True, size=16)
+    charts_sheet.append([title])
+    charts_sheet.append(
+        [
+            "Both charts contain measured values only. Cumulative energy is "
+            "integrated from the selected interval-average AC power."
+        ]
+    )
+
+    chart_data_sheet = workbook.create_sheet("Chart data")
+    chart_data_sheet.sheet_state = "hidden"
+    chart_data_sheet.sheet_view.showGridLines = False
+    chart_headers = ["Timestamp (Mountain)"]
+    chart_headers.extend(f"{label} power (kW)" for _column, label, _color in available)
+    chart_headers.extend(
+        f"{label} cumulative energy (kWh)"
+        for _column, label, _color in available
+    )
+    chart_data_sheet.append(chart_headers)
+
+    def finite_or_none(value: Any) -> float | None:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return numeric if math.isfinite(numeric) else None
+
+    for _, row in plot_frame.iterrows():
+        timestamp = row["_plot_time"].to_pydatetime().replace(tzinfo=None)
+        chart_row: list[Any] = [timestamp]
+        chart_row.extend(
+            finite_or_none(row[column] / 1_000.0)
+            for column, _label, _color in available
+        )
+        chart_row.extend(
+            finite_or_none(row[f"_{column}_energy_kwh"])
+            for column, _label, _color in available
+        )
+        chart_data_sheet.append(chart_row)
+
+    chart_count = 0
+    if available and not plot_frame.empty:
+        max_row = len(plot_frame.index) + 1
+        categories = Reference(
+            chart_data_sheet,
+            min_col=1,
+            min_row=2,
+            max_row=max_row,
+        )
+
+        def add_line_chart(
+            *,
+            title_text: str,
+            y_axis_title: str,
+            min_col: int,
+            max_col: int,
+            anchor: str,
+        ) -> None:
+            nonlocal chart_count
+            chart = LineChart()
+            chart.title = title_text
+            chart.style = 13
+            chart.height = 8
+            chart.width = 18
+            chart.legend.position = "b"
+            chart.display_blanks = "gap"
+            chart.y_axis.title = y_axis_title
+            chart.x_axis = DateAxis()
+            chart.x_axis.title = "Time (Mountain)"
+            chart.x_axis.number_format = "mm-dd-yyyy hh:mm"
+            chart.add_data(
+                Reference(
+                    chart_data_sheet,
+                    min_col=min_col,
+                    min_row=1,
+                    max_col=max_col,
+                    max_row=max_row,
+                ),
+                titles_from_data=True,
+            )
+            chart.set_categories(categories)
+            for series, (_column, label, color) in zip(chart.series, available):
+                series.tx = SeriesLabel(v=label)
+                series.graphicalProperties.line.solidFill = color.removeprefix("#")
+                series.graphicalProperties.line.width = 28_575
+            charts_sheet.add_chart(chart, anchor)
+            chart_count += 1
+
+        power_first = 2
+        power_last = power_first + len(available) - 1
+        energy_first = power_last + 1
+        energy_last = energy_first + len(available) - 1
+        add_line_chart(
+            title_text=f"Measured AC Power: {system_names}",
+            y_axis_title="Power (kW)",
+            min_col=power_first,
+            max_col=power_last,
+            anchor="A4",
+        )
+        add_line_chart(
+            title_text=f"Measured Cumulative Energy: {system_names}",
+            y_axis_title="Cumulative Energy (kWh)",
+            min_col=energy_first,
+            max_col=energy_last,
+            anchor="A21",
+        )
+    else:
+        charts_sheet.append(
+            ["No SolarEdge or Solectria measured-power values were available."]
+        )
+
+    workbook.save(destination)
+    return {
+        "sheet_count": 3,
+        "chart_count": chart_count,
+        "series": [column for column, _label, _color in available],
     }
 
 

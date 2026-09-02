@@ -119,7 +119,7 @@ export function isAllowedApiPath(path: string[]): boolean {
       (
         path[0] === "data-collections" &&
         isCollectionId(path[1]) &&
-        path[2] === "download"
+        ["download", "download-xlsx"].includes(path[2])
       ) ||
       (
         path[0] === "technoeconomic" &&

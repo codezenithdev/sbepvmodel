@@ -74,9 +74,9 @@
                     <footer class="collect-data-actions">
                         <div>
                             <strong>Ready to collect?</strong>
-                            <span>The CSV includes raw and decoded quality flags. Downloads are temporary and may be pruned.</span>
+                            <span>Download the source data as CSV or as an Excel workbook with two measured charts.</span>
                         </div>
-                        <button class="run-button" id="collectDataSubmit" type="submit">Collect data</button>
+                        <button class="run-btn" id="collectDataSubmit" type="submit">Collect data</button>
                     </footer>
                     <p class="collect-data-error" id="collectDataError" role="alert" tabindex="-1" hidden></p>
                 </form>
@@ -104,42 +104,34 @@
                         <dl class="collect-data-summary" id="collectDataSummary" hidden>
                             <div><dt>Rows</dt><dd id="collectDataRowCount">&mdash;</dd></div>
                             <div><dt>Series</dt><dd id="collectDataSeriesCount">&mdash;</dd></div>
-                            <div><dt>Usable-value completeness</dt><dd id="collectDataCompleteness">&mdash;</dd></div>
-                            <div><dt>Quality issues</dt><dd id="collectDataIssueCount">&mdash;</dd></div>
+                            <div><dt>SolarEdge measured</dt><dd id="collectDataSolarEdgeStatus">&mdash;</dd></div>
+                            <div><dt>Solectria measured</dt><dd id="collectDataSolectriaStatus">&mdash;</dd></div>
                         </dl>
 
                         <section class="collect-data-plots" id="collectDataPlots" aria-labelledby="collectDataPlotsHeading" hidden>
                             <div class="collect-data-section-heading">
                                 <div>
                                     <p class="collect-data-eyebrow">Measured data only</p>
-                                    <h3 id="collectDataPlotsHeading">Power and energy</h3>
+                                    <h3 id="collectDataPlotsHeading">SolarEdge and Solectria power and energy</h3>
                                 </div>
                             </div>
                             <div class="collect-data-plot-grid" id="collectDataPlotGrid">
                                 <figure class="collect-data-plot-card" id="collectDataAcPowerCard" hidden>
-                                    <figcaption>Measured AC power</figcaption>
-                                    <img id="collectDataAcPowerPlot" alt="Measured AC power for the selected systems">
+                                    <figcaption>Measured SolarEdge and Solectria AC power</figcaption>
+                                    <img id="collectDataAcPowerPlot" alt="Measured SolarEdge and Solectria AC power">
                                 </figure>
                                 <figure class="collect-data-plot-card" id="collectDataEnergyCard" hidden>
-                                    <figcaption>Measured cumulative energy</figcaption>
-                                    <img id="collectDataEnergyPlot" alt="Cumulative measured energy for the selected systems">
+                                    <figcaption>Measured SolarEdge and Solectria cumulative energy</figcaption>
+                                    <img id="collectDataEnergyPlot" alt="Measured SolarEdge and Solectria cumulative energy">
                                 </figure>
                             </div>
                             <p class="collect-data-plot-note" id="collectDataPlotNote" hidden></p>
                         </section>
 
-                        <section class="collect-data-quality" id="collectDataQuality" aria-labelledby="collectDataQualityHeading" hidden>
-                            <div class="collect-data-quality-heading">
-                                <div>
-                                    <p class="collect-data-eyebrow">Read-only screening</p>
-                                    <h3 id="collectDataQualityHeading">Data-quality report</h3>
-                                </div>
-                                <span class="collect-data-quality-state" id="collectDataQualityState"></span>
-                            </div>
-                            <ul class="collect-data-issue-list" id="collectDataIssueList"></ul>
-                        </section>
-
-                        <a class="download-link collect-data-download" id="collectDataDownload" href="#" download hidden>Download collected CSV</a>
+                        <div class="collect-data-downloads" id="collectDataDownloads" hidden>
+                            <a class="download-link collect-data-download" id="collectDataCsvDownload" href="#" download>Download CSV</a>
+                            <a class="download-link collect-data-download" id="collectDataXlsxDownload" href="#" download>Download XLSX with charts</a>
+                        </div>
                     </div>
                 </section>
             </section>
