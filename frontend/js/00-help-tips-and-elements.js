@@ -369,6 +369,7 @@
             distributionRangeMeta: document.getElementById('annualDistributionRangeMeta'),
         };
         const operationsNavLink = document.getElementById('operationsNavLink');
+        const collectDataNavLink = document.getElementById('collectDataNavLink');
         const pvModelNavLink = document.getElementById('pvModelNavLink');
         const STORAGE_KEY = 'sb-energy-dashboard-state-v1';
         const CHAT_HISTORY_STORAGE_KEY = 'sb-energy-solar-agent-conversations-v1';

@@ -41,6 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sbepv import dashboard, model, reporting
 from sbepv import technoeconomic as technoeconomic_kernel
 from sbepv.api import autonomy as autonomy_api
+from sbepv.api import collect_data as collect_data_api
 from sbepv.api import config, job_store, plots, review_store, state
 from sbepv.api import technoeconomic as technoeconomic_api
 from sbepv.api import baselines as baselines_module
@@ -215,6 +216,13 @@ def __getattr__(name: str) -> Any:
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
     _dashboard_basic_credentials()
+    try:
+        collect_data_api.reconcile_interrupted_collections()
+        collect_data_api.prune_data_collections()
+    except Exception:
+        logger.exception(
+            "Standalone data collection recovery failed; other workflows will continue"
+        )
     state.AGENT_STORE.mark_stale_claimed_decision_turns_failed(
         before=datetime.now(timezone.utc)
         - timedelta(seconds=config.DECISION_AGENT_TURN_STALE_SECONDS),
@@ -252,6 +260,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Autonomy-Human-Action"],
 )
 app.include_router(autonomy_api.router)
+app.include_router(collect_data_api.router)
 app.mount(
     "/outputs",
     PublicOutputStaticFiles(directory=str(config.OUTPUT_DIR)),
@@ -290,6 +299,7 @@ async def require_dashboard_basic_auth(request: Request, call_next):
         "/outputs/.agent_state",
         "/outputs/.annual_sources",
         "/outputs/.calibration_reviews",
+        "/outputs/.data_collections",
         "/outputs/.decision_evidence",
         "/outputs/.decision_reports",
         "/outputs/.technoeconomic_attempts",

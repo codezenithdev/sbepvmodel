@@ -89,6 +89,7 @@ PRIVATE_OUTPUT_DIRS = (
     (OUTPUT_DIR / ".agent_state").resolve(),
     CALIBRATION_REVIEW_DIR.resolve(),
     ANNUAL_SOURCE_ARTIFACT_DIR.resolve(),
+    (OUTPUT_DIR / ".data_collections").resolve(),
     DECISION_EVIDENCE_DIR.resolve(),
     DECISION_REPORT_DIR.resolve(),
     (OUTPUT_DIR / ".technoeconomic_attempts").resolve(),
@@ -99,6 +100,36 @@ CALIBRATION_REVIEW_MAX_RANGE = timedelta(days=366)
 CALIBRATION_REVIEW_MAX_ROWS = 200_000
 VALIDATION_RUN_MAX_RANGE = CALIBRATION_REVIEW_MAX_RANGE
 VALIDATION_RUN_MAX_ROWS = CALIBRATION_REVIEW_MAX_ROWS
+DATA_COLLECTION_MAX_RANGE = timedelta(days=366)
+DATA_COLLECTION_MAX_ROWS = 200_000
+DATA_COLLECTION_MAX_ACTIVE = int(
+    _bounded_env_number(
+        "PV_DASHBOARD_MAX_ACTIVE_DATA_COLLECTIONS", 2, minimum=1, maximum=8
+    )
+)
+DATA_COLLECTION_MAX_RECORDS = int(
+    _bounded_env_number(
+        "PV_DASHBOARD_MAX_DATA_COLLECTION_RECORDS", 250, minimum=10, maximum=1000
+    )
+)
+DATA_COLLECTION_RETENTION = timedelta(
+    days=int(
+        _bounded_env_number(
+            "PV_DASHBOARD_DATA_COLLECTION_RETENTION_DAYS",
+            7,
+            minimum=1,
+            maximum=90,
+        )
+    )
+)
+DATA_COLLECTION_MAX_STORAGE_BYTES = int(
+    _bounded_env_number(
+        "PV_DASHBOARD_DATA_COLLECTION_STORAGE_MB",
+        1024,
+        minimum=64,
+        maximum=4096,
+    )
+) * 1024 * 1024
 ANNUAL_RUN_MAX_DAYS = 3 * 366
 # Excel worksheets allow 1,048,576 rows including the header. Annual runs emit
 # one time-series row per interval, so reject requests that cannot be exported.

@@ -72,6 +72,7 @@ export function isAllowedApiPath(path: string[]): boolean {
       "annual-run",
       "chat",
       "calibration-reviews",
+      "data-collections",
       "saved-results",
     ].includes(path[0]);
   }
@@ -79,6 +80,7 @@ export function isAllowedApiPath(path: string[]): boolean {
   const isSafeId = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
   const isCaseId = (value: string) => /^case_[a-zA-Z0-9_-]+$/.test(value);
   const isEvidenceId = (value: string) => /^evi_[a-zA-Z0-9_-]+$/.test(value);
+  const isCollectionId = (value: string) => /^collect_[a-f0-9]{24}$/.test(value);
   const isScenarioId = (value: string) => /^dsc_[a-zA-Z0-9]+$/.test(value);
   const isTeaJobId = (value: string) => /^tea_[a-zA-Z0-9_-]+$/.test(value);
   const isTurnId = (value: string) => /^(?:turn_|dturn_)[a-zA-Z0-9_-]+$/.test(value);
@@ -88,6 +90,7 @@ export function isAllowedApiPath(path: string[]): boolean {
   if (path.length === 2) {
     return (
       (path[0] === "status" && isSafeId(path[1])) ||
+      (path[0] === "data-collections" && isCollectionId(path[1])) ||
       (path[0] === "agent" && path[1] === "state") ||
       (path[0] === "saved-results" && isSafeId(path[1])) ||
       (
@@ -112,6 +115,11 @@ export function isAllowedApiPath(path: string[]): boolean {
         path[0] === "calibration-reviews" &&
         isSafeId(path[1]) &&
         ["run", "rows"].includes(path[2])
+      ) ||
+      (
+        path[0] === "data-collections" &&
+        isCollectionId(path[1]) &&
+        path[2] === "download"
       ) ||
       (
         path[0] === "technoeconomic" &&

@@ -91,6 +91,25 @@ test("allows only the exact Autonomy evidence, execution, decision, sign-off, an
   }
 });
 
+test("allows only exact standalone data collection routes", () => {
+  const collectionId = "collect_0123456789abcdef01234567";
+  for (const path of [
+    ["data-collections"],
+    ["data-collections", collectionId],
+    ["data-collections", collectionId, "download"],
+  ]) {
+    assert.equal(isAllowedApiPath(path), true, `expected allowed: ${path.join("/")}`);
+  }
+  for (const path of [
+    ["data-collections", "unsafe"],
+    ["data-collections", collectionId, "delete"],
+    ["data-collections", collectionId, "download", "extra"],
+    ["data-collections", "collect_0123456789ABCDEF01234567"],
+  ]) {
+    assert.equal(isAllowedApiPath(path), false, `expected rejected: ${path.join("/")}`);
+  }
+});
+
 test("proxy service credentials cannot authorize human sign-off", async () => {
   const originalFetch = globalThis.fetch;
   const originalUser = process.env.RENDER_BASIC_USER;

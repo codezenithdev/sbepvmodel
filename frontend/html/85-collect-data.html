@@ -1,0 +1,116 @@
+            <section class="collect-data-only collect-data-page" id="collectDataPanel" aria-labelledby="collectDataHeading">
+                <header class="collect-data-header">
+                    <div>
+                        <p class="collect-data-eyebrow">Standalone source utility</p>
+                        <h2 id="collectDataHeading">Collect Bazefield data</h2>
+                        <p>Choose a Mountain-time window and the source series to export. This retrieves data only; it does not start calibration, simulation, or analysis.</p>
+                    </div>
+                    <span class="collect-data-isolation-badge">No model run</span>
+                </header>
+
+                <form class="collect-data-form" id="collectDataForm" novalidate>
+                    <section class="collect-data-card" aria-labelledby="collectDataWindowHeading">
+                        <div class="collect-data-card-heading">
+                            <span class="collect-data-step" aria-hidden="true">1</span>
+                            <div>
+                                <h3 id="collectDataWindowHeading">Collection window</h3>
+                                <p>The end boundary is exclusive.</p>
+                            </div>
+                        </div>
+                        <div class="collect-data-window-grid">
+                            <label class="control-field">
+                                <span class="date-label">Start date</span>
+                                <input class="date-input" id="collectDataFromDate" type="date" required>
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">Start time (24-hour)</span>
+                                <input class="date-input time-24-input" id="collectDataFromTime" type="text" value="00:00" placeholder="HH:MM" pattern="(?:[01]\d|2[0-3]):[0-5]\d" maxlength="5" autocomplete="off" required>
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">End date</span>
+                                <input class="date-input" id="collectDataToDate" type="date" required>
+                            </label>
+                            <label class="control-field">
+                                <span class="date-label">End time (24-hour)</span>
+                                <input class="date-input time-24-input" id="collectDataToTime" type="text" value="00:00" placeholder="HH:MM" pattern="(?:[01]\d|2[0-3]):[0-5]\d" maxlength="5" autocomplete="off" required>
+                            </label>
+                        </div>
+                        <p class="collect-data-time-note">24-hour HH:MM &middot; America/Denver</p>
+                        <label class="control-field collect-data-interval-field">
+                            <span class="date-label">Aggregation interval</span>
+                            <span class="interval-row">
+                                <input class="date-input" id="collectDataIntervalValue" type="number" value="1" min="1" step="1" inputmode="numeric" required>
+                                <select class="date-input" id="collectDataIntervalUnit">
+                                    <option value="minutes">minutes</option>
+                                    <option value="hours" selected>hours</option>
+                                    <option value="days">days</option>
+                                </select>
+                            </span>
+                        </label>
+                    </section>
+
+                    <fieldset class="collect-data-card collect-data-groups">
+                        <legend class="collect-data-card-heading">
+                            <span class="collect-data-step" aria-hidden="true">2</span>
+                            <span>
+                                <strong>System data</strong>
+                                <small>Select at least one source group.</small>
+                            </span>
+                        </legend>
+                        <label class="checkbox-control">
+                            <input type="checkbox" name="collectDataGroup" value="solaredge" checked>
+                            <span><strong>SolarEdge power</strong><small>Measured active power with source quality flags.</small></span>
+                        </label>
+                        <label class="checkbox-control">
+                            <input type="checkbox" name="collectDataGroup" value="solectria" checked>
+                            <span><strong>Solectria power</strong><small>Measured active power with source quality flags.</small></span>
+                        </label>
+                        <label class="checkbox-control">
+                            <input type="checkbox" name="collectDataGroup" value="weather" checked>
+                            <span><strong>Site weather</strong><small>DNI, GHI, DHI, ambient temperature, and wind speed.</small></span>
+                        </label>
+                    </fieldset>
+
+                    <footer class="collect-data-actions">
+                        <div>
+                            <strong>Ready to collect?</strong>
+                            <span>The CSV includes raw and decoded quality flags. Downloads are temporary and may be pruned.</span>
+                        </div>
+                        <button class="run-button" id="collectDataSubmit" type="submit">Collect data</button>
+                    </footer>
+                    <p class="collect-data-error" id="collectDataError" role="alert" tabindex="-1" hidden></p>
+                </form>
+
+                <section class="collect-data-status" id="collectDataStatus" role="status" aria-live="polite" aria-atomic="true" aria-busy="false" hidden>
+                    <div class="collect-data-status-heading">
+                        <div>
+                            <p class="collect-data-status-label" id="collectDataStateLabel">Queued</p>
+                            <h3 id="collectDataStage">Collection queued</h3>
+                        </div>
+                        <span id="collectDataProgressText">0%</span>
+                    </div>
+                    <div class="collect-data-progress" id="collectDataProgress" role="progressbar" aria-label="Data collection progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                        <span id="collectDataProgressFill"></span>
+                    </div>
+
+                    <dl class="collect-data-summary" id="collectDataSummary" hidden>
+                        <div><dt>Rows</dt><dd id="collectDataRowCount">&mdash;</dd></div>
+                        <div><dt>Series</dt><dd id="collectDataSeriesCount">&mdash;</dd></div>
+                        <div><dt>Usable-value completeness</dt><dd id="collectDataCompleteness">&mdash;</dd></div>
+                        <div><dt>Quality issues</dt><dd id="collectDataIssueCount">&mdash;</dd></div>
+                    </dl>
+
+                    <section class="collect-data-quality" id="collectDataQuality" aria-labelledby="collectDataQualityHeading" hidden>
+                        <div class="collect-data-quality-heading">
+                            <div>
+                                <p class="collect-data-eyebrow">Read-only screening</p>
+                                <h3 id="collectDataQualityHeading">Data-quality report</h3>
+                            </div>
+                            <span class="collect-data-quality-state" id="collectDataQualityState"></span>
+                        </div>
+                        <ul class="collect-data-issue-list" id="collectDataIssueList"></ul>
+                    </section>
+
+                    <a class="download-link collect-data-download" id="collectDataDownload" href="#" download hidden>Download collected CSV</a>
+                </section>
+            </section>

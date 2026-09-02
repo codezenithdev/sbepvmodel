@@ -1,0 +1,352 @@
+        const collectDataElements = Object.freeze({
+            panel: document.getElementById('collectDataPanel'),
+            form: document.getElementById('collectDataForm'),
+            fromDate: document.getElementById('collectDataFromDate'),
+            fromTime: document.getElementById('collectDataFromTime'),
+            toDate: document.getElementById('collectDataToDate'),
+            toTime: document.getElementById('collectDataToTime'),
+            intervalValue: document.getElementById('collectDataIntervalValue'),
+            intervalUnit: document.getElementById('collectDataIntervalUnit'),
+            submit: document.getElementById('collectDataSubmit'),
+            error: document.getElementById('collectDataError'),
+            status: document.getElementById('collectDataStatus'),
+            stateLabel: document.getElementById('collectDataStateLabel'),
+            stage: document.getElementById('collectDataStage'),
+            progress: document.getElementById('collectDataProgress'),
+            progressFill: document.getElementById('collectDataProgressFill'),
+            progressText: document.getElementById('collectDataProgressText'),
+            summary: document.getElementById('collectDataSummary'),
+            rowCount: document.getElementById('collectDataRowCount'),
+            seriesCount: document.getElementById('collectDataSeriesCount'),
+            completeness: document.getElementById('collectDataCompleteness'),
+            issueCount: document.getElementById('collectDataIssueCount'),
+            quality: document.getElementById('collectDataQuality'),
+            qualityState: document.getElementById('collectDataQualityState'),
+            issueList: document.getElementById('collectDataIssueList'),
+            download: document.getElementById('collectDataDownload'),
+        });
+        let collectDataPollTimer = null;
+        let collectDataRevision = 0;
+        let collectDataActiveId = null;
+        let collectDataPollFailures = 0;
+        let collectDataBusy = false;
+
+        function openCollectDataView() {
+            document.body.classList.remove(
+                'dashboard-mode-validation',
+                'dashboard-mode-annual',
+                'dashboard-mode-technoeconomic',
+                'dashboard-mode-autonomy'
+            );
+            document.body.classList.add('dashboard-mode-collect-data');
+            dashboardTitle.textContent = 'Collect Bazefield Data';
+            dashboardSubtitle.textContent = 'Retrieve selected site source data, inspect collection quality, and download the CSV without starting a model workflow.';
+            [validationTab, annualTab, technoeconomicTab, autonomyTab].forEach((tab) => {
+                tab.classList.remove('active');
+                tab.setAttribute('aria-pressed', 'false');
+            });
+            setActiveNav(collectDataNavLink);
+        }
+
+        function collectDataRestoreWorkflowView() {
+            if (!document.body.classList.contains('dashboard-mode-collect-data')) return;
+            switchMode(activeView, false);
+        }
+
+        function collectDataSetError(message, focus = false) {
+            collectDataElements.error.textContent = String(message || 'The data collection could not be completed.');
+            collectDataElements.error.hidden = false;
+            if (focus) collectDataElements.error.focus();
+        }
+
+        function collectDataClearError() {
+            collectDataElements.error.textContent = '';
+            collectDataElements.error.hidden = true;
+        }
+
+        function collectDataSetBusy(busy) {
+            collectDataBusy = busy;
+            collectDataElements.submit.disabled = busy;
+            collectDataElements.submit.textContent = busy ? 'Collecting…' : 'Collect data';
+            collectDataElements.status.setAttribute('aria-busy', String(busy));
+            collectDataElements.form.querySelectorAll('input, select').forEach((control) => {
+                control.disabled = busy;
+            });
+        }
+
+        function collectDataResetDownload() {
+            collectDataElements.download.hidden = true;
+            collectDataElements.download.removeAttribute('href');
+            collectDataElements.download.removeAttribute('download');
+        }
+
+        function collectDataClearResult() {
+            collectDataResetDownload();
+            collectDataElements.status.hidden = true;
+            collectDataElements.summary.hidden = true;
+            collectDataElements.quality.hidden = true;
+            collectDataElements.issueList.replaceChildren();
+        }
+
+        function collectDataInvalidateResult() {
+            if (collectDataBusy) return;
+            collectDataRevision += 1;
+            collectDataActiveId = null;
+            collectDataPollFailures = 0;
+            window.clearTimeout(collectDataPollTimer);
+            collectDataClearError();
+            collectDataClearResult();
+        }
+
+        function collectDataSetProgress(progress) {
+            const bounded = Math.min(100, Math.max(0, Number(progress) || 0));
+            const rounded = Math.round(bounded);
+            collectDataElements.progress.setAttribute('aria-valuenow', String(rounded));
+            collectDataElements.progressFill.style.width = rounded + '%';
+            collectDataElements.progressText.textContent = rounded + '%';
+        }
+
+        function collectDataStateText(state) {
+            if (state === 'completed') return 'Complete';
+            if (state === 'failed') return 'Needs attention';
+            if (state === 'collecting') return 'Collecting';
+            return 'Queued';
+        }
+
+        function collectDataRenderQuality(quality) {
+            const report = quality && typeof quality === 'object' ? quality : {};
+            const issues = Array.isArray(report.issues) ? report.issues : [];
+            collectDataElements.quality.hidden = false;
+            collectDataElements.qualityState.dataset.status = report.status || 'clean';
+            collectDataElements.qualityState.textContent = issues.length
+                ? issues.length.toLocaleString() + (issues.length === 1 ? ' issue' : ' issues')
+                : 'No issues detected';
+            const items = [];
+            if (!issues.length) {
+                const item = document.createElement('li');
+                item.className = 'collect-data-issue clean';
+                const title = document.createElement('strong');
+                title.textContent = 'No collection-quality issues detected';
+                const detail = document.createElement('span');
+                detail.textContent = 'All selected series passed the timestamp, completeness, source-quality, and screening-bound checks.';
+                item.append(title, detail);
+                items.push(item);
+            } else {
+                issues.forEach((issue) => {
+                    const item = document.createElement('li');
+                    item.className = 'collect-data-issue';
+                    const title = document.createElement('strong');
+                    title.textContent = String(issue?.title || 'Data-quality issue');
+                    const detail = document.createElement('span');
+                    detail.textContent = String(issue?.message || 'Review this source-data issue.');
+                    item.append(title, detail);
+                    items.push(item);
+                });
+            }
+            collectDataElements.issueList.replaceChildren(...items);
+        }
+
+        function collectDataRender(record) {
+            collectDataElements.status.hidden = false;
+            collectDataElements.stateLabel.textContent = collectDataStateText(record?.state);
+            collectDataElements.stage.textContent = String(record?.stage || 'Checking collection status');
+            collectDataSetProgress(record?.progress);
+            const result = record?.result;
+            if (record?.state === 'completed' && result) {
+                const quality = result.quality || {};
+                const summary = quality.summary || {};
+                collectDataElements.summary.hidden = false;
+                collectDataElements.rowCount.textContent = Number(result.row_count || 0).toLocaleString();
+                collectDataElements.seriesCount.textContent = Number((result.series || []).length).toLocaleString();
+                collectDataElements.completeness.textContent = Number(summary.usable_value_completeness_percent || 0).toLocaleString(undefined, { maximumFractionDigits: 1 }) + '%';
+                collectDataElements.issueCount.textContent = Number(quality.issue_count || 0).toLocaleString();
+                collectDataRenderQuality(quality);
+                const safeId = /^collect_[a-f0-9]{24}$/.test(String(record.collection_id || ''))
+                    ? record.collection_id
+                    : null;
+                if (safeId) {
+                    collectDataElements.download.href = '/api/data-collections/' + encodeURIComponent(safeId) + '/download';
+                    const safeFilename = String(result.filename || 'sbe-collected-data.csv').replace(/[^A-Za-z0-9._-]/g, '_');
+                    collectDataElements.download.setAttribute('download', safeFilename);
+                    collectDataElements.download.hidden = false;
+                }
+            }
+            if (record?.state === 'failed') {
+                collectDataSetError(record?.error?.message || 'The data collection failed.', true);
+            }
+        }
+
+        async function collectDataReadPayload(response) {
+            try {
+                return await response.json();
+            } catch (_) {
+                return {};
+            }
+        }
+
+        function collectDataErrorDetail(payload, fallback) {
+            if (typeof payload?.detail === 'string') return payload.detail;
+            if (Array.isArray(payload?.detail)) {
+                const messages = payload.detail.map((item) => item?.msg).filter(Boolean);
+                if (messages.length) return messages.join('; ');
+            }
+            return fallback;
+        }
+
+        function collectDataSchedulePoll(collectionId, revision, delay = 750) {
+            window.clearTimeout(collectDataPollTimer);
+            collectDataPollTimer = window.setTimeout(
+                () => void collectDataPoll(collectionId, revision),
+                delay
+            );
+        }
+
+        async function collectDataPoll(collectionId, revision) {
+            if (revision !== collectDataRevision || collectionId !== collectDataActiveId) return;
+            try {
+                const response = await fetchWithDashboardTimeout(
+                    '/api/data-collections/' + encodeURIComponent(collectionId),
+                    { cache: 'no-store' },
+                    10000
+                );
+                const payload = await collectDataReadPayload(response);
+                if (!response.ok) {
+                    throw new Error(collectDataErrorDetail(payload, 'Collection status is unavailable.'));
+                }
+                if (revision !== collectDataRevision) return;
+                collectDataPollFailures = 0;
+                collectDataRender(payload);
+                if (payload.state === 'queued' || payload.state === 'collecting') {
+                    collectDataSchedulePoll(collectionId, revision, 900);
+                    return;
+                }
+                collectDataSetBusy(false);
+            } catch (error) {
+                if (revision !== collectDataRevision) return;
+                collectDataPollFailures += 1;
+                if (collectDataPollFailures < 4) {
+                    collectDataElements.stage.textContent = 'Reconnecting to collection status';
+                    collectDataSchedulePoll(collectionId, revision, 1200 * collectDataPollFailures);
+                    return;
+                }
+                collectDataSetBusy(false);
+                collectDataSetError(error?.message || 'Collection status is unavailable.', true);
+            }
+        }
+
+        function collectDataReadRequest() {
+            collectDataClearError();
+            const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+            const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+            const fromDate = collectDataElements.fromDate.value.trim();
+            const toDate = collectDataElements.toDate.value.trim();
+            const fromTime = collectDataElements.fromTime.value.trim();
+            const toTime = collectDataElements.toTime.value.trim();
+            if (!datePattern.test(fromDate)) {
+                collectDataElements.fromDate.focus();
+                throw new Error('Choose a valid collection start date.');
+            }
+            if (!timePattern.test(fromTime)) {
+                collectDataElements.fromTime.focus();
+                throw new Error('Start time must use 24-hour HH:MM format.');
+            }
+            if (!datePattern.test(toDate)) {
+                collectDataElements.toDate.focus();
+                throw new Error('Choose a valid collection end date.');
+            }
+            if (!timePattern.test(toTime)) {
+                collectDataElements.toTime.focus();
+                throw new Error('End time must use 24-hour HH:MM format.');
+            }
+            if (fromDate + 'T' + fromTime >= toDate + 'T' + toTime) {
+                collectDataElements.toDate.focus();
+                throw new Error('Collection start date/time must be before the end date/time.');
+            }
+            const intervalValue = Number(collectDataElements.intervalValue.value);
+            if (!Number.isInteger(intervalValue) || intervalValue < 1) {
+                collectDataElements.intervalValue.focus();
+                throw new Error('Aggregation interval must be a whole number of at least 1.');
+            }
+            const dataGroups = Array.from(
+                collectDataElements.form.querySelectorAll('input[name="collectDataGroup"]:checked')
+            ).map((input) => input.value);
+            if (!dataGroups.length) {
+                collectDataElements.form.querySelector('input[name="collectDataGroup"]')?.focus();
+                throw new Error('Select at least one system-data group.');
+            }
+            return {
+                from_date: fromDate,
+                from_time: fromTime,
+                to_date: toDate,
+                to_time: toTime,
+                interval_value: intervalValue,
+                interval_unit: collectDataElements.intervalUnit.value,
+                data_groups: dataGroups,
+            };
+        }
+
+        async function collectDataSubmit(event) {
+            event.preventDefault();
+            let request;
+            try {
+                request = collectDataReadRequest();
+            } catch (error) {
+                collectDataSetError(error?.message, true);
+                return;
+            }
+            collectDataRevision += 1;
+            const revision = collectDataRevision;
+            collectDataActiveId = null;
+            collectDataPollFailures = 0;
+            window.clearTimeout(collectDataPollTimer);
+            collectDataClearResult();
+            collectDataElements.status.hidden = false;
+            collectDataElements.stateLabel.textContent = 'Queued';
+            collectDataElements.stage.textContent = 'Submitting collection request';
+            collectDataSetProgress(0);
+            collectDataSetBusy(true);
+            try {
+                const response = await fetchWithDashboardTimeout(
+                    '/api/data-collections',
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(request),
+                    },
+                    10000
+                );
+                const payload = await collectDataReadPayload(response);
+                if (!response.ok) {
+                    throw new Error(collectDataErrorDetail(payload, 'The collection request was rejected.'));
+                }
+                if (revision !== collectDataRevision) return;
+                const collectionId = String(payload.collection_id || '');
+                if (!/^collect_[a-f0-9]{24}$/.test(collectionId)) {
+                    throw new Error('The collection service returned an invalid identifier.');
+                }
+                collectDataActiveId = collectionId;
+                collectDataRender(payload);
+                collectDataSchedulePoll(collectionId, revision, 250);
+            } catch (error) {
+                if (revision !== collectDataRevision) return;
+                collectDataSetBusy(false);
+                collectDataSetError(error?.message || 'The collection request failed.', true);
+            }
+        }
+
+        function collectDataApplyDefaults() {
+            const today = dateIsoInTimeZone();
+            collectDataElements.fromDate.value = shiftIsoDate(today, -1);
+            collectDataElements.toDate.value = today;
+            collectDataElements.fromDate.max = today;
+            collectDataElements.toDate.max = today;
+        }
+
+        collectDataNavLink.addEventListener('click', openCollectDataView);
+        [operationsNavLink, pvModelNavLink].forEach((link) => {
+            link.addEventListener('click', collectDataRestoreWorkflowView, true);
+        });
+        collectDataElements.form.addEventListener('submit', collectDataSubmit);
+        collectDataElements.form.addEventListener('input', collectDataInvalidateResult);
+        collectDataElements.form.addEventListener('change', collectDataInvalidateResult);
+        collectDataApplyDefaults();

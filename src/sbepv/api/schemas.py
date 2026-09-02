@@ -32,6 +32,33 @@ class StrictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class DataCollectionRequest(StrictRequest):
+    """Standalone Bazefield source-data collection request."""
+
+    from_date: str
+    from_time: str = "00:00"
+    to_date: str
+    to_time: str = "00:00"
+    interval_value: int = Field(default=1, ge=1)
+    interval_unit: Literal["minutes", "hours", "days"] = "hours"
+    data_groups: list[Literal["solaredge", "solectria", "weather"]] = Field(
+        default_factory=lambda: ["solaredge", "solectria", "weather"],
+        min_length=1,
+        max_length=3,
+    )
+
+    @field_validator("data_groups")
+    @classmethod
+    def data_groups_are_unique(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("Data groups must not contain duplicates.")
+        order = {
+            name: index
+            for index, name in enumerate(("solaredge", "solectria", "weather"))
+        }
+        return sorted(value, key=order.__getitem__)
+
+
 class RunRequest(StrictRequest):
     from_date: str  # YYYY-MM-DD
     from_time: str = "00:00"  # HH:MM
