@@ -116,6 +116,14 @@ class CollectDataIngestTests(unittest.TestCase):
         self.assertEqual(rows[0]["solaredge_measured_power_quality_code"], "524480")
         self.assertEqual(rows[0]["solaredge_measured_power_quality"], "good")
         self.assertEqual(rows[1]["ghi_quality"], "uncertain")
+        self.assertAlmostEqual(
+            result["measured_energy_kwh"]["solaredge_measured_power"],
+            21.0,
+        )
+        self.assertNotIn(
+            "solectria_measured_power",
+            result["measured_energy_kwh"],
+        )
 
         issue_keys = {
             (item["code"], item.get("series"))
@@ -152,6 +160,9 @@ class CollectDataIngestTests(unittest.TestCase):
             exported = output.read_text(encoding="utf-8")
 
         self.assertEqual(result["row_count"], 0)
+        self.assertIsNone(
+            result["measured_energy_kwh"]["solaredge_measured_power"]
+        )
         self.assertEqual(
             result["quality"]["summary"]["usable_value_completeness_percent"],
             0.0,

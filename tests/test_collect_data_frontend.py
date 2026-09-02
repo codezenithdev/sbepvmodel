@@ -34,8 +34,8 @@ class CollectDataFrontendTests(unittest.TestCase):
             "collectDataPlots",
             "collectDataAcPowerPlot",
             "collectDataEnergyPlot",
-            "collectDataSolarEdgeStatus",
-            "collectDataSolectriaStatus",
+            "collectDataSolarEdgeEnergy",
+            "collectDataSolectriaEnergy",
             "collectDataDownloads",
             "collectDataCsvDownload",
             "collectDataXlsxDownload",
@@ -77,8 +77,12 @@ class CollectDataFrontendTests(unittest.TestCase):
         self.assertIn("'/download-xlsx'", self.script)
         self.assertIn("Download CSV", self.markup)
         self.assertIn("Download XLSX with charts", self.markup)
-        self.assertIn("SolarEdge measured", self.markup)
-        self.assertIn("Solectria measured", self.markup)
+        self.assertIn("SolarEdge measured energy", self.markup)
+        self.assertIn("Solectria measured energy", self.markup)
+        self.assertIn("collectDataFormatEnergy", self.script)
+        self.assertIn("measured_energy_kwh", self.script)
+        self.assertNotIn("'Included'", self.script)
+        self.assertNotIn("'Not selected'", self.script)
         self.assertNotIn("Read-only screening", self.markup)
         self.assertNotIn("Data-quality report", self.markup)
         self.assertNotIn("collectDataRenderQuality", self.script)

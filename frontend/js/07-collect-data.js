@@ -20,8 +20,8 @@
             summary: document.getElementById('collectDataSummary'),
             rowCount: document.getElementById('collectDataRowCount'),
             seriesCount: document.getElementById('collectDataSeriesCount'),
-            solarEdgeStatus: document.getElementById('collectDataSolarEdgeStatus'),
-            solectriaStatus: document.getElementById('collectDataSolectriaStatus'),
+            solarEdgeEnergy: document.getElementById('collectDataSolarEdgeEnergy'),
+            solectriaEnergy: document.getElementById('collectDataSolectriaEnergy'),
             plots: document.getElementById('collectDataPlots'),
             acPowerCard: document.getElementById('collectDataAcPowerCard'),
             acPowerPlot: document.getElementById('collectDataAcPowerPlot'),
@@ -152,6 +152,20 @@
             return 'Queued';
         }
 
+        function collectDataFormatEnergy(value) {
+            if (value === null || value === undefined || value === '') return '\u2014';
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return '\u2014';
+            const magnitude = Math.abs(numeric);
+            if (magnitude >= 1_000_000) {
+                return (numeric / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' GWh';
+            }
+            if (magnitude >= 1_000) {
+                return (numeric / 1_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' MWh';
+            }
+            return numeric.toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' kWh';
+        }
+
         function collectDataRenderPlots(record, result) {
             collectDataResetPlots();
             collectDataElements.plots.hidden = false;
@@ -199,15 +213,14 @@
             collectDataSetProgress(record?.progress);
             const result = record?.result;
             if (record?.state === 'completed' && result) {
-                const seriesNames = new Set(
-                    (Array.isArray(result.series) ? result.series : [])
-                        .map((series) => String(series?.name || ''))
-                );
+                const measuredEnergy = result.measured_energy_kwh && typeof result.measured_energy_kwh === 'object'
+                    ? result.measured_energy_kwh
+                    : {};
                 collectDataElements.summary.hidden = false;
                 collectDataElements.rowCount.textContent = Number(result.row_count || 0).toLocaleString();
                 collectDataElements.seriesCount.textContent = Number((result.series || []).length).toLocaleString();
-                collectDataElements.solarEdgeStatus.textContent = seriesNames.has('solaredge_measured_power') ? 'Included' : 'Not selected';
-                collectDataElements.solectriaStatus.textContent = seriesNames.has('solectria_measured_power') ? 'Included' : 'Not selected';
+                collectDataElements.solarEdgeEnergy.textContent = collectDataFormatEnergy(measuredEnergy.solaredge_measured_power);
+                collectDataElements.solectriaEnergy.textContent = collectDataFormatEnergy(measuredEnergy.solectria_measured_power);
                 collectDataRenderPlots(record, result);
                 collectDataElements.collapseToggle.hidden = false;
                 const safeId = /^collect_[a-f0-9]{24}$/.test(String(record.collection_id || ''))

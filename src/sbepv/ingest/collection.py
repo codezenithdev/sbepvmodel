@@ -873,6 +873,24 @@ def collect_historian_data(
 
     destination = Path(output_csv)
     bazefield.write_csv(rows, str(destination), output_columns)
+    measured_energy_kwh: dict[str, float | None] = {}
+    ordered_timestamps = sorted(buckets)
+    for column, _label, _color in _MEASURED_POWER_SERIES:
+        if column not in selected_column_set:
+            continue
+        total_kwh = 0.0
+        usable_sample_count = 0
+        for timestamp_ms, row in zip(ordered_timestamps, rows, strict=True):
+            value = row.get(column)
+            if not _finite_number(value):
+                continue
+            duration_seconds = min(
+                float(interval_seconds),
+                max(0.0, (end_ms - timestamp_ms) / 1_000.0),
+            )
+            total_kwh += float(value) * duration_seconds / 3_600_000.0
+            usable_sample_count += 1
+        measured_energy_kwh[column] = total_kwh if usable_sample_count else None
     quality = _quality_report(
         buckets,
         columns,
@@ -893,5 +911,6 @@ def collect_historian_data(
             {"name": column, **SERIES_METADATA[column]}
             for column in columns
         ],
+        "measured_energy_kwh": measured_energy_kwh,
         "quality": quality,
     }

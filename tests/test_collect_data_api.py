@@ -51,6 +51,7 @@ class CollectDataApiTests(unittest.TestCase):
                 "unit": "W",
                 "group": "solaredge",
             }],
+            "measured_energy_kwh": {"solaredge_measured_power": 10.0},
             "quality": {
                 "status": "clean",
                 "issue_count": 0,
@@ -198,6 +199,12 @@ class CollectDataApiTests(unittest.TestCase):
         payload = status.json()
         self.assertEqual(payload["state"], "completed")
         self.assertEqual(payload["result"]["quality"]["status"], "clean")
+        self.assertEqual(
+            payload["result"]["measured_energy_kwh"][
+                "solaredge_measured_power"
+            ],
+            10.0,
+        )
         self.assertEqual(
             payload["result"]["download_url"],
             f"/api/data-collections/{collection_id}/download",
