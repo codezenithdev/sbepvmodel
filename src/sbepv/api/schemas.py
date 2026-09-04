@@ -237,6 +237,10 @@ TECHNOECONOMIC_STANDALONE_COMMERCIAL_REALIZATION_COLUMN_OVERHEAD = 11
 # V5 retains all eleven SolarEdge columns, adds their eleven Solectria mirrors,
 # and adds the paired per-realization LCOE delta.
 TECHNOECONOMIC_PAIRED_COMMERCIAL_REALIZATION_COLUMN_OVERHEAD = 23
+# V6 retains only realization-level totals in the public table.  Annual and
+# component traces are exported for the three Upgrade-NPV representatives, so
+# they do not scale the realization-cell budget by project life.
+TECHNOECONOMIC_LIFECYCLE_REALIZATION_COLUMN_OVERHEAD = 64
 TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS = 8_000_000
 # Forward stepwise rank regression repeatedly fits expanding predictor sets.  The
 # deterministic n*p^2 gate is a conservative lower-bound proxy for that work.
@@ -843,13 +847,19 @@ class PairedCommercialSystemRequest(StrictTechnoeconomicRequest):
 
     technology: Literal["solectria", "solaredge"]
     evidence: TechnoeconomicEvidenceRequest
+    # V5 owns this cost stack.  V6 deliberately leaves it empty because the
+    # lifecycle object below owns every initial, recurring, scheduled, and
+    # reliability cost.  The parent validator enforces the version-specific
+    # choice so an omitted list cannot silently weaken a V5 request.
     cost_lines: list[StandaloneCommercialCostLineRequest] = Field(
-        min_length=1,
+        default_factory=list,
         max_length=1000,
     )
 
     @model_validator(mode="after")
     def validate_system_cost_stack(self) -> "PairedCommercialSystemRequest":
+        if not self.cost_lines:
+            return self
         identifiers = [line.input_id for line in self.cost_lines]
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("paired commercial cost input IDs must be unique per system")
@@ -884,6 +894,306 @@ class PairedCommercialSystemRequest(StrictTechnoeconomicRequest):
         return self
 
 
+LifecycleDistributionUnit = Literal[
+    "constant_usd",
+    "constant_usd_per_kwh_ac",
+    "constant_usd_per_target_w",
+    "constant_usd_per_target_w_year",
+    "dimensionless",
+    "dimensionless_fraction",
+    "hours",
+    "real_fraction_per_year",
+    "years",
+]
+
+
+class LifecycleDocumentedDistributionRequest(StrictTechnoeconomicRequest):
+    """One evidenced stochastic scalar in the V6 lifecycle contract."""
+
+    unit: LifecycleDistributionUnit
+    distribution: TechnoeconomicDistributionRequest
+    evidence: TechnoeconomicEvidenceRequest
+
+
+class LifecycleSourceAvailabilityRequest(StrictTechnoeconomicRequest):
+    year: Annotated[int, Field(ge=1900, le=3000)]
+    availability: Annotated[float, Field(gt=0, le=1, allow_inf_nan=False)]
+    evidence: TechnoeconomicEvidenceRequest
+
+
+class LifecycleInitialCostLineRequest(StrictTechnoeconomicRequest):
+    input_id: StableTechnoeconomicId
+    label: NonemptyTechnoeconomicText
+    cost_per_w: LifecycleDocumentedDistributionRequest
+    coverage_ids: list[StableTechnoeconomicId] = Field(min_length=1, max_length=256)
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_initial_cost_line(self) -> "LifecycleInitialCostLineRequest":
+        if self.cost_per_w.unit != "constant_usd_per_target_w":
+            raise ValueError("lifecycle initial cost must use constant_usd_per_target_w")
+        if len(set(self.coverage_ids)) != len(self.coverage_ids):
+            raise ValueError("lifecycle initial-cost coverage IDs must be unique")
+        return self
+
+
+class LifecycleScheduledCostRequest(StrictTechnoeconomicRequest):
+    input_id: StableTechnoeconomicId
+    label: NonemptyTechnoeconomicText
+    cost: LifecycleDocumentedDistributionRequest
+    real_cost_growth: LifecycleDocumentedDistributionRequest
+    occurrence_years: list[Annotated[int, Field(ge=1)]] = Field(
+        min_length=1,
+        max_length=1000,
+    )
+    coverage_ids: list[StableTechnoeconomicId] = Field(min_length=1, max_length=256)
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_scheduled_cost(self) -> "LifecycleScheduledCostRequest":
+        if self.cost.unit != "constant_usd":
+            raise ValueError("lifecycle scheduled cost must use constant_usd")
+        if self.real_cost_growth.unit != "real_fraction_per_year":
+            raise ValueError("lifecycle scheduled cost growth must be a real annual fraction")
+        if self.occurrence_years != sorted(set(self.occurrence_years)):
+            raise ValueError("lifecycle scheduled occurrence years must be unique and increasing")
+        if len(set(self.coverage_ids)) != len(self.coverage_ids):
+            raise ValueError("lifecycle scheduled-cost coverage IDs must be unique")
+        return self
+
+
+class LifecyclePreventiveReplacementRequest(StrictTechnoeconomicRequest):
+    year: Annotated[int, Field(ge=1)]
+    quantity: Annotated[int, Field(ge=1)]
+    coverage_ids: list[StableTechnoeconomicId] = Field(min_length=1, max_length=256)
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_preventive_replacement(self) -> "LifecyclePreventiveReplacementRequest":
+        if len(set(self.coverage_ids)) != len(self.coverage_ids):
+            raise ValueError("preventive-replacement coverage IDs must be unique")
+        return self
+
+
+class LifecycleWarrantyRequest(StrictTechnoeconomicRequest):
+    age_limit_years: Annotated[int, Field(ge=0)]
+    fraction: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+    covered_cost_categories: list[Literal["hardware", "labor", "mobilization"]] = Field(
+        min_length=1,
+        max_length=3,
+    )
+    coverage_ids: list[StableTechnoeconomicId] = Field(min_length=1, max_length=256)
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_warranty(self) -> "LifecycleWarrantyRequest":
+        if len(set(self.covered_cost_categories)) != len(self.covered_cost_categories):
+            raise ValueError("warranty covered-cost categories must be unique")
+        if len(set(self.coverage_ids)) != len(self.coverage_ids):
+            raise ValueError("warranty coverage IDs must be unique")
+        return self
+
+
+class LifecycleComponentRequest(StrictTechnoeconomicRequest):
+    component_id: StableTechnoeconomicId
+    category: StableTechnoeconomicId
+    count: Annotated[int, Field(ge=1)]
+    capacity_impact: Annotated[float, Field(gt=0, le=1, allow_inf_nan=False)]
+    weibull_beta: LifecycleDocumentedDistributionRequest
+    weibull_eta_years: LifecycleDocumentedDistributionRequest
+    repair_hours: LifecycleDocumentedDistributionRequest
+    logistics_hours: LifecycleDocumentedDistributionRequest
+    emergency_unit_cost: LifecycleDocumentedDistributionRequest
+    restock_unit_cost: LifecycleDocumentedDistributionRequest
+    labor_cost: LifecycleDocumentedDistributionRequest
+    mobilization_cost: LifecycleDocumentedDistributionRequest
+    real_cost_growth: LifecycleDocumentedDistributionRequest
+    batch_size: Annotated[int, Field(ge=1)]
+    initial_spares: Annotated[int, Field(ge=0)]
+    spare_target: Annotated[int, Field(ge=0)]
+    warranty: LifecycleWarrantyRequest | None = None
+    preventive_replacements: list[LifecyclePreventiveReplacementRequest] = Field(
+        default_factory=list,
+        max_length=1000,
+    )
+    coverage_ids: list[StableTechnoeconomicId] = Field(min_length=1, max_length=256)
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_component(self) -> "LifecycleComponentRequest":
+        expected_units = {
+            "weibull_beta": "dimensionless",
+            "weibull_eta_years": "years",
+            "repair_hours": "hours",
+            "logistics_hours": "hours",
+            "emergency_unit_cost": "constant_usd",
+            "restock_unit_cost": "constant_usd",
+            "labor_cost": "constant_usd",
+            "mobilization_cost": "constant_usd",
+            "real_cost_growth": "real_fraction_per_year",
+        }
+        for field_name, expected_unit in expected_units.items():
+            if getattr(self, field_name).unit != expected_unit:
+                raise ValueError(
+                    f"lifecycle component {field_name} must use {expected_unit}"
+                )
+        years = [item.year for item in self.preventive_replacements]
+        if years != sorted(set(years)):
+            raise ValueError("preventive replacement years must be unique and increasing")
+        if len(set(self.coverage_ids)) != len(self.coverage_ids):
+            raise ValueError("component coverage IDs must be unique")
+        return self
+
+
+class LifecycleSystemRequest(StrictTechnoeconomicRequest):
+    technology: Literal["solectria", "solaredge"]
+    degradation: LifecycleDocumentedDistributionRequest
+    base_availability: LifecycleDocumentedDistributionRequest
+    base_om_cost_per_w_year: LifecycleDocumentedDistributionRequest
+    base_om_real_growth: LifecycleDocumentedDistributionRequest
+    initial_cost_lines: list[LifecycleInitialCostLineRequest] = Field(
+        min_length=1,
+        max_length=1000,
+    )
+    scheduled_costs: list[LifecycleScheduledCostRequest] = Field(
+        default_factory=list,
+        max_length=1000,
+    )
+    components: list[LifecycleComponentRequest] = Field(min_length=1, max_length=256)
+    decommissioning_cost: LifecycleDocumentedDistributionRequest
+    salvage_value: LifecycleDocumentedDistributionRequest
+    source_availability_by_year: list[LifecycleSourceAvailabilityRequest] = Field(
+        default_factory=list,
+        max_length=200,
+    )
+    base_om_coverage_ids: list[StableTechnoeconomicId] = Field(
+        min_length=1,
+        max_length=256,
+    )
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_lifecycle_system(self) -> "LifecycleSystemRequest":
+        expected_units = {
+            "degradation": "real_fraction_per_year",
+            "base_availability": "dimensionless_fraction",
+            "base_om_cost_per_w_year": "constant_usd_per_target_w_year",
+            "base_om_real_growth": "real_fraction_per_year",
+            "decommissioning_cost": "constant_usd",
+            "salvage_value": "constant_usd",
+        }
+        for field_name, expected_unit in expected_units.items():
+            if getattr(self, field_name).unit != expected_unit:
+                raise ValueError(
+                    f"lifecycle system {field_name} must use {expected_unit}"
+                )
+        initial_ids = [item.input_id for item in self.initial_cost_lines]
+        scheduled_ids = [item.input_id for item in self.scheduled_costs]
+        component_ids = [item.component_id for item in self.components]
+        if len(set(initial_ids + scheduled_ids)) != len(initial_ids) + len(scheduled_ids):
+            raise ValueError("lifecycle system cost input IDs must be unique")
+        if len(set(component_ids)) != len(component_ids):
+            raise ValueError("lifecycle component IDs must be unique per system")
+        weather_years = [item.year for item in self.source_availability_by_year]
+        if weather_years != sorted(set(weather_years)):
+            raise ValueError("source availability years must be unique and increasing")
+        if len(set(self.base_om_coverage_ids)) != len(self.base_om_coverage_ids):
+            raise ValueError("base-O&M coverage IDs must be unique")
+        return self
+
+
+class LifecycleCommonCauseRequest(StrictTechnoeconomicRequest):
+    event_id: StableTechnoeconomicId
+    annual_probability: LifecycleDocumentedDistributionRequest
+    downtime_hours: LifecycleDocumentedDistributionRequest
+    capacity_impact: Annotated[float, Field(gt=0, le=1, allow_inf_nan=False)]
+    cost_per_event: LifecycleDocumentedDistributionRequest
+    real_cost_growth: LifecycleDocumentedDistributionRequest
+    affected_systems: list[Literal["solectria", "solaredge"]] = Field(
+        min_length=1,
+        max_length=2,
+    )
+    coverage_ids: list[StableTechnoeconomicId] = Field(min_length=1, max_length=256)
+    evidence: TechnoeconomicEvidenceRequest
+
+    @model_validator(mode="after")
+    def validate_common_cause(self) -> "LifecycleCommonCauseRequest":
+        expected_units = {
+            "annual_probability": "dimensionless_fraction",
+            "downtime_hours": "hours",
+            "cost_per_event": "constant_usd",
+            "real_cost_growth": "real_fraction_per_year",
+        }
+        for field_name, expected_unit in expected_units.items():
+            if getattr(self, field_name).unit != expected_unit:
+                raise ValueError(
+                    f"lifecycle common-cause {field_name} must use {expected_unit}"
+                )
+        if len(set(self.affected_systems)) != len(self.affected_systems):
+            raise ValueError("common-cause affected systems must be unique")
+        if len(set(self.coverage_ids)) != len(self.coverage_ids):
+            raise ValueError("common-cause coverage IDs must be unique")
+        return self
+
+
+class PairedLifecycleRequest(StrictTechnoeconomicRequest):
+    weather_path_method: Literal[
+        "paired-yearwise-balanced-across-realizations-independent-across-project-years-v1"
+    ]
+    source_energy_basis: Literal["gross", "net"]
+    reliability_mode: Literal["event", "expected"]
+    electricity_value: LifecycleDocumentedDistributionRequest
+    electricity_value_real_growth: LifecycleDocumentedDistributionRequest
+    systems: list[LifecycleSystemRequest] = Field(min_length=2, max_length=2)
+    common_cause_events: list[LifecycleCommonCauseRequest] = Field(
+        default_factory=list,
+        max_length=256,
+    )
+    decision_probability_threshold: Annotated[
+        float,
+        Field(gt=0.5, le=1, allow_inf_nan=False),
+    ] = 0.75
+    decision_npv_tolerance_usd_per_target_w: FinitePositiveFloat
+
+    @model_validator(mode="after")
+    def validate_paired_lifecycle(self) -> "PairedLifecycleRequest":
+        if self.electricity_value.unit != "constant_usd_per_kwh_ac":
+            raise ValueError("lifecycle electricity value must use constant_usd_per_kwh_ac")
+        if self.electricity_value_real_growth.unit != "real_fraction_per_year":
+            raise ValueError("lifecycle electricity-value growth must be a real annual fraction")
+        technologies = [system.technology for system in self.systems]
+        if len(set(technologies)) != 2 or set(technologies) != {
+            "solectria",
+            "solaredge",
+        }:
+            raise ValueError(
+                "paired lifecycle systems require exactly one Solectria and one SolarEdge"
+            )
+        event_ids = [event.event_id for event in self.common_cause_events]
+        if len(set(event_ids)) != len(event_ids):
+            raise ValueError("common-cause event IDs must be unique")
+        lifecycle_cost_ids = [
+            line.input_id
+            for system in self.systems
+            for line in (*system.initial_cost_lines, *system.scheduled_costs)
+        ]
+        if len(set(lifecycle_cost_ids)) != len(lifecycle_cost_ids):
+            raise ValueError("lifecycle cost input IDs must be globally unique")
+        if self.source_energy_basis == "gross" and any(
+            system.source_availability_by_year for system in self.systems
+        ):
+            raise ValueError(
+                "gross source energy must not declare source availability corrections"
+            )
+        if self.source_energy_basis == "net" and any(
+            not system.source_availability_by_year for system in self.systems
+        ):
+            raise ValueError(
+                "net source energy requires source availability evidence for both systems"
+            )
+        return self
+
+
 class PairedCommercialRequest(StrictTechnoeconomicRequest):
     """Scale both verified systems to one common commercial target."""
 
@@ -899,6 +1209,10 @@ class PairedCommercialRequest(StrictTechnoeconomicRequest):
     systems: list[PairedCommercialSystemRequest] = Field(
         min_length=2,
         max_length=2,
+    )
+    lifecycle: PairedLifecycleRequest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
     )
 
     @model_validator(mode="after")
@@ -921,6 +1235,16 @@ class PairedCommercialRequest(StrictTechnoeconomicRequest):
         ]
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("paired commercial cost input IDs must be globally unique")
+        if self.lifecycle is None and any(not system.cost_lines for system in self.systems):
+            raise ValueError("v5 paired commercial requires a complete cost stack per system")
+        if self.lifecycle is not None and any(system.cost_lines for system in self.systems):
+            raise ValueError(
+                "v6 lifecycle owns all system costs; paired commercial cost_lines must be empty"
+            )
+        if self.lifecycle is not None and {
+            system.technology for system in self.lifecycle.systems
+        } != set(technologies):
+            raise ValueError("paired commercial and lifecycle technologies must match")
         return self
 
 
@@ -942,7 +1266,15 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
         max_length=1000,
     )
     finance: TechnoeconomicFinanceRequest
-    shared_degradation: SharedDegradationRequest
+    calculation_contract_version: Literal[
+        "tea-calculation-v1",
+        "tea-calculation-v2",
+        "tea-calculation-v3",
+        "tea-calculation-v4",
+        "tea-calculation-v5",
+        "tea-calculation-v6",
+    ] | None = Field(default=None, exclude_if=lambda value: value is None)
+    shared_degradation: SharedDegradationRequest | None = None
     commercial_reference_design: CommercialReferenceDesignRequest | None = None
     commercial_transfer: CommercialEnergyTransferRequest | None = None
     commercial_scaling: CommercialScalingRequest | None = None
@@ -951,6 +1283,52 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
 
     @model_validator(mode="after")
     def validate_submission_contract(self) -> "TechnoeconomicSubmissionRequest":
+        lifecycle = (
+            self.paired_commercial.lifecycle
+            if self.paired_commercial is not None
+            else None
+        )
+        if lifecycle is not None and self.calculation_contract_version is None:
+            raise ValueError(
+                "paired_commercial.lifecycle requires explicit "
+                "calculation_contract_version='tea-calculation-v6'"
+            )
+        if self.calculation_contract_version == "tea-calculation-v6" and lifecycle is None:
+            raise ValueError(
+                "tea-calculation-v6 requires paired_commercial.lifecycle"
+            )
+        if lifecycle is not None and self.calculation_contract_version != "tea-calculation-v6":
+            raise ValueError(
+                "paired_commercial.lifecycle is only valid for tea-calculation-v6"
+            )
+        if lifecycle is not None and self.shared_degradation is not None:
+            raise ValueError(
+                "tea-calculation-v6 uses separate lifecycle degradation; "
+                "shared_degradation must be omitted"
+            )
+        if lifecycle is None and self.shared_degradation is None:
+            raise ValueError("tea-calculation-v1 through v5 require shared_degradation")
+        inferred_contract_version = (
+            "tea-calculation-v6"
+            if lifecycle is not None
+            else "tea-calculation-v5"
+            if self.paired_commercial is not None
+            else "tea-calculation-v4"
+            if self.standalone_commercial is not None
+            else "tea-calculation-v3"
+            if self.commercial_scaling is not None
+            else "tea-calculation-v2"
+            if self.capacity_normalization == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
+            else "tea-calculation-v1"
+        )
+        if (
+            self.calculation_contract_version is not None
+            and self.calculation_contract_version != inferred_contract_version
+        ):
+            raise ValueError(
+                "calculation_contract_version does not match the submitted request shape: "
+                f"expected {inferred_contract_version}"
+            )
         input_ids = [line.input_id for line in self.cost_lines]
         standalone_lines = (
             self.standalone_commercial.cost_lines
@@ -1041,7 +1419,10 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
             )
         if self.finance.real_discount_rate.unit != "real_fraction_per_year":
             raise ValueError("real discount rate must use real_fraction_per_year")
-        if self.shared_degradation.annual_rate.unit != "real_fraction_per_year":
+        if (
+            self.shared_degradation is not None
+            and self.shared_degradation.annual_rate.unit != "real_fraction_per_year"
+        ):
             raise ValueError("shared degradation must use real_fraction_per_year")
         if any(
             year > self.finance.project_life_years
@@ -1051,6 +1432,25 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
             raise ValueError(
                 "scheduled commercial occurrence years must fall within project life"
             )
+        if lifecycle is not None:
+            if any(
+                year > self.finance.project_life_years
+                for system in lifecycle.systems
+                for line in system.scheduled_costs
+                for year in line.occurrence_years
+            ):
+                raise ValueError(
+                    "lifecycle scheduled occurrence years must fall within project life"
+                )
+            if any(
+                replacement.year > self.finance.project_life_years
+                for system in lifecycle.systems
+                for component in system.components
+                for replacement in component.preventive_replacements
+            ):
+                raise ValueError(
+                    "preventive replacement years must fall within project life"
+                )
 
         if self.basis == "solartac_site":
             if self.commercial_reference_design is not None or self.commercial_transfer is not None:
@@ -1157,6 +1557,58 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                     "commercial representative costs must declare a sourced per-Wdc basis"
                 )
 
+        lifecycle_distributions: list[TechnoeconomicDistributionRequest] = []
+        if lifecycle is not None:
+            lifecycle_distributions.extend(
+                (
+                    lifecycle.electricity_value.distribution,
+                    lifecycle.electricity_value_real_growth.distribution,
+                )
+            )
+            for system in lifecycle.systems:
+                lifecycle_distributions.extend(
+                    (
+                        system.degradation.distribution,
+                        system.base_availability.distribution,
+                        system.base_om_cost_per_w_year.distribution,
+                        system.base_om_real_growth.distribution,
+                        system.decommissioning_cost.distribution,
+                        system.salvage_value.distribution,
+                    )
+                )
+                lifecycle_distributions.extend(
+                    line.cost_per_w.distribution for line in system.initial_cost_lines
+                )
+                for line in system.scheduled_costs:
+                    lifecycle_distributions.extend(
+                        (line.cost.distribution, line.real_cost_growth.distribution)
+                    )
+                for component in system.components:
+                    lifecycle_distributions.extend(
+                        getattr(component, field_name).distribution
+                        for field_name in (
+                            "weibull_beta",
+                            "weibull_eta_years",
+                            "repair_hours",
+                            "logistics_hours",
+                            "emergency_unit_cost",
+                            "restock_unit_cost",
+                            "labor_cost",
+                            "mobilization_cost",
+                            "real_cost_growth",
+                        )
+                    )
+            for event in lifecycle.common_cause_events:
+                lifecycle_distributions.extend(
+                    getattr(event, field_name).distribution
+                    for field_name in (
+                        "annual_probability",
+                        "downtime_hours",
+                        "cost_per_event",
+                        "real_cost_growth",
+                    )
+                )
+
         declared_input_count = len(self.cost_lines) + len(commercial_lines) + 2
         if self.commercial_transfer is not None:
             declared_input_count += 2
@@ -1173,25 +1625,29 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
             estimated_realization_columns += (
                 TECHNOECONOMIC_STANDALONE_COMMERCIAL_REALIZATION_COLUMN_OVERHEAD
             )
-        if self.paired_commercial is not None:
+        if lifecycle is not None:
+            estimated_realization_columns = (
+                TECHNOECONOMIC_LIFECYCLE_REALIZATION_COLUMN_OVERHEAD
+                + 1  # shared discount-rate realization
+                + len(lifecycle_distributions)
+            )
+        elif self.paired_commercial is not None:
             estimated_realization_columns += (
                 TECHNOECONOMIC_PAIRED_COMMERCIAL_REALIZATION_COLUMN_OVERHEAD
             )
         realization_export_cells = self.n * estimated_realization_columns
         if realization_export_cells > TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS:
-            raise ValueError(
-                "technoeconomic realization export cell budget exceeded: "
-                f"{realization_export_cells} > "
-                f"{TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS}"
-            )
+            if lifecycle is None:
+                raise ValueError(
+                    "technoeconomic realization export cell budget exceeded: "
+                    f"{realization_export_cells} > "
+                    f"{TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS}"
+                )
 
         distributions = [line.distribution for line in self.cost_lines]
-        distributions.extend(
-            (
-                self.finance.real_discount_rate.distribution,
-                self.shared_degradation.annual_rate.distribution,
-            )
-        )
+        distributions.append(self.finance.real_discount_rate.distribution)
+        if self.shared_degradation is not None:
+            distributions.append(self.shared_degradation.annual_rate.distribution)
         if self.commercial_transfer is not None:
             distributions.extend(
                 (
@@ -1202,6 +1658,7 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
         if self.commercial_scaling is not None:
             distributions.append(self.commercial_scaling.marginal_cost_difference)
         distributions.extend(line.distribution for line in commercial_lines)
+        distributions.extend(lifecycle_distributions)
         nonfixed_predictor_count = sum(
             distribution.family != "fixed"
             and not (
@@ -1211,7 +1668,10 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
             for distribution in distributions
         )
         sensitivity_work_units = self.n * nonfixed_predictor_count**2
-        if sensitivity_work_units > TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS:
+        if (
+            lifecycle is None
+            and sensitivity_work_units > TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS
+        ):
             raise ValueError(
                 "technoeconomic sensitivity work budget exceeded: "
                 f"{sensitivity_work_units} > "
@@ -1238,6 +1698,16 @@ __all__ = [
     "DocumentedDistributionRequest",
     "EvidenceCitationRequest",
     "FixedDistributionRequest",
+    "LifecycleCommonCauseRequest",
+    "LifecycleComponentRequest",
+    "LifecycleDocumentedDistributionRequest",
+    "LifecycleInitialCostLineRequest",
+    "LifecyclePreventiveReplacementRequest",
+    "LifecycleScheduledCostRequest",
+    "LifecycleSourceAvailabilityRequest",
+    "LifecycleSystemRequest",
+    "LifecycleWarrantyRequest",
+    "PairedLifecycleRequest",
     "PriceIndexCurrencyNormalizationRequest",
     "ProposalEditRequest",
     "ProposalSweepConfirmRequest",

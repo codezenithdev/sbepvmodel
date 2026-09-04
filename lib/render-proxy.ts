@@ -127,6 +127,11 @@ export function isAllowedApiPath(path: string[]): boolean {
         isSafeId(path[2])
       ) ||
       (
+        path[0] === "technoeconomic" &&
+        path[1] === "formulas" &&
+        path[2] === "v6"
+      ) ||
+      (
         path[0] === "autonomy" &&
         path[1] === "cases" &&
         isCaseId(path[2])

@@ -11,7 +11,30 @@
         const TECHNOECONOMIC_ACTIVE_JOB_STORAGE_KEY = 'sbepv.technoeconomic.active-job.v1';
         const TECHNOECONOMIC_STANDALONE_CONTRACT_VERSION = 'tea-calculation-v4';
         const TECHNOECONOMIC_PAIRED_CONTRACT_VERSION = 'tea-calculation-v5';
+        const TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION = 'tea-calculation-v6';
         const TECHNOECONOMIC_SAMPLING_VERSION = 'tea-lhs-v1';
+        const TECHNOECONOMIC_LIFECYCLE_SAMPLING_VERSION = 'tea-lhs-v2';
+        const TECHNOECONOMIC_LIFECYCLE_WEATHER_METHOD =
+            'paired-yearwise-balanced-across-realizations-independent-across-project-years-v1';
+        const TECHNOECONOMIC_LIFECYCLE_TEMPLATE_REFERENCE =
+            'tea-v6-provisional-template-v1';
+        const TECHNOECONOMIC_LIFECYCLE_TEMPLATE_DEFAULTS = Object.freeze({
+            lifecycleSourceBasis: 'gross', lifecycleReliabilityMode: 'event',
+            lifecycleElectricityValue: '0.07', lifecycleElectricityGrowth: '0',
+            lifecycleNpvTolerance: '0.01',
+            lifecycleSolectriaDegradation: '0.50',
+            lifecycleSolarEdgeDegradation: '0.50',
+            lifecycleSolectriaAvailability: '99.50',
+            lifecycleSolarEdgeAvailability: '99.50',
+            lifecycleSolectriaInitialCost: '1.56',
+            lifecycleSolarEdgeInitialCost: '1.56',
+            lifecycleSolectriaBaseOm: '22.00', lifecycleSolarEdgeBaseOm: '22.00',
+            lifecycleSolectriaDecommissioning: '3000000',
+            lifecycleSolarEdgeDecommissioning: '3000000',
+            lifecycleSolectriaSalvage: '2000000', lifecycleSolarEdgeSalvage: '2000000',
+            lifecycleCommonProbability: '2.00', lifecycleCommonDowntime: '48',
+            lifecycleCommonImpact: '20', lifecycleCommonCost: '100000',
+        });
         const TECHNOECONOMIC_PAIRED_SYSTEMS = Object.freeze([
             Object.freeze({key: 'solectria', label: 'Solectria'}),
             Object.freeze({key: 'solaredge', label: 'SolarEdge'}),
@@ -198,8 +221,12 @@
         let technoeconomicWorkspaceInitialized = false;
         let technoeconomicApplyingDraft = false;
         let technoeconomicEntryMode = TECHNOECONOMIC_GUIDED_ENTRY_MODE;
+        let technoeconomicLifecycleEntryMode = 'empty';
+        let technoeconomicLifecycleTemplateModified = false;
         let technoeconomicAssumptionsTrigger = null;
         let technoeconomicAssumptionsReturnFocus = true;
+        let technoeconomicFormulaRegistryPayload = null;
+        let technoeconomicFormulaRegistryPromise = null;
 
         function technoeconomicPlainObject(value) {
             return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -1422,6 +1449,39 @@
             return output;
         }
 
+        function technoeconomicLifecycleEvidenceCopy(value, acceptance = null) {
+            if (Array.isArray(value)) {
+                return value.map((item) => technoeconomicLifecycleEvidenceCopy(
+                    item, acceptance
+                ));
+            }
+            if (!value || typeof value !== 'object') return value;
+            const output = {};
+            for (const [key, item] of Object.entries(value)) {
+                if (key === 'explicit_acceptance' || key === 'acceptance_rationale') continue;
+                output[key] = technoeconomicLifecycleEvidenceCopy(item, acceptance);
+            }
+            if (Object.hasOwn(output, 'evidence_class')
+                && Object.hasOwn(output, 'citation') && acceptance) {
+                output.explicit_acceptance = acceptance.accepted === true;
+                output.acceptance_rationale = acceptance.accepted === true
+                    ? acceptance.rationale : '';
+            }
+            return output;
+        }
+
+        function technoeconomicSanitizeLifecycleJsonDraft(value) {
+            const raw = technoeconomicText(value);
+            if (!raw.trim()) return '';
+            try {
+                return JSON.stringify(
+                    technoeconomicLifecycleEvidenceCopy(JSON.parse(raw)), null, 2
+                );
+            } catch (_error) {
+                return raw;
+            }
+        }
+
         function technoeconomicStandaloneSanitizeDraft(value) {
             const source = technoeconomicPlainObject(value);
             if (source.schema_version !== TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION) {
@@ -1455,8 +1515,21 @@
             const ratingBasis = ['ac_operating_limit', 'dc_installed_nameplate'].includes(
                 source.rating_basis
             ) ? source.rating_basis : 'ac_operating_limit';
+            // The existing paired-draft-v3 key predates the discriminator. A
+            // missing value therefore identifies a saved V5 draft, while new
+            // defaults below opt into V6 explicitly.
+            const calculationContract = [
+                TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION,
+                TECHNOECONOMIC_PAIRED_CONTRACT_VERSION,
+            ].includes(source.calculation_contract_version)
+                ? source.calculation_contract_version
+                : TECHNOECONOMIC_PAIRED_CONTRACT_VERSION;
             return {
                 schema_version: TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION,
+                calculation_contract_version: calculationContract,
+                lifecycle_json: technoeconomicSanitizeLifecycleJsonDraft(
+                    source.lifecycle_json
+                ),
                 source_annual_job_id: technoeconomicText(source.source_annual_job_id),
                 target_capacity: technoeconomicText(source.target_capacity) || '100',
                 n: technoeconomicText(source.n) || '10000',
@@ -1477,6 +1550,8 @@
         function technoeconomicStandaloneDefaultDraft() {
             return technoeconomicStandaloneSanitizeDraft({
                 schema_version: TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION,
+                calculation_contract_version: TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION,
+                lifecycle_json: '',
                 source_annual_job_id: '', target_capacity: '100', n: '10000',
                 seed: '', project_life_years: '30', rating_basis: 'ac_operating_limit',
                 discount_distribution: {family: 'fixed', value: ''},
@@ -1509,6 +1584,8 @@
             }));
             return technoeconomicStandaloneSanitizeDraft({
                 schema_version: TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION,
+                calculation_contract_version: technoeconomicElements.calculationContract?.value,
+                lifecycle_json: technoeconomicElements.lifecycleJson?.value || '',
                 source_annual_job_id: technoeconomicElements.standaloneSourceSelect?.value || '',
                 target_capacity: technoeconomicElements.standaloneTargetCapacityInput?.value || '',
                 n: technoeconomicElements.standaloneRealizations?.value || '',
@@ -1583,10 +1660,24 @@
                     technoeconomicElements.standaloneSourceSelect.value =
                         draft.source_annual_job_id;
                 }
+                if (technoeconomicElements.calculationContract) {
+                    technoeconomicElements.calculationContract.value =
+                        draft.calculation_contract_version;
+                }
                 if (technoeconomicElements.standaloneTargetCapacityInput) {
                     technoeconomicElements.standaloneTargetCapacityInput.value =
                         draft.target_capacity;
                 }
+                for (const root of [
+                    technoeconomicElements.standaloneSolectriaCostLines,
+                    technoeconomicElements.standaloneSolarEdgeCostLines,
+                ]) {
+                    if (root?.dataset) root.dataset.ratingBasis = draft.rating_basis;
+                }
+                if (technoeconomicElements.lifecycleJson) {
+                    technoeconomicElements.lifecycleJson.value = draft.lifecycle_json;
+                }
+                technoeconomicHydrateLifecycleTemplate(draft.lifecycle_json);
                 if (technoeconomicElements.standaloneRealizations) {
                     technoeconomicElements.standaloneRealizations.value = draft.n;
                 }
@@ -1643,6 +1734,7 @@
             } finally {
                 technoeconomicApplyingDraft = false;
             }
+            technoeconomicRenderContractMode();
             technoeconomicRenderStandaloneDraft();
             return true;
         }
@@ -1941,6 +2033,1201 @@
             };
         }
 
+        function technoeconomicSelectedContractVersion() {
+            const selected = technoeconomicElements?.calculationContract?.value;
+            return selected === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION
+                ? TECHNOECONOMIC_PAIRED_CONTRACT_VERSION
+                : TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION;
+        }
+
+        function technoeconomicLifecycleTemplateControls() {
+            return [
+                'lifecycleSourceBasis', 'lifecycleReliabilityMode',
+                'lifecycleElectricityValue', 'lifecycleElectricityGrowth',
+                'lifecycleNpvTolerance', 'lifecycleSolectriaDegradation',
+                'lifecycleSolarEdgeDegradation', 'lifecycleSolectriaAvailability',
+                'lifecycleSolarEdgeAvailability', 'lifecycleSolectriaInitialCost',
+                'lifecycleSolarEdgeInitialCost', 'lifecycleSolectriaBaseOm',
+                'lifecycleSolarEdgeBaseOm', 'lifecycleSolectriaDecommissioning',
+                'lifecycleSolarEdgeDecommissioning', 'lifecycleSolectriaSalvage',
+                'lifecycleSolarEdgeSalvage', 'lifecycleCommonProbability',
+                'lifecycleCommonDowntime', 'lifecycleCommonImpact',
+                'lifecycleCommonCost',
+            ].map((key) => technoeconomicElements?.[key]).filter(Boolean);
+        }
+
+        function technoeconomicSetLifecycleTemplateStatus(state, title, detail) {
+            if (technoeconomicElements?.lifecycleTemplateStatusPanel) {
+                technoeconomicElements.lifecycleTemplateStatusPanel.dataset.state = state;
+            }
+            if (technoeconomicElements?.lifecycleTemplateStatus) {
+                technoeconomicElements.lifecycleTemplateStatus.textContent = title;
+            }
+            if (technoeconomicElements?.lifecycleTemplateStatusDetail) {
+                technoeconomicElements.lifecycleTemplateStatusDetail.textContent = detail;
+            }
+        }
+
+        function technoeconomicSetLifecycleTemplateButtonMode(applied) {
+            if (!technoeconomicElements?.useLifecycleTemplateButton) return;
+            const button = technoeconomicElements.useLifecycleTemplateButton;
+            button.textContent = applied
+                ? 'Reset to approved template values'
+                : 'Use approved template values';
+            const statusPanel = technoeconomicElements.lifecycleTemplateStatusPanel;
+            const heading = statusPanel?.parentElement?.querySelector?.(
+                '.tea-v6-template-heading'
+            );
+            if (applied && typeof statusPanel?.appendChild === 'function'
+                && button.parentElement !== statusPanel) {
+                statusPanel.appendChild(button);
+            } else if (!applied && typeof heading?.appendChild === 'function'
+                && button.parentElement !== heading) {
+                heading.appendChild(button);
+            }
+        }
+
+        function technoeconomicSetLifecycleTemplateControlsEnabled(enabled) {
+            for (const control of technoeconomicLifecycleTemplateControls()) {
+                control.disabled = !enabled;
+            }
+        }
+
+        function technoeconomicLifecycleTemplateRatingBasis() {
+            const source = technoeconomicStandaloneSelectedSource();
+            const ratingBases = new Set(TECHNOECONOMIC_PAIRED_SYSTEMS.map(({key}) => (
+                technoeconomicStandaloneSourceCapacityInfo(source, key)?.ratingBasis
+            )).filter(Boolean));
+            if (ratingBases.size === 1) return [...ratingBases][0];
+            const renderedBasis = technoeconomicElements?.standaloneSolarEdgeCostLines
+                ?.dataset?.ratingBasis;
+            return ['ac_operating_limit', 'dc_installed_nameplate'].includes(renderedBasis)
+                ? renderedBasis : 'ac_operating_limit';
+        }
+
+        function technoeconomicRenderLifecycleTemplateCostBasis(ratingBasis) {
+            const suffix = ratingBasis === 'dc_installed_nameplate' ? 'dc' : 'ac';
+            if (technoeconomicElements?.lifecycleInitialCostUnit) {
+                technoeconomicElements.lifecycleInitialCostUnit.textContent =
+                    `real 2022 USD/W${suffix}`;
+            }
+            if (technoeconomicElements?.lifecycleBaseOmUnit) {
+                technoeconomicElements.lifecycleBaseOmUnit.textContent =
+                    `real 2022 USD/kW${suffix}-year`;
+            }
+        }
+
+        function technoeconomicResetLifecycleTemplateFields() {
+            technoeconomicLifecycleTemplateModified = false;
+            for (const [key, value] of Object.entries(
+                TECHNOECONOMIC_LIFECYCLE_TEMPLATE_DEFAULTS
+            )) {
+                if (technoeconomicElements?.[key]) {
+                    technoeconomicElements[key].value = value;
+                }
+            }
+            const ratingBasis = technoeconomicLifecycleTemplateRatingBasis();
+            const preset = TECHNOECONOMIC_STANDALONE_ATB_PRESETS[ratingBasis]
+                || TECHNOECONOMIC_STANDALONE_ATB_PRESETS.ac_operating_limit;
+            for (const key of [
+                'lifecycleSolectriaInitialCost', 'lifecycleSolarEdgeInitialCost',
+            ]) {
+                if (technoeconomicElements?.[key]) technoeconomicElements[key].value = preset.capex;
+            }
+            for (const key of [
+                'lifecycleSolectriaBaseOm', 'lifecycleSolarEdgeBaseOm',
+            ]) {
+                if (technoeconomicElements?.[key]) technoeconomicElements[key].value = preset.om;
+            }
+            technoeconomicRenderLifecycleTemplateCostBasis(ratingBasis);
+        }
+
+        function technoeconomicLifecycleTemplateNumber(
+            key, label, errors, {minimum = null, maximum = null, divisor = 1} = {}
+        ) {
+            const control = technoeconomicElements?.[key];
+            const raw = technoeconomicText(control?.value).trim();
+            const number = raw ? Number(raw) : Number.NaN;
+            const invalid = !raw || !Number.isFinite(number)
+                || (minimum !== null && number < minimum)
+                || (maximum !== null && number > maximum);
+            const range = minimum !== null && maximum !== null
+                ? `between ${minimum} and ${maximum}`
+                : minimum !== null ? `at least ${minimum}`
+                    : maximum !== null ? `no greater than ${maximum}` : 'a finite number';
+            const message = invalid
+                ? `${label} must be ${range}.`
+                : '';
+            control?.setCustomValidity?.(message);
+            if (invalid) {
+                errors.push(message);
+                return null;
+            }
+            return number / divisor;
+        }
+
+        function technoeconomicLifecycleTemplateEvidence(label) {
+            return {
+                evidence_class: 'engineering_judgment',
+                citation: {
+                    title: 'TEA v6 provisional lifecycle planning template v1',
+                    organization: 'Application-provided TEA template',
+                    url: null,
+                    stable_reference: TECHNOECONOMIC_LIFECYCLE_TEMPLATE_REFERENCE,
+                    publication_or_as_of_date: '2026-09-03',
+                    accessed_date: '2026-09-03',
+                    excerpt_or_derivation_note:
+                        `${label}. User-selected neutral planning value derived from the `
+                        + 'synthetic TEA v6 review fixture; it is not vendor evidence and must be '
+                        + 'accepted by the analyst for this run or replaced with project evidence.'
+                        + (technoeconomicLifecycleTemplateModified
+                            ? ' [analyst-modified] One or more editable planning values differ from the template defaults.'
+                            : ''),
+                    preservation_mode: 'metadata_excerpt_only',
+                    user_supplied_content_sha256: null,
+                    metadata_only_rationale:
+                        'The versioned provisional template is embedded in the dashboard and has no separate evidence file.',
+                },
+                explicit_acceptance: null,
+                acceptance_rationale: null,
+            };
+        }
+
+        function technoeconomicLifecycleTemplateDocumented(value, unit, label, evidence = null) {
+            return {
+                unit,
+                distribution: {family: 'fixed', value},
+                evidence: evidence || technoeconomicLifecycleTemplateEvidence(label),
+            };
+        }
+
+        function technoeconomicLifecycleTemplateNrelEvidence(subject, note) {
+            const evidence = technoeconomicStandaloneNrelEvidence(subject, note);
+            evidence.citation.user_supplied_content_sha256 = null;
+            evidence.explicit_acceptance = null;
+            evidence.acceptance_rationale = null;
+            return evidence;
+        }
+
+        function technoeconomicLifecycleTemplateComponent(
+            technology, componentKey, count, capacityImpact
+        ) {
+            const prefix = `template.${technology}.${componentKey}`;
+            const componentA = componentKey === 'component-a';
+            const label = componentA
+                ? 'Generic 100-kW power-electronics equivalent'
+                : 'Generic 1-MW balance-of-system equivalent';
+            const spareTarget = Math.max(1, Math.ceil(count * 0.01));
+            const documented = (value, unit, field, evidence = null) => (
+                technoeconomicLifecycleTemplateDocumented(
+                    value, unit, `${label}: ${field}`, evidence
+                )
+            );
+            return {
+                component_id: componentA
+                    ? 'template-power-electronics-100kw'
+                    : 'template-balance-of-system-1mw',
+                category: componentA
+                    ? 'power-electronics-equivalent' : 'balance-of-system-equivalent',
+                count,
+                capacity_impact: capacityImpact,
+                weibull_beta: documented(componentA ? 1.5 : 2.5, 'dimensionless', 'Weibull beta'),
+                weibull_eta_years: documented(componentA ? 15 : 30, 'years', 'Weibull eta'),
+                repair_hours: documented(componentA ? 8 : 24, 'hours', 'repair time'),
+                logistics_hours: documented(componentA ? 72 : 168, 'hours', 'logistics time'),
+                emergency_unit_cost: documented(
+                    componentA ? 15750 : 52500, 'constant_usd', 'emergency hardware cost'
+                ),
+                restock_unit_cost: documented(
+                    componentA ? 15000 : 50000, 'constant_usd', 'stock replenishment cost'
+                ),
+                labor_cost: documented(
+                    componentA ? 1000 : 5000, 'constant_usd', 'labor cost per failure'
+                ),
+                mobilization_cost: documented(
+                    componentA ? 500 : 2000, 'constant_usd', 'mobilization cost per batch'
+                ),
+                real_cost_growth: documented(0, 'real_fraction_per_year', 'real cost growth'),
+                batch_size: componentA ? 5 : 1,
+                initial_spares: spareTarget,
+                spare_target: spareTarget,
+                warranty: {
+                    age_limit_years: componentA ? 10 : 5,
+                    fraction: componentA ? 0.8 : 0.5,
+                    covered_cost_categories: ['hardware'],
+                    coverage_ids: [`${prefix}.warranty`],
+                    evidence: technoeconomicLifecycleTemplateEvidence(`${label}: warranty scope`),
+                },
+                preventive_replacements: [],
+                coverage_ids: [`${prefix}.corrective-and-availability`],
+                evidence: technoeconomicLifecycleTemplateEvidence(`${label}: target BOM entry`),
+            };
+        }
+
+        function technoeconomicLifecycleTemplateSystem(
+            technology, values, targetMw, componentCounts, ratingBasis
+        ) {
+            const label = technology === 'solectria' ? 'Solectria' : 'SolarEdge';
+            const prefix = `template.${technology}`;
+            const preset = TECHNOECONOMIC_STANDALONE_ATB_PRESETS[ratingBasis]
+                || TECHNOECONOMIC_STANDALONE_ATB_PRESETS.ac_operating_limit;
+            const usesNrelCapex = Math.abs(Number(values.initialCost) - Number(preset.capex))
+                <= 1e-12;
+            const usesNrelOm = Math.abs(Number(values.baseOm) - Number(preset.om) / 1000)
+                <= 1e-12;
+            const documented = (value, unit, field, evidence = null) => (
+                technoeconomicLifecycleTemplateDocumented(
+                    value, unit, `${label}: ${field}`, evidence
+                )
+            );
+            return {
+                technology,
+                degradation: documented(
+                    values.degradation, 'real_fraction_per_year', 'annual degradation'
+                ),
+                base_availability: documented(
+                    values.availability, 'dimensionless_fraction', 'base availability'
+                ),
+                base_om_cost_per_w_year: documented(
+                    values.baseOm, 'constant_usd_per_target_w_year', 'base O&M',
+                    usesNrelOm
+                        ? technoeconomicLifecycleTemplateNrelEvidence(
+                            `NREL 2024 ATB utility-scale PV O&M benchmark for ${label}`,
+                            `${label} uses the rating-basis-specific generic ATB O&M preset in real 2022 USD; not a vendor quote.`
+                        )
+                        : technoeconomicLifecycleTemplateEvidence(
+                            `${label}: analyst-edited base O&M; no longer the NREL ATB preset`
+                        )
+                ),
+                base_om_real_growth: documented(
+                    0, 'real_fraction_per_year', 'base O&M real growth'
+                ),
+                initial_cost_lines: [{
+                    input_id: `${prefix}.initial-installed-cost`,
+                    label: `${label} initial installed cost`,
+                    cost_per_w: documented(
+                        values.initialCost, 'constant_usd_per_target_w',
+                        'initial installed cost',
+                        usesNrelCapex
+                            ? technoeconomicLifecycleTemplateNrelEvidence(
+                                `NREL 2024 ATB utility-scale PV CAPEX benchmark for ${label}`,
+                                `${label} uses the rating-basis-specific generic ATB CAPEX preset in real 2022 USD; not a vendor quote.`
+                            )
+                            : technoeconomicLifecycleTemplateEvidence(
+                                `${label}: analyst-edited initial cost; no longer the NREL ATB preset`
+                            )
+                    ),
+                    coverage_ids: [`${prefix}.initial-system`],
+                    evidence: technoeconomicLifecycleTemplateEvidence(
+                        `${label}: initial installed-cost coverage`
+                    ),
+                }],
+                scheduled_costs: [],
+                components: [
+                    technoeconomicLifecycleTemplateComponent(
+                        technology, 'component-a', componentCounts.componentA,
+                        Math.min(1, 0.1 / targetMw)
+                    ),
+                    technoeconomicLifecycleTemplateComponent(
+                        technology, 'component-b', componentCounts.componentB,
+                        Math.min(1, 1 / targetMw)
+                    ),
+                ],
+                decommissioning_cost: documented(
+                    values.decommissioning, 'constant_usd', 'decommissioning cost'
+                ),
+                salvage_value: documented(values.salvage, 'constant_usd', 'salvage value'),
+                source_availability_by_year: [],
+                base_om_coverage_ids: [`${prefix}.base-om`],
+                evidence: technoeconomicLifecycleTemplateEvidence(
+                    `${label}: neutral lifecycle system template`
+                ),
+            };
+        }
+
+        function technoeconomicBuildLifecycleTemplate() {
+            const errors = [];
+            const number = (key, label, options) => (
+                technoeconomicLifecycleTemplateNumber(key, label, errors, options)
+            );
+            const targetMw = Number(technoeconomicElements?.standaloneTargetCapacityInput?.value);
+            if (!Number.isFinite(targetMw) || targetMw <= 0) {
+                errors.push('Target capacity must be greater than zero before applying the template.');
+            }
+            const electricityValue = number(
+                'lifecycleElectricityValue', 'Electricity value', {minimum: 0}
+            );
+            const electricityGrowth = number(
+                'lifecycleElectricityGrowth', 'Electricity-value growth',
+                {minimum: -99.99, divisor: 100}
+            );
+            const tolerance = number(
+                'lifecycleNpvTolerance', 'NPV tie tolerance', {minimum: 0.000001}
+            );
+            const systemValues = {};
+            for (const {key, label} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                const elementPrefix = key === 'solectria' ? 'Solectria' : 'SolarEdge';
+                systemValues[key] = {
+                    degradation: number(
+                        `lifecycle${elementPrefix}Degradation`, `${label} degradation`,
+                        {minimum: 0, maximum: 99.99, divisor: 100}
+                    ),
+                    availability: number(
+                        `lifecycle${elementPrefix}Availability`, `${label} availability`,
+                        {minimum: 0.01, maximum: 100, divisor: 100}
+                    ),
+                    initialCost: number(
+                        `lifecycle${elementPrefix}InitialCost`, `${label} initial cost`,
+                        {minimum: 0}
+                    ),
+                    baseOm: number(
+                        `lifecycle${elementPrefix}BaseOm`, `${label} base O&M`,
+                        {minimum: 0, divisor: 1000}
+                    ),
+                    decommissioning: number(
+                        `lifecycle${elementPrefix}Decommissioning`,
+                        `${label} decommissioning cost`, {minimum: 0}
+                    ),
+                    salvage: number(
+                        `lifecycle${elementPrefix}Salvage`, `${label} salvage value`,
+                        {minimum: 0}
+                    ),
+                };
+            }
+            const commonProbability = number(
+                'lifecycleCommonProbability', 'Common-event probability',
+                {minimum: 0, maximum: 100, divisor: 100}
+            );
+            const commonDowntime = number(
+                'lifecycleCommonDowntime', 'Common-event downtime', {minimum: 0}
+            );
+            const commonImpact = number(
+                'lifecycleCommonImpact', 'Common-event capacity impact',
+                {minimum: 0.01, maximum: 100, divisor: 100}
+            );
+            const commonCost = number(
+                'lifecycleCommonCost', 'Common-event cost', {minimum: 0}
+            );
+            if (errors.length) return {lifecycle: null, errors};
+            const componentCounts = {
+                componentA: Math.max(1, Math.ceil(targetMw * 10)),
+                componentB: Math.max(1, Math.ceil(targetMw)),
+            };
+            const ratingBasis = technoeconomicLifecycleTemplateRatingBasis();
+            const lifecycle = {
+                weather_path_method: TECHNOECONOMIC_LIFECYCLE_WEATHER_METHOD,
+                source_energy_basis: technoeconomicElements?.lifecycleSourceBasis?.value
+                    || 'gross',
+                reliability_mode: technoeconomicElements?.lifecycleReliabilityMode?.value
+                    || 'event',
+                electricity_value: technoeconomicLifecycleTemplateDocumented(
+                    electricityValue, 'constant_usd_per_kwh_ac', 'Year-one electricity value'
+                ),
+                electricity_value_real_growth: technoeconomicLifecycleTemplateDocumented(
+                    electricityGrowth, 'real_fraction_per_year',
+                    'Electricity-value real growth'
+                ),
+                systems: TECHNOECONOMIC_PAIRED_SYSTEMS.map(({key}) => (
+                    technoeconomicLifecycleTemplateSystem(
+                        key, systemValues[key], targetMw, componentCounts, ratingBasis
+                    )
+                )),
+                common_cause_events: [{
+                    event_id: 'shared-site-event',
+                    annual_probability: technoeconomicLifecycleTemplateDocumented(
+                        commonProbability, 'dimensionless_fraction',
+                        'Shared site-event annual probability'
+                    ),
+                    downtime_hours: technoeconomicLifecycleTemplateDocumented(
+                        commonDowntime, 'hours', 'Shared site-event downtime'
+                    ),
+                    capacity_impact: commonImpact,
+                    cost_per_event: technoeconomicLifecycleTemplateDocumented(
+                        commonCost, 'constant_usd', 'Shared site-event cost'
+                    ),
+                    real_cost_growth: technoeconomicLifecycleTemplateDocumented(
+                        0, 'real_fraction_per_year', 'Shared site-event real cost growth'
+                    ),
+                    affected_systems: ['solectria', 'solaredge'],
+                    coverage_ids: ['template.shared.site-event'],
+                    evidence: technoeconomicLifecycleTemplateEvidence(
+                        'Shared site-event affecting both systems'
+                    ),
+                }],
+                decision_probability_threshold: 0.75,
+                decision_npv_tolerance_usd_per_target_w: tolerance,
+            };
+            return {lifecycle, errors: []};
+        }
+
+        function technoeconomicRenderLifecycleTemplateScaling() {
+            const targetMwValue = Number(
+                technoeconomicElements?.standaloneTargetCapacityInput?.value
+            );
+            const targetMw = Number.isFinite(targetMwValue) && targetMwValue > 0
+                ? targetMwValue : 100;
+            const countA = Math.max(1, Math.ceil(targetMw * 10));
+            const countB = Math.max(1, Math.ceil(targetMw));
+            const spareA = Math.max(1, Math.ceil(countA * 0.01));
+            const spareB = Math.max(1, Math.ceil(countB * 0.01));
+            if (technoeconomicElements?.lifecycleComponentACount) {
+                technoeconomicElements.lifecycleComponentACount.textContent =
+                    countA.toLocaleString('en-US');
+            }
+            if (technoeconomicElements?.lifecycleComponentBCount) {
+                technoeconomicElements.lifecycleComponentBCount.textContent =
+                    countB.toLocaleString('en-US');
+            }
+            if (technoeconomicElements?.lifecycleComponentAImpact) {
+                technoeconomicElements.lifecycleComponentAImpact.textContent =
+                    `${technoeconomicFormatNumber(Math.min(1, 0.1 / targetMw) * 100, 4)}% capacity/unit`;
+            }
+            if (technoeconomicElements?.lifecycleComponentBImpact) {
+                technoeconomicElements.lifecycleComponentBImpact.textContent =
+                    `${technoeconomicFormatNumber(Math.min(1, 1 / targetMw) * 100, 4)}% capacity/unit`;
+            }
+            if (technoeconomicElements?.lifecycleComponentASpares) {
+                technoeconomicElements.lifecycleComponentASpares.textContent =
+                    `${spareA.toLocaleString('en-US')} ${spareA === 1 ? 'unit' : 'units'}`;
+            }
+            if (technoeconomicElements?.lifecycleComponentBSpares) {
+                technoeconomicElements.lifecycleComponentBSpares.textContent =
+                    `${spareB.toLocaleString('en-US')} ${spareB === 1 ? 'unit' : 'units'}`;
+            }
+            if (technoeconomicElements?.lifecycleScalingNote) {
+                const targetKw = targetMw * 1000;
+                technoeconomicElements.lifecycleScalingNote.textContent =
+                    `At the ${technoeconomicFormatNumber(targetMw, 4)} MW target: `
+                    + `ceil(${technoeconomicFormatNumber(targetKw, 2)} kW ÷ 100 kW) `
+                    + `and ceil(${technoeconomicFormatNumber(targetKw, 2)} kW ÷ 1,000 kW). `
+                    + 'No scheduled costs or preventive replacements are included; base O&M '
+                    + 'and corrective-cost growth are 0% real.';
+            }
+            return {countA, countB, spareA, spareB};
+        }
+
+        function technoeconomicSyncLifecycleTemplate() {
+            technoeconomicRenderLifecycleTemplateScaling();
+            const built = technoeconomicBuildLifecycleTemplate();
+            if (!built.lifecycle) {
+                if (technoeconomicElements?.lifecycleJson) {
+                    technoeconomicElements.lifecycleJson.value = '';
+                }
+                technoeconomicSetLifecycleTemplateStatus(
+                    'invalid', 'Complete the highlighted template value',
+                    built.errors[0] || 'One or more template values are incomplete.'
+                );
+                return false;
+            }
+            if (technoeconomicElements?.lifecycleJson) {
+                technoeconomicElements.lifecycleJson.value = JSON.stringify(
+                    built.lifecycle, null, 2
+                );
+            }
+            technoeconomicLifecycleEntryMode = 'template';
+            technoeconomicSetLifecycleTemplateControlsEnabled(true);
+            technoeconomicSetLifecycleTemplateButtonMode(true);
+            const counts = technoeconomicRenderLifecycleTemplateScaling();
+            const discount = technoeconomicStandaloneDistributionDraft(
+                technoeconomicElements?.standaloneDiscountFamily,
+                technoeconomicElements?.standaloneDiscountParameters
+            );
+            technoeconomicSetLifecycleTemplateStatus(
+                'applied', technoeconomicLifecycleTemplateModified
+                    ? 'Modified provisional template values applied'
+                    : 'Provisional template values applied',
+                `Review and confirm below. Each system uses ${counts.countA.toLocaleString('en-US')} `
+                + `generic 100-kW equivalents and ${counts.countB.toLocaleString('en-US')} `
+                + `generic 1-MW equivalents; ${technoeconomicLifecycleTemplateModified
+                    ? 'edited and unedited reliability values' : 'all reliability values'} `
+                + `remain visibly provisional. Real discount rate: ${
+                    technoeconomicStandaloneDistributionDisplay(discount)
+                }%.`
+            );
+            return true;
+        }
+
+        function technoeconomicEnsureLifecycleTemplateDiscount() {
+            const draft = technoeconomicStandaloneDistributionDraft(
+                technoeconomicElements?.standaloneDiscountFamily,
+                technoeconomicElements?.standaloneDiscountParameters
+            );
+            const hasValue = Object.entries(draft).some(([key, value]) => (
+                key !== 'family' && technoeconomicText(value).trim()
+            ));
+            if (hasValue) return false;
+            technoeconomicStandaloneApplyDistributionDraft(
+                technoeconomicElements?.standaloneDiscountFamily,
+                technoeconomicElements?.standaloneDiscountParameters,
+                'technoeconomicStandaloneDiscount',
+                {family: 'fixed', value: '5'}
+            );
+            return true;
+        }
+
+        function technoeconomicApplyLifecycleTemplate() {
+            technoeconomicResetLifecycleTemplateFields();
+            technoeconomicEnsureLifecycleTemplateDiscount();
+            if (!technoeconomicSyncLifecycleTemplate()) return false;
+            if (technoeconomicElements?.lifecycleAdvancedDetails) {
+                technoeconomicElements.lifecycleAdvancedDetails.open = false;
+            }
+            if (technoeconomicElements?.standaloneAccept) {
+                technoeconomicElements.standaloneAccept.checked = false;
+            }
+            technoeconomicRenderStandaloneDraft();
+            technoeconomicMarkDraftChanged('Provisional lifecycle template applied.');
+            return true;
+        }
+
+        function technoeconomicLifecycleTemplateFixedValue(value) {
+            const distribution = technoeconomicPlainObject(value?.distribution);
+            return distribution.family === 'fixed' && Number.isFinite(Number(distribution.value))
+                ? Number(distribution.value) : null;
+        }
+
+        function technoeconomicLifecycleTemplateComparable(value, parentKey = '') {
+            if (Array.isArray(value)) {
+                const result = value.map((item) => (
+                    technoeconomicLifecycleTemplateComparable(item, parentKey)
+                ));
+                if (parentKey === 'systems') {
+                    result.sort((left, right) => technoeconomicText(left?.technology)
+                        .localeCompare(technoeconomicText(right?.technology)));
+                } else if (parentKey === 'components') {
+                    result.sort((left, right) => technoeconomicText(left?.component_id)
+                        .localeCompare(technoeconomicText(right?.component_id)));
+                } else if (['affected_systems', 'coverage_ids',
+                    'covered_cost_categories'].includes(parentKey)) {
+                    result.sort((left, right) => technoeconomicText(left)
+                        .localeCompare(technoeconomicText(right)));
+                }
+                return result;
+            }
+            if (!value || typeof value !== 'object') return value;
+            if (parentKey === 'evidence') {
+                return {
+                    evidence_class: technoeconomicText(value.evidence_class),
+                    organization: technoeconomicText(value?.citation?.organization),
+                    stable_reference: technoeconomicText(value?.citation?.stable_reference),
+                    url: technoeconomicText(value?.citation?.url),
+                    preservation_mode: technoeconomicText(value?.citation?.preservation_mode),
+                };
+            }
+            return Object.fromEntries(Object.keys(value).sort().map((key) => [
+                key, technoeconomicLifecycleTemplateComparable(value[key], key),
+            ]));
+        }
+
+        function technoeconomicLifecycleTemplateExpectedValues() {
+            const preset = TECHNOECONOMIC_STANDALONE_ATB_PRESETS[
+                technoeconomicLifecycleTemplateRatingBasis()
+            ] || TECHNOECONOMIC_STANDALONE_ATB_PRESETS.ac_operating_limit;
+            return {
+                ...TECHNOECONOMIC_LIFECYCLE_TEMPLATE_DEFAULTS,
+                lifecycleSolectriaInitialCost: preset.capex,
+                lifecycleSolarEdgeInitialCost: preset.capex,
+                lifecycleSolectriaBaseOm: preset.om,
+                lifecycleSolarEdgeBaseOm: preset.om,
+            };
+        }
+
+        function technoeconomicLifecycleTemplateDifferences() {
+            const labels = {
+                lifecycleSourceBasis: 'Source energy basis',
+                lifecycleReliabilityMode: 'Reliability calculation',
+                lifecycleElectricityValue: 'Electricity value',
+                lifecycleElectricityGrowth: 'Electricity-value real growth',
+                lifecycleNpvTolerance: 'Decision NPV tolerance',
+                lifecycleSolectriaDegradation: 'Solectria annual degradation',
+                lifecycleSolarEdgeDegradation: 'SolarEdge annual degradation',
+                lifecycleSolectriaAvailability: 'Solectria base availability',
+                lifecycleSolarEdgeAvailability: 'SolarEdge base availability',
+                lifecycleSolectriaInitialCost: 'Solectria initial installed cost',
+                lifecycleSolarEdgeInitialCost: 'SolarEdge initial installed cost',
+                lifecycleSolectriaBaseOm: 'Solectria base O&M',
+                lifecycleSolarEdgeBaseOm: 'SolarEdge base O&M',
+                lifecycleSolectriaDecommissioning: 'Solectria decommissioning cost',
+                lifecycleSolarEdgeDecommissioning: 'SolarEdge decommissioning cost',
+                lifecycleSolectriaSalvage: 'Solectria salvage value',
+                lifecycleSolarEdgeSalvage: 'SolarEdge salvage value',
+                lifecycleCommonProbability: 'Shared-event annual probability',
+                lifecycleCommonDowntime: 'Shared-event downtime',
+                lifecycleCommonImpact: 'Shared-event capacity impact',
+                lifecycleCommonCost: 'Shared-event cost',
+            };
+            return Object.entries(technoeconomicLifecycleTemplateExpectedValues()).flatMap(
+                ([key, expected]) => {
+                const actual = technoeconomicText(technoeconomicElements?.[key]?.value).trim();
+                const actualNumber = Number(actual);
+                const expectedNumber = Number(expected);
+                let differs;
+                if (actual && Number.isFinite(actualNumber) && Number.isFinite(expectedNumber)) {
+                    differs = Math.abs(actualNumber - expectedNumber) > 1e-12;
+                } else {
+                    differs = actual !== technoeconomicText(expected);
+                }
+                return differs
+                    ? [`${labels[key] || key}: ${actual || 'Not entered'} (template ${expected})`]
+                    : [];
+                }
+            );
+        }
+
+        function technoeconomicLifecycleTemplateVisibleValuesModified() {
+            return technoeconomicLifecycleTemplateDifferences().length > 0;
+        }
+
+        function technoeconomicLifecycleMatchesTemplateShape(lifecycle) {
+            const targetMw = Number(
+                technoeconomicElements?.standaloneTargetCapacityInput?.value
+            );
+            if (!lifecycle || !Number.isFinite(targetMw) || targetMw <= 0
+                || lifecycle.weather_path_method !== TECHNOECONOMIC_LIFECYCLE_WEATHER_METHOD
+                || lifecycle.source_energy_basis !== 'gross'
+                || lifecycle.reliability_mode !== 'event') return false;
+            const systems = Array.isArray(lifecycle.systems) ? lifecycle.systems : [];
+            if (systems.length !== 2 || new Set(
+                systems.map((system) => system?.technology)
+            ).size !== 2) return false;
+            const events = Array.isArray(lifecycle.common_cause_events)
+                ? lifecycle.common_cause_events : [];
+            if (events.length !== 1) return false;
+            const fixed = technoeconomicLifecycleTemplateFixedValue;
+            const editableValues = {
+                electricityValue: fixed(lifecycle.electricity_value),
+                electricityGrowth: fixed(lifecycle.electricity_value_real_growth),
+                tolerance: Number(lifecycle.decision_npv_tolerance_usd_per_target_w),
+                commonProbability: fixed(events[0].annual_probability),
+                commonDowntime: fixed(events[0].downtime_hours),
+                commonImpact: Number(events[0].capacity_impact),
+                commonCost: fixed(events[0].cost_per_event),
+            };
+            if (Object.values(editableValues).some((value) => !Number.isFinite(value))) {
+                return false;
+            }
+            const componentCounts = {
+                componentA: Math.max(1, Math.ceil(targetMw * 10)),
+                componentB: Math.max(1, Math.ceil(targetMw)),
+            };
+            const ratingBasis = technoeconomicLifecycleTemplateRatingBasis();
+            const expectedSystems = [];
+            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                const system = systems.find((candidate) => candidate?.technology === key);
+                if (!system) return false;
+                const values = {
+                    degradation: fixed(system.degradation),
+                    availability: fixed(system.base_availability),
+                    initialCost: fixed(system.initial_cost_lines?.[0]?.cost_per_w),
+                    baseOm: fixed(system.base_om_cost_per_w_year),
+                    decommissioning: fixed(system.decommissioning_cost),
+                    salvage: fixed(system.salvage_value),
+                };
+                if (Object.values(values).some((value) => !Number.isFinite(value))) {
+                    return false;
+                }
+                expectedSystems.push(technoeconomicLifecycleTemplateSystem(
+                    key, values, targetMw, componentCounts, ratingBasis
+                ));
+            }
+            const expected = {
+                weather_path_method: TECHNOECONOMIC_LIFECYCLE_WEATHER_METHOD,
+                source_energy_basis: 'gross',
+                reliability_mode: 'event',
+                electricity_value: technoeconomicLifecycleTemplateDocumented(
+                    editableValues.electricityValue, 'constant_usd_per_kwh_ac',
+                    'Year-one electricity value'
+                ),
+                electricity_value_real_growth: technoeconomicLifecycleTemplateDocumented(
+                    editableValues.electricityGrowth, 'real_fraction_per_year',
+                    'Electricity-value real growth'
+                ),
+                systems: expectedSystems,
+                common_cause_events: [{
+                    event_id: 'shared-site-event',
+                    annual_probability: technoeconomicLifecycleTemplateDocumented(
+                        editableValues.commonProbability, 'dimensionless_fraction',
+                        'Shared site-event annual probability'
+                    ),
+                    downtime_hours: technoeconomicLifecycleTemplateDocumented(
+                        editableValues.commonDowntime, 'hours',
+                        'Shared site-event downtime'
+                    ),
+                    capacity_impact: editableValues.commonImpact,
+                    cost_per_event: technoeconomicLifecycleTemplateDocumented(
+                        editableValues.commonCost, 'constant_usd',
+                        'Shared site-event cost'
+                    ),
+                    real_cost_growth: technoeconomicLifecycleTemplateDocumented(
+                        0, 'real_fraction_per_year', 'Shared site-event real cost growth'
+                    ),
+                    affected_systems: ['solectria', 'solaredge'],
+                    coverage_ids: ['template.shared.site-event'],
+                    evidence: technoeconomicLifecycleTemplateEvidence(
+                        'Shared site-event affecting both systems'
+                    ),
+                }],
+                decision_probability_threshold: 0.75,
+                decision_npv_tolerance_usd_per_target_w: editableValues.tolerance,
+            };
+            return JSON.stringify(technoeconomicLifecycleTemplateComparable(lifecycle))
+                === JSON.stringify(technoeconomicLifecycleTemplateComparable(expected));
+        }
+
+        function technoeconomicHydrateLifecycleTemplate(raw) {
+            technoeconomicRenderLifecycleTemplateScaling();
+            const text = technoeconomicText(raw).trim();
+            if (!text) {
+                technoeconomicLifecycleEntryMode = 'empty';
+                technoeconomicSetLifecycleTemplateControlsEnabled(false);
+                technoeconomicSetLifecycleTemplateButtonMode(false);
+                technoeconomicRenderLifecycleTemplateCostBasis(
+                    technoeconomicLifecycleTemplateRatingBasis()
+                );
+                technoeconomicSetLifecycleTemplateStatus(
+                    'ready', 'Ready to apply',
+                    'The values shown are provisional planning assumptions. Select “Use approved template values,” review them, and provide the confirmation below.'
+                );
+                return false;
+            }
+            let lifecycle;
+            try {
+                lifecycle = JSON.parse(text);
+            } catch (_error) {
+                technoeconomicLifecycleEntryMode = 'advanced';
+                technoeconomicSetLifecycleTemplateControlsEnabled(false);
+                technoeconomicSetLifecycleTemplateButtonMode(false);
+                technoeconomicSetLifecycleTemplateStatus(
+                    'invalid', 'Custom lifecycle data needs attention',
+                    'Open the Advanced section and correct the technical lifecycle data.'
+                );
+                return false;
+            }
+            if (!technoeconomicLifecycleMatchesTemplateShape(lifecycle)) {
+                technoeconomicLifecycleEntryMode = 'advanced';
+                technoeconomicSetLifecycleTemplateControlsEnabled(false);
+                technoeconomicSetLifecycleTemplateButtonMode(false);
+                technoeconomicSetLifecycleTemplateStatus(
+                    'custom', 'Custom lifecycle specification loaded',
+                    'The calculation will use the data in the Advanced section, not the versioned provisional template shown above.'
+                );
+                return true;
+            }
+            const setValue = (key, value, multiplier = 1) => {
+                if (technoeconomicElements?.[key] && Number.isFinite(value)) {
+                    technoeconomicElements[key].value = String(value * multiplier);
+                }
+            };
+            if (technoeconomicElements?.lifecycleSourceBasis) {
+                technoeconomicElements.lifecycleSourceBasis.value =
+                    lifecycle.source_energy_basis || 'gross';
+            }
+            if (technoeconomicElements?.lifecycleReliabilityMode) {
+                technoeconomicElements.lifecycleReliabilityMode.value =
+                    lifecycle.reliability_mode || 'event';
+            }
+            setValue(
+                'lifecycleElectricityValue',
+                technoeconomicLifecycleTemplateFixedValue(lifecycle.electricity_value)
+            );
+            setValue(
+                'lifecycleElectricityGrowth',
+                technoeconomicLifecycleTemplateFixedValue(
+                    lifecycle.electricity_value_real_growth
+                ), 100
+            );
+            setValue(
+                'lifecycleNpvTolerance',
+                Number(lifecycle.decision_npv_tolerance_usd_per_target_w)
+            );
+            for (const system of Array.isArray(lifecycle.systems) ? lifecycle.systems : []) {
+                const elementPrefix = system?.technology === 'solectria'
+                    ? 'Solectria' : system?.technology === 'solaredge' ? 'SolarEdge' : '';
+                if (!elementPrefix) continue;
+                setValue(
+                    `lifecycle${elementPrefix}Degradation`,
+                    technoeconomicLifecycleTemplateFixedValue(system.degradation), 100
+                );
+                setValue(
+                    `lifecycle${elementPrefix}Availability`,
+                    technoeconomicLifecycleTemplateFixedValue(system.base_availability), 100
+                );
+                setValue(
+                    `lifecycle${elementPrefix}InitialCost`,
+                    technoeconomicLifecycleTemplateFixedValue(system.initial_cost_lines?.[0]?.cost_per_w)
+                );
+                setValue(
+                    `lifecycle${elementPrefix}BaseOm`,
+                    technoeconomicLifecycleTemplateFixedValue(system.base_om_cost_per_w_year),
+                    1000
+                );
+                setValue(
+                    `lifecycle${elementPrefix}Decommissioning`,
+                    technoeconomicLifecycleTemplateFixedValue(system.decommissioning_cost)
+                );
+                setValue(
+                    `lifecycle${elementPrefix}Salvage`,
+                    technoeconomicLifecycleTemplateFixedValue(system.salvage_value)
+                );
+            }
+            const commonEvent = Array.isArray(lifecycle.common_cause_events)
+                ? lifecycle.common_cause_events[0] : null;
+            if (commonEvent) {
+                setValue(
+                    'lifecycleCommonProbability',
+                    technoeconomicLifecycleTemplateFixedValue(commonEvent.annual_probability), 100
+                );
+                setValue(
+                    'lifecycleCommonDowntime',
+                    technoeconomicLifecycleTemplateFixedValue(commonEvent.downtime_hours)
+                );
+                setValue('lifecycleCommonImpact', Number(commonEvent.capacity_impact), 100);
+                setValue(
+                    'lifecycleCommonCost',
+                    technoeconomicLifecycleTemplateFixedValue(commonEvent.cost_per_event)
+                );
+            }
+            technoeconomicLifecycleTemplateModified = text.includes('[analyst-modified]')
+                || technoeconomicLifecycleTemplateVisibleValuesModified();
+            technoeconomicLifecycleEntryMode = 'template';
+            technoeconomicSetLifecycleTemplateControlsEnabled(true);
+            technoeconomicSetLifecycleTemplateButtonMode(true);
+            technoeconomicRenderLifecycleTemplateCostBasis(
+                technoeconomicLifecycleTemplateRatingBasis()
+            );
+            technoeconomicRenderLifecycleTemplateScaling();
+            technoeconomicSetLifecycleTemplateStatus(
+                'applied', technoeconomicLifecycleTemplateModified
+                    ? 'Modified provisional template values restored'
+                    : 'Provisional template values restored',
+                'These saved planning values will be prepared automatically. Review them and confirm again before calculation.'
+            );
+            return true;
+        }
+
+        function technoeconomicHandleLifecycleTemplateInput(target) {
+            if (target === technoeconomicElements?.lifecycleJson) {
+                technoeconomicHydrateLifecycleTemplate(target.value);
+                return;
+            }
+            const guided = technoeconomicLifecycleTemplateControls().includes(target);
+            const capacity = target === technoeconomicElements?.standaloneTargetCapacityInput;
+            if (!guided && !capacity) return;
+            technoeconomicRenderLifecycleTemplateScaling();
+            if (technoeconomicLifecycleEntryMode === 'template') {
+                technoeconomicLifecycleTemplateModified = true;
+                technoeconomicSyncLifecycleTemplate();
+                return;
+            }
+            if (guided) {
+                technoeconomicSetLifecycleTemplateStatus(
+                    'ready', 'Template values changed but not yet applied',
+                    'Select “Use approved template values” to reset to the approved set, or open Advanced to use custom technical data.'
+                );
+            }
+        }
+
+        function technoeconomicRenderContractMode() {
+            const lifecycle = technoeconomicSelectedContractVersion()
+                === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION;
+            if (technoeconomicElements?.lifecycleInputGroup) {
+                technoeconomicElements.lifecycleInputGroup.hidden = !lifecycle;
+            }
+            if (technoeconomicElements?.legacyDegradationRow) {
+                technoeconomicElements.legacyDegradationRow.hidden = lifecycle;
+            }
+            if (technoeconomicElements?.legacyCostGroup) {
+                technoeconomicElements.legacyCostGroup.hidden = lifecycle;
+            }
+            if (technoeconomicElements?.legacyFormulaPanel) {
+                technoeconomicElements.legacyFormulaPanel.hidden = lifecycle;
+            }
+            if (technoeconomicElements?.lifecycleJson) {
+                // The Advanced editor is optional. Readiness is enforced by the
+                // generated lifecycle object, not browser validation on a closed disclosure.
+                technoeconomicElements.lifecycleJson.required = false;
+                technoeconomicElements.lifecycleJson.setAttribute?.(
+                    'aria-required', 'false'
+                );
+            }
+            if (technoeconomicElements?.standaloneSubmitButton) {
+                technoeconomicElements.standaloneSubmitButton.textContent = lifecycle
+                    ? 'Calculate upgrade NPV' : 'Calculate LCOE';
+            }
+            if (technoeconomicElements?.standaloneAssumptionsReviewButton) {
+                technoeconomicElements.standaloneAssumptionsReviewButton.textContent = lifecycle
+                    ? 'Review lifecycle analysis' : 'Review paired LCOE';
+            }
+            if (lifecycle) {
+                if (technoeconomicLifecycleEntryMode === 'empty') {
+                    technoeconomicHydrateLifecycleTemplate(
+                        technoeconomicElements?.lifecycleJson?.value || ''
+                    );
+                }
+                void technoeconomicLoadFormulaRegistry();
+            }
+        }
+
+        function technoeconomicFormulaRegistryText(value) {
+            if (Array.isArray(value)) return value.map(String).join('; ');
+            if (value === null || value === undefined) return '';
+            return String(value);
+        }
+
+        function technoeconomicRenderFormulaRegistry(payload) {
+            const formulas = Array.isArray(payload?.formulas) ? payload.formulas : [];
+            if (technoeconomicElements?.formulaRegistryStatus) {
+                technoeconomicElements.formulaRegistryStatus.textContent =
+                    `${payload.formula_registry_version} · ${formulas.length} formulas`;
+            }
+            if (technoeconomicElements?.formulaRegistryHash) {
+                technoeconomicElements.formulaRegistryHash.textContent =
+                    `Kernel registry SHA-256: ${payload.formula_registry_sha256}`;
+            }
+            const body = technoeconomicElements?.formulaRegistryBody;
+            if (!body) return;
+            body.replaceChildren();
+            for (const formula of formulas) {
+                const row = technoeconomicNode('tr');
+                row.append(
+                    technoeconomicNode('th', {
+                        scope: 'row',
+                        text: technoeconomicFormulaRegistryText(formula.formula_id),
+                    }),
+                    technoeconomicNode('td', {
+                        text: technoeconomicFormulaRegistryText(formula.equation),
+                    }),
+                    technoeconomicNode('td', {
+                        text: technoeconomicFormulaRegistryText(formula.units),
+                    }),
+                    technoeconomicNode('td', {
+                        text: technoeconomicFormulaRegistryText(formula.guards),
+                    })
+                );
+                body.appendChild(row);
+            }
+        }
+
+        async function technoeconomicLoadFormulaRegistry() {
+            if (technoeconomicFormulaRegistryPayload) {
+                technoeconomicRenderFormulaRegistry(technoeconomicFormulaRegistryPayload);
+                return technoeconomicFormulaRegistryPayload;
+            }
+            if (technoeconomicFormulaRegistryPromise) {
+                return technoeconomicFormulaRegistryPromise;
+            }
+            if (technoeconomicElements?.formulaRegistryStatus) {
+                technoeconomicElements.formulaRegistryStatus.textContent =
+                    'Loading the v6 formula catalog…';
+            }
+            technoeconomicFormulaRegistryPromise = (async () => {
+                try {
+                    const payload = await technoeconomicFetchJson(
+                        '/api/technoeconomic/formulas/v6'
+                    );
+                    const formulas = Array.isArray(payload?.formulas) ? payload.formulas : [];
+                    const declaredCount = Number(payload?.formula_registry_count);
+                    if (payload?.calculation_contract_version
+                            !== TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION
+                        || payload?.formula_registry_version !== 'tea-formulas-v6'
+                        || !Number.isInteger(declaredCount)
+                        || declaredCount !== formulas.length
+                        || !/^[a-f0-9]{64}$/i.test(
+                            technoeconomicText(payload?.formula_registry_sha256)
+                        )) {
+                        throw new Error('The server returned an invalid v6 formula registry.');
+                    }
+                    technoeconomicFormulaRegistryPayload = payload;
+                    technoeconomicRenderFormulaRegistry(payload);
+                    return payload;
+                } catch (error) {
+                    if (technoeconomicElements?.formulaRegistryStatus) {
+                        technoeconomicElements.formulaRegistryStatus.textContent =
+                            'Formula catalog unavailable';
+                    }
+                    if (technoeconomicElements?.formulaRegistryHash) {
+                        technoeconomicElements.formulaRegistryHash.textContent =
+                            technoeconomicText(error?.message)
+                            || 'The v6 formula registry could not be verified.';
+                    }
+                    return null;
+                } finally {
+                    technoeconomicFormulaRegistryPromise = null;
+                }
+            })();
+            return technoeconomicFormulaRegistryPromise;
+        }
+
+        function technoeconomicLifecycleUnsafeKey(value) {
+            if (Array.isArray(value)) return value.some(technoeconomicLifecycleUnsafeKey);
+            if (!value || typeof value !== 'object') return false;
+            return Object.keys(value).some((key) => (
+                ['__proto__', 'prototype', 'constructor'].includes(key)
+                || technoeconomicLifecycleUnsafeKey(value[key])
+            ));
+        }
+
+        function technoeconomicParseLifecycleSpecification(errors) {
+            const raw = technoeconomicText(technoeconomicElements?.lifecycleJson?.value).trim();
+            if (!raw) {
+                technoeconomicPushError(
+                    errors, 'Lifecycle setup',
+                    'Select “Use approved template values,” or provide a complete custom specification under Advanced.'
+                );
+                return null;
+            }
+            let lifecycle;
+            try {
+                lifecycle = JSON.parse(raw);
+            } catch (error) {
+                technoeconomicPushError(
+                    errors, 'paired_commercial.lifecycle',
+                    `The Advanced lifecycle data could not be read: ${error?.message || 'parse failed'}.`
+                );
+                return null;
+            }
+            if (!lifecycle || Array.isArray(lifecycle) || typeof lifecycle !== 'object') {
+                technoeconomicPushError(
+                    errors, 'paired_commercial.lifecycle',
+                    'Advanced lifecycle data must contain one complete specification.'
+                );
+                return null;
+            }
+            if (technoeconomicLifecycleUnsafeKey(lifecycle)) {
+                technoeconomicPushError(
+                    errors, 'paired_commercial.lifecycle',
+                    'Advanced lifecycle data contains a prohibited object key.'
+                );
+                return null;
+            }
+            if (!['gross', 'net'].includes(lifecycle.source_energy_basis)) {
+                technoeconomicPushError(
+                    errors, 'paired_commercial.lifecycle.source_energy_basis',
+                    'Choose gross or net source energy.'
+                );
+            }
+            if (!['event', 'expected'].includes(lifecycle.reliability_mode)) {
+                technoeconomicPushError(
+                    errors, 'paired_commercial.lifecycle.reliability_mode',
+                    'Choose event or expected reliability mode.'
+                );
+            }
+            const tolerance = Number(lifecycle.decision_npv_tolerance_usd_per_target_w);
+            if (!Number.isFinite(tolerance) || tolerance <= 0) {
+                technoeconomicPushError(
+                    errors, 'paired_commercial.lifecycle.decision_npv_tolerance_usd_per_target_w',
+                    'Enter a positive economic NPV decision tolerance in USD per target W.'
+                );
+            }
+            const systems = Array.isArray(lifecycle.systems) ? lifecycle.systems : [];
+            const technologies = systems.map((system) => system?.technology).sort();
+            if (technologies.length !== 2
+                || technologies[0] !== 'solaredge'
+                || technologies[1] !== 'solectria') {
+                technoeconomicPushError(
+                    errors, 'paired_commercial.lifecycle.systems',
+                    'Provide exactly one Solectria and one SolarEdge lifecycle system.'
+                );
+            }
+            systems.forEach((system, index) => {
+                if (!Array.isArray(system?.components) || system.components.length === 0) {
+                    technoeconomicPushError(
+                        errors, `paired_commercial.lifecycle.systems.${index}.components`,
+                        'An explicit evidenced target BOM with at least one component is required.'
+                    );
+                }
+            });
+            const acceptedLifecycle = technoeconomicLifecycleEvidenceCopy(lifecycle, {
+                accepted: technoeconomicElements?.standaloneAccept?.checked === true,
+                rationale: technoeconomicText(
+                    technoeconomicElements?.standaloneAssumptionNote?.value
+                ).trim(),
+            });
+            return {
+                ...acceptedLifecycle,
+                weather_path_method: TECHNOECONOMIC_LIFECYCLE_WEATHER_METHOD,
+                decision_probability_threshold: 0.75,
+                decision_npv_tolerance_usd_per_target_w: tolerance,
+            };
+        }
+
+        function technoeconomicLifecycleSpecificationStats(value) {
+            const stats = {
+                evidenceCount: 0,
+                provisionalEvidenceCount: 0,
+                nonfixedPredictorCount: 0,
+            };
+            const visit = (item) => {
+                if (Array.isArray(item)) {
+                    item.forEach(visit);
+                    return;
+                }
+                if (!item || typeof item !== 'object') return;
+                if (Object.hasOwn(item, 'evidence_class')
+                    && Object.hasOwn(item, 'citation')) {
+                    stats.evidenceCount += 1;
+                    if (['engineering_judgment', 'secondary_synthesis'].includes(
+                        item.evidence_class
+                    )) stats.provisionalEvidenceCount += 1;
+                }
+                if (Object.hasOwn(item, 'unit')
+                    && item.distribution && typeof item.distribution === 'object'
+                    && item.distribution.family !== 'fixed') {
+                    stats.nonfixedPredictorCount += 1;
+                }
+                Object.values(item).forEach(visit);
+            };
+            visit(value);
+            return stats;
+        }
+
+        function technoeconomicV6IgnoresLegacyOnlyError(error) {
+            const path = technoeconomicText(error?.path);
+            return path === 'shared_degradation'
+                || path.startsWith('shared_degradation.')
+                || /^paired_commercial\.systems\.\d+\.cost_lines(?:\.|$)/.test(path);
+        }
+
+        function technoeconomicSerializeLifecycleRequest(options = {}) {
+            const serialized = technoeconomicSerializeStandaloneRequest(options);
+            const errors = serialized.errors.filter(
+                (error) => !technoeconomicV6IgnoresLegacyOnlyError(error)
+            );
+            const lifecycle = technoeconomicParseLifecycleSpecification(errors);
+            const payload = JSON.parse(JSON.stringify(serialized.payload));
+            payload.calculation_contract_version =
+                TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION;
+            delete payload.shared_degradation;
+            if (payload.paired_commercial) {
+                payload.paired_commercial.lifecycle = lifecycle;
+                for (const system of payload.paired_commercial.systems || []) {
+                    system.cost_lines = [];
+                }
+            }
+            const stats = lifecycle
+                ? technoeconomicLifecycleSpecificationStats(lifecycle)
+                : {
+                    evidenceCount: 0,
+                    provisionalEvidenceCount: 0,
+                    nonfixedPredictorCount: 0,
+                };
+            return {
+                ...serialized,
+                payload,
+                errors,
+                valid: errors.length === 0 && lifecycle !== null,
+                ...stats,
+            };
+        }
+
+        function technoeconomicSerializeCurrentRequest(options = {}) {
+            if (technoeconomicSelectedContractVersion()
+                === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION) {
+                return technoeconomicSerializeLifecycleRequest(options);
+            }
+            return technoeconomicSerializeStandaloneRequest(options);
+        }
+
         function technoeconomicStandaloneAppendDefinition(root, term, description) {
             if (!root) return;
             const row = technoeconomicNode('div');
@@ -1980,7 +3267,7 @@
             )} (${technoeconomicFormatNumber(target / capacity.watts, 4)}x)`).join('; ');
         }
 
-        function technoeconomicRenderStandaloneBridge(source, result = null) {
+        function technoeconomicRenderStandaloneBridge(source, result = null, options = {}) {
             const capacities = Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(
                 ({key}) => [key, technoeconomicStandaloneSourceCapacityInfo(source, key)]
             ));
@@ -2025,12 +3312,14 @@
                 }
                 return;
             }
-            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
-                const costRoot = technoeconomicPairedSystemElements(key).costLines;
-                if (costRoot && costRoot.dataset.ratingBasis !== ratingBasis) {
-                    technoeconomicStandaloneRenderCostLines(
-                        key, ratingBasis, {forcePreset: true}
-                    );
+            if (options.preserveCostLines !== true) {
+                for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                    const costRoot = technoeconomicPairedSystemElements(key).costLines;
+                    if (costRoot && costRoot.dataset.ratingBasis !== ratingBasis) {
+                        technoeconomicStandaloneRenderCostLines(
+                            key, ratingBasis, {forcePreset: true}
+                        );
+                    }
                 }
             }
             const years = Array.isArray(source.eligible_years) ? source.eligible_years : [];
@@ -2143,6 +3432,9 @@
                     ? `${technoeconomicStandaloneDistributionDisplay(discountDraft)}%`
                     : 'Enter an evidenced real rate'
             );
+            if (technoeconomicElements?.standaloneAssumptionsDialog?.open) {
+                technoeconomicBuilderUpdate();
+            }
         }
 
         function technoeconomicStandaloneMetricSummary(result, metricName) {
@@ -2190,6 +3482,44 @@
             );
             if (values.some((value) => value === null)) return null;
             return values.reduce((total, value) => total + value, 0);
+        }
+
+        function technoeconomicSetStandaloneResultPresentation(kind) {
+            const lifecycle = kind === 'lifecycle';
+            const standalone = kind === 'standalone';
+            if (technoeconomicElements.legacyPercentilePanel) {
+                technoeconomicElements.legacyPercentilePanel.hidden = lifecycle;
+            }
+            if (technoeconomicElements.v6DecisionPanel) {
+                technoeconomicElements.v6DecisionPanel.hidden = !lifecycle;
+            }
+            if (technoeconomicElements.legacyFormulaPanel) {
+                technoeconomicElements.legacyFormulaPanel.hidden = lifecycle;
+            }
+            if (technoeconomicElements.standaloneResultEyebrow) {
+                technoeconomicElements.standaloneResultEyebrow.textContent = lifecycle
+                    ? 'Result: upgrade NPV decision'
+                    : standalone
+                        ? 'Result: standalone commercial LCOE CDF'
+                        : 'Result: paired commercial LCOE CDF';
+            }
+            if (technoeconomicElements.standaloneResultsHeading) {
+                technoeconomicElements.standaloneResultsHeading.textContent = lifecycle
+                    ? 'SolarEdge upgrade relative to Solectria'
+                    : standalone ? 'SolarEdge LCOE' : 'Solectria and SolarEdge LCOE';
+            }
+            if (technoeconomicElements.standaloneCdfCaption) {
+                technoeconomicElements.standaloneCdfCaption.textContent = lifecycle
+                    ? 'The official sealed chart shows the modeled upgrade-NPV distribution; positive values favor SolarEdge.'
+                    : 'The curve shows the probability that modeled LCOE is at or below each real-USD value.';
+            }
+            if (technoeconomicElements.standaloneCdfPlot) {
+                technoeconomicElements.standaloneCdfPlot.alt = lifecycle
+                    ? 'Empirical distribution of SolarEdge-relative-to-Solectria upgrade NPV'
+                    : standalone
+                        ? 'Empirical cumulative distribution of modeled commercial SolarEdge lifecycle LCOE'
+                        : 'Empirical cumulative distributions of modeled commercial Solectria and SolarEdge lifecycle LCOE';
+            }
         }
 
         function technoeconomicRenderStandaloneScenario(job, result) {
@@ -2296,6 +3626,7 @@
         }
 
         function technoeconomicRenderStandaloneResult(job, result) {
+            technoeconomicSetStandaloneResultPresentation('standalone');
             const summary = technoeconomicStandaloneMetricSummary(
                 result, TECHNOECONOMIC_STANDALONE_LCOE_METRIC
             );
@@ -2366,7 +3697,7 @@
             const source = technoeconomicSources.find(
                 (item) => item?.source_annual_job_id === job.source_annual_job_id
             ) || technoeconomicStandaloneSelectedSource();
-            technoeconomicRenderStandaloneBridge(source, result);
+            technoeconomicRenderStandaloneBridge(source, result, {preserveCostLines: true});
             const manifest = technoeconomicPlainObject(
                 technoeconomicPlainObject(job.artifacts).exports
             );
@@ -2394,6 +3725,7 @@
         }
 
         function technoeconomicRenderPairedResult(job, result) {
+            technoeconomicSetStandaloneResultPresentation('paired');
             const pairedResult = technoeconomicPlainObject(result.paired_commercial);
             const pairedSystems = technoeconomicPlainObject(pairedResult.systems);
             const summaries = Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(
@@ -2508,7 +3840,7 @@
             const source = technoeconomicSources.find(
                 (item) => item?.source_annual_job_id === job.source_annual_job_id
             ) || technoeconomicStandaloneSelectedSource();
-            technoeconomicRenderStandaloneBridge(source, result);
+            technoeconomicRenderStandaloneBridge(source, result, {preserveCostLines: true});
             const manifest = technoeconomicPlainObject(
                 technoeconomicPlainObject(job.artifacts).exports
             );
@@ -2535,7 +3867,269 @@
             }
         }
 
+        function technoeconomicRenderLifecycleResult(job, result) {
+            technoeconomicSetStandaloneResultPresentation('lifecycle');
+            const summaries = technoeconomicPlainObject(result.summaries);
+            const lifecycle = technoeconomicPlainObject(result.paired_lifecycle);
+            const decision = technoeconomicPlainObject(
+                Object.keys(technoeconomicPlainObject(summaries.headline_decision)).length
+                    ? summaries.headline_decision : lifecycle.headline_decision
+            );
+            const upgradeNpv = technoeconomicPlainObject(
+                Object.keys(technoeconomicPlainObject(summaries.upgrade_npv)).length
+                    ? summaries.upgrade_npv : lifecycle.upgrade_npv
+            );
+            const deltaLcoe = technoeconomicPlainObject(
+                Object.keys(technoeconomicPlainObject(summaries.delta_lcoe)).length
+                    ? summaries.delta_lcoe : lifecycle.delta_lcoe
+            );
+            const lcoo = technoeconomicPlainObject(
+                Object.keys(technoeconomicPlainObject(summaries.lcoo)).length
+                    ? summaries.lcoo : lifecycle.lcoo
+            );
+            const lcoeSolectria = technoeconomicPlainObject(summaries.lcoe_solectria);
+            const lcoeSolarEdge = technoeconomicPlainObject(summaries.lcoe_solaredge);
+            const probabilityRoot = technoeconomicPlainObject(
+                Object.keys(technoeconomicPlainObject(summaries.probability_counts)).length
+                    ? summaries.probability_counts : lifecycle.probability_counts
+            );
+            const probabilityCounts = technoeconomicPlainObject(probabilityRoot.upgrade_npv);
+            const percentiles = technoeconomicPlainObject(upgradeNpv.percentiles);
+            const preferred = technoeconomicText(decision.decision).trim()
+                || (decision.preferred_system === 'solaredge'
+                    ? 'SolarEdge preferred'
+                    : decision.preferred_system === 'solectria'
+                        ? 'Solectria preferred' : 'No decisive winner');
+            const reasonCodes = Array.isArray(decision.reason_codes)
+                ? decision.reason_codes
+                : Array.isArray(lifecycle.reason_codes) ? lifecycle.reason_codes : [];
+            const warnings = Array.isArray(lifecycle.warnings) ? lifecycle.warnings : [];
+            const available = upgradeNpv.status === 'available';
+            if (technoeconomicElements.standaloneResults) {
+                technoeconomicElements.standaloneResults.dataset.state = available
+                    ? 'done' : 'unavailable';
+            }
+            if (technoeconomicElements.standaloneResultStatus) {
+                technoeconomicElements.standaloneResultStatus.textContent =
+                    decision.status === 'suppressed'
+                        ? `V6 decision suppressed: ${(
+                            reasonCodes.length ? reasonCodes : ['failed decision gate']
+                        ).map(technoeconomicHumanize).join(', ')}.`
+                        : `Completed v6 ${technoeconomicHumanize(
+                            lifecycle.reliability_mode || 'event'
+                        )}-mode lifecycle calculation · ${preferred}.`;
+            }
+            if (technoeconomicElements.standaloneInterpretation) {
+                const p10 = technoeconomicStandaloneOptionalNumber(percentiles.p10);
+                const p50 = technoeconomicStandaloneOptionalNumber(percentiles.p50);
+                const p90 = technoeconomicStandaloneOptionalNumber(percentiles.p90);
+                const probability = decision.preferred_system === 'solaredge'
+                    ? probabilityCounts.p_positive
+                    : decision.preferred_system === 'solectria'
+                        ? probabilityCounts.p_negative : null;
+                const probabilityText = technoeconomicStandaloneOptionalNumber(probability);
+                technoeconomicElements.standaloneInterpretation.textContent = p50 === null
+                    ? `Upgrade NPV is unavailable: ${technoeconomicHumanize(
+                        upgradeNpv.reason || 'no completed population'
+                    )}.`
+                    : `${preferred}. Upgrade NPV P50 is ${
+                        technoeconomicStandaloneFormatUsd(p50)
+                    }; P10–P90 is ${technoeconomicStandaloneFormatUsd(p10)} to ${
+                        technoeconomicStandaloneFormatUsd(p90)
+                    }${probabilityText === null ? '' : `; decision probability ${
+                        technoeconomicFormatNumber(probabilityText * 100, 1)
+                    }%`}. Positive upgrade NPV favors SolarEdge.${
+                        warnings.length ? ` Warnings: ${warnings.map((warning) =>
+                            technoeconomicHumanize(
+                                typeof warning === 'string' ? warning : warning?.code
+                            )
+                        ).join(', ')}.` : ''
+                    }`;
+            }
+            const probabilitySummary = technoeconomicElements.v6ProbabilitySummary;
+            if (probabilitySummary) {
+                probabilitySummary.replaceChildren();
+                const denominator = technoeconomicStandaloneOptionalNumber(
+                    probabilityCounts.denominator
+                );
+                const probabilityText = (probability, count) => {
+                    const number = technoeconomicStandaloneOptionalNumber(probability);
+                    const countNumber = technoeconomicStandaloneOptionalNumber(count);
+                    if (number === null || countNumber === null || denominator === null) {
+                        return 'Unavailable';
+                    }
+                    return `${technoeconomicFormatNumber(number * 100, 1)}% · ${
+                        technoeconomicFormatNumber(countNumber, 0)
+                    }/${technoeconomicFormatNumber(denominator, 0)}`;
+                };
+                for (const [label, value] of [
+                    ['NPV positive', probabilityText(
+                        probabilityCounts.p_positive, probabilityCounts.positive
+                    )],
+                    ['NPV negative', probabilityText(
+                        probabilityCounts.p_negative, probabilityCounts.negative
+                    )],
+                    ['NPV tie', probabilityText(
+                        probabilityCounts.p_tie, probabilityCounts.tie
+                    )],
+                    ['Decision threshold', `${technoeconomicFormatNumber(
+                        Number(decision.probability_threshold
+                            ?? lifecycle.headline_decision?.probability_threshold
+                            ?? 0.75) * 100,
+                        0
+                    )}%`],
+                ]) {
+                    technoeconomicStandaloneAppendDefinition(
+                        probabilitySummary, label, value
+                    );
+                }
+            }
+            const body = technoeconomicElements.v6PercentileBody;
+            if (body) {
+                body.replaceChildren();
+                const summariesByColumn = [
+                    [upgradeNpv, technoeconomicStandaloneFormatUsd],
+                    [lcoeSolectria, technoeconomicStandaloneFormatLcoePerMwh],
+                    [lcoeSolarEdge, technoeconomicStandaloneFormatLcoePerMwh],
+                    [deltaLcoe, technoeconomicStandaloneFormatLcoePerMwh],
+                    [lcoo, technoeconomicStandaloneFormatLcoePerMwh],
+                ];
+                for (const [key, label] of [
+                    ['p10', 'P10'], ['p50', 'P50 (median)'], ['p90', 'P90'],
+                ]) {
+                    const row = technoeconomicNode('tr');
+                    row.dataset.percentile = key;
+                    row.append(technoeconomicNode('th', {text: label, scope: 'row'}));
+                    for (const [summary, formatter] of summariesByColumn) {
+                        row.append(technoeconomicNode('td', {
+                            text: formatter(technoeconomicStandalonePercentile(summary, key)),
+                        }));
+                    }
+                    body.appendChild(row);
+                }
+            }
+            const request = technoeconomicPlainObject(job?.request);
+            if (technoeconomicElements.standaloneRunContext) {
+                technoeconomicElements.standaloneRunContext.textContent = `${
+                    technoeconomicFormatNumber(result.realization_count ?? request.n, 0)
+                } trials · ${result.sampling_version || TECHNOECONOMIC_LIFECYCLE_SAMPLING_VERSION
+                } · ${request.finance?.project_life_years ?? result.project_life_years
+                    ?? 'Unavailable'} years · Upgrade NPV primary`;
+            }
+            const scenario = technoeconomicElements.standaloneScenarioSummary;
+            if (scenario) {
+                scenario.replaceChildren();
+                for (const [label, value] of [
+                    ['Target capacity', technoeconomicStandaloneFormatCapacity(
+                        lifecycle.target_capacity_w,
+                        lifecycle.target_rating_basis,
+                        {forceMw: true}
+                    )],
+                    ['Project life', `${request.finance?.project_life_years
+                        ?? result.project_life_years ?? 'Unavailable'} years`],
+                    ['Systems', 'Solectria and SolarEdge'],
+                    ['Currency', `USD (real ${lifecycle.constant_dollar_cost_year
+                        ?? request.finance?.constant_dollar_cost_year ?? 'unavailable'})`],
+                    ['Source energy', technoeconomicHumanize(
+                        lifecycle.source_energy_basis || 'unavailable'
+                    )],
+                    ['Reliability', `${technoeconomicHumanize(
+                        lifecycle.reliability_mode || 'event'
+                    )} mode · event mode is headline`],
+                ]) technoeconomicStandaloneAppendDefinition(scenario, label, value);
+            }
+            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                const costRoot = technoeconomicPairedSystemElements(key).costSummary;
+                if (!costRoot) continue;
+                costRoot.replaceChildren();
+                const suffix = key === 'solectria' ? 'solectria' : 'solaredge';
+                const costSummary = technoeconomicPlainObject(
+                    summaries[`lifecycle_cost_${suffix}`]
+                );
+                const energySummary = technoeconomicPlainObject(
+                    summaries[`lifecycle_energy_${suffix}`]
+                );
+                const lcoeSummary = suffix === 'solectria'
+                    ? lcoeSolectria : lcoeSolarEdge;
+                for (const [label, value] of [
+                    ['PV lifecycle cost', technoeconomicStandaloneFormatUsd(
+                        technoeconomicStandalonePercentile(costSummary, 'p50')
+                    )],
+                    ['PV lifecycle energy', (() => {
+                        const energy = technoeconomicStandalonePercentile(
+                            energySummary, 'p50'
+                        );
+                        return energy === null ? 'Unavailable'
+                            : `${technoeconomicFormatNumber(energy / 1000000, 2)} GWh`;
+                    })()],
+                    ['Lifecycle LCOE', technoeconomicStandaloneFormatLcoePerMwh(
+                        technoeconomicStandalonePercentile(lcoeSummary, 'p50')
+                    )],
+                ]) technoeconomicStandaloneAppendDefinition(costRoot, label, value);
+            }
+            const provenance = technoeconomicElements.standaloneProvenance;
+            if (provenance) {
+                provenance.replaceChildren();
+                const registry = technoeconomicPlainObject(lifecycle.formula_registry);
+                technoeconomicStandaloneAppendDefinition(
+                    provenance, 'Annual source', job.source_annual_job_id
+                        || request.source_annual_job_id || 'Unavailable'
+                );
+                for (const [label, value] of [
+                    ['TEA job', job.job_id],
+                    ['Calculation contract', result.calculation_contract_version],
+                    ['Sampling contract', result.sampling_version],
+                    ['Result schema', result.result_version || 'tea-result-v6'],
+                    ['Formula registry', registry.formula_registry_version
+                        || registry.version || 'tea-formulas-v6'],
+                    ['Formula registry SHA-256', registry.formula_registry_sha256
+                        || registry.sha256],
+                    ['Weather allocation', TECHNOECONOMIC_LIFECYCLE_WEATHER_METHOD],
+                ]) {
+                    if (value !== null && value !== undefined && String(value).trim()) {
+                        technoeconomicStandaloneAppendDefinition(
+                            provenance, label, String(value)
+                        );
+                    }
+                }
+            }
+            const source = technoeconomicSources.find(
+                (item) => item?.source_annual_job_id === job.source_annual_job_id
+            ) || technoeconomicStandaloneSelectedSource();
+            technoeconomicRenderStandaloneBridge(source, result, {preserveCostLines: true});
+            const manifest = technoeconomicPlainObject(
+                technoeconomicPlainObject(job.artifacts).exports
+            );
+            const entries = technoeconomicPlainObject(manifest.artifacts);
+            const safe = (artifactId) => technoeconomicSafeArtifactUrl(
+                job.job_id, artifactId, technoeconomicPlainObject(entries[artifactId]).url
+            );
+            const cdfUrl = safe('cdf_plot');
+            technoeconomicSetPlot(
+                technoeconomicElements.standaloneCdfPlot,
+                technoeconomicElements.standaloneCdfFallback,
+                cdfUrl,
+                'The verified upgrade-NPV CDF chart is not available.'
+            );
+            technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, cdfUrl);
+            technoeconomicSetDownload(
+                technoeconomicElements.standaloneCsvLink, safe('csv_bundle')
+            );
+            technoeconomicSetDownload(
+                technoeconomicElements.standaloneXlsxLink, safe('xlsx_workbook')
+            );
+            if (technoeconomicElements.standaloneSubmitButton) {
+                technoeconomicElements.standaloneSubmitButton.textContent =
+                    'Recalculate upgrade NPV';
+            }
+        }
+
         function technoeconomicClearStandaloneResult() {
+            technoeconomicSetStandaloneResultPresentation(
+                technoeconomicSelectedContractVersion()
+                    === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION
+                    ? 'lifecycle' : 'paired'
+            );
             if (technoeconomicElements.standaloneResults) {
                 technoeconomicElements.standaloneResults.dataset.state = 'empty';
             }
@@ -2548,6 +4142,8 @@
                     'A completed server result is required before the probability distribution can be interpreted.';
             }
             technoeconomicElements.standalonePercentileBody?.replaceChildren();
+            technoeconomicElements.v6ProbabilitySummary?.replaceChildren();
+            technoeconomicElements.v6PercentileBody?.replaceChildren();
             technoeconomicSetPlot(
                 technoeconomicElements.standaloneCdfPlot,
                 technoeconomicElements.standaloneCdfFallback,
@@ -2559,7 +4155,10 @@
             technoeconomicSetDownload(technoeconomicElements.standaloneXlsxLink, null);
             technoeconomicElements.standaloneProvenance?.replaceChildren();
             if (technoeconomicElements.standaloneSubmitButton) {
-                technoeconomicElements.standaloneSubmitButton.textContent = 'Calculate LCOE';
+                technoeconomicElements.standaloneSubmitButton.textContent =
+                    technoeconomicSelectedContractVersion()
+                        === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION
+                        ? 'Calculate upgrade NPV' : 'Calculate LCOE';
             }
             technoeconomicRenderStandaloneDraft();
         }
@@ -5530,6 +7129,19 @@
             const paired = technoeconomicPlainObject(payload.paired_commercial);
             const commercial = Object.keys(paired).length ? paired : standalone;
             const pairedSystems = Array.isArray(paired.systems) ? paired.systems : [];
+            const lifecycle = technoeconomicPlainObject(paired.lifecycle);
+            const lifecycleSystems = Array.isArray(lifecycle.systems)
+                ? lifecycle.systems : [];
+            const lifecycleV6 = payload.calculation_contract_version
+                === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION
+                && Object.keys(lifecycle).length > 0;
+            const lifecycleUsesTemplate = lifecycleV6
+                && technoeconomicLifecycleMatchesTemplateShape(lifecycle);
+            const lifecycleDistributionText = (documented, multiplier = 1) => (
+                technoeconomicStandaloneDistributionDisplay(
+                    technoeconomicPlainObject(documented).distribution, multiplier
+                )
+            );
             const targetWatts = Number(commercial.target_capacity)
                 * (commercial.target_capacity_unit === 'mw' ? 1000000 : 1000);
             const systems = pairedSystems.length ? pairedSystems : [{
@@ -5554,11 +7166,14 @@
                     description: 'Financial assumptions are frozen in the selected constant-dollar year.',
                 },
                 {
-                    title: 'Cost evidence accepted', status: 'Accepted',
+                    title: lifecycleV6 ? 'Lifecycle evidence reviewed' : 'Cost evidence accepted',
+                    status: lifecycleV6 && provisionalCount ? 'Provisional' : 'Accepted',
                     description: provisionalCount
                         ? `${provisionalCount} provisional evidence record${
                             provisionalCount === 1 ? ' is' : 's are'
-                        } accepted for this request.`
+                        } accepted for this request. ${lifecycleUsesTemplate
+                            ? 'The values come from provisional template v1, not vendor data.'
+                            : ''}`
                         : 'All submitted cost-line evidence is recorded with this request.',
                 },
             ]);
@@ -5577,7 +7192,9 @@
                         sourceSummary.eligible_years.join(', ') || 'Re-verified by server at submission'
                     ),
                     technoeconomicSummaryItem(
-                        'Weather-year allocation', 'Balanced seeded paired-year allocation'
+                        'Weather-year allocation', lifecycleV6
+                            ? 'Balanced across realizations independently for every project year'
+                            : 'Balanced seeded paired-year allocation'
                     ),
                     technoeconomicSummaryItem(
                         'Frozen Solectria applied capacity',
@@ -5592,7 +7209,9 @@
                 ];
                 const scaleItems = [
                     technoeconomicSummaryItem(
-                        'Analysis', pairedSystems.length
+                        'Analysis', lifecycleV6
+                            ? 'Paired lifecycle upgrade NPV (SolarEdge relative to Solectria)'
+                            : pairedSystems.length
                             ? 'Paired commercial Solectria and SolarEdge LCOE'
                             : 'Standalone commercial SolarEdge LCOE'
                     ),
@@ -5614,7 +7233,9 @@
                         'Sampling method', 'Seeded Latin Hypercube Sampling (LHS)'
                     ),
                     technoeconomicSummaryItem(
-                        'Sampling contract', TECHNOECONOMIC_SAMPLING_VERSION
+                        'Sampling contract', lifecycleV6
+                            ? TECHNOECONOMIC_LIFECYCLE_SAMPLING_VERSION
+                            : TECHNOECONOMIC_SAMPLING_VERSION
                     ),
                     technoeconomicSummaryItem('Realizations', payload.n.toLocaleString('en-US')),
                     technoeconomicSummaryItem('Sampling seed', String(payload.seed)),
@@ -5633,28 +7254,94 @@
                         )}%`
                     ),
                     technoeconomicSummaryItem(
-                        'Annual module degradation',
-                        `${technoeconomicStandaloneDistributionDisplay(
-                            payload.shared_degradation.annual_rate.distribution, 100
-                        )}%`
+                        'Annual module degradation', lifecycleV6
+                            ? lifecycleSystems.map((system) => `${
+                                technoeconomicHumanize(system.technology)
+                            }: ${technoeconomicStandaloneDistributionDisplay(
+                                technoeconomicPlainObject(system.degradation).distribution, 100
+                            )}%`).join('; ')
+                            : `${technoeconomicStandaloneDistributionDisplay(
+                                payload.shared_degradation.annual_rate.distribution, 100
+                            )}%`
                     ),
                 ];
                 const costSummaryItems = [
                     technoeconomicSummaryItem(
-                        'Commercial cost lines', String(costLineCount)
+                        lifecycleV6 ? 'Lifecycle component classes' : 'Commercial cost lines',
+                        String(lifecycleV6
+                            ? lifecycleSystems.reduce((count, system) => (
+                                count + (Array.isArray(system.components)
+                                    ? system.components.length : 0)
+                            ), 0)
+                            : costLineCount)
                     ),
                     technoeconomicSummaryItem(
                         'Evidence records', String(serialized.evidenceCount)
                     ),
                 ];
+                if (lifecycleV6) {
+                    const commonEvent = Array.isArray(lifecycle.common_cause_events)
+                        ? lifecycle.common_cause_events[0] : null;
+                    costSummaryItems.push(
+                        technoeconomicSummaryItem(
+                            'Lifecycle input set', lifecycleUsesTemplate
+                                ? `${TECHNOECONOMIC_LIFECYCLE_TEMPLATE_REFERENCE} · version 1 · provisional synthetic review fixture`
+                                : 'Custom evidenced lifecycle specification'
+                        ),
+                        technoeconomicSummaryItem(
+                            'Recommendation reliability mode',
+                            `${technoeconomicHumanize(lifecycle.reliability_mode)}; ${
+                                technoeconomicFormatNumber(
+                                    Number(lifecycle.decision_probability_threshold) * 100, 4
+                                )
+                            }% decision threshold`
+                        ),
+                        technoeconomicSummaryItem(
+                            'Electricity value',
+                            `${lifecycleDistributionText(lifecycle.electricity_value)} real USD/kWh; `
+                            + `${lifecycleDistributionText(
+                                lifecycle.electricity_value_real_growth, 100
+                            )}% real annual growth`
+                        ),
+                        technoeconomicSummaryItem(
+                            'Upgrade NPV tie tolerance',
+                            `${technoeconomicFormatNumber(
+                                lifecycle.decision_npv_tolerance_usd_per_target_w, 6
+                            )} USD/target W`
+                        ),
+                        technoeconomicSummaryItem(
+                            'Component scaling',
+                            `ceil(${technoeconomicFormatNumber(targetWatts / 1000, 2)} kW ÷ 100 kW) `
+                            + `and ceil(${technoeconomicFormatNumber(
+                                targetWatts / 1000, 2
+                            )} kW ÷ 1,000 kW) per system`
+                        )
+                    );
+                    if (commonEvent) {
+                        costSummaryItems.push(technoeconomicSummaryItem(
+                            'Shared site event',
+                            `${lifecycleDistributionText(
+                                commonEvent.annual_probability, 100
+                            )}% annual probability; ${lifecycleDistributionText(
+                                commonEvent.downtime_hours
+                            )} hours; ${technoeconomicFormatNumber(
+                                Number(commonEvent.capacity_impact) * 100, 4
+                            )}% capacity; ${lifecycleDistributionText(
+                                commonEvent.cost_per_event
+                            )} real USD/event; ${lifecycleDistributionText(
+                                commonEvent.real_cost_growth, 100
+                            )}% real growth; paired across both systems`
+                        ));
+                    }
+                }
                 const systemGrid = technoeconomicNode('div', {
                     className: 'tea-confirm-system-grid',
                 });
-                systems.forEach((system) => {
+                (lifecycleV6 ? lifecycleSystems : systems).forEach((system) => {
                     const label = technoeconomicPairedSystem(system.technology)?.label
                         || technoeconomicHumanize(system.technology);
                     const costItems = [];
-                    system.cost_lines.forEach((line, index) => {
+                    (system.cost_lines || []).forEach((line, index) => {
                         const years = line.timing === 'scheduled_year_end'
                             ? `; years ${line.occurrence_years.join(', ')}` : '';
                         costItems.push(technoeconomicSummaryItem(
@@ -5667,6 +7354,96 @@
                             }${years}; evidence: ${technoeconomicReviewEvidence(line.evidence)}`
                         ));
                     });
+                    if (lifecycleV6) {
+                        const initialCostLine = Array.isArray(system.initial_cost_lines)
+                            ? system.initial_cost_lines[0] : null;
+                        costItems.push(
+                            technoeconomicSummaryItem(
+                                'Target BOM component classes',
+                                String(Array.isArray(system.components)
+                                    ? system.components.length : 0)
+                            ),
+                            technoeconomicSummaryItem(
+                                'Source-energy basis',
+                                technoeconomicHumanize(lifecycle.source_energy_basis)
+                            ),
+                            technoeconomicSummaryItem(
+                                'Degradation and availability',
+                                `${lifecycleDistributionText(system.degradation, 100)}% degradation/year; `
+                                + `${lifecycleDistributionText(system.base_availability, 100)}% base availability`
+                            ),
+                            technoeconomicSummaryItem(
+                                'Initial cost and base O&M',
+                                `${initialCostLine
+                                    ? lifecycleDistributionText(initialCostLine.cost_per_w)
+                                    : 'Unavailable'} real ${payload.finance.constant_dollar_cost_year} `
+                                + `USD/W${technoeconomicStandaloneRatingSuffix(
+                                    commercial.target_rating_basis
+                                )}; ${lifecycleDistributionText(
+                                    system.base_om_cost_per_w_year, 1000
+                                )} real USD/kW${technoeconomicStandaloneRatingSuffix(
+                                    commercial.target_rating_basis
+                                )}-year; ${lifecycleDistributionText(
+                                    system.base_om_real_growth, 100
+                                )}% real growth`
+                            ),
+                            technoeconomicSummaryItem(
+                                'Terminal and scheduled costs',
+                                `${lifecycleDistributionText(
+                                    system.decommissioning_cost
+                                )} real USD decommissioning; ${lifecycleDistributionText(
+                                    system.salvage_value
+                                )} real USD salvage; ${Array.isArray(system.scheduled_costs)
+                                    && system.scheduled_costs.length
+                                    ? `${system.scheduled_costs.length} scheduled cost line(s)`
+                                    : 'no scheduled cost lines'}`
+                            )
+                        );
+                        for (const component of Array.isArray(system.components)
+                            ? system.components : []) {
+                            const warranty = technoeconomicPlainObject(component.warranty);
+                            costItems.push(technoeconomicSummaryItem(
+                                `Component: ${technoeconomicHumanize(component.component_id)}`,
+                                `${Number(component.count).toLocaleString('en-US')} units; `
+                                + `${technoeconomicFormatNumber(
+                                    Number(component.capacity_impact) * 100, 6
+                                )}% capacity/unit; Weibull beta ${lifecycleDistributionText(
+                                    component.weibull_beta
+                                )}, eta ${lifecycleDistributionText(
+                                    component.weibull_eta_years
+                                )} years; repair ${lifecycleDistributionText(
+                                    component.repair_hours
+                                )} hours; emergency logistics ${lifecycleDistributionText(
+                                    component.logistics_hours
+                                )} hours`
+                            ), technoeconomicSummaryItem(
+                                `${technoeconomicHumanize(component.component_id)} costs, spares, and warranty`,
+                                `Emergency hardware ${lifecycleDistributionText(
+                                    component.emergency_unit_cost
+                                )} USD; restock ${lifecycleDistributionText(
+                                    component.restock_unit_cost
+                                )} USD; labor ${lifecycleDistributionText(
+                                    component.labor_cost
+                                )} USD/failure; mobilization ${lifecycleDistributionText(
+                                    component.mobilization_cost
+                                )} USD/batch of ${component.batch_size}; initial/target spares `
+                                + `${component.initial_spares}/${component.spare_target}; warranty `
+                                + `${warranty.age_limit_years ?? 'none'} years at ${
+                                    Number.isFinite(Number(warranty.fraction))
+                                        ? technoeconomicFormatNumber(
+                                            Number(warranty.fraction) * 100, 4
+                                        ) : 'unavailable'
+                                }% for ${(warranty.covered_cost_categories || []).join(', ') || 'none'}; `
+                                + `${lifecycleDistributionText(
+                                    component.real_cost_growth, 100
+                                )}% real cost growth; ${Array.isArray(
+                                    component.preventive_replacements
+                                ) && component.preventive_replacements.length
+                                    ? `${component.preventive_replacements.length} preventive schedule(s)`
+                                    : 'no preventive replacements'}`
+                            ));
+                        }
+                    }
                     systemGrid.append(technoeconomicConfirmationSystem(
                         system.technology, label, costItems
                     ));
@@ -5895,6 +7672,786 @@
             technoeconomicAssumptionsReturnFocus = true;
         }
 
+        const TECHNOECONOMIC_BUILDER_SECTIONS = [
+            {
+                key: 'source', label: 'Source & Scale',
+                description: 'Choose the verified Annual Simulation and define the commercial target and reproducible sampling.',
+            },
+            {
+                key: 'finance', label: 'Finance',
+                description: 'Set the lifecycle horizon and evidenced real financial assumptions.',
+            },
+            {
+                key: 'lifecycle', label: 'Lifecycle',
+                description: 'Apply the approved planning template, then review and edit the aligned Solectria and SolarEdge assumptions.',
+            },
+            {
+                key: 'reliability', label: 'Reliability',
+                description: 'Review component scaling, availability, failure treatment, spares, and the shared site event.',
+            },
+            {
+                key: 'value', label: 'Value',
+                description: 'Review electricity value, growth, tie tolerance, and the locked decision rule.',
+            },
+            {
+                key: 'review', label: 'Evidence & Review',
+                description: 'Confirm evidence completeness, provisional values, template differences, and the required acceptance.',
+            },
+        ];
+        let technoeconomicBuilderSectionIndex = 0;
+
+        function technoeconomicBuilderIssueTarget(error) {
+            if (error?.element) {
+                return {
+                    section: error.section || 'review',
+                    element: error.element,
+                };
+            }
+            const path = technoeconomicText(error?.path);
+            if (path === 'explicit_acceptance' || path.endsWith('.explicit_acceptance')) {
+                return {
+                    section: 'review',
+                    element: technoeconomicElements?.standaloneAccept,
+                };
+            }
+            if (path === 'acceptance_rationale' || path.endsWith('.acceptance_rationale')
+                || path === 'evidence.assumption_note') {
+                return {
+                    section: 'review',
+                    element: technoeconomicElements?.standaloneAssumptionNote,
+                };
+            }
+            const generatedEvidencePath = /(^|\.)(evidence|project_life_evidence)(\.|$)/
+                .test(path);
+            const generatedEvidenceMode = technoeconomicSelectedContractVersion()
+                === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION
+                || technoeconomicLifecycleEntryMode !== 'advanced';
+            if (generatedEvidencePath && generatedEvidenceMode) {
+                return {
+                    section: 'review',
+                    element: technoeconomicElements?.standaloneAssumptionNote,
+                };
+            }
+            const financeDistributionMatch = path.match(
+                /^(finance\.real_discount_rate|shared_degradation\.annual_rate)\.distribution\.(value|low|mode|high|mean|sd)$/
+            );
+            if (financeDistributionMatch) {
+                const degradation = financeDistributionMatch[1].startsWith(
+                    'shared_degradation'
+                );
+                const container = degradation
+                    ? technoeconomicElements?.standaloneDegradationParameters
+                    : technoeconomicElements?.standaloneDiscountParameters;
+                return {
+                    section: 'finance',
+                    element: container?.querySelector?.(
+                        `[data-tea-v4-param="${financeDistributionMatch[2]}"]`
+                    ) || (degradation
+                        ? technoeconomicElements?.standaloneDegradationFamily
+                        : technoeconomicElements?.standaloneDiscountFamily),
+                };
+            }
+            if ((path === 'shared_degradation' || path.startsWith('shared_degradation.'))
+                && technoeconomicSelectedContractVersion()
+                    === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION) {
+                return {
+                    section: 'finance',
+                    element: technoeconomicElements?.standaloneDegradationFamily,
+                };
+            }
+            const systemMatch = path.match(
+                /^paired_commercial(?:\.lifecycle)?\.systems\.(\d+)(?:\.(.*))?$/
+            );
+            if (systemMatch) {
+                const prefix = Number(systemMatch[1]) === 1 ? 'SolarEdge' : 'Solectria';
+                const suffix = technoeconomicText(systemMatch[2]);
+                if (!path.startsWith('paired_commercial.lifecycle.systems.')) {
+                    const container = technoeconomicElements?.[
+                        `standalone${prefix}CostLines`
+                    ];
+                    const costMatch = suffix.match(
+                        /^cost_lines\.(\d+)(?:\.distribution(?:\.(value|low|mode|high|mean|sd))?)?/
+                    );
+                    const card = costMatch
+                        ? Array.from(container?.querySelectorAll?.(
+                            '[data-tea-v4-cost-line]'
+                        ) || [])[Number(costMatch[1])]
+                        : null;
+                    const field = costMatch?.[2]
+                        ? card?.querySelector?.(`[data-tea-v4-param="${costMatch[2]}"]`)
+                        : card?.querySelector?.('select, input, textarea');
+                    return {
+                        section: 'lifecycle',
+                        element: field || container,
+                    };
+                }
+                const systemMappings = [
+                    ['degradation', `lifecycle${prefix}Degradation`],
+                    ['base_availability', `lifecycle${prefix}Availability`],
+                    ['initial_cost_lines', `lifecycle${prefix}InitialCost`],
+                    ['base_om_cost_per_w_year', `lifecycle${prefix}BaseOm`],
+                    ['decommissioning_cost', `lifecycle${prefix}Decommissioning`],
+                    ['salvage_value', `lifecycle${prefix}Salvage`],
+                ];
+                const systemField = systemMappings.find(([field]) =>
+                    suffix === field || suffix.startsWith(`${field}.`)
+                );
+                if (systemField) {
+                    return {
+                        section: 'lifecycle',
+                        element: technoeconomicElements?.[systemField[1]],
+                    };
+                }
+                return {
+                    section: 'lifecycle',
+                    element: technoeconomicElements?.lifecycleJson,
+                    reveal: technoeconomicElements?.lifecycleAdvancedDetails,
+                };
+            }
+            const commonEventMatch = path.match(
+                /^paired_commercial\.lifecycle\.common_cause_events\.\d+\.(.*)$/
+            );
+            if (commonEventMatch) {
+                const suffix = commonEventMatch[1];
+                const commonMappings = [
+                    ['annual_probability', 'lifecycleCommonProbability'],
+                    ['downtime_hours', 'lifecycleCommonDowntime'],
+                    ['capacity_impact', 'lifecycleCommonImpact'],
+                    ['cost_per_event', 'lifecycleCommonCost'],
+                ];
+                const commonField = commonMappings.find(([field]) =>
+                    suffix === field || suffix.startsWith(`${field}.`)
+                );
+                if (commonField) {
+                    return {
+                        section: 'reliability',
+                        element: technoeconomicElements?.[commonField[1]],
+                    };
+                }
+            }
+            const mappings = [
+                ['source_annual_job_id', 'source', 'standaloneSourceSelect'],
+                ['paired_commercial.target_capacity', 'source', 'standaloneTargetCapacityInput'],
+                ['paired_commercial.target_rating_basis', 'source', 'standaloneSourceSelect'],
+                ['n', 'source', 'standaloneRealizations'],
+                ['seed', 'source', 'standaloneSeed'],
+                ['finance.project_life_years', 'finance', 'standaloneProjectLife'],
+                ['finance.project_life', 'finance', 'standaloneProjectLife'],
+                ['finance.real_discount_rate', 'finance', 'standaloneDiscountFamily'],
+                ['shared_degradation', 'lifecycle', 'lifecycleSolectriaDegradation'],
+                ['lifecycle.electricity_value_real_growth', 'value', 'lifecycleElectricityGrowth'],
+                ['lifecycle.electricity_value', 'value', 'lifecycleElectricityValue'],
+                ['lifecycle.decision_npv_tolerance_usd_per_target_w', 'value', 'lifecycleNpvTolerance'],
+                ['lifecycle.common_cause_events', 'reliability', 'lifecycleCommonProbability'],
+                ['lifecycle.reliability_mode', 'reliability', 'lifecycleReliabilityMode'],
+                ['lifecycle.source_energy_basis', 'lifecycle', 'lifecycleSourceBasis'],
+                ['Lifecycle setup', 'lifecycle', 'useLifecycleTemplateButton'],
+                ['cost_lines', 'lifecycle', 'standaloneSolectriaCostLines'],
+                ['evidence.assumption_note', 'review', 'standaloneAssumptionNote'],
+                ['evidence', 'review', 'standaloneAssumptionNote'],
+            ];
+            const match = mappings.find(([prefix]) => path === prefix
+                || path.startsWith(`${prefix}.`)
+                || path.endsWith(`.${prefix}`)
+                || path.includes(`.${prefix}.`));
+            if (match) return {section: match[1], element: technoeconomicElements?.[match[2]]};
+            if (path === 'paired_commercial.lifecycle'
+                || path.startsWith('paired_commercial.lifecycle.')) {
+                if (technoeconomicLifecycleEntryMode === 'empty') {
+                    return {
+                        section: 'lifecycle',
+                        element: technoeconomicElements?.useLifecycleTemplateButton,
+                    };
+                }
+                return {
+                    section: 'lifecycle',
+                    element: technoeconomicElements?.lifecycleJson,
+                    reveal: technoeconomicElements?.lifecycleAdvancedDetails,
+                };
+            }
+            return {section: 'review', element: technoeconomicElements?.standaloneAssumptionNote};
+        }
+
+        function technoeconomicBuilderNormalizeIssue(error) {
+            const path = technoeconomicText(error?.path);
+            if (path === 'explicit_acceptance' || path.endsWith('.explicit_acceptance')) {
+                return {
+                    ...error,
+                    path: 'evidence.explicit_acceptance',
+                    message: 'Confirm the required review acceptance.',
+                };
+            }
+            if (path === 'acceptance_rationale' || path.endsWith('.acceptance_rationale')
+                || path === 'evidence.assumption_note') {
+                return {
+                    ...error,
+                    path: 'evidence.assumption_note',
+                    message: 'Document the source or justification for these assumptions.',
+                };
+            }
+            const generatedEvidencePath = /(^|\.)(evidence|project_life_evidence)(\.|$)/
+                .test(path);
+            const generatedEvidenceMode = technoeconomicSelectedContractVersion()
+                === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION
+                || technoeconomicLifecycleEntryMode !== 'advanced';
+            if (generatedEvidencePath && generatedEvidenceMode) {
+                return {
+                    ...error,
+                    path: 'evidence.assumption_note',
+                    message: 'Document the source or justification for these assumptions.',
+                };
+            }
+            return error;
+        }
+
+        function technoeconomicBuilderIssueLabel(error) {
+            const message = technoeconomicText(error?.message) || 'Complete this requirement.';
+            const target = technoeconomicBuilderIssueTarget(error).element;
+            const conciseLabels = new Map([
+                [technoeconomicElements?.standaloneSourceSelect, 'Previous Annual Simulation source'],
+                [technoeconomicElements?.standaloneAssumptionNote, 'Source / justification'],
+                [technoeconomicElements?.standaloneAccept, 'Review acceptance'],
+                [technoeconomicElements?.useLifecycleTemplateButton, 'Approved lifecycle template'],
+            ]);
+            const explicitLabel = conciseLabels.get(target) || target?.labels?.[0]?.textContent;
+            const rowLabel = target?.closest?.('tr')?.querySelector?.('th[scope="row"]')?.textContent;
+            const label = technoeconomicText(explicitLabel || rowLabel)
+                .replace(/\s+/g, ' ').trim();
+            if (!label || message.toLocaleLowerCase().includes(label.toLocaleLowerCase())) {
+                return message;
+            }
+            return `${label}: ${message}`;
+        }
+
+        function technoeconomicBuilderClearInlineErrors() {
+            const dialog = technoeconomicElements?.standaloneAssumptionsDialog;
+            dialog?.querySelectorAll?.('.tea-field-errors, .tea-field-error')
+                .forEach((node) => node.remove());
+            dialog?.querySelectorAll?.('[aria-invalid="true"]').forEach((node) => {
+                node.removeAttribute('aria-invalid');
+                const describedBy = technoeconomicText(node.getAttribute('aria-describedby'))
+                    .split(/\s+/).filter((id) => id && !id.startsWith('tea-builder-error-'));
+                if (describedBy.length) node.setAttribute('aria-describedby', describedBy.join(' '));
+                else node.removeAttribute('aria-describedby');
+            });
+        }
+
+        function technoeconomicBuilderRenderInlineErrors(errors) {
+            technoeconomicBuilderClearInlineErrors();
+            const grouped = new Map();
+            for (const [index, error] of (errors || []).entries()) {
+                const target = technoeconomicBuilderIssueTarget(error).element;
+                if (!target) continue;
+                const errorId = `tea-builder-error-${index}`;
+                const message = technoeconomicNode('span', {
+                    className: 'tea-field-error', id: errorId, text: error.message,
+                });
+                if (!grouped.has(target)) {
+                    grouped.set(target, {
+                        messages: new Set(),
+                        node: technoeconomicNode('div', {
+                            className: 'tea-field-errors',
+                        }),
+                    });
+                }
+                const group = grouped.get(target);
+                if (group.messages.has(error.message)) continue;
+                group.messages.add(error.message);
+                group.node.appendChild(message);
+                target.setAttribute?.('aria-invalid', 'true');
+                const describedBy = technoeconomicText(target.getAttribute?.('aria-describedby'))
+                    .split(/\s+/).filter(Boolean);
+                if (!describedBy.includes(errorId)) describedBy.push(errorId);
+                target.setAttribute?.('aria-describedby', describedBy.join(' '));
+            }
+            for (const [target, group] of grouped.entries()) {
+                const checkboxRow = target.closest?.('.tea-checkbox-row');
+                const templateHeading = target.closest?.('.tea-v6-template-heading');
+                const host = checkboxRow?.parentElement
+                    || templateHeading
+                    || target.closest?.('.tea-field, .tea-v6-template-field, td')
+                    || target.parentElement;
+                host?.appendChild?.(group.node);
+            }
+        }
+
+        function technoeconomicBuilderReviewCard(title, lines, status = '') {
+            const card = technoeconomicNode('section', {className: 'tea-builder-review-card'});
+            card.dataset.status = status;
+            const heading = technoeconomicNode('div', {
+                className: 'tea-builder-review-card-heading',
+            });
+            heading.appendChild(technoeconomicNode('h5', {text: title}));
+            if (status) {
+                const labels = {
+                    verified: 'Verified', provisional: 'Provisional',
+                    required: 'Required', locked: 'Locked',
+                };
+                heading.appendChild(technoeconomicNode('span', {
+                    className: `tea-status-badge tea-status-${status}`,
+                    text: labels[status] || status,
+                }));
+            }
+            card.appendChild(heading);
+            const list = technoeconomicNode('ul');
+            for (const line of lines) list.appendChild(technoeconomicNode('li', {text: line}));
+            card.appendChild(list);
+            return card;
+        }
+
+        function technoeconomicBuilderLegacyPresetDifferences(draft) {
+            const differences = [];
+            for (const {key, label} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                const systemDraft = draft?.systems?.[key];
+                const definitions = technoeconomicStandaloneCostDefinitions(
+                    draft?.rating_basis, key
+                );
+                for (const definition of definitions) {
+                    const line = (systemDraft?.cost_lines || []).find(
+                        (candidate) => candidate.key === definition.key
+                    );
+                    const family = technoeconomicText(line?.distribution?.family);
+                    const value = technoeconomicText(line?.distribution?.value).trim();
+                    if (family !== 'fixed' || Number(value) !== Number(definition.value)) {
+                        const current = line
+                            ? `${family || 'unknown'}${value ? ` ${value}` : ''}`
+                            : 'not entered';
+                        differences.push(
+                            `${label} ${definition.label}: ${current} `
+                            + `(preset fixed ${definition.value})`
+                        );
+                    }
+                }
+                const extraLines = (systemDraft?.cost_lines || []).filter(
+                    (line) => !definitions.some((definition) => definition.key === line.key)
+                );
+                if (extraLines.length) {
+                    differences.push(
+                        `${label}: ${extraLines.length} additional sourced cost ${
+                            extraLines.length === 1 ? 'line' : 'lines'}`
+                    );
+                }
+            }
+            return differences;
+        }
+
+        function technoeconomicBuilderRenderReview(serialized) {
+            const root = technoeconomicElements?.builderReviewSummary;
+            if (!root) return;
+            const payload = technoeconomicPlainObject(serialized?.payload);
+            const paired = technoeconomicPlainObject(payload.paired_commercial);
+            const systems = Array.isArray(paired.systems) ? paired.systems : [];
+            const source = technoeconomicStandaloneSelectedSource();
+            const lifecycleContract = technoeconomicSelectedContractVersion()
+                === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION;
+            const provisional = Number(serialized?.provisionalEvidenceCount || 0);
+            const lifecycleSystemLines = (prefix) => [
+                `Annual degradation: ${technoeconomicElements?.[`lifecycle${prefix}Degradation`]?.value || 'Not entered'}%`,
+                `Base availability: ${technoeconomicElements?.[`lifecycle${prefix}Availability`]?.value || 'Not entered'}%`,
+                `Initial installed cost: ${technoeconomicElements?.[`lifecycle${prefix}InitialCost`]?.value || 'Not entered'}`,
+                `Base O&M: ${technoeconomicElements?.[`lifecycle${prefix}BaseOm`]?.value || 'Not entered'}`,
+                `Decommissioning: ${technoeconomicElements?.[`lifecycle${prefix}Decommissioning`]?.value || 'Not entered'} USD`,
+                `Salvage value: ${technoeconomicElements?.[`lifecycle${prefix}Salvage`]?.value || 'Not entered'} USD`,
+            ];
+            const standaloneDraft = !lifecycleContract
+                ? technoeconomicStandaloneDraftSnapshot() : null;
+            const templateDifferences = lifecycleContract
+                ? technoeconomicLifecycleEntryMode === 'template'
+                    ? technoeconomicLifecycleTemplateDifferences() : []
+                : technoeconomicBuilderLegacyPresetDifferences(standaloneDraft);
+            const templateLines = lifecycleContract
+                ? technoeconomicLifecycleEntryMode === 'empty'
+                    ? ['Approved template values have not been applied.']
+                    : technoeconomicLifecycleEntryMode === 'advanced'
+                        ? ['A custom Advanced lifecycle specification is active. Compare its documented values with the approved planning template before submission.']
+                        : templateDifferences.length
+                        ? ['Values changed from the approved planning template:',
+                            ...templateDifferences]
+                        : ['No values differ from the approved planning template.']
+                : templateDifferences.length
+                    ? ['Values changed from the NREL 2024 ATB cost preset:',
+                        ...templateDifferences]
+                    : ['No cost values differ from the NREL 2024 ATB preset.'];
+            const legacySystemLines = (systemKey) => {
+                const systemDraft = standaloneDraft?.systems?.[systemKey];
+                const definitions = technoeconomicStandaloneCostDefinitions(
+                    standaloneDraft?.rating_basis, systemKey
+                );
+                return (systemDraft?.cost_lines || []).map((line) => {
+                    const definition = definitions.find((item) => item.key === line.key);
+                    const values = Object.entries(line.distribution || {})
+                        .filter(([key, value]) => key !== 'family'
+                            && technoeconomicText(value).trim())
+                        .map(([key, value]) => `${key} ${value}`).join(', ');
+                    const family = technoeconomicText(line.distribution?.family || 'fixed');
+                    return `${definition?.label || line.key}: ${family}${
+                        values ? ` (${values})` : ''}`;
+                });
+            };
+            const provisionalLines = lifecycleContract
+                ? technoeconomicLifecycleEntryMode === 'empty'
+                    ? ['The approved planning template has not been applied. The visible lifecycle values remain provisional and cannot be calculated until reviewed and applied.']
+                    : [provisional
+                        ? `${provisional} provisional evidence ${provisional === 1 ? 'entry' : 'entries'} require acceptance.`
+                        : 'Applied lifecycle planning values remain provisional unless supported by project evidence.']
+                : ['V5 benchmark costs and shared degradation remain editable; their evidence and acceptance are reviewed below.'];
+            root.replaceChildren(
+                technoeconomicBuilderReviewCard('Shared assumptions', [
+                    `${technoeconomicElements?.standaloneTargetCapacityInput?.value || 'Not entered'} MW target capacity`,
+                    `${technoeconomicElements?.standaloneProjectLife?.value || 'Not entered'}-year project life`,
+                    `${technoeconomicElements?.standaloneRealizations?.value || 'Not entered'} seeded LHS trials`,
+                    technoeconomicElements?.calculationContract?.selectedOptions?.[0]?.textContent
+                        || technoeconomicSelectedContractVersion(),
+                ], 'verified'),
+                technoeconomicBuilderReviewCard('Solectria assumptions', [
+                    ...(lifecycleContract
+                        ? lifecycleSystemLines('Solectria') : legacySystemLines('solectria')),
+                    `${lifecycleContract
+                        ? systems.find((item) => item?.technology === 'solectria')?.cost_lines?.length || 0
+                        : standaloneDraft?.systems?.solectria?.cost_lines?.length || 0} cost lines`,
+                ], 'provisional'),
+                technoeconomicBuilderReviewCard('SolarEdge assumptions', [
+                    ...(lifecycleContract
+                        ? lifecycleSystemLines('SolarEdge') : legacySystemLines('solaredge')),
+                    `${lifecycleContract
+                        ? systems.find((item) => item?.technology === 'solaredge')?.cost_lines?.length || 0
+                        : standaloneDraft?.systems?.solaredge?.cost_lines?.length || 0} cost lines`,
+                ], 'provisional'),
+                technoeconomicBuilderReviewCard('Template comparison', templateLines,
+                    lifecycleContract && technoeconomicLifecycleEntryMode === 'empty'
+                        ? 'required' : provisional ? 'provisional' : 'verified'),
+                technoeconomicBuilderReviewCard('Provisional values', [
+                    ...provisionalLines,
+                ], lifecycleContract || provisional ? 'provisional' : 'verified'),
+                technoeconomicBuilderReviewCard('Evidence completeness', [
+                    source ? 'Annual source selected for server re-verification.' : 'Annual source is required.',
+                    technoeconomicText(technoeconomicElements?.standaloneAssumptionNote?.value).trim()
+                        ? 'Source / justification provided.' : 'Source / justification is required.',
+                    technoeconomicElements?.standaloneAccept?.checked
+                        ? 'Required acceptance confirmed.' : 'Required acceptance is not confirmed.',
+                ], serialized?.valid ? 'verified' : 'required'),
+            );
+        }
+
+        function technoeconomicBuilderSectionState(
+            key, issuesBySection, lifecycleContract, result
+        ) {
+            if (!lifecycleContract && ['reliability', 'value'].includes(key)) {
+                return 'locked';
+            }
+            if (issuesBySection[key]?.length) return 'required';
+            if (key === 'review' || key === 'source') return 'verified';
+            if (key === 'finance') {
+                return Number(result?.provisionalEvidenceCount || 0) > 0
+                    ? 'provisional' : 'verified';
+            }
+            if (key === 'lifecycle' && !lifecycleContract) return 'provisional';
+            if (lifecycleContract && ['lifecycle', 'reliability', 'value'].includes(key)) {
+                return Number(result?.provisionalEvidenceCount || 0) > 0
+                    ? 'provisional' : 'verified';
+            }
+            return 'verified';
+        }
+
+        function technoeconomicBuilderUpdate(serialized = null) {
+            if (!technoeconomicElements?.builderSteps) return;
+            const result = serialized || technoeconomicSerializeCurrentRequest({
+                sources: technoeconomicSources,
+            });
+            const errors = Array.isArray(result.errors) ? result.errors : [];
+            const displayErrors = [...errors];
+            const issuesBySection = Object.fromEntries(
+                TECHNOECONOMIC_BUILDER_SECTIONS.map(({key}) => [key, []])
+            );
+            for (const error of errors) {
+                issuesBySection[technoeconomicBuilderIssueTarget(error).section].push(error);
+            }
+            const addRequirement = (section, requirement) => {
+                const duplicate = displayErrors.some((error) =>
+                    technoeconomicText(error?.path) === technoeconomicText(requirement.path)
+                    && technoeconomicText(error?.message) === technoeconomicText(requirement.message)
+                );
+                if (duplicate) return;
+                issuesBySection[section].push(requirement);
+                displayErrors.push(requirement);
+            };
+            const discountInputs = Array.from(
+                technoeconomicElements?.standaloneDiscountParameters?.querySelectorAll?.(
+                    'input:not([disabled]), select:not([disabled])'
+                ) || []
+            );
+            const emptyDiscountInput = discountInputs.find((input) =>
+                !technoeconomicText(input.value).trim()
+            );
+            if (emptyDiscountInput) {
+                addRequirement('finance', {
+                    path: 'finance.real_discount_rate.distribution',
+                    message: 'Enter the real discount-rate value.',
+                    section: 'finance',
+                    element: emptyDiscountInput,
+                });
+            }
+            if (!technoeconomicText(
+                technoeconomicElements?.standaloneAssumptionNote?.value
+            ).trim()) {
+                addRequirement('review', {
+                    path: 'evidence.assumption_note',
+                    message: 'Provide the source or justification for these assumptions.',
+                    section: 'review',
+                    element: technoeconomicElements?.standaloneAssumptionNote,
+                });
+            }
+            if (!technoeconomicElements?.standaloneAccept?.checked) {
+                addRequirement('review', {
+                    path: 'evidence.explicit_acceptance',
+                    message: 'Confirm the required review acceptance.',
+                    section: 'review',
+                    element: technoeconomicElements?.standaloneAccept,
+                });
+            }
+            const lifecycleRequired = technoeconomicSelectedContractVersion()
+                === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION
+                && technoeconomicLifecycleEntryMode === 'empty';
+            if (lifecycleRequired) {
+                const sectionRequirements = {
+                    lifecycle: {
+                        path: 'Lifecycle setup',
+                        message: 'Apply the approved template or provide a complete custom lifecycle specification.',
+                    },
+                    reliability: {
+                        path: 'paired_commercial.lifecycle.reliability_mode',
+                        message: 'Apply or provide the reliability specification.',
+                    },
+                    value: {
+                        path: 'paired_commercial.lifecycle.electricity_value',
+                        message: 'Apply or provide the value specification.',
+                    },
+                };
+                for (const [key, requirement] of Object.entries(sectionRequirements)) {
+                    if (!issuesBySection[key].length) {
+                        issuesBySection[key].push(requirement);
+                        if (key === 'lifecycle') displayErrors.push(requirement);
+                    }
+                }
+            }
+            const actionableErrors = [];
+            const seenErrorsByTarget = new Map();
+            for (const originalError of displayErrors) {
+                let error = technoeconomicBuilderNormalizeIssue(originalError);
+                let target = technoeconomicBuilderIssueTarget(error);
+                if (target.element === technoeconomicElements?.standaloneSourceSelect
+                    && !technoeconomicElements.standaloneSourceSelect?.value) {
+                    error = {
+                        path: 'source_annual_job_id',
+                        message: 'Select a completed, verified Annual Simulation.',
+                    };
+                    target = technoeconomicBuilderIssueTarget(error);
+                }
+                const targetKey = target.element || target.section;
+                if (!seenErrorsByTarget.has(targetKey)) {
+                    seenErrorsByTarget.set(targetKey, new Set());
+                }
+                const messageKey = `${technoeconomicText(error.path)}:${
+                    technoeconomicText(error.message)}`;
+                if (seenErrorsByTarget.get(targetKey).has(messageKey)) continue;
+                seenErrorsByTarget.get(targetKey).add(messageKey);
+                actionableErrors.push(error);
+            }
+            const active = TECHNOECONOMIC_BUILDER_SECTIONS[technoeconomicBuilderSectionIndex]
+                || TECHNOECONOMIC_BUILDER_SECTIONS[0];
+            const lifecycleContract = technoeconomicSelectedContractVersion()
+                === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION;
+            const v5Descriptions = {
+                lifecycle: 'Review and edit the paired Solectria and SolarEdge cost stacks used by the v5 LCOE calculation.',
+                reliability: 'Review the reliability treatment locked by the v5 paired-LCOE contract.',
+                value: 'Review the LCOE value methodology locked by the v5 paired-LCOE contract.',
+            };
+            technoeconomicElements.builderSectionEyebrow.textContent =
+                `Section ${technoeconomicBuilderSectionIndex + 1} of ${TECHNOECONOMIC_BUILDER_SECTIONS.length}`;
+            technoeconomicElements.builderSectionHeading.textContent = active.label;
+            technoeconomicElements.builderSectionDescription.textContent = !lifecycleContract
+                && v5Descriptions[active.key] ? v5Descriptions[active.key] : active.description;
+            technoeconomicElements.standaloneAssumptionsDialog.querySelectorAll(
+                '[data-tea-builder-section]'
+            ).forEach((group) => {
+                let visible = technoeconomicText(group.dataset.teaBuilderSection)
+                    .split(/\s+/).includes(active.key);
+                if (group === technoeconomicElements.lifecycleInputGroup) {
+                    visible = visible && lifecycleContract;
+                }
+                if (group === technoeconomicElements.legacyCostGroup) {
+                    visible = visible && !lifecycleContract;
+                }
+                group.hidden = !visible;
+            });
+            technoeconomicElements.standaloneAssumptionsDialog.querySelectorAll(
+                '[data-tea-builder-panel]'
+            ).forEach((panel) => {
+                panel.hidden = panel.dataset.teaBuilderPanel !== active.key;
+            });
+            technoeconomicElements.standaloneAssumptionsDialog.querySelectorAll(
+                '[data-tea-builder-v5-section]'
+            ).forEach((panel) => {
+                panel.hidden = lifecycleContract
+                    || panel.dataset.teaBuilderV5Section !== active.key;
+            });
+            const assumptionsTableRegion = technoeconomicElements.builderStage
+                ?.querySelector?.('.tea-assumptions-table-region');
+            if (assumptionsTableRegion) {
+                assumptionsTableRegion.hidden = !lifecycleContract
+                    && ['reliability', 'value'].includes(active.key);
+            }
+            technoeconomicElements.builderReview.hidden = active.key !== 'review';
+            technoeconomicElements.builderSteps.querySelectorAll('[data-tea-builder-step]')
+                .forEach((button) => {
+                    const key = button.dataset.teaBuilderStep;
+                    const state = technoeconomicBuilderSectionState(
+                        key, issuesBySection, lifecycleContract, result
+                    );
+                    button.dataset.status = state;
+                    button.toggleAttribute('aria-current', key === active.key);
+                    if (key === active.key) button.setAttribute('aria-current', 'step');
+                    const status = button.querySelector('small');
+                    if (status) status.textContent = state[0].toUpperCase() + state.slice(1);
+                });
+            const targetValue = Number(technoeconomicElements.standaloneTargetCapacityInput?.value);
+            technoeconomicElements.builderTarget.textContent = Number.isFinite(targetValue) && targetValue > 0
+                ? `${technoeconomicFormatNumber(targetValue, 4)} MW` : 'Required';
+            const projectLife = Number(technoeconomicElements.standaloneProjectLife?.value);
+            technoeconomicElements.builderLife.textContent = Number.isSafeInteger(projectLife)
+                && projectLife > 0 ? `${projectLife} years` : 'Required';
+            const trials = Number(technoeconomicElements.standaloneRealizations?.value);
+            technoeconomicElements.builderTrials.textContent = Number.isSafeInteger(trials)
+                && trials >= 1 && trials <= 100000
+                ? trials.toLocaleString('en-US') : 'Required';
+            technoeconomicElements.builderContract.textContent =
+                technoeconomicElements.calculationContract?.selectedOptions?.[0]?.textContent
+                || technoeconomicSelectedContractVersion();
+            const selectedSource = technoeconomicStandaloneSelectedSource();
+            technoeconomicElements.builderSource.textContent = selectedSource
+                ? `${selectedSource.source_annual_job_id} · ${
+                    Array.isArray(selectedSource.eligible_years)
+                        ? `${selectedSource.eligible_years.length} weather years`
+                        : 'verified source'}`
+                : 'Not selected';
+            technoeconomicElements.builderCompletion.replaceChildren(...TECHNOECONOMIC_BUILDER_SECTIONS.map(
+                ({key, label}) => {
+                    const item = technoeconomicNode('li');
+                    const state = technoeconomicBuilderSectionState(
+                        key, issuesBySection, lifecycleContract, result
+                    );
+                    item.dataset.status = state;
+                    item.append(
+                        technoeconomicNode('span', {text: label}),
+                        technoeconomicNode('span', {
+                            text: state[0].toUpperCase() + state.slice(1),
+                        })
+                    );
+                    return item;
+                }
+            ));
+            technoeconomicElements.builderIssueCount.textContent = String(actionableErrors.length);
+            technoeconomicElements.builderIssues.replaceChildren(...actionableErrors.map((error) => {
+                const item = technoeconomicNode('li');
+                const target = technoeconomicBuilderIssueTarget(error);
+                const button = technoeconomicNode('button', {
+                    type: 'button', text: technoeconomicBuilderIssueLabel(error),
+                });
+                button.dataset.issuePath = technoeconomicText(error.path);
+                button.addEventListener('click', () => {
+                    technoeconomicBuilderGoTo(target.section, {
+                        focus: target.element,
+                        reveal: target.reveal,
+                    });
+                });
+                item.appendChild(button);
+                return item;
+            }));
+            if (!actionableErrors.length) {
+                technoeconomicElements.builderIssues.replaceChildren(
+                    technoeconomicNode('li', {text: 'All current requirements are verified.'})
+                );
+            }
+            technoeconomicBuilderRenderInlineErrors(actionableErrors);
+            technoeconomicBuilderRenderReview(result);
+            const remaining = actionableErrors.map((error) => technoeconomicBuilderIssueLabel(error));
+            technoeconomicElements.builderFooterRequirements.dataset.state = actionableErrors.length
+                ? 'blocked' : 'ready';
+            technoeconomicElements.builderFooterRequirements.dataset.overflow =
+                actionableErrors.length > 3 ? 'true' : 'false';
+            const footerTitle = technoeconomicNode('strong', {
+                text: actionableErrors.length
+                    ? `Calculation blocked — ${remaining.length} remaining ${
+                        remaining.length === 1 ? 'requirement' : 'requirements'}`
+                    : 'Ready to review and calculate',
+            });
+            if (actionableErrors.length) {
+                const footerList = technoeconomicNode('ul');
+                for (const requirement of remaining) {
+                    footerList.appendChild(technoeconomicNode('li', {text: requirement}));
+                }
+                technoeconomicElements.builderFooterRequirements.replaceChildren(
+                    footerTitle, footerList
+                );
+            } else {
+                technoeconomicElements.builderFooterRequirements.replaceChildren(
+                    footerTitle,
+                    technoeconomicNode('span', {
+                        text: 'All required evidence and acceptance are present.',
+                    })
+                );
+            }
+            technoeconomicElements.builderBackButton.disabled = technoeconomicBuilderSectionIndex === 0;
+            technoeconomicElements.builderContinueButton.hidden =
+                technoeconomicBuilderSectionIndex === TECHNOECONOMIC_BUILDER_SECTIONS.length - 1;
+            technoeconomicElements.standaloneAssumptionsReviewButton.hidden =
+                technoeconomicBuilderSectionIndex !== TECHNOECONOMIC_BUILDER_SECTIONS.length - 1;
+            technoeconomicElements.standaloneAssumptionsReviewButton.disabled = !result.valid;
+            technoeconomicElements.standaloneAssumptionsReviewButton.textContent =
+                'Review & calculate';
+            return result;
+        }
+
+        function technoeconomicBuilderGoTo(section, options = {}) {
+            const index = TECHNOECONOMIC_BUILDER_SECTIONS.findIndex(
+                (candidate) => candidate.key === section
+            );
+            if (index < 0) return false;
+            technoeconomicBuilderSectionIndex = index;
+            technoeconomicBuilderUpdate();
+            const focusTarget = options.focus || technoeconomicElements.builderStage;
+            requestAnimationFrame(() => {
+                if (options.reveal) options.reveal.open = true;
+                const bodyScroller = technoeconomicElements.builderStage?.parentElement;
+                if (bodyScroller) bodyScroller.scrollTop = 0;
+                if (technoeconomicElements.builderStage) {
+                    technoeconomicElements.builderStage.scrollTop = 0;
+                }
+                const activeStep = technoeconomicElements.builderSteps?.querySelector?.(
+                    `[data-tea-builder-step="${section}"]`
+                );
+                activeStep?.scrollIntoView?.({block: 'nearest', inline: 'nearest'});
+                if (focusTarget !== technoeconomicElements.builderStage) {
+                    focusTarget?.scrollIntoView?.({block: 'center', inline: 'nearest'});
+                }
+                focusTarget?.focus?.({preventScroll: true});
+            });
+            return true;
+        }
+
+        function technoeconomicBuilderSaveDraft() {
+            const saved = technoeconomicPersistDraft() && technoeconomicPersistStandaloneDraft();
+            if (technoeconomicElements?.draftStatus) {
+                technoeconomicElements.draftStatus.textContent = saved
+                    ? 'Scenario Builder draft saved in this browser.'
+                    : 'Draft could not be saved in this browser.';
+            }
+            if (technoeconomicElements?.liveStatus) {
+                technoeconomicElements.liveStatus.textContent = saved
+                    ? 'Scenario draft saved.' : 'Scenario draft could not be saved.';
+            }
+        }
+
         function technoeconomicOpenAssumptionsDialog(trigger) {
             const dialog = technoeconomicElements.standaloneAssumptionsDialog;
             if (!dialog) return false;
@@ -5906,7 +8463,12 @@
                 if (typeof dialog.showModal === 'function') dialog.showModal();
                 else dialog.setAttribute('open', '');
             }
-            technoeconomicElements.standaloneSourceSelect?.focus?.({preventScroll: true});
+            technoeconomicBuilderUpdate();
+            const active = TECHNOECONOMIC_BUILDER_SECTIONS[technoeconomicBuilderSectionIndex]?.key;
+            const initialFocus = active === 'source'
+                ? technoeconomicElements.standaloneSourceSelect
+                : technoeconomicElements.builderStage;
+            initialFocus?.focus?.({preventScroll: true});
             return true;
         }
 
@@ -5942,13 +8504,15 @@
                 errorElement?.focus();
                 return;
             }
-            const serialized = technoeconomicSerializeStandaloneRequest({
+            const serialized = technoeconomicSerializeCurrentRequest({
                 sources: technoeconomicSources,
             });
             technoeconomicRenderErrors(errorElement, serialized.errors);
             if (!serialized.valid) {
                 technoeconomicOpenAssumptionsDialog(event?.submitter);
-                errorElement?.focus();
+                technoeconomicBuilderUpdate(serialized);
+                const firstTarget = technoeconomicBuilderIssueTarget(serialized.errors[0]);
+                technoeconomicBuilderGoTo(firstTarget.section, {focus: firstTarget.element});
                 return;
             }
             const frozenPayload = technoeconomicDeepFreeze(
@@ -7042,12 +9606,14 @@
                 || job.request?.calculation_contract_version;
             const standaloneV4 = contractVersion === TECHNOECONOMIC_STANDALONE_CONTRACT_VERSION;
             const pairedV5 = contractVersion === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION;
-            if (standaloneV4 || pairedV5) {
+            const lifecycleV6 = contractVersion === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION;
+            if (standaloneV4 || pairedV5 || lifecycleV6) {
                 if (technoeconomicElements.results) technoeconomicElements.results.hidden = true;
                 if (technoeconomicElements.standaloneResults) {
                     technoeconomicElements.standaloneResults.hidden = false;
                 }
-                if (pairedV5) technoeconomicRenderPairedResult(job, result);
+                if (lifecycleV6) technoeconomicRenderLifecycleResult(job, result);
+                else if (pairedV5) technoeconomicRenderPairedResult(job, result);
                 else technoeconomicRenderStandaloneResult(job, result);
                 return;
             }
@@ -7250,6 +9816,7 @@
                 || !technoeconomicElements?.form) return;
             technoeconomicWorkspaceInitialized = true;
             technoeconomicStandaloneInitializeEditors();
+            technoeconomicRenderContractMode();
             const standaloneDraft = technoeconomicLoadStandaloneDraft();
             if (standaloneDraft) technoeconomicStandaloneApplyDraft(standaloneDraft);
             else if (technoeconomicElements.standaloneAccept) {
@@ -7260,6 +9827,7 @@
             technoeconomicElements.form.addEventListener('submit', technoeconomicOpenConfirmation);
             technoeconomicElements.form.addEventListener('input', (event) => {
                 technoeconomicClearStandaloneAcceptance(event.target);
+                technoeconomicHandleLifecycleTemplateInput(event.target);
                 const commercialAccept = technoeconomicDomElement(
                     'technoeconomicGuidedCommercialAccept'
                 );
@@ -7299,7 +9867,31 @@
             });
             technoeconomicElements.form.addEventListener('change', (event) => {
                 technoeconomicClearStandaloneAcceptance(event.target);
+                if (event.target === technoeconomicElements.calculationContract) {
+                    technoeconomicRenderContractMode();
+                    // Contract rendering controls which version is available; the
+                    // builder remains the owner of which section is visible.
+                    if (technoeconomicElements.standaloneAssumptionsDialog?.open) {
+                        technoeconomicBuilderUpdate();
+                    }
+                }
                 if (event.target === technoeconomicElements.standaloneSourceSelect) {
+                    if (technoeconomicLifecycleEntryMode === 'template') {
+                        technoeconomicLifecycleEntryMode = 'empty';
+                        technoeconomicLifecycleTemplateModified = false;
+                        technoeconomicSetLifecycleTemplateControlsEnabled(false);
+                        technoeconomicSetLifecycleTemplateButtonMode(false);
+                        if (technoeconomicElements.lifecycleJson) {
+                            technoeconomicElements.lifecycleJson.value = '';
+                        }
+                        technoeconomicRenderLifecycleTemplateCostBasis(
+                            technoeconomicLifecycleTemplateRatingBasis()
+                        );
+                        technoeconomicSetLifecycleTemplateStatus(
+                            'ready', 'Annual source changed; apply the template again',
+                            'Reapplying selects the correct AC- or DC-basis NREL CAPEX and O&M preset and regenerates component scaling.'
+                        );
+                    }
                     if (technoeconomicElements.sourceSelect) {
                         technoeconomicElements.sourceSelect.value = event.target.value;
                     }
@@ -7358,6 +9950,9 @@
             technoeconomicElements.useGuidedButton?.addEventListener(
                 'click', technoeconomicUseGuidedSolarTac
             );
+            technoeconomicElements.useLifecycleTemplateButton?.addEventListener(
+                'click', technoeconomicApplyLifecycleTemplate
+            );
             technoeconomicElements.advancedDetails?.addEventListener('toggle', () => {
                 if (technoeconomicElements.advancedDetails.open
                     && technoeconomicEntryMode === TECHNOECONOMIC_GUIDED_ENTRY_MODE) {
@@ -7382,9 +9977,28 @@
             technoeconomicElements.standaloneAssumptionsCloseButton?.addEventListener(
                 'click', () => technoeconomicCloseAssumptionsDialog()
             );
-            technoeconomicElements.standaloneAssumptionsFooterCloseButton?.addEventListener(
-                'click', () => technoeconomicCloseAssumptionsDialog()
+            technoeconomicElements.builderSteps?.addEventListener('click', (event) => {
+                const button = event.target.closest?.('[data-tea-builder-step]');
+                if (button) technoeconomicBuilderGoTo(button.dataset.teaBuilderStep);
+            });
+            technoeconomicElements.builderSaveButton?.addEventListener(
+                'click', technoeconomicBuilderSaveDraft
             );
+            technoeconomicElements.builderBackButton?.addEventListener('click', () => {
+                const previous = TECHNOECONOMIC_BUILDER_SECTIONS[
+                    Math.max(0, technoeconomicBuilderSectionIndex - 1)
+                ];
+                technoeconomicBuilderGoTo(previous.key);
+            });
+            technoeconomicElements.builderContinueButton?.addEventListener('click', () => {
+                const next = TECHNOECONOMIC_BUILDER_SECTIONS[
+                    Math.min(
+                        TECHNOECONOMIC_BUILDER_SECTIONS.length - 1,
+                        technoeconomicBuilderSectionIndex + 1
+                    )
+                ];
+                technoeconomicBuilderGoTo(next.key);
+            });
             technoeconomicElements.standaloneAssumptionsDialog?.addEventListener('cancel', () => {
                 technoeconomicAssumptionsReturnFocus = true;
             });

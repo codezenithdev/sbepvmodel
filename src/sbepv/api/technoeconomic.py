@@ -30,6 +30,7 @@ from sbepv import technoeconomic as technoeconomic_kernel
 from sbepv.api import config, timewindows
 from sbepv.api.schemas import (
     ANNUAL_APPLIED_CAPACITY_NORMALIZATION,
+    TECHNOECONOMIC_LIFECYCLE_REALIZATION_COLUMN_OVERHEAD,
     TechnoeconomicDistributionRequest,
     TechnoeconomicEvidenceRequest,
     TechnoeconomicSubmissionRequest,
@@ -2655,6 +2656,36 @@ def _parsed_submission_request(
     return TechnoeconomicSubmissionRequest.model_validate(dict(payload))
 
 
+def canonical_submission_request_payload(
+    request_payload: Mapping[str, Any] | TechnoeconomicSubmissionRequest,
+) -> dict[str, Any]:
+    """Return the durable API payload without version-added null fields.
+
+    Every optional workflow field is pruned only when absent.  In particular,
+    V6's public ``paired_commercial.lifecycle`` discriminator must not introduce
+    ``lifecycle: null`` into any historical V5 request hash, and the new explicit
+    version field must not alter any V1--V5 request that omitted it.
+    """
+
+    request = _parsed_submission_request(request_payload)
+    canonical = request.model_dump(mode="json", exclude_none=False)
+    if request.calculation_contract_version is None:
+        canonical.pop("calculation_contract_version", None)
+    if request.capacity_normalization is None:
+        canonical.pop("capacity_normalization", None)
+    if request.commercial_scaling is None:
+        canonical.pop("commercial_scaling", None)
+    if request.standalone_commercial is None:
+        canonical.pop("standalone_commercial", None)
+    if request.paired_commercial is None:
+        canonical.pop("paired_commercial", None)
+    elif request.paired_commercial.lifecycle is None:
+        paired = canonical.get("paired_commercial")
+        if isinstance(paired, dict):
+            paired.pop("lifecycle", None)
+    return canonical
+
+
 def _kernel_distribution(
     input_id: str,
     distribution: TechnoeconomicDistributionRequest,
@@ -2666,6 +2697,42 @@ def _kernel_distribution(
         family=family,
         **values,
     )
+
+
+def _kernel_lifecycle_distribution(
+    input_id: str,
+    documented: Any,
+) -> technoeconomic_kernel.DistributionSpec:
+    return _kernel_distribution(input_id, documented.distribution)
+
+
+def _kernel_lifecycle_evidence(
+    evidence: TechnoeconomicEvidenceRequest,
+    *additional: TechnoeconomicEvidenceRequest,
+) -> dict[str, Any]:
+    evidence_items = (evidence, *additional)
+    payloads = [
+        item.model_dump(mode="json", exclude_none=True)
+        for item in evidence_items
+    ]
+    provisional = any(
+        item.evidence_class in {"engineering_judgment", "secondary_synthesis"}
+        for item in evidence_items
+    )
+    return {
+        "status": "provisional" if provisional else "evidenced",
+        "accepted": (
+            all(
+                item.explicit_acceptance is True
+                for item in evidence_items
+                if item.evidence_class
+                in {"engineering_judgment", "secondary_synthesis"}
+            )
+            if provisional
+            else True
+        ),
+        "source": payloads[0] if len(payloads) == 1 else payloads,
+    }
 
 
 def _snapshot_capacity_specs(
@@ -2840,6 +2907,304 @@ def _cost_intensity_multipliers(
     )
 
 
+def _build_paired_lifecycle_spec(
+    request: TechnoeconomicSubmissionRequest,
+) -> technoeconomic_kernel.PairedLifecycleSpec | None:
+    paired_request = request.paired_commercial
+    if paired_request is None or paired_request.lifecycle is None:
+        return None
+
+    lifecycle = paired_request.lifecycle
+    capacity_multiplier = (
+        1_000.0 if paired_request.target_capacity_unit == "kw" else 1_000_000.0
+    )
+    system_specs: list[technoeconomic_kernel.LifecycleSystemSpec] = []
+    for system in sorted(lifecycle.systems, key=lambda item: item.technology):
+        technology = system.technology
+        initial_lines = tuple(
+            technoeconomic_kernel.LifecycleInitialCostLineSpec(
+                input_id=line.input_id,
+                label=line.label,
+                cost_per_w=_kernel_lifecycle_distribution(
+                    line.input_id,
+                    line.cost_per_w,
+                ),
+                coverage_ids=tuple(line.coverage_ids),
+                evidence=_kernel_lifecycle_evidence(
+                    line.evidence,
+                    line.cost_per_w.evidence,
+                ),
+            )
+            for line in system.initial_cost_lines
+        )
+        scheduled_costs = tuple(
+            technoeconomic_kernel.LifecycleScheduledCostSpec(
+                input_id=line.input_id,
+                label=line.label,
+                cost=_kernel_lifecycle_distribution(line.input_id, line.cost),
+                real_cost_growth=_kernel_lifecycle_distribution(
+                    f"{line.input_id}.real-cost-growth",
+                    line.real_cost_growth,
+                ),
+                occurrence_years=tuple(line.occurrence_years),
+                coverage_ids=tuple(line.coverage_ids),
+                evidence=_kernel_lifecycle_evidence(
+                    line.evidence,
+                    line.cost.evidence,
+                    line.real_cost_growth.evidence,
+                ),
+            )
+            for line in system.scheduled_costs
+        )
+        components: list[technoeconomic_kernel.LifecycleComponentSpec] = []
+        for component in system.components:
+            distribution_prefix = (
+                f"lifecycle.{technology}.component.{component.component_id}"
+            )
+            documented_fields = (
+                component.weibull_beta,
+                component.weibull_eta_years,
+                component.repair_hours,
+                component.logistics_hours,
+                component.emergency_unit_cost,
+                component.restock_unit_cost,
+                component.labor_cost,
+                component.mobilization_cost,
+                component.real_cost_growth,
+            )
+            warranty = (
+                technoeconomic_kernel.LifecycleWarrantySpec(
+                    age_limit_years=component.warranty.age_limit_years,
+                    fraction=component.warranty.fraction,
+                    covered_cost_categories=tuple(
+                        component.warranty.covered_cost_categories
+                    ),
+                    coverage_ids=tuple(component.warranty.coverage_ids),
+                    evidence=_kernel_lifecycle_evidence(
+                        component.warranty.evidence
+                    ),
+                )
+                if component.warranty is not None
+                else None
+            )
+            components.append(
+                technoeconomic_kernel.LifecycleComponentSpec(
+                    component_id=component.component_id,
+                    category=component.category,
+                    count=component.count,
+                    capacity_impact=component.capacity_impact,
+                    weibull_beta=_kernel_lifecycle_distribution(
+                        f"{distribution_prefix}.weibull-beta",
+                        component.weibull_beta,
+                    ),
+                    weibull_eta_years=_kernel_lifecycle_distribution(
+                        f"{distribution_prefix}.weibull-eta-years",
+                        component.weibull_eta_years,
+                    ),
+                    repair_hours=_kernel_lifecycle_distribution(
+                        f"{distribution_prefix}.repair-hours",
+                        component.repair_hours,
+                    ),
+                    logistics_hours=_kernel_lifecycle_distribution(
+                        f"{distribution_prefix}.logistics-hours",
+                        component.logistics_hours,
+                    ),
+                    emergency_unit_cost=_kernel_lifecycle_distribution(
+                        f"{distribution_prefix}.emergency-unit-cost",
+                        component.emergency_unit_cost,
+                    ),
+                    restock_unit_cost=_kernel_lifecycle_distribution(
+                        f"{distribution_prefix}.restock-unit-cost",
+                        component.restock_unit_cost,
+                    ),
+                    labor_cost=_kernel_lifecycle_distribution(
+                        f"{distribution_prefix}.labor-cost",
+                        component.labor_cost,
+                    ),
+                    mobilization_cost=_kernel_lifecycle_distribution(
+                        f"{distribution_prefix}.mobilization-cost",
+                        component.mobilization_cost,
+                    ),
+                    real_cost_growth=_kernel_lifecycle_distribution(
+                        f"{distribution_prefix}.real-cost-growth",
+                        component.real_cost_growth,
+                    ),
+                    batch_size=component.batch_size,
+                    initial_spares=component.initial_spares,
+                    spare_target=component.spare_target,
+                    warranty=warranty,
+                    preventive_replacements=tuple(
+                        technoeconomic_kernel.LifecyclePreventiveReplacementSpec(
+                            year=item.year,
+                            quantity=item.quantity,
+                            coverage_ids=tuple(item.coverage_ids),
+                            evidence=_kernel_lifecycle_evidence(item.evidence),
+                        )
+                        for item in component.preventive_replacements
+                    ),
+                    coverage_ids=tuple(component.coverage_ids),
+                    evidence=_kernel_lifecycle_evidence(
+                        component.evidence,
+                        *(item.evidence for item in documented_fields),
+                    ),
+                )
+            )
+        system_documented_fields = (
+            system.degradation,
+            system.base_availability,
+            system.base_om_cost_per_w_year,
+            system.base_om_real_growth,
+            system.decommissioning_cost,
+            system.salvage_value,
+        )
+        system_specs.append(
+            technoeconomic_kernel.LifecycleSystemSpec(
+                technology=technology,
+                degradation=_kernel_lifecycle_distribution(
+                    f"lifecycle.{technology}.degradation",
+                    system.degradation,
+                ),
+                base_availability=_kernel_lifecycle_distribution(
+                    f"lifecycle.{technology}.base-availability",
+                    system.base_availability,
+                ),
+                base_om_cost_per_w_year=_kernel_lifecycle_distribution(
+                    f"lifecycle.{technology}.base-om-cost-per-w-year",
+                    system.base_om_cost_per_w_year,
+                ),
+                base_om_real_growth=_kernel_lifecycle_distribution(
+                    f"lifecycle.{technology}.base-om-real-growth",
+                    system.base_om_real_growth,
+                ),
+                initial_cost_lines=initial_lines,
+                scheduled_costs=scheduled_costs,
+                components=tuple(components),
+                decommissioning_cost=_kernel_lifecycle_distribution(
+                    f"lifecycle.{technology}.decommissioning-cost",
+                    system.decommissioning_cost,
+                ),
+                salvage_value=_kernel_lifecycle_distribution(
+                    f"lifecycle.{technology}.salvage-value",
+                    system.salvage_value,
+                ),
+                source_availability_by_year=tuple(
+                    technoeconomic_kernel.LifecycleSourceAvailabilitySpec(
+                        year=item.year,
+                        availability=item.availability,
+                        evidence=_kernel_lifecycle_evidence(item.evidence),
+                    )
+                    for item in system.source_availability_by_year
+                ),
+                base_om_coverage_ids=tuple(system.base_om_coverage_ids),
+                evidence=_kernel_lifecycle_evidence(
+                    system.evidence,
+                    *(item.evidence for item in system_documented_fields),
+                ),
+            )
+        )
+
+    common_causes = tuple(
+        technoeconomic_kernel.LifecycleCommonCauseSpec(
+            event_id=event.event_id,
+            annual_probability=_kernel_lifecycle_distribution(
+                f"lifecycle.common-cause.{event.event_id}.annual-probability",
+                event.annual_probability,
+            ),
+            downtime_hours=_kernel_lifecycle_distribution(
+                f"lifecycle.common-cause.{event.event_id}.downtime-hours",
+                event.downtime_hours,
+            ),
+            capacity_impact=event.capacity_impact,
+            cost_per_event=_kernel_lifecycle_distribution(
+                f"lifecycle.common-cause.{event.event_id}.cost-per-event",
+                event.cost_per_event,
+            ),
+            real_cost_growth=_kernel_lifecycle_distribution(
+                f"lifecycle.common-cause.{event.event_id}.real-cost-growth",
+                event.real_cost_growth,
+            ),
+            affected_systems=tuple(event.affected_systems),
+            coverage_ids=tuple(event.coverage_ids),
+            evidence=_kernel_lifecycle_evidence(
+                event.evidence,
+                event.annual_probability.evidence,
+                event.downtime_hours.evidence,
+                event.cost_per_event.evidence,
+                event.real_cost_growth.evidence,
+            ),
+        )
+        for event in lifecycle.common_cause_events
+    )
+    return technoeconomic_kernel.PairedLifecycleSpec(
+        target_capacity_w=paired_request.target_capacity * capacity_multiplier,
+        target_rating_basis=paired_request.target_rating_basis,
+        source_energy_basis=lifecycle.source_energy_basis,
+        reliability_mode=lifecycle.reliability_mode,
+        systems=tuple(system_specs),  # type: ignore[arg-type]
+        electricity_value=_kernel_lifecycle_distribution(
+            "lifecycle.electricity-value",
+            lifecycle.electricity_value,
+        ),
+        electricity_value_real_growth=_kernel_lifecycle_distribution(
+            "lifecycle.electricity-value-real-growth",
+            lifecycle.electricity_value_real_growth,
+        ),
+        common_cause_events=common_causes,
+        decision_probability_threshold=lifecycle.decision_probability_threshold,
+        npv_absolute_tolerance_usd_per_w=(
+            lifecycle.decision_npv_tolerance_usd_per_target_w
+        ),
+        electricity_value_evidence=_kernel_lifecycle_evidence(
+            lifecycle.electricity_value.evidence,
+            lifecycle.electricity_value_real_growth.evidence,
+        ),
+    )
+
+
+def _lifecycle_export_column_count(
+    lifecycle: technoeconomic_kernel.PairedLifecycleSpec,
+) -> int:
+    # All V6 distribution input IDs become realization columns.  The overhead is
+    # intentionally conservative and annual/component traces do not scale with n.
+    distribution_count = 3  # discount rate, electricity value, value growth
+    for system in lifecycle.systems:
+        distribution_count += 6 + len(system.initial_cost_lines)
+        distribution_count += 2 * len(system.scheduled_costs)
+        distribution_count += 9 * len(system.components)
+    distribution_count += 4 * len(lifecycle.common_cause_events)
+    return (
+        TECHNOECONOMIC_LIFECYCLE_REALIZATION_COLUMN_OVERHEAD
+        + distribution_count
+    )
+
+
+def _validate_lifecycle_admission(
+    request: TechnoeconomicSubmissionRequest,
+    lifecycle: technoeconomic_kernel.PairedLifecycleSpec,
+) -> None:
+    component_count = sum(len(system.components) for system in lifecycle.systems)
+    export_columns = _lifecycle_export_column_count(lifecycle)
+    safe = technoeconomic_kernel.lifecycle_safe_realization_max(
+        request.finance.project_life_years,
+        component_count,
+        realization_export_columns=export_columns,
+    )
+    if request.n > int(safe["safe_max_realizations"]):
+        estimate = technoeconomic_kernel.estimate_lifecycle_memory(
+            request.n,
+            request.finance.project_life_years,
+            component_count,
+        )
+        raise technoeconomic_kernel.TechnoeconomicValidationError(
+            f"Requested {request.n} realizations exceeds the v6 safe maximum "
+            f"{safe['safe_max_realizations']} limited by "
+            f"{safe['limiting_dimension']}; estimated_peak_bytes="
+            f"{estimate['estimated_peak_bytes']}; "
+            f"memory_limit_bytes={estimate['memory_limit_bytes']}; "
+            f"realization_export_columns={export_columns}."
+        )
+
+
 def build_technoeconomic_kernel_request(
     request_payload: Mapping[str, Any] | TechnoeconomicSubmissionRequest,
     source_snapshot: Mapping[str, Any],
@@ -2984,8 +3349,12 @@ def build_technoeconomic_kernel_request(
             transfer_method=request.standalone_commercial.transfer_method,
         )
 
+    paired_lifecycle = _build_paired_lifecycle_spec(request)
+    if paired_lifecycle is not None:
+        _validate_lifecycle_admission(request, paired_lifecycle)
+
     paired_commercial: technoeconomic_kernel.PairedCommercialSpec | None = None
-    if request.paired_commercial is not None:
+    if request.paired_commercial is not None and paired_lifecycle is None:
         capacity_multiplier = (
             1_000.0
             if request.paired_commercial.target_capacity_unit == "kw"
@@ -3035,15 +3404,20 @@ def build_technoeconomic_kernel_request(
             "finance.discount-rate",
             request.finance.real_discount_rate.distribution,
         ),
-        shared_degradation=_kernel_distribution(
-            "energy.shared-degradation",
-            request.shared_degradation.annual_rate.distribution,
+        shared_degradation=(
+            _kernel_distribution(
+                "energy.shared-degradation",
+                request.shared_degradation.annual_rate.distribution,
+            )
+            if request.shared_degradation is not None
+            else None
         ),
         applied_capacities=applied_capacities,
         transfer=transfer,
         commercial_scaling=commercial_scaling,
         standalone_commercial=standalone_commercial,
         paired_commercial=paired_commercial,
+        paired_lifecycle=paired_lifecycle,
         constant_dollar_cost_year=(
             request.finance.constant_dollar_cost_year
             if request.standalone_commercial is not None
@@ -3057,7 +3431,9 @@ def build_technoeconomic_kernel_request(
         ),
         cost_stack_completeness=request.cost_stack_completeness,
         calculation_contract_version=(
-            technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
+            technoeconomic_kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION
+            if paired_lifecycle is not None
+            else technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
             if request.paired_commercial is not None
             else technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
             if request.standalone_commercial is not None
@@ -3068,7 +3444,11 @@ def build_technoeconomic_kernel_request(
             == ANNUAL_APPLIED_CAPACITY_NORMALIZATION
             else technoeconomic_kernel.LEGACY_CALCULATION_CONTRACT_VERSION
         ),
-        sampling_version=technoeconomic_kernel.SAMPLING_VERSION,
+        sampling_version=(
+            technoeconomic_kernel.LIFECYCLE_SAMPLING_VERSION
+            if paired_lifecycle is not None
+            else technoeconomic_kernel.SAMPLING_VERSION
+        ),
     )
     return technoeconomic_kernel.validate_request(kernel_request)
 
@@ -3086,12 +3466,15 @@ def _evidence_receipt(
                 "finance:discount-rate",
                 request.finance.real_discount_rate.evidence,
             ),
+        ]
+    )
+    if request.shared_degradation is not None:
+        subjects.append(
             (
                 "energy:shared-degradation",
                 request.shared_degradation.annual_rate.evidence,
-            ),
-        ]
-    )
+            )
+        )
     if request.commercial_reference_design is not None:
         subjects.append(
             ("commercial:reference-design", request.commercial_reference_design.evidence)
@@ -3161,6 +3544,108 @@ def _evidence_receipt(
                 )
                 for line in system.cost_lines
             )
+        lifecycle = request.paired_commercial.lifecycle
+        if lifecycle is not None:
+            subjects.extend(
+                (
+                    ("lifecycle:electricity-value", lifecycle.electricity_value.evidence),
+                    (
+                        "lifecycle:electricity-value-growth",
+                        lifecycle.electricity_value_real_growth.evidence,
+                    ),
+                )
+            )
+            for system in lifecycle.systems:
+                prefix = f"lifecycle:{system.technology}"
+                subjects.append((prefix, system.evidence))
+                for field_name in (
+                    "degradation",
+                    "base_availability",
+                    "base_om_cost_per_w_year",
+                    "base_om_real_growth",
+                    "decommissioning_cost",
+                    "salvage_value",
+                ):
+                    subjects.append(
+                        (
+                            f"{prefix}:{field_name}",
+                            getattr(system, field_name).evidence,
+                        )
+                    )
+                for line in system.initial_cost_lines:
+                    subjects.extend(
+                        (
+                            (f"{prefix}:initial:{line.input_id}", line.evidence),
+                            (
+                                f"{prefix}:initial:{line.input_id}:cost_per_w",
+                                line.cost_per_w.evidence,
+                            ),
+                        )
+                    )
+                for line in system.scheduled_costs:
+                    subjects.extend(
+                        (
+                            (f"{prefix}:scheduled:{line.input_id}", line.evidence),
+                            (f"{prefix}:scheduled:{line.input_id}:cost", line.cost.evidence),
+                            (
+                                f"{prefix}:scheduled:{line.input_id}:growth",
+                                line.real_cost_growth.evidence,
+                            ),
+                        )
+                    )
+                for component in system.components:
+                    component_prefix = f"{prefix}:component:{component.component_id}"
+                    subjects.append((component_prefix, component.evidence))
+                    for field_name in (
+                        "weibull_beta",
+                        "weibull_eta_years",
+                        "repair_hours",
+                        "logistics_hours",
+                        "emergency_unit_cost",
+                        "restock_unit_cost",
+                        "labor_cost",
+                        "mobilization_cost",
+                        "real_cost_growth",
+                    ):
+                        subjects.append(
+                            (
+                                f"{component_prefix}:{field_name}",
+                                getattr(component, field_name).evidence,
+                            )
+                        )
+                    if component.warranty is not None:
+                        subjects.append(
+                            (f"{component_prefix}:warranty", component.warranty.evidence)
+                        )
+                    subjects.extend(
+                        (
+                            f"{component_prefix}:preventive:{item.year}",
+                            item.evidence,
+                        )
+                        for item in component.preventive_replacements
+                    )
+                subjects.extend(
+                    (
+                        f"{prefix}:source-availability:{item.year}",
+                        item.evidence,
+                    )
+                    for item in system.source_availability_by_year
+                )
+            for event in lifecycle.common_cause_events:
+                event_prefix = f"lifecycle:common-cause:{event.event_id}"
+                subjects.append((event_prefix, event.evidence))
+                for field_name in (
+                    "annual_probability",
+                    "downtime_hours",
+                    "cost_per_event",
+                    "real_cost_growth",
+                ):
+                    subjects.append(
+                        (
+                            f"{event_prefix}:{field_name}",
+                            getattr(event, field_name).evidence,
+                        )
+                    )
 
     subjects.extend(
         (
@@ -3761,6 +4246,114 @@ def _paired_commercial_receipt(
     }
 
 
+def _paired_lifecycle_receipt(
+    request: TechnoeconomicSubmissionRequest,
+    kernel_request: technoeconomic_kernel.TechnoeconomicRequest,
+) -> dict[str, Any] | None:
+    paired = request.paired_commercial
+    lifecycle = paired.lifecycle if paired is not None else None
+    if lifecycle is None:
+        return None
+    kernel_lifecycle = kernel_request.paired_lifecycle
+    if kernel_lifecycle is None:
+        _fail(
+            "paired_lifecycle_missing",
+            "Validated V6 kernel request has no paired lifecycle specification.",
+        )
+    applied = {
+        item.system: item for item in (kernel_request.applied_capacities or ())
+    }
+    component_count = sum(
+        len(system.components) for system in kernel_lifecycle.systems
+    )
+    realization_export_columns = _lifecycle_export_column_count(kernel_lifecycle)
+    memory_estimate = technoeconomic_kernel.estimate_lifecycle_memory(
+        request.n,
+        request.finance.project_life_years,
+        component_count,
+    )
+    safe_maximum = technoeconomic_kernel.lifecycle_safe_realization_max(
+        request.finance.project_life_years,
+        component_count,
+        realization_export_columns=realization_export_columns,
+    )
+    systems: dict[str, Any] = {}
+    submitted_systems = {
+        system.technology: system for system in lifecycle.systems
+    }
+    for system in kernel_lifecycle.systems:
+        submitted = submitted_systems[system.technology]
+        source = applied[system.technology]
+        systems[system.technology] = {
+            "technology": system.technology,
+            "source_capacity_w": source.applied_capacity_w,
+            "source_rating_basis": source.rating_basis,
+            "capacity_scale_factor": (
+                kernel_lifecycle.target_capacity_w / source.applied_capacity_w
+            ),
+            "initial_cost_input_ids": [
+                line.input_id for line in system.initial_cost_lines
+            ],
+            "scheduled_cost_input_ids": [
+                line.input_id for line in system.scheduled_costs
+            ],
+            "component_ids": [
+                component.component_id for component in system.components
+            ],
+            "component_count": len(system.components),
+            "source_availability_years": [
+                item.year for item in system.source_availability_by_year
+            ],
+            "base_om_coverage_ids": list(system.base_om_coverage_ids),
+            "provisional": any(
+                item.evidence.evidence_class
+                in {"engineering_judgment", "secondary_synthesis"}
+                for item in (
+                    submitted.degradation,
+                    submitted.base_availability,
+                    submitted.base_om_cost_per_w_year,
+                    submitted.base_om_real_growth,
+                    submitted.decommissioning_cost,
+                    submitted.salvage_value,
+                )
+            ),
+        }
+    return {
+        "status": "validated",
+        "shape_discriminator": "paired_lifecycle",
+        "weather_path_method": lifecycle.weather_path_method,
+        "source_energy_basis": kernel_lifecycle.source_energy_basis,
+        "reliability_mode": kernel_lifecycle.reliability_mode,
+        "submitted_target_capacity": {
+            "value": paired.target_capacity,
+            "unit": paired.target_capacity_unit,
+        },
+        "target_capacity_w": kernel_lifecycle.target_capacity_w,
+        "target_rating_basis": kernel_lifecycle.target_rating_basis,
+        "constant_dollar_cost_year": request.finance.constant_dollar_cost_year,
+        "decision_probability_threshold": (
+            kernel_lifecycle.decision_probability_threshold
+        ),
+        "decision_npv_tolerance_usd_per_target_w": (
+            kernel_lifecycle.npv_absolute_tolerance_usd_per_w
+        ),
+        "sign_convention": "SolarEdge minus Solectria",
+        "systems": systems,
+        "common_cause_event_ids": [
+            event.event_id for event in kernel_lifecycle.common_cause_events
+        ],
+        "component_count": component_count,
+        "memory_admission": {
+            **memory_estimate,
+            **safe_maximum,
+            "realization_export_columns": realization_export_columns,
+        },
+        "formula_registry_version": technoeconomic_kernel.FORMULA_REGISTRY_VERSION,
+        "formula_registry_count": len(technoeconomic_kernel.formula_registry()),
+        "formula_registry_sha256": technoeconomic_kernel.formula_registry_hash(),
+    }
+
+
 def _transfer_receipt(request: TechnoeconomicSubmissionRequest) -> dict[str, Any]:
     if request.basis == "solartac_site":
         return {
@@ -3856,23 +4449,7 @@ def build_technoeconomic_submission_provenance(
             "The validated kernel request does not match the strict request and frozen source.",
         )
 
-    canonical_request = request.model_dump(mode="json", exclude_none=False)
-    if request.capacity_normalization is None:
-        # This field did not exist on v1 durable requests.  Omitting its default
-        # preserves their exact immutable request/provenance hashes on retry.
-        canonical_request.pop("capacity_normalization", None)
-    if request.commercial_scaling is None:
-        # Preserve v1/v2 durable request hashes from before this optional v3
-        # workflow existed.
-        canonical_request.pop("commercial_scaling", None)
-    if request.standalone_commercial is None:
-        # Preserve every v1-v3 durable request hash from before the standalone
-        # v4 workflow existed.
-        canonical_request.pop("standalone_commercial", None)
-    if request.paired_commercial is None:
-        # Preserve every v1-v4 durable request hash from before the paired v5
-        # workflow existed.
-        canonical_request.pop("paired_commercial", None)
+    canonical_request = canonical_submission_request_payload(request)
     normalization = _normalization_receipt(request, supplied_kernel)
     overlap = _overlap_receipt(request, supplied_kernel)
     evidence = _evidence_receipt(request)
@@ -3883,9 +4460,11 @@ def build_technoeconomic_submission_provenance(
         request,
         supplied_kernel,
     )
-    paired_commercial = _paired_commercial_receipt(
-        request,
-        supplied_kernel,
+    paired_lifecycle = _paired_lifecycle_receipt(request, supplied_kernel)
+    paired_commercial = (
+        _paired_commercial_receipt(request, supplied_kernel)
+        if paired_lifecycle is None
+        else None
     )
     receipts = {
         "normalization": normalization,
@@ -3899,9 +4478,13 @@ def build_technoeconomic_submission_provenance(
         receipts["standalone_commercial"] = standalone_commercial
     if paired_commercial is not None:
         receipts["paired_commercial"] = paired_commercial
+    if paired_lifecycle is not None:
+        receipts["paired_lifecycle"] = paired_lifecycle
     provenance = {
         "schema_version": (
-            5
+            6
+            if paired_lifecycle is not None
+            else 5
             if paired_commercial is not None
             else 4
             if standalone_commercial is not None
@@ -3928,7 +4511,9 @@ def build_technoeconomic_submission_provenance(
         "calculation_contract_version": supplied_kernel.calculation_contract_version,
         "sampling_version": supplied_kernel.sampling_version,
         "request_schema": (
-            "technoeconomic-submission-v5"
+            "technoeconomic-submission-v6"
+            if paired_lifecycle is not None
+            else "technoeconomic-submission-v5"
             if paired_commercial is not None
             else "technoeconomic-submission-v4"
             if standalone_commercial is not None
@@ -3969,6 +4554,11 @@ def build_technoeconomic_submission_provenance(
         provenance["paired_commercial_receipt_sha256"] = canonical_json_sha256(
             paired_commercial
         )
+    if paired_lifecycle is not None:
+        provenance["paired_lifecycle_receipt"] = paired_lifecycle
+        provenance["paired_lifecycle_receipt_sha256"] = canonical_json_sha256(
+            paired_lifecycle
+        )
     return provenance
 
 
@@ -3980,6 +4570,7 @@ __all__ = [
     "build_annual_source_snapshot",
     "build_technoeconomic_kernel_request",
     "build_technoeconomic_submission_provenance",
+    "canonical_submission_request_payload",
     "canonical_json_sha256",
     "harden_annual_source_artifact",
     "inspect_annual_source_eligibility",

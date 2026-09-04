@@ -1,0 +1,496 @@
+        /* Final cascade layer for existing TEA modal primitives used by Scenario Builder. */
+        .tea-assumptions-dialog {
+            width: min(1440px, calc(100vw - 32px));
+            height: min(900px, calc(100dvh - 24px));
+            border-color: #9fb3c8;
+        }
+
+        .tea-assumptions-dialog-shell {
+            grid-template-rows: auto auto minmax(0, 1fr) auto;
+        }
+
+        .tea-assumptions-dialog-header {
+            padding: 18px 24px 16px;
+            border-bottom: 0;
+            background: #102a43;
+        }
+
+        .tea-assumptions-dialog-header h2,
+        .tea-assumptions-dialog-header .tea-step-label {
+            color: #ffffff;
+        }
+
+        .tea-assumptions-dialog-header p:last-child {
+            color: #c9d6e2;
+            font-size: 0.875rem;
+        }
+
+        .tea-assumptions-dialog-header > .tea-button {
+            border-color: #7792ab;
+            background: transparent;
+            color: #ffffff;
+        }
+
+        .tea-assumptions-dialog-header > .tea-button:hover {
+            border-color: #c9d6e2;
+            background: rgba(255, 255, 255, 0.12);
+            color: #ffffff;
+        }
+
+        body:has(.tea-assumptions-dialog[open]) {
+            overflow: hidden;
+        }
+
+        .tea-standalone-assumptions-body {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(270px, 320px);
+            align-items: start;
+            min-height: 0;
+            padding: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            background: #edf4f8;
+        }
+
+        .tea-standalone-assumptions-body > .tea-alert {
+            margin: 0 0 14px;
+        }
+
+        .tea-assumptions-table-region {
+            min-width: 0;
+            overflow: clip;
+            border: 1px solid #bcccdc;
+            border-radius: 10px;
+            background: #ffffff;
+            box-shadow: 0 2px 7px rgba(16, 42, 67, 0.07);
+        }
+
+        .tea-builder-stage {
+            overflow: visible;
+            overscroll-behavior: auto;
+        }
+
+        .tea-builder-stage .tea-assumptions-table {
+            width: 100%;
+            min-width: 0;
+        }
+
+        .tea-builder-stage .tea-assumptions-table > :is(thead, tbody) > tr > :is(th, td) {
+            min-width: 0;
+            overflow-wrap: break-word;
+            word-break: normal;
+        }
+
+        .tea-builder-stage .tea-assumptions-table > thead th:nth-child(1) {
+            width: 18%;
+        }
+
+        .tea-builder-stage .tea-assumptions-table > thead th:nth-child(2) {
+            width: 14%;
+            overflow-wrap: normal;
+        }
+
+        .tea-builder-stage .tea-assumptions-table > thead th:nth-child(3),
+        .tea-builder-stage .tea-assumptions-table > thead th:nth-child(4) {
+            width: 27%;
+        }
+
+        .tea-builder-stage .tea-assumptions-table > thead th:nth-child(5) {
+            width: 14%;
+        }
+
+        .tea-builder-summary {
+            position: sticky;
+            top: 0;
+            align-self: start;
+            overflow: visible;
+        }
+
+        .tea-builder-summary-sticky {
+            position: static;
+        }
+
+        .tea-builder-nav {
+            scrollbar-width: none;
+        }
+
+        .tea-builder-nav::-webkit-scrollbar {
+            display: none;
+        }
+
+        .tea-builder-nav button[data-status="provisional"] > span {
+            border-color: #d5a431;
+            background: #fff4cf;
+            color: #7a5200;
+        }
+
+        .tea-builder-nav button[data-status="provisional"] > small {
+            color: #8a5b00;
+        }
+
+        .tea-builder-nav button[data-status="locked"] > span {
+            border-color: #829ab1;
+            background: #eef3f7;
+            color: #334e68;
+        }
+
+        .tea-builder-nav button[data-status="locked"] > small {
+            color: #486581;
+        }
+
+        .tea-builder-nav button[aria-current="step"] {
+            border-bottom-width: 4px;
+            box-shadow: inset 0 0 0 1px rgba(22, 138, 131, 0.16);
+        }
+
+        .tea-builder-nav button[aria-current="step"] > span {
+            border-color: #168a83;
+            background: #168a83;
+            color: #ffffff;
+        }
+
+        .tea-builder-stage .tea-assumptions-table :is(input, select, textarea) {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .tea-builder-stage .tea-assumption-actions {
+            flex-wrap: wrap;
+        }
+
+        .tea-builder-stage .tea-v6-template-heading > div {
+            min-width: 0;
+        }
+
+        .tea-v6-template-builder:has(.tea-v6-template-status[data-state="applied"])
+        > .tea-v6-template-heading {
+            display: none;
+        }
+
+        .tea-v6-template-status[data-state="applied"] {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            align-items: center;
+            border-color: #e2c875;
+            background: #fff7d8;
+        }
+
+        .tea-v6-template-status[data-state="applied"] .tea-v6-template-status-dot {
+            background: #b7791f;
+        }
+
+        .tea-v6-template-status[data-state="applied"] > .tea-button {
+            min-height: 34px;
+            padding: 6px 10px;
+            font-size: 0.75rem;
+        }
+
+        .tea-template-badge {
+            border-color: #e2c875;
+            background: #fff7d8;
+            color: #785b00;
+        }
+
+        .tea-status-locked {
+            border-color: #a9bfd4;
+            background: #eef3f7;
+            color: #334e68;
+        }
+
+        .tea-builder-completion li[data-status="provisional"] > span:last-child {
+            color: #8a5b00;
+        }
+
+        .tea-builder-completion li[data-status="locked"] > span:last-child {
+            color: #486581;
+        }
+
+        .tea-field-errors {
+            display: grid;
+            gap: 3px;
+            width: 100%;
+        }
+
+        .tea-v6-template-heading > .tea-field-errors {
+            flex-basis: 100%;
+        }
+
+        .tea-builder-review-card-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 7px;
+        }
+
+        .tea-builder-review-card-heading h5 {
+            margin-bottom: 0;
+        }
+
+        .tea-builder-review-card[data-status="required"] {
+            border-color: #efb5af;
+            background: #fff8f7;
+        }
+
+        .tea-builder-review-card[data-status="provisional"] {
+            border-color: #e2c875;
+            background: #fffaf0;
+        }
+
+        .tea-builder-stage .tea-assumption-cost-row .tea-v4-cost-line-heading {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 5px;
+            overflow-wrap: normal;
+        }
+
+        .tea-builder-stage .tea-assumption-cost-row .tea-v4-cost-line-heading > div {
+            min-width: 0;
+            overflow-wrap: normal;
+        }
+
+        .tea-builder-stage .tea-assumption-cost-row .tea-contract-badge {
+            width: max-content;
+            max-width: 100%;
+            white-space: normal;
+        }
+
+        .tea-assumptions-dialog-actions {
+            position: sticky;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 13px 20px;
+            border-top: 1px solid #9fb3c8;
+            background: #ffffff;
+            box-shadow: 0 -4px 14px rgba(16, 42, 67, 0.08);
+        }
+
+        .tea-assumptions-dialog-actions .tea-button {
+            white-space: nowrap;
+        }
+
+        .tea-assumptions-validation-summary {
+            display: grid;
+            flex: 1 1 auto;
+            gap: 3px;
+            max-width: 58%;
+            max-height: 68px;
+            overflow-x: hidden;
+            overflow-y: auto;
+            padding-right: 8px;
+        }
+
+        .tea-assumptions-validation-summary strong {
+            color: #102a43;
+            font-size: 0.75rem;
+        }
+
+        .tea-assumptions-validation-summary ul {
+            display: grid;
+            gap: 2px;
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .tea-assumptions-validation-summary li,
+        .tea-assumptions-validation-summary > span {
+            font-size: 0.6875rem;
+            line-height: 1.35;
+        }
+
+        .tea-assumptions-validation-summary[data-state="blocked"] strong,
+        .tea-assumptions-validation-summary[data-state="blocked"] li {
+            color: #b42318;
+        }
+
+        .tea-assumptions-validation-summary[data-overflow="false"] {
+            max-height: none;
+            overflow: visible;
+            padding-right: 0;
+        }
+
+        #technoeconomicAssumptionsReviewBtn:disabled {
+            border-color: #bcccdc;
+            background: #d9e2ec;
+            color: #334e68;
+            opacity: 1;
+        }
+
+        .tea-builder-compatibility {
+            display: grid;
+            gap: 9px;
+            padding: 20px;
+            border: 1px solid #bcccdc;
+            border-radius: 10px;
+            background: #ffffff;
+            box-shadow: 0 2px 7px rgba(16, 42, 67, 0.07);
+        }
+
+        .tea-builder-compatibility[hidden] {
+            display: none;
+        }
+
+        .tea-builder-compatibility > .tea-status-badge {
+            width: max-content;
+        }
+
+        .tea-builder-compatibility h4 {
+            color: #102a43;
+            font-size: 1rem;
+        }
+
+        .tea-builder-compatibility p {
+            max-width: 760px;
+            color: #486581;
+            font-size: 0.875rem;
+            line-height: 1.55;
+        }
+
+        .tea-builder-compatibility details {
+            margin-top: 6px;
+            padding: 12px;
+            border: 1px solid #d9e2ec;
+            border-radius: 6px;
+            background: #f8fbfd;
+        }
+
+        .tea-builder-compatibility summary {
+            color: #243b53;
+            font-size: 0.8125rem;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        @media (max-width: 1180px) and (min-width: 901px) {
+            .tea-standalone-assumptions-body {
+                grid-template-columns: minmax(0, 1fr);
+                grid-template-rows: max-content max-content;
+                align-content: start;
+            }
+
+            .tea-builder-stage {
+                padding: 20px 18px;
+            }
+
+            .tea-builder-summary-sticky {
+                padding: 18px 16px;
+            }
+
+            .tea-builder-summary {
+                position: static;
+                overflow: visible;
+                border-top: 1px solid #bcccdc;
+                border-left: 0;
+            }
+
+            .tea-builder-nav ol {
+                grid-template-columns: repeat(6, minmax(128px, 1fr));
+                min-width: 768px;
+            }
+
+            .tea-builder-nav button {
+                padding-right: 5px;
+                padding-left: 5px;
+            }
+        }
+
+        @media (max-width: 900px) {
+            .tea-assumptions-dialog {
+                width: 100vw;
+                height: 100dvh;
+                max-height: 100dvh;
+                border: 0;
+                border-radius: 0;
+            }
+
+            .tea-standalone-assumptions-body {
+                display: grid;
+                grid-template-columns: 1fr;
+                overflow: auto;
+            }
+
+            .tea-builder-nav ol {
+                grid-template-columns: repeat(6, minmax(126px, 1fr));
+                min-width: 756px;
+                padding: 0 8px;
+            }
+
+            .tea-builder-nav button {
+                min-height: 58px;
+                padding: 7px 6px;
+            }
+
+            .tea-builder-stage {
+                overflow: visible;
+            }
+
+            .tea-builder-stage .tea-assumptions-table-region {
+                overflow: visible;
+            }
+
+            .tea-builder-summary {
+                position: static;
+                border-top: 1px solid #bcccdc;
+                border-left: 0;
+            }
+
+            .tea-assumptions-dialog-actions {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr);
+                gap: 8px;
+                padding: 10px 12px;
+            }
+
+            .tea-assumptions-validation-summary {
+                max-width: none;
+                max-height: 64px;
+            }
+
+            .tea-builder-footer-actions {
+                display: grid;
+                grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.75fr) minmax(0, 1.35fr);
+                gap: 6px;
+            }
+
+            .tea-builder-footer-actions .tea-button {
+                width: 100%;
+                min-width: 0;
+                padding-right: 8px;
+                padding-left: 8px;
+                white-space: normal;
+            }
+
+            .tea-v6-template-status[data-state="applied"] {
+                grid-template-columns: auto minmax(0, 1fr);
+            }
+
+            .tea-v6-template-status[data-state="applied"] > .tea-button {
+                width: 100%;
+                grid-column: 1 / -1;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .tea-assumptions-dialog-header {
+                padding-right: 16px;
+                padding-left: 16px;
+            }
+
+            .tea-builder-nav ol {
+                grid-template-columns: repeat(6, minmax(116px, 1fr));
+                min-width: 696px;
+            }
+
+            .tea-builder-footer-actions .tea-button {
+                min-height: 40px;
+                font-size: 0.75rem;
+            }
+
+            .tea-assumptions-dialog-actions {
+                padding: 8px 10px 10px;
+            }
+        }

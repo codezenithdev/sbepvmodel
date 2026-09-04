@@ -17,6 +17,8 @@ adds a separate standalone commercial SolarEdge LCOE whose energy comes only fro
 SolarEdge Annual realization and whose lifecycle costs come from a dedicated,
 probabilistic commercial cost stack.  Version 5 adds the matching standalone
 Solectria calculation while preserving the same paired weather-year draw.
+Version 6 is an additive, isolated target-lifecycle path with paired yearwise weather,
+separate degradation, cohort reliability, and upgrade NPV as its decision metric.
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal, InvalidOperation, localcontext
 from hashlib import sha256
+import calendar
+import json
 import math
 import re
 from typing import Any, Callable, Literal
@@ -40,7 +44,11 @@ CALCULATION_CONTRACT_VERSION = "tea-calculation-v2"
 COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION = "tea-calculation-v3"
 STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION = "tea-calculation-v4"
 PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION = "tea-calculation-v5"
+LIFECYCLE_CALCULATION_CONTRACT_VERSION = "tea-calculation-v6"
 SAMPLING_VERSION = "tea-lhs-v1"
+LIFECYCLE_SAMPLING_VERSION = "tea-lhs-v2"
+LIFECYCLE_RESULT_VERSION = "tea-result-v6"
+FORMULA_REGISTRY_VERSION = "tea-formulas-v6"
 NUMERICAL_CONTRACT_VERSION = "tea-numerics-v1"
 # The versions this contract was authored and hand-verified against.  They are
 # recorded in provenance and named in diagnostics; they are not the gate.  The
@@ -68,6 +76,11 @@ COMMERCIAL_MARGINAL_COST_DIFFERENCE_INPUT_ID = (
 )
 COMMERCIAL_SCALING_TRANSFER_METHOD = "direct_capacity_scaling"
 RNG_DOMAIN = b"sbepv-tea-lhs-v1\0"
+LIFECYCLE_RNG_DOMAIN = b"sbepv-tea-lhs-v2\0"
+
+LIFECYCLE_MEMORY_BASE_BYTES = 256 * 1024 * 1024
+LIFECYCLE_MEMORY_LIMIT_BYTES = int(1.2 * 1024 * 1024 * 1024)
+LIFECYCLE_EXPORT_CELL_LIMIT = 8_000_000
 
 R2_ENTRY_THRESHOLD = 1e-6
 R2_TIE_ABSOLUTE_TOLERANCE = 1e-12
@@ -112,6 +125,9 @@ CommercialCostCategory = Literal[
     "full_annual_om",
     "scheduled_replacement",
 ]
+LifecycleSourceEnergyBasis = Literal["gross", "net"]
+LifecycleReliabilityMode = Literal["event", "expected"]
+LifecycleWarrantyCategory = Literal["hardware", "labor", "mobilization"]
 
 INITIAL_COST_TYPES = frozenset({"initial_capex", "initial_installation_labor"})
 RECURRING_COST_TYPES = frozenset(
@@ -517,6 +533,141 @@ class PairedCommercialSpec:
 
 
 @dataclass(frozen=True)
+class LifecycleSourceAvailabilitySpec:
+    """Evidenced availability already embodied in one net source-energy row."""
+
+    year: int
+    availability: float
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LifecycleInitialCostLineSpec:
+    """One initial target-system cost intensity in real USD per target watt."""
+
+    input_id: str
+    label: str
+    cost_per_w: DistributionSpec
+    coverage_ids: tuple[str, ...]
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LifecycleScheduledCostSpec:
+    """One evidenced target-system cost occurring at declared year ends."""
+
+    input_id: str
+    label: str
+    cost: DistributionSpec
+    real_cost_growth: DistributionSpec
+    occurrence_years: tuple[int, ...]
+    coverage_ids: tuple[str, ...]
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LifecyclePreventiveReplacementSpec:
+    """Oldest-first preventive replacement quantity at one project year end."""
+
+    year: int
+    quantity: int
+    coverage_ids: tuple[str, ...]
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LifecycleWarrantySpec:
+    """Age-limited credit against explicitly named corrective-cost categories."""
+
+    age_limit_years: int
+    fraction: float
+    covered_cost_categories: tuple[LifecycleWarrantyCategory, ...]
+    coverage_ids: tuple[str, ...]
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LifecycleComponentSpec:
+    """Explicit target BOM and reliability/corrective-maintenance assumptions."""
+
+    component_id: str
+    category: str
+    count: int
+    capacity_impact: float
+    weibull_beta: DistributionSpec
+    weibull_eta_years: DistributionSpec
+    repair_hours: DistributionSpec
+    logistics_hours: DistributionSpec
+    emergency_unit_cost: DistributionSpec
+    restock_unit_cost: DistributionSpec
+    labor_cost: DistributionSpec
+    mobilization_cost: DistributionSpec
+    real_cost_growth: DistributionSpec
+    batch_size: int
+    initial_spares: int
+    spare_target: int
+    warranty: LifecycleWarrantySpec | None
+    preventive_replacements: tuple[LifecyclePreventiveReplacementSpec, ...]
+    coverage_ids: tuple[str, ...]
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LifecycleSystemSpec:
+    """Complete lifecycle energy, cost, and reliability inputs for one system."""
+
+    technology: SystemName
+    degradation: DistributionSpec
+    base_availability: DistributionSpec
+    base_om_cost_per_w_year: DistributionSpec
+    base_om_real_growth: DistributionSpec
+    initial_cost_lines: tuple[LifecycleInitialCostLineSpec, ...]
+    scheduled_costs: tuple[LifecycleScheduledCostSpec, ...]
+    components: tuple[LifecycleComponentSpec, ...]
+    decommissioning_cost: DistributionSpec
+    salvage_value: DistributionSpec
+    source_availability_by_year: tuple[LifecycleSourceAvailabilitySpec, ...]
+    base_om_coverage_ids: tuple[str, ...]
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LifecycleCommonCauseSpec:
+    """One common-cause event draw shared by every affected system."""
+
+    event_id: str
+    annual_probability: DistributionSpec
+    downtime_hours: DistributionSpec
+    capacity_impact: float
+    cost_per_event: DistributionSpec
+    real_cost_growth: DistributionSpec
+    affected_systems: tuple[SystemName, ...]
+    coverage_ids: tuple[str, ...]
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PairedLifecycleSpec:
+    """Version-6 target lifecycle contract, kept separate from frozen v5."""
+
+    target_capacity_w: float
+    target_rating_basis: AppliedCapacityRatingBasis
+    source_energy_basis: LifecycleSourceEnergyBasis
+    reliability_mode: LifecycleReliabilityMode
+    systems: tuple[LifecycleSystemSpec, LifecycleSystemSpec]
+    electricity_value: DistributionSpec
+    electricity_value_real_growth: DistributionSpec
+    common_cause_events: tuple[LifecycleCommonCauseSpec, ...] = ()
+    decision_probability_threshold: float = 0.75
+    cost_absolute_tolerance_usd_per_w: float = 1e-12
+    energy_absolute_tolerance_kwh_per_w: float = 1e-9
+    npv_absolute_tolerance_usd_per_w: float = 0.01
+    relative_tolerance: float = 1e-12
+    lcoe_absolute_tolerance: float = 1e-12
+    electricity_value_evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class TechnoeconomicRequest:
     """Canonical semantic input to the Phase-1 pure kernel."""
 
@@ -528,7 +679,7 @@ class TechnoeconomicRequest:
     paired_energy_rows: tuple[PairedEnergyRow, ...]
     cost_lines: tuple[CostLineSpec, ...]
     discount_rate: DistributionSpec
-    shared_degradation: DistributionSpec
+    shared_degradation: DistributionSpec | None
     applied_capacities: tuple[AppliedCapacitySpec, AppliedCapacitySpec] | None = None
     transfer: TransferSpec | None = None
     commercial_reference_wdc: float | None = None
@@ -539,6 +690,7 @@ class TechnoeconomicRequest:
     standalone_commercial: StandaloneCommercialSpec | None = None
     constant_dollar_cost_year: int | None = None
     paired_commercial: PairedCommercialSpec | None = None
+    paired_lifecycle: PairedLifecycleSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -562,7 +714,8 @@ def canonical_request_payload(request: TechnoeconomicRequest) -> dict[str, Any]:
     ``applied_capacities`` did not exist in the version-1 dataclass, and
     ``commercial_scaling`` did not exist before version 3, and
     ``standalone_commercial`` did not exist before version 4, and
-    ``paired_commercial`` did not exist before version 5.  Omitting those
+    ``paired_commercial`` did not exist before version 5, and
+    ``paired_lifecycle`` did not exist before version 6.  Omitting those
     defaulted fields from the older literal contracts preserves their exact
     historical hashes and immutable retry comparisons.
     """
@@ -582,11 +735,372 @@ def canonical_request_payload(request: TechnoeconomicRequest) -> dict[str, Any]:
     if request.calculation_contract_version not in {
         STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
         PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+        LIFECYCLE_CALCULATION_CONTRACT_VERSION,
     }:
         payload.pop("constant_dollar_cost_year", None)
     if request.calculation_contract_version != PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION:
         payload.pop("paired_commercial", None)
+    if request.calculation_contract_version != LIFECYCLE_CALCULATION_CONTRACT_VERSION:
+        payload.pop("paired_lifecycle", None)
     return payload
+
+
+TEA_V6_FORMULA_REGISTRY: tuple[Mapping[str, Any], ...] = (
+    {
+        "formula_id": "V6-F001",
+        "name": "Balanced paired weather",
+        "equation": "count_y(t) in {floor(n/Y), ceil(n/Y)}; y_SE(i,t)=y_SO(i,t)",
+        "excel_template": "sealed sampled weather-year value",
+        "inputs": ("n", "eligible weather years", "seed", "project year"),
+        "units": "calendar year",
+        "timing": "each project year",
+        "guards": "unique eligible years; domain-separated seeded permutation",
+        "output": "y(i,t)",
+        "contract_section": "paired weather",
+    },
+    {
+        "formula_id": "V6-F002",
+        "name": "Capacity-normalized source energy",
+        "equation": "B(i,s,t)=E_source(s,y(i,t))*P_target/P_source(s)",
+        "excel_template": "=SourceEnergy*TargetCapacity/SourceCapacity",
+        "inputs": ("source energy", "target capacity", "source capacity"),
+        "units": "kWh_AC",
+        "timing": "annual",
+        "guards": "positive target and source capacities",
+        "output": "target source energy",
+        "contract_section": "energy",
+    },
+    {
+        "formula_id": "V6-F003",
+        "name": "Separate degradation",
+        "equation": "D(i,s,t)=(1-g(i,s))^(t-1)",
+        "excel_template": "=(1-DegradationRate)^(ProjectYear-1)",
+        "inputs": ("system degradation rate", "project year"),
+        "units": "fraction",
+        "timing": "annual",
+        "guards": "0<=g<1",
+        "output": "degradation factor",
+        "contract_section": "energy",
+    },
+    {
+        "formula_id": "V6-F004",
+        "name": "Weibull annual failure probability",
+        "equation": "p=1-exp(-(((a+1)/eta)^beta-(a/eta)^beta))",
+        "excel_template": "=1-EXP(-(((Age+1)/Eta)^Beta-(Age/Eta)^Beta))",
+        "inputs": ("cohort age", "Weibull beta", "Weibull eta"),
+        "units": "probability/year",
+        "timing": "annual by cohort",
+        "guards": "beta>0; eta>0",
+        "output": "annual failure probability",
+        "contract_section": "reliability",
+    },
+    {
+        "formula_id": "V6-F005",
+        "name": "Event-mode failures",
+        "equation": "K(i,s,c,t,a)~Binomial(N(i,s,c,t,a),p(i,s,c,a))",
+        "excel_template": "sealed binomial event count",
+        "inputs": ("cohort count", "failure probability", "sealed random draw"),
+        "units": "components",
+        "timing": "annual by cohort",
+        "guards": "integer cohort count",
+        "output": "event failures",
+        "contract_section": "reliability",
+    },
+    {
+        "formula_id": "V6-F006",
+        "name": "Expected-hazard failures",
+        "equation": "K_bar(i,s,c,t,a)=N(i,s,c,t,a)*p(i,s,c,a)",
+        "excel_template": "=StartCount*FailureProbability",
+        "inputs": ("cohort count", "failure probability"),
+        "units": "expected components",
+        "timing": "annual by cohort",
+        "guards": "diagnostic only",
+        "output": "expected failures",
+        "contract_section": "reliability",
+    },
+    {
+        "formula_id": "V6-F007",
+        "name": "Cohort renewal",
+        "equation": "N(t+1,0)=sum_a(K+Q); N(t+1,a+1)=N-K-Q",
+        "excel_template": "=Failures+Preventive; =Start-Failures-Preventive",
+        "inputs": ("start cohort", "failures", "oldest-first preventive"),
+        "units": "components",
+        "timing": "year end",
+        "guards": "failures before preventive; nonnegative survivors",
+        "output": "next-year cohorts",
+        "contract_section": "reliability",
+    },
+    {
+        "formula_id": "V6-F008",
+        "name": "Spare dispatch and restock",
+        "equation": "U=min(K,S_start); M=K-U; R=S_target-(S_start-U)",
+        "excel_template": "=MIN(Failures,SparesStart); =Failures-Stocked; =Target-(Start-Stocked)",
+        "inputs": ("failures", "starting spares", "spare target"),
+        "units": "components",
+        "timing": "annual",
+        "guards": "nonnegative integer inventories",
+        "output": "stocked, emergency, and restock quantities",
+        "contract_section": "spares",
+    },
+    {
+        "formula_id": "V6-F009",
+        "name": "Component downtime",
+        "equation": "u_c=min(1,w_c*(U*h_repair+M*(h_logistics+h_repair))/H_y)",
+        "excel_template": "=MIN(1,Impact*(Stocked*RepairHours+Emergency*(LogisticsHours+RepairHours))/HoursYear)",
+        "inputs": ("capacity impact", "replacement counts", "repair/logistics hours", "hours/year"),
+        "units": "fraction",
+        "timing": "annual",
+        "guards": "H_y is 8760 or 8784",
+        "output": "component downtime fraction",
+        "contract_section": "availability",
+    },
+    {
+        "formula_id": "V6-F010",
+        "name": "Common-cause event",
+        "equation": "J(i,k,t)~Bernoulli(q(i,k)); expected J=q",
+        "excel_template": "sealed Bernoulli event; expected = AnnualProbability",
+        "inputs": ("annual probability", "sealed random draw"),
+        "units": "event indicator",
+        "timing": "annual",
+        "guards": "one draw shared across affected systems",
+        "output": "common-cause event",
+        "contract_section": "common cause",
+    },
+    {
+        "formula_id": "V6-F011",
+        "name": "Target availability",
+        "equation": "A_target=A_base*product_c(1-u_c)*product_k(1-u_common,k)",
+        "excel_template": "=BaseAvailability*PRODUCT(1-ComponentDowntime)*PRODUCT(1-CommonDowntime)",
+        "inputs": ("base availability", "component downtime", "common-cause downtime"),
+        "units": "fraction",
+        "timing": "annual",
+        "guards": "each factor in [0,1]",
+        "output": "target availability",
+        "contract_section": "availability",
+    },
+    {
+        "formula_id": "V6-F012",
+        "name": "Source availability correction",
+        "equation": "A_adjust=A_target (gross); A_adjust=A_target/A_source (net)",
+        "excel_template": "=IF(SourceBasis=\"gross\",TargetAvailability,TargetAvailability/SourceAvailability)",
+        "inputs": ("source basis", "target availability", "source availability"),
+        "units": "multiplier",
+        "timing": "annual",
+        "guards": "net basis requires evidenced positive A_source; no upper clamp",
+        "output": "availability adjustment",
+        "contract_section": "availability",
+    },
+    {
+        "formula_id": "V6-F013",
+        "name": "Delivered energy",
+        "equation": "E(i,s,t)=B(i,s,t)*D(i,s,t)*A_adjust(i,s,t)",
+        "excel_template": "=TargetSourceEnergy*DegradationFactor*AvailabilityAdjustment",
+        "inputs": ("target source energy", "degradation", "availability adjustment"),
+        "units": "kWh_AC",
+        "timing": "annual",
+        "guards": "finite nonnegative factors",
+        "output": "delivered energy",
+        "contract_section": "energy",
+    },
+    {
+        "formula_id": "V6-F014",
+        "name": "Real cost growth",
+        "equation": "z_t=z_1*(1+e_z)^(t-1)",
+        "excel_template": "=Year1Value*(1+RealGrowth)^(ProjectYear-1)",
+        "inputs": ("year-1 value", "real growth", "project year"),
+        "units": "input-dependent",
+        "timing": "annual",
+        "guards": "growth support greater than -1; nonzero growth evidenced",
+        "output": "grown real value",
+        "contract_section": "costs",
+    },
+    {
+        "formula_id": "V6-F015",
+        "name": "Annual base O&M",
+        "equation": "C_OM=P_target*x_OM,1*(1+e_OM)^(t-1)",
+        "excel_template": "=TargetCapacity*OMPerWYear*(1+OMGrowth)^(ProjectYear-1)",
+        "inputs": ("target capacity", "base O&M", "real growth"),
+        "units": "real USD/year",
+        "timing": "annual",
+        "guards": "nonnegative cost",
+        "output": "base O&M cost",
+        "contract_section": "costs",
+    },
+    {
+        "formula_id": "V6-F016",
+        "name": "Corrective cost",
+        "equation": "C_corr=M*C_emergency+R*C_restock+K*C_labor+ceil(K/batch)*C_mobilization-C_warranty",
+        "excel_template": "=Emergency*EmergencyCost+Restock*RestockCost+Failures*LaborCost+CEILING(Failures/Batch,1)*Mobilization-WarrantyCredit",
+        "inputs": ("failure/spare quantities", "unit costs", "batch size", "warranty"),
+        "units": "real USD/year",
+        "timing": "annual",
+        "guards": "warranty <= eligible gross cost",
+        "output": "corrective cost",
+        "contract_section": "costs",
+    },
+    {
+        "formula_id": "V6-F017",
+        "name": "Annual system cost",
+        "equation": "C=C_OM+C_scheduled+C_preventive+C_corrective+C_common",
+        "excel_template": "=SUM(BaseOM,Scheduled,Preventive,Corrective,CommonCause)",
+        "inputs": ("annual cost categories",),
+        "units": "real USD/year",
+        "timing": "annual",
+        "guards": "coverage audit passes",
+        "output": "annual system cost",
+        "contract_section": "costs",
+    },
+    {
+        "formula_id": "V6-F018",
+        "name": "Initial system cost",
+        "equation": "C_0=P_target*sum(initial USD/W lines)+initial spare inventory",
+        "excel_template": "=TargetCapacity*SUM(InitialCostPerW)+InitialSpareInventory",
+        "inputs": ("initial intensities", "target capacity", "initial spares"),
+        "units": "real USD",
+        "timing": "t=0",
+        "guards": "nonnegative inputs",
+        "output": "initial cost",
+        "contract_section": "costs",
+    },
+    {
+        "formula_id": "V6-F019",
+        "name": "Discount factor",
+        "equation": "DF(i,t)=(1+r(i))^(-t)",
+        "excel_template": "=(1+DiscountRate)^(-ProjectYear)",
+        "inputs": ("shared real discount rate", "project year"),
+        "units": "fraction",
+        "timing": "annual",
+        "guards": "r>-1",
+        "output": "discount factor",
+        "contract_section": "finance",
+    },
+    {
+        "formula_id": "V6-F020",
+        "name": "Present lifecycle cost",
+        "equation": "C_PV=C_0+sum_t(C_t+1[t=L]*(C_decommission-S_salvage))*DF_t",
+        "excel_template": "=InitialCost+SUMPRODUCT(AnnualPlusTerminalCost,DiscountFactor)",
+        "inputs": ("initial cost", "annual cost", "terminal values", "discount factors"),
+        "units": "real USD",
+        "timing": "lifecycle",
+        "guards": "negative derived cost warned, not clamped",
+        "output": "present lifecycle cost",
+        "contract_section": "finance",
+    },
+    {
+        "formula_id": "V6-F021",
+        "name": "Present energy",
+        "equation": "E_PV=sum_t(E_t*DF_t)",
+        "excel_template": "=SUMPRODUCT(DeliveredEnergy,DiscountFactor)",
+        "inputs": ("annual delivered energy", "discount factors"),
+        "units": "discounted kWh_AC",
+        "timing": "lifecycle",
+        "guards": "positive denominator for LCOE",
+        "output": "present energy",
+        "contract_section": "finance",
+    },
+    {
+        "formula_id": "V6-F022",
+        "name": "Capital recovery and equivalent annual quantities",
+        "equation": "CRF=r*(1+r)^L/((1+r)^L-1); CRF=1/L when r=0; C_EA=CRF*C_PV; E_EA=CRF*E_PV",
+        "excel_template": "=IF(DiscountRate=0,1/Life,DiscountRate*(1+DiscountRate)^Life/((1+DiscountRate)^Life-1)); =CRF*PVLifecycleCost; =CRF*PVEnergy",
+        "inputs": ("discount rate", "project life", "present lifecycle cost", "present energy"),
+        "units": "1/year; real USD/year; discounted kWh_AC/year",
+        "timing": "lifecycle",
+        "guards": "r>-1; L positive",
+        "output": "CRF, equivalent annual cost, and equivalent annual energy",
+        "contract_section": "finance",
+    },
+    {
+        "formula_id": "V6-F023",
+        "name": "Standalone LCOE",
+        "equation": "LCOE_s=C_PV,s/E_PV,s",
+        "excel_template": "=PVLifecycleCost/PVEnergy",
+        "inputs": ("present lifecycle cost", "present energy"),
+        "units": "USD/kWh_AC",
+        "timing": "lifecycle",
+        "guards": "present energy > 0",
+        "output": "standalone LCOE",
+        "contract_section": "metrics",
+    },
+    {
+        "formula_id": "V6-F024",
+        "name": "Incremental quantities",
+        "equation": "DeltaC=C_SE-C_SO; DeltaE=E_SE-E_SO; DeltaLCOE=LCOE_SE-LCOE_SO",
+        "excel_template": "=SolarEdge-Solectria",
+        "inputs": ("paired system outcomes",),
+        "units": "USD; kWh_AC; USD/kWh_AC",
+        "timing": "annual and lifecycle",
+        "guards": "paired realization",
+        "output": "incremental quantities",
+        "contract_section": "metrics",
+    },
+    {
+        "formula_id": "V6-F025",
+        "name": "Incremental LCOO",
+        "equation": "LCOO=DeltaC_PV/DeltaE_PV outside scale-aware energy tolerance",
+        "excel_template": "=IF(ABS(DeltaEnergy)>EnergyTolerance,DeltaCost/DeltaEnergy,NA())",
+        "inputs": ("incremental cost", "incremental energy", "energy tolerance"),
+        "units": "USD/kWh_AC",
+        "timing": "lifecycle",
+        "guards": "undefined at near-zero incremental energy; quadrant retained",
+        "output": "LCOO or reason code",
+        "contract_section": "metrics",
+    },
+    {
+        "formula_id": "V6-F026",
+        "name": "Electricity value",
+        "equation": "V(i,t)=V_1(i)*(1+e_V(i))^(t-1)",
+        "excel_template": "=Year1ElectricityValue*(1+RealGrowth)^(ProjectYear-1)",
+        "inputs": ("year-1 electricity value", "real growth", "project year"),
+        "units": "real USD/kWh_AC",
+        "timing": "annual",
+        "guards": "nonnegative value; growth > -1",
+        "output": "electricity value",
+        "contract_section": "decision",
+    },
+    {
+        "formula_id": "V6-F027",
+        "name": "Upgrade NPV",
+        "equation": "NPV_upgrade=-DeltaC_0+sum_t(V_t*DeltaE_t-DeltaC_t)*DF_t",
+        "excel_template": "=-DeltaInitialCost+SUMPRODUCT(ElectricityValue*DeltaEnergy-DeltaAnnualCost,DiscountFactor)",
+        "inputs": ("incremental initial/annual cost", "incremental energy", "electricity value", "discount factor"),
+        "units": "real USD",
+        "timing": "lifecycle",
+        "guards": "year-L cost includes decommissioning and salvage",
+        "output": "upgrade NPV",
+        "contract_section": "decision",
+    },
+    {
+        "formula_id": "V6-F028",
+        "name": "Headline decision",
+        "equation": "prefer SE if P(NPV>tol)>=0.75; prefer SO if P(NPV<-tol)>=0.75; else no decisive winner",
+        "excel_template": "=IF(PPositive>=Threshold,\"SolarEdge preferred\",IF(PNegative>=Threshold,\"Solectria preferred\",\"No decisive winner\"))",
+        "inputs": ("NPV sign counts", "economic tolerance", "decision threshold"),
+        "units": "decision",
+        "timing": "post simulation",
+        "guards": "event mode, passed checks, stable convergence",
+        "output": "headline decision",
+        "contract_section": "decision",
+    },
+)
+
+
+def formula_registry() -> tuple[Mapping[str, Any], ...]:
+    """Return the single structured source for every version-6 formula."""
+
+    return tuple(dict(row) for row in TEA_V6_FORMULA_REGISTRY)
+
+
+def formula_registry_hash() -> str:
+    """Return the canonical semantic hash of the version-6 formula registry."""
+
+    payload = json.dumps(
+        TEA_V6_FORMULA_REGISTRY,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+    return sha256(payload).hexdigest()
 
 
 def _is_int(value: Any) -> bool:
@@ -1066,6 +1580,195 @@ def _substream(seed: int, purpose: str, stable_id: str) -> np.random.PCG64DXSM:
     digest = sha256(domain).digest()
     entropy = [int.from_bytes(digest[offset : offset + 4], "big") for offset in range(0, 32, 4)]
     return np.random.PCG64DXSM(np.random.SeedSequence(entropy=entropy))
+
+
+def _lifecycle_substream(
+    seed: int,
+    purpose: str,
+    stable_id: str,
+) -> np.random.PCG64DXSM:
+    """Return a version-6 domain-separated stream without touching v1 streams."""
+
+    if not isinstance(purpose, str) or not purpose or "\0" in purpose:
+        raise TechnoeconomicValidationError(
+            "RNG purpose must be a nonempty string without NUL."
+        )
+    _validate_stable_id(stable_id, "RNG stable ID")
+    domain = (
+        LIFECYCLE_RNG_DOMAIN
+        + int(seed).to_bytes(8, "big", signed=False)
+        + b"\0"
+        + purpose.encode("utf-8")
+        + b"\0"
+        + stable_id.encode("ascii")
+    )
+    digest = sha256(domain).digest()
+    entropy = [
+        int.from_bytes(digest[offset : offset + 4], "big")
+        for offset in range(0, 32, 4)
+    ]
+    return np.random.PCG64DXSM(np.random.SeedSequence(entropy=entropy))
+
+
+def generate_lhs_v2(
+    n: int,
+    seed: int,
+    distributions: Sequence[DistributionSpec],
+) -> dict[str, np.ndarray]:
+    """Generate version-6 LHS draws on streams disjoint from tea-lhs-v1."""
+
+    validate_runtime_versions()
+    n, seed = _validate_n_seed(n, seed)
+    normalized = [validate_distribution(spec) for spec in distributions]
+    identifiers = [spec.input_id for spec in normalized]
+    if len(set(identifiers)) != len(identifiers):
+        raise TechnoeconomicValidationError(
+            "Version-6 distribution input IDs must be globally unique."
+        )
+    reserved = RESERVED_INPUT_IDS & set(identifiers)
+    if reserved:
+        raise TechnoeconomicValidationError(
+            f"Input IDs {sorted(reserved)!r} are reserved for weather allocation "
+            "or sensitivity source predictors."
+        )
+
+    sampled: dict[str, np.ndarray] = {}
+    for spec in sorted(normalized, key=lambda item: item.input_id.encode("ascii")):
+        if spec.family == "fixed":
+            sampled[spec.input_id] = np.full(n, spec.value, dtype=np.float64)
+            continue
+        jitter_generator = _lifecycle_substream(
+            seed,
+            LHS_JITTER_PURPOSE,
+            spec.input_id,
+        )
+        permutation_generator = _lifecycle_substream(
+            seed,
+            LHS_PERMUTATION_PURPOSE,
+            spec.input_id,
+        )
+        probabilities = _jittered_strata(n, jitter_generator)
+        permutation = _fisher_yates(range(n), permutation_generator)
+        sampled[spec.input_id] = inverse_cdf(spec, probabilities[permutation])
+    return sampled
+
+
+def allocate_weather_paths_v2(
+    n: int,
+    seed: int,
+    years: Sequence[int],
+    project_life_years: int,
+) -> np.ndarray:
+    """Allocate an independently balanced paired weather path for every year."""
+
+    validate_runtime_versions()
+    n, seed = _validate_n_seed(n, seed)
+    life = _validate_life(project_life_years)
+    normalized_years: list[int] = []
+    for year in years:
+        if not _is_int(year):
+            raise TechnoeconomicValidationError("Weather years must be integers.")
+        normalized_years.append(int(year))
+    if not normalized_years:
+        raise TechnoeconomicValidationError("At least one weather year is required.")
+    if len(set(normalized_years)) != len(normalized_years):
+        raise TechnoeconomicValidationError("Weather years must be unique.")
+    normalized_years.sort()
+
+    paths = np.empty((n, life), dtype=np.int64)
+    quotient, remainder = divmod(n, len(normalized_years))
+    for year_index in range(life):
+        stable_id = f"weather.year.t{year_index + 1:04d}"
+        extra_order = _fisher_yates(
+            normalized_years,
+            _lifecycle_substream(seed, WEATHER_EXTRA_PURPOSE, stable_id),
+        )
+        extras = set(extra_order[:remainder])
+        grouped: list[int] = []
+        for weather_year in normalized_years:
+            grouped.extend(
+                [weather_year]
+                * (quotient + (1 if weather_year in extras else 0))
+            )
+        assigned = _fisher_yates(
+            grouped,
+            _lifecycle_substream(seed, WEATHER_ASSIGNMENT_PURPOSE, stable_id),
+        )
+        paths[:, year_index] = np.asarray(assigned, dtype=np.int64)
+    return paths
+
+
+def estimate_lifecycle_memory(
+    n: int,
+    project_life_years: int,
+    component_count: int,
+) -> Mapping[str, int]:
+    """Conservatively estimate the v6 in-memory ndarray high-water mark."""
+
+    n, _ = _validate_n_seed(n, 0)
+    life = _validate_life(project_life_years)
+    if not _is_int(component_count) or int(component_count) < 0:
+        raise TechnoeconomicValidationError(
+            "component_count must be a nonnegative integer."
+        )
+    components = int(component_count)
+    # V6 deliberately rolls cohort state.  The estimate includes realization
+    # vectors, both systems' annual arrays, per-component annual audit arrays,
+    # and one rolling cohort workspace rather than an n*C*L*L history cube.
+    planned_float64_values = n * (
+        40 + 34 * life + components * (13 * life + 2 * (life + 1))
+    )
+    planned_int64_values = n * (life + components * (7 * life + life + 1))
+    planned_bytes = 8 * (planned_float64_values + planned_int64_values)
+    estimated_peak = LIFECYCLE_MEMORY_BASE_BYTES + 2 * planned_bytes
+    return {
+        "planned_ndarray_bytes": int(planned_bytes),
+        "estimated_peak_bytes": int(estimated_peak),
+        "memory_limit_bytes": LIFECYCLE_MEMORY_LIMIT_BYTES,
+    }
+
+
+def lifecycle_safe_realization_max(
+    project_life_years: int,
+    component_count: int,
+    *,
+    realization_export_columns: int = 28,
+) -> Mapping[str, int | str]:
+    """Return the request-specific v6 ceiling and its limiting dimension."""
+
+    life = _validate_life(project_life_years)
+    if not _is_int(component_count) or int(component_count) < 0:
+        raise TechnoeconomicValidationError(
+            "component_count must be a nonnegative integer."
+        )
+    if not _is_int(realization_export_columns) or int(realization_export_columns) <= 0:
+        raise TechnoeconomicValidationError(
+            "realization_export_columns must be a positive integer."
+        )
+    components = int(component_count)
+    columns = int(realization_export_columns)
+    per_realization_planned_bytes = int(
+        estimate_lifecycle_memory(1, life, components)["planned_ndarray_bytes"]
+    )
+    available = max(0, LIFECYCLE_MEMORY_LIMIT_BYTES - LIFECYCLE_MEMORY_BASE_BYTES)
+    memory_max = available // max(1, 2 * per_realization_planned_bytes)
+    export_max = LIFECYCLE_EXPORT_CELL_LIMIT // columns
+    safe_max = min(MAX_REALIZATIONS, memory_max, export_max)
+    limiting = min(
+        (
+            (MAX_REALIZATIONS, "public_realization_ceiling"),
+            (memory_max, "estimated_peak_memory"),
+            (export_max, "realization_export_cells"),
+        ),
+        key=lambda item: (item[0], item[1]),
+    )[1]
+    return {
+        "safe_max_realizations": int(safe_max),
+        "memory_safe_max": int(memory_max),
+        "export_safe_max": int(export_max),
+        "public_ceiling": MAX_REALIZATIONS,
+        "limiting_dimension": limiting,
+    }
 
 
 def _open_interval_jitter(bit_generator: Any) -> float:
@@ -2686,12 +3389,833 @@ def _validate_support_wide_outputs(
             )
 
 
+def _validate_lifecycle_evidence(
+    evidence: Mapping[str, Any],
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(evidence, Mapping):
+        raise TechnoeconomicValidationError(f"{label} evidence must be an object.")
+    normalized = dict(evidence)
+    status = normalized.get("status")
+    if status == "evidenced":
+        if len(normalized) < 2:
+            raise TechnoeconomicValidationError(
+                f"{label} evidenced input must identify its evidence source."
+            )
+    elif status == "provisional":
+        if normalized.get("accepted") is not True:
+            raise TechnoeconomicValidationError(
+                f"{label} provisional input requires accepted=true."
+            )
+    else:
+        raise TechnoeconomicValidationError(
+            f"{label} evidence status must be 'evidenced' or explicitly accepted "
+            "'provisional'."
+        )
+    return normalized
+
+
+def _validate_lifecycle_distribution(
+    spec: DistributionSpec,
+    label: str,
+    *,
+    lower: float | None = None,
+    lower_inclusive: bool = True,
+    upper: float | None = None,
+    upper_inclusive: bool = True,
+) -> DistributionSpec:
+    normalized = validate_distribution(spec)
+    support_low, support_high = distribution_support(normalized)
+    if lower is not None:
+        invalid_low = (
+            support_low < lower if lower_inclusive else support_low <= lower
+        )
+        if invalid_low:
+            comparator = ">=" if lower_inclusive else ">"
+            raise TechnoeconomicValidationError(
+                f"{label} must have support {comparator} {lower}."
+            )
+    if upper is not None:
+        invalid_high = (
+            support_high > upper if upper_inclusive else support_high >= upper
+        )
+        if invalid_high:
+            comparator = "<=" if upper_inclusive else "<"
+            raise TechnoeconomicValidationError(
+                f"{label} must have support {comparator} {upper}."
+            )
+    return normalized
+
+
+def _validate_lifecycle_growth(
+    spec: DistributionSpec,
+    label: str,
+    evidence: Mapping[str, Any],
+) -> DistributionSpec:
+    normalized = _validate_lifecycle_distribution(
+        spec,
+        label,
+        lower=-1.0,
+        lower_inclusive=False,
+    )
+    support = distribution_support(normalized)
+    if support != (0.0, 0.0):
+        _validate_lifecycle_evidence(evidence, f"{label} nonzero growth")
+    return normalized
+
+
+def _validate_lifecycle_coverage_ids(
+    values: Sequence[str],
+    label: str,
+) -> tuple[str, ...]:
+    normalized = tuple(_validate_stable_id(value, label) for value in values)
+    if len(set(normalized)) != len(normalized):
+        raise TechnoeconomicValidationError(f"{label} values must be unique.")
+    if not normalized:
+        raise TechnoeconomicValidationError(f"{label} must not be empty.")
+    return tuple(sorted(normalized, key=lambda value: value.encode("ascii")))
+
+
+def _validate_lifecycle_request(
+    request: TechnoeconomicRequest,
+) -> TechnoeconomicRequest:
+    """Validate v6 without entering or altering any historical execution path."""
+
+    if request.sampling_version != LIFECYCLE_SAMPLING_VERSION:
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v6 requires sampling_version='tea-lhs-v2'."
+        )
+    if request.basis != "solartac_site":
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v6 requires the frozen SolarTAC site energy basis."
+        )
+    if request.cost_stack_completeness != "full_system":
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v6 requires a full_system cost stack."
+        )
+    if request.cost_lines:
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v6 must not define legacy cost_lines."
+        )
+    if request.shared_degradation is not None:
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v6 uses separate system degradation and requires "
+            "shared_degradation=None."
+        )
+    for label, value in (
+        ("transfer", request.transfer),
+        ("commercial_reference_wdc", request.commercial_reference_wdc),
+        ("commercial_scaling", request.commercial_scaling),
+        ("standalone_commercial", request.standalone_commercial),
+        ("paired_commercial", request.paired_commercial),
+    ):
+        if value is not None:
+            raise TechnoeconomicValidationError(
+                f"tea-calculation-v6 must not define legacy {label}."
+            )
+    if request.paired_lifecycle is None:
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v6 requires paired_lifecycle."
+        )
+    if (
+        not _is_int(request.constant_dollar_cost_year)
+        or not 1900 <= int(request.constant_dollar_cost_year) <= 3000
+    ):
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v6 requires a constant-dollar cost year from 1900 "
+            "through 3000."
+        )
+
+    n, seed = _validate_n_seed(request.n, request.seed)
+    life = _validate_life(request.project_life_years)
+    capacities = tuple(validate_capacity(spec) for spec in request.capacities)
+    capacity_map = {spec.system: spec for spec in capacities}
+    if len(capacities) != 2 or set(capacity_map) != {"solectria", "solaredge"}:
+        raise TechnoeconomicValidationError(
+            "Exactly one Solectria and one SolarEdge capacity manifest are required."
+        )
+    capacities = (capacity_map["solectria"], capacity_map["solaredge"])
+    rows = _validate_energy_rows(request.paired_energy_rows)
+    if request.applied_capacities is None:
+        raise TechnoeconomicValidationError(
+            "tea-calculation-v6 requires frozen applied source capacities."
+        )
+    applied_capacities = _validate_applied_capacities(
+        request.applied_capacities,
+        capacity_map,
+    )
+    applied_map = {item.system: item for item in applied_capacities}
+    discount = validate_distribution(request.discount_rate, "discount_rate")
+
+    lifecycle = request.paired_lifecycle
+    target_capacity = _finite_float(
+        lifecycle.target_capacity_w,
+        "paired_lifecycle.target_capacity_w",
+    )
+    if target_capacity <= 0:
+        raise TechnoeconomicValidationError(
+            "paired_lifecycle.target_capacity_w must be positive."
+        )
+    if lifecycle.target_rating_basis not in {
+        "ac_operating_limit",
+        "dc_installed_nameplate",
+    }:
+        raise TechnoeconomicValidationError(
+            "paired_lifecycle.target_rating_basis is unsupported."
+        )
+    for system in ("solectria", "solaredge"):
+        if applied_map[system].rating_basis != lifecycle.target_rating_basis:
+            raise TechnoeconomicValidationError(
+                "Version-6 target and source capacities must use one rating basis."
+            )
+    if lifecycle.source_energy_basis not in {"gross", "net"}:
+        raise TechnoeconomicValidationError(
+            "paired_lifecycle.source_energy_basis must be 'gross' or 'net'."
+        )
+    if lifecycle.reliability_mode not in {"event", "expected"}:
+        raise TechnoeconomicValidationError(
+            "paired_lifecycle.reliability_mode must be 'event' or 'expected'."
+        )
+    decision_threshold = _finite_float(
+        lifecycle.decision_probability_threshold,
+        "paired_lifecycle.decision_probability_threshold",
+    )
+    if not 0.5 < decision_threshold <= 1.0:
+        raise TechnoeconomicValidationError(
+            "Decision probability threshold must be greater than 0.5 and at most 1."
+        )
+    tolerance_values: dict[str, float] = {}
+    for name in (
+        "cost_absolute_tolerance_usd_per_w",
+        "energy_absolute_tolerance_kwh_per_w",
+        "npv_absolute_tolerance_usd_per_w",
+        "relative_tolerance",
+        "lcoe_absolute_tolerance",
+    ):
+        value = _finite_float(getattr(lifecycle, name), f"paired_lifecycle.{name}")
+        if value < 0:
+            raise TechnoeconomicValidationError(
+                f"paired_lifecycle.{name} must be nonnegative."
+            )
+        tolerance_values[name] = value
+
+    electricity_value_evidence = _validate_lifecycle_evidence(
+        lifecycle.electricity_value_evidence,
+        "paired_lifecycle.electricity_value",
+    )
+    electricity_value = _validate_lifecycle_distribution(
+        lifecycle.electricity_value,
+        "paired_lifecycle.electricity_value",
+        lower=0.0,
+    )
+    electricity_growth = _validate_lifecycle_growth(
+        lifecycle.electricity_value_real_growth,
+        "paired_lifecycle.electricity_value_real_growth",
+        electricity_value_evidence,
+    )
+
+    coverage_owners: dict[tuple[SystemName, str], str] = {}
+
+    def register_coverage(
+        system: SystemName,
+        coverage_ids: Sequence[str],
+        owner: str,
+        label: str,
+    ) -> tuple[str, ...]:
+        normalized_ids = _validate_lifecycle_coverage_ids(coverage_ids, label)
+        for coverage_id in normalized_ids:
+            key = (system, coverage_id)
+            previous = coverage_owners.get(key)
+            if previous is not None and previous != owner:
+                raise TechnoeconomicValidationError(
+                    f"Coverage ID {coverage_id!r} overlaps {previous!r} and "
+                    f"{owner!r} for {system}."
+                )
+            coverage_owners[key] = owner
+        return normalized_ids
+
+    normalized_systems: list[LifecycleSystemSpec] = []
+    shared_input_pairs = (
+        (discount.input_id, "shared discount rate"),
+        (electricity_value.input_id, "electricity value"),
+        (electricity_growth.input_id, "electricity value growth"),
+    )
+    if len({identifier for identifier, _ in shared_input_pairs}) != len(
+        shared_input_pairs
+    ):
+        raise TechnoeconomicValidationError(
+            "Discount-rate and electricity-value input IDs must be unique."
+        )
+    input_owners: dict[str, str] = dict(shared_input_pairs)
+
+    def register_distribution(spec: DistributionSpec, owner: str) -> None:
+        previous = input_owners.get(spec.input_id)
+        if previous is not None and previous != owner:
+            raise TechnoeconomicValidationError(
+                f"Distribution input ID {spec.input_id!r} is used by both "
+                f"{previous!r} and {owner!r}."
+            )
+        if previous is not None:
+            raise TechnoeconomicValidationError(
+                f"Distribution input ID {spec.input_id!r} must be globally unique."
+            )
+        input_owners[spec.input_id] = owner
+
+    system_map = {system.technology: system for system in lifecycle.systems}
+    if len(lifecycle.systems) != 2 or set(system_map) != {"solectria", "solaredge"}:
+        raise TechnoeconomicValidationError(
+            "paired_lifecycle requires exactly one Solectria and one SolarEdge system."
+        )
+    eligible_years = {row.year for row in rows}
+    component_count = 0
+    for technology in ("solectria", "solaredge"):
+        system = system_map[technology]
+        system_evidence = _validate_lifecycle_evidence(
+            system.evidence,
+            f"paired_lifecycle.{technology}",
+        )
+        degradation = validate_distribution(system.degradation, "degradation")
+        base_availability = _validate_lifecycle_distribution(
+            system.base_availability,
+            f"{technology}.base_availability",
+            lower=0.0,
+            lower_inclusive=False,
+            upper=1.0,
+        )
+        base_om = _validate_lifecycle_distribution(
+            system.base_om_cost_per_w_year,
+            f"{technology}.base_om_cost_per_w_year",
+            lower=0.0,
+        )
+        base_om_growth = _validate_lifecycle_growth(
+            system.base_om_real_growth,
+            f"{technology}.base_om_real_growth",
+            system_evidence,
+        )
+        decommissioning = _validate_lifecycle_distribution(
+            system.decommissioning_cost,
+            f"{technology}.decommissioning_cost",
+            lower=0.0,
+        )
+        salvage = _validate_lifecycle_distribution(
+            system.salvage_value,
+            f"{technology}.salvage_value",
+            lower=0.0,
+        )
+        for spec, owner in (
+            (degradation, f"{technology} degradation"),
+            (base_availability, f"{technology} base availability"),
+            (base_om, f"{technology} base O&M"),
+            (base_om_growth, f"{technology} base O&M growth"),
+            (decommissioning, f"{technology} decommissioning"),
+            (salvage, f"{technology} salvage"),
+        ):
+            register_distribution(spec, owner)
+        base_coverage = register_coverage(
+            technology,
+            system.base_om_coverage_ids,
+            "base_om",
+            f"{technology}.base_om_coverage_ids",
+        )
+
+        initial_lines: list[LifecycleInitialCostLineSpec] = []
+        if not system.initial_cost_lines:
+            raise TechnoeconomicValidationError(
+                f"{technology} requires at least one initial cost line."
+            )
+        for line in system.initial_cost_lines:
+            if not isinstance(line, LifecycleInitialCostLineSpec):
+                raise TechnoeconomicValidationError(
+                    "Initial lifecycle lines must be LifecycleInitialCostLineSpec."
+                )
+            line_id = _validate_stable_id(line.input_id, "initial cost input ID")
+            if line.cost_per_w.input_id != line_id:
+                raise TechnoeconomicValidationError(
+                    f"Initial cost line {line_id!r} must match its distribution input ID."
+                )
+            if not isinstance(line.label, str) or not line.label.strip():
+                raise TechnoeconomicValidationError("Initial cost line label must be nonempty.")
+            evidence = _validate_lifecycle_evidence(line.evidence, line_id)
+            cost_per_w = _validate_lifecycle_distribution(
+                line.cost_per_w,
+                line_id,
+                lower=0.0,
+            )
+            coverage_ids = register_coverage(
+                technology,
+                line.coverage_ids,
+                f"initial:{line_id}",
+                f"{line_id}.coverage_ids",
+            )
+            register_distribution(cost_per_w, f"initial:{line_id}")
+            initial_lines.append(
+                replace(
+                    line,
+                    input_id=line_id,
+                    label=line.label.strip(),
+                    cost_per_w=cost_per_w,
+                    coverage_ids=coverage_ids,
+                    evidence=evidence,
+                )
+            )
+
+        scheduled_costs: list[LifecycleScheduledCostSpec] = []
+        for line in system.scheduled_costs:
+            if not isinstance(line, LifecycleScheduledCostSpec):
+                raise TechnoeconomicValidationError(
+                    "Scheduled lifecycle lines must be LifecycleScheduledCostSpec."
+                )
+            line_id = _validate_stable_id(line.input_id, "scheduled cost input ID")
+            if line.cost.input_id != line_id:
+                raise TechnoeconomicValidationError(
+                    f"Scheduled cost line {line_id!r} must match its cost input ID."
+                )
+            if not isinstance(line.label, str) or not line.label.strip():
+                raise TechnoeconomicValidationError(
+                    "Scheduled cost line label must be nonempty."
+                )
+            evidence = _validate_lifecycle_evidence(line.evidence, line_id)
+            cost = _validate_lifecycle_distribution(line.cost, line_id, lower=0.0)
+            growth = _validate_lifecycle_growth(
+                line.real_cost_growth,
+                f"{line_id}.real_cost_growth",
+                evidence,
+            )
+            occurrence_years = tuple(sorted(line.occurrence_years))
+            if (
+                not occurrence_years
+                or len(set(occurrence_years)) != len(occurrence_years)
+                or any(not _is_int(year) or not 1 <= int(year) <= life for year in occurrence_years)
+            ):
+                raise TechnoeconomicValidationError(
+                    f"{line_id}.occurrence_years must contain unique project years."
+                )
+            coverage_ids = register_coverage(
+                technology,
+                line.coverage_ids,
+                f"scheduled:{line_id}",
+                f"{line_id}.coverage_ids",
+            )
+            register_distribution(cost, f"scheduled:{line_id}")
+            register_distribution(growth, f"scheduled-growth:{line_id}")
+            scheduled_costs.append(
+                replace(
+                    line,
+                    input_id=line_id,
+                    label=line.label.strip(),
+                    cost=cost,
+                    real_cost_growth=growth,
+                    occurrence_years=occurrence_years,
+                    coverage_ids=coverage_ids,
+                    evidence=evidence,
+                )
+            )
+
+        component_ids: set[str] = set()
+        components: list[LifecycleComponentSpec] = []
+        if not system.components:
+            raise TechnoeconomicValidationError(
+                f"{technology} requires an explicit nonempty target BOM."
+            )
+        for component in system.components:
+            if not isinstance(component, LifecycleComponentSpec):
+                raise TechnoeconomicValidationError(
+                    "Target BOM entries must be LifecycleComponentSpec."
+                )
+            component_id = _validate_stable_id(component.component_id, "component ID")
+            if component_id in component_ids:
+                raise TechnoeconomicValidationError(
+                    f"Duplicate {technology} component ID {component_id!r}."
+                )
+            component_ids.add(component_id)
+            component_count += 1
+            if not isinstance(component.category, str) or not component.category.strip():
+                raise TechnoeconomicValidationError("Component category must be nonempty.")
+            if not _is_int(component.count) or int(component.count) <= 0:
+                raise TechnoeconomicValidationError(
+                    f"{component_id}.count must be a positive integer."
+                )
+            count = int(component.count)
+            impact = _finite_float(component.capacity_impact, f"{component_id}.capacity_impact")
+            if not 0 < impact <= 1:
+                raise TechnoeconomicValidationError(
+                    f"{component_id}.capacity_impact must be in (0,1]."
+                )
+            if not _is_int(component.batch_size) or int(component.batch_size) <= 0:
+                raise TechnoeconomicValidationError(
+                    f"{component_id}.batch_size must be positive."
+                )
+            for inventory_name in ("initial_spares", "spare_target"):
+                inventory = getattr(component, inventory_name)
+                if not _is_int(inventory) or not 0 <= int(inventory) <= count:
+                    raise TechnoeconomicValidationError(
+                        f"{component_id}.{inventory_name} must be an integer from 0 through count."
+                    )
+            if int(component.initial_spares) > int(component.spare_target):
+                raise TechnoeconomicValidationError(
+                    f"{component_id}.initial_spares must not exceed spare_target."
+                )
+            evidence = _validate_lifecycle_evidence(
+                component.evidence,
+                f"{technology}.{component_id}",
+            )
+            normalized_component_distributions = {
+                "weibull_beta": _validate_lifecycle_distribution(
+                    component.weibull_beta,
+                    f"{component_id}.weibull_beta",
+                    lower=0.0,
+                    lower_inclusive=False,
+                ),
+                "weibull_eta_years": _validate_lifecycle_distribution(
+                    component.weibull_eta_years,
+                    f"{component_id}.weibull_eta_years",
+                    lower=0.0,
+                    lower_inclusive=False,
+                ),
+                "repair_hours": _validate_lifecycle_distribution(
+                    component.repair_hours,
+                    f"{component_id}.repair_hours",
+                    lower=0.0,
+                ),
+                "logistics_hours": _validate_lifecycle_distribution(
+                    component.logistics_hours,
+                    f"{component_id}.logistics_hours",
+                    lower=0.0,
+                ),
+                "emergency_unit_cost": _validate_lifecycle_distribution(
+                    component.emergency_unit_cost,
+                    f"{component_id}.emergency_unit_cost",
+                    lower=0.0,
+                ),
+                "restock_unit_cost": _validate_lifecycle_distribution(
+                    component.restock_unit_cost,
+                    f"{component_id}.restock_unit_cost",
+                    lower=0.0,
+                ),
+                "labor_cost": _validate_lifecycle_distribution(
+                    component.labor_cost,
+                    f"{component_id}.labor_cost",
+                    lower=0.0,
+                ),
+                "mobilization_cost": _validate_lifecycle_distribution(
+                    component.mobilization_cost,
+                    f"{component_id}.mobilization_cost",
+                    lower=0.0,
+                ),
+                "real_cost_growth": _validate_lifecycle_growth(
+                    component.real_cost_growth,
+                    f"{component_id}.real_cost_growth",
+                    evidence,
+                ),
+            }
+            for field_name, spec in normalized_component_distributions.items():
+                register_distribution(spec, f"{technology}.{component_id}.{field_name}")
+            coverage_ids = register_coverage(
+                technology,
+                component.coverage_ids,
+                f"component:{component_id}",
+                f"{component_id}.coverage_ids",
+            )
+            preventive: list[LifecyclePreventiveReplacementSpec] = []
+            preventive_years: set[int] = set()
+            for item in component.preventive_replacements:
+                if not isinstance(item, LifecyclePreventiveReplacementSpec):
+                    raise TechnoeconomicValidationError(
+                        "Preventive entries must be LifecyclePreventiveReplacementSpec."
+                    )
+                if not _is_int(item.year) or not 1 <= int(item.year) <= life:
+                    raise TechnoeconomicValidationError(
+                        f"{component_id} preventive year is outside project life."
+                    )
+                year = int(item.year)
+                if year in preventive_years:
+                    raise TechnoeconomicValidationError(
+                        f"{component_id} preventive years must be unique."
+                    )
+                preventive_years.add(year)
+                if not _is_int(item.quantity) or not 0 <= int(item.quantity) <= count:
+                    raise TechnoeconomicValidationError(
+                        f"{component_id} preventive quantity must be from 0 through count."
+                    )
+                item_evidence = _validate_lifecycle_evidence(
+                    item.evidence,
+                    f"{component_id}.preventive.{year}",
+                )
+                item_coverage = register_coverage(
+                    technology,
+                    item.coverage_ids,
+                    f"preventive:{component_id}:{year}",
+                    f"{component_id}.preventive.{year}.coverage_ids",
+                )
+                preventive.append(
+                    replace(
+                        item,
+                        year=year,
+                        quantity=int(item.quantity),
+                        coverage_ids=item_coverage,
+                        evidence=item_evidence,
+                    )
+                )
+            warranty: LifecycleWarrantySpec | None = None
+            if component.warranty is not None:
+                item = component.warranty
+                if not isinstance(item, LifecycleWarrantySpec):
+                    raise TechnoeconomicValidationError(
+                        "Component warranty must be LifecycleWarrantySpec."
+                    )
+                if not _is_int(item.age_limit_years) or int(item.age_limit_years) < 0:
+                    raise TechnoeconomicValidationError(
+                        f"{component_id} warranty age_limit_years must be nonnegative."
+                    )
+                fraction = _finite_float(item.fraction, f"{component_id}.warranty.fraction")
+                if not 0 <= fraction <= 1:
+                    raise TechnoeconomicValidationError(
+                        f"{component_id} warranty fraction must be in [0,1]."
+                    )
+                categories = tuple(sorted(set(item.covered_cost_categories)))
+                supported_categories = {"hardware", "labor", "mobilization"}
+                if (
+                    len(categories) != len(item.covered_cost_categories)
+                    or not set(categories).issubset(supported_categories)
+                    or (fraction > 0 and not categories)
+                ):
+                    raise TechnoeconomicValidationError(
+                        f"{component_id} warranty categories must be unique supported categories."
+                    )
+                warranty_evidence = _validate_lifecycle_evidence(
+                    item.evidence,
+                    f"{component_id}.warranty",
+                )
+                warranty_coverage = register_coverage(
+                    technology,
+                    item.coverage_ids,
+                    f"warranty:{component_id}",
+                    f"{component_id}.warranty.coverage_ids",
+                )
+                warranty = replace(
+                    item,
+                    age_limit_years=int(item.age_limit_years),
+                    fraction=fraction,
+                    covered_cost_categories=categories,
+                    coverage_ids=warranty_coverage,
+                    evidence=warranty_evidence,
+                )
+            components.append(
+                replace(
+                    component,
+                    component_id=component_id,
+                    category=component.category.strip(),
+                    count=count,
+                    capacity_impact=impact,
+                    batch_size=int(component.batch_size),
+                    initial_spares=int(component.initial_spares),
+                    spare_target=int(component.spare_target),
+                    warranty=warranty,
+                    preventive_replacements=tuple(sorted(preventive, key=lambda item: item.year)),
+                    coverage_ids=coverage_ids,
+                    evidence=evidence,
+                    **normalized_component_distributions,
+                )
+            )
+
+        source_availability: list[LifecycleSourceAvailabilitySpec] = []
+        seen_source_years: set[int] = set()
+        for item in system.source_availability_by_year:
+            if not isinstance(item, LifecycleSourceAvailabilitySpec):
+                raise TechnoeconomicValidationError(
+                    "Source availability rows must be LifecycleSourceAvailabilitySpec."
+                )
+            if not _is_int(item.year) or int(item.year) not in eligible_years:
+                raise TechnoeconomicValidationError(
+                    f"{technology} source availability year is not an eligible energy year."
+                )
+            year = int(item.year)
+            if year in seen_source_years:
+                raise TechnoeconomicValidationError(
+                    f"Duplicate {technology} source availability year {year}."
+                )
+            seen_source_years.add(year)
+            availability = _finite_float(
+                item.availability,
+                f"{technology}.source_availability.{year}",
+            )
+            if not 0 < availability <= 1:
+                raise TechnoeconomicValidationError(
+                    "Source availability evidence must be in (0,1]."
+                )
+            source_evidence = _validate_lifecycle_evidence(
+                item.evidence,
+                f"{technology}.source_availability.{year}",
+            )
+            source_availability.append(
+                replace(
+                    item,
+                    year=year,
+                    availability=availability,
+                    evidence=source_evidence,
+                )
+            )
+        if lifecycle.source_energy_basis == "net" and seen_source_years != eligible_years:
+            missing = sorted(eligible_years - seen_source_years)
+            raise TechnoeconomicValidationError(
+                f"Net source energy requires availability evidence for every weather year; missing {missing!r}."
+            )
+        if lifecycle.source_energy_basis == "gross" and source_availability:
+            raise TechnoeconomicValidationError(
+                "Gross source energy must not define source availability corrections."
+            )
+        normalized_systems.append(
+            replace(
+                system,
+                degradation=degradation,
+                base_availability=base_availability,
+                base_om_cost_per_w_year=base_om,
+                base_om_real_growth=base_om_growth,
+                initial_cost_lines=tuple(sorted(initial_lines, key=lambda item: item.input_id.encode("ascii"))),
+                scheduled_costs=tuple(sorted(scheduled_costs, key=lambda item: item.input_id.encode("ascii"))),
+                components=tuple(sorted(components, key=lambda item: item.component_id.encode("ascii"))),
+                decommissioning_cost=decommissioning,
+                salvage_value=salvage,
+                source_availability_by_year=tuple(sorted(source_availability, key=lambda item: item.year)),
+                base_om_coverage_ids=base_coverage,
+                evidence=system_evidence,
+            )
+        )
+
+    common_causes: list[LifecycleCommonCauseSpec] = []
+    common_ids: set[str] = set()
+    for event in lifecycle.common_cause_events:
+        if not isinstance(event, LifecycleCommonCauseSpec):
+            raise TechnoeconomicValidationError(
+                "Common-cause entries must be LifecycleCommonCauseSpec."
+            )
+        event_id = _validate_stable_id(event.event_id, "common-cause event ID")
+        if event_id in common_ids:
+            raise TechnoeconomicValidationError(
+                f"Duplicate common-cause event ID {event_id!r}."
+            )
+        common_ids.add(event_id)
+        evidence = _validate_lifecycle_evidence(event.evidence, event_id)
+        probability = _validate_lifecycle_distribution(
+            event.annual_probability,
+            f"{event_id}.annual_probability",
+            lower=0.0,
+            upper=1.0,
+        )
+        downtime = _validate_lifecycle_distribution(
+            event.downtime_hours,
+            f"{event_id}.downtime_hours",
+            lower=0.0,
+        )
+        cost = _validate_lifecycle_distribution(
+            event.cost_per_event,
+            f"{event_id}.cost_per_event",
+            lower=0.0,
+        )
+        growth = _validate_lifecycle_growth(
+            event.real_cost_growth,
+            f"{event_id}.real_cost_growth",
+            evidence,
+        )
+        impact = _finite_float(event.capacity_impact, f"{event_id}.capacity_impact")
+        if not 0 < impact <= 1:
+            raise TechnoeconomicValidationError(
+                f"{event_id}.capacity_impact must be in (0,1]."
+            )
+        affected = tuple(
+            technology
+            for technology in ("solectria", "solaredge")
+            if technology in event.affected_systems
+        )
+        if (
+            not affected
+            or len(affected) != len(event.affected_systems)
+            or any(system not in {"solectria", "solaredge"} for system in event.affected_systems)
+        ):
+            raise TechnoeconomicValidationError(
+                f"{event_id}.affected_systems must be a unique nonempty system subset."
+            )
+        coverage_ids = _validate_lifecycle_coverage_ids(
+            event.coverage_ids,
+            f"{event_id}.coverage_ids",
+        )
+        for technology in affected:
+            for coverage_id in coverage_ids:
+                key = (technology, coverage_id)
+                if key in coverage_owners:
+                    raise TechnoeconomicValidationError(
+                        f"Common-cause coverage ID {coverage_id!r} overlaps "
+                        f"{coverage_owners[key]!r} for {technology}."
+                    )
+                coverage_owners[key] = f"common:{event_id}"
+        for spec, owner in (
+            (probability, f"common:{event_id}:probability"),
+            (downtime, f"common:{event_id}:downtime"),
+            (cost, f"common:{event_id}:cost"),
+            (growth, f"common:{event_id}:growth"),
+        ):
+            register_distribution(spec, owner)
+        common_causes.append(
+            replace(
+                event,
+                event_id=event_id,
+                annual_probability=probability,
+                downtime_hours=downtime,
+                capacity_impact=impact,
+                cost_per_event=cost,
+                real_cost_growth=growth,
+                affected_systems=affected,
+                coverage_ids=coverage_ids,
+                evidence=evidence,
+            )
+        )
+
+    safe = lifecycle_safe_realization_max(
+        life,
+        component_count,
+        realization_export_columns=64 + len(input_owners),
+    )
+    if n > int(safe["safe_max_realizations"]):
+        raise TechnoeconomicValidationError(
+            f"Requested {n} realizations exceeds the v6 safe maximum "
+            f"{safe['safe_max_realizations']} limited by {safe['limiting_dimension']}."
+        )
+    for endpoint in distribution_support(discount):
+        annuity_factor_and_crf(endpoint, life)
+
+    normalized_lifecycle = replace(
+        lifecycle,
+        target_capacity_w=target_capacity,
+        systems=(normalized_systems[0], normalized_systems[1]),
+        electricity_value=electricity_value,
+        electricity_value_real_growth=electricity_growth,
+        common_cause_events=tuple(sorted(common_causes, key=lambda item: item.event_id.encode("ascii"))),
+        decision_probability_threshold=decision_threshold,
+        electricity_value_evidence=electricity_value_evidence,
+        **tolerance_values,
+    )
+    return replace(
+        request,
+        n=n,
+        seed=seed,
+        project_life_years=life,
+        capacities=capacities,
+        applied_capacities=applied_capacities,
+        paired_energy_rows=rows,
+        discount_rate=discount,
+        constant_dollar_cost_year=int(request.constant_dollar_cost_year),
+        paired_lifecycle=normalized_lifecycle,
+    )
+
+
 def validate_request(request: TechnoeconomicRequest) -> TechnoeconomicRequest:
     """Return a deterministically ordered, fully validated kernel request."""
 
     validate_runtime_versions()
     if not isinstance(request, TechnoeconomicRequest):
         raise TechnoeconomicValidationError("Request must be a TechnoeconomicRequest.")
+    if request.calculation_contract_version == LIFECYCLE_CALCULATION_CONTRACT_VERSION:
+        return _validate_lifecycle_request(request)
     if request.calculation_contract_version not in {
         LEGACY_CALCULATION_CONTRACT_VERSION,
         CALCULATION_CONTRACT_VERSION,
@@ -2701,6 +4225,10 @@ def validate_request(request: TechnoeconomicRequest) -> TechnoeconomicRequest:
     }:
         raise TechnoeconomicValidationError(
             f"Unsupported calculation contract: {request.calculation_contract_version!r}."
+        )
+    if request.paired_lifecycle is not None:
+        raise TechnoeconomicValidationError(
+            "Only tea-calculation-v6 may define paired_lifecycle."
         )
     if request.sampling_version != SAMPLING_VERSION:
         raise TechnoeconomicValidationError(
@@ -4533,6 +6061,1663 @@ def _sensitivity_models(
     return results
 
 
+def _v6_distribution_specs(request: TechnoeconomicRequest) -> tuple[DistributionSpec, ...]:
+    lifecycle = request.paired_lifecycle
+    if lifecycle is None:
+        raise TechnoeconomicInvariantError("Validated v6 request lost paired_lifecycle.")
+    specs: list[DistributionSpec] = [
+        request.discount_rate,
+        lifecycle.electricity_value,
+        lifecycle.electricity_value_real_growth,
+    ]
+    for system in lifecycle.systems:
+        specs.extend(
+            [
+                system.degradation,
+                system.base_availability,
+                system.base_om_cost_per_w_year,
+                system.base_om_real_growth,
+                system.decommissioning_cost,
+                system.salvage_value,
+            ]
+        )
+        specs.extend(line.cost_per_w for line in system.initial_cost_lines)
+        for line in system.scheduled_costs:
+            specs.extend((line.cost, line.real_cost_growth))
+        for component in system.components:
+            specs.extend(
+                (
+                    component.weibull_beta,
+                    component.weibull_eta_years,
+                    component.repair_hours,
+                    component.logistics_hours,
+                    component.emergency_unit_cost,
+                    component.restock_unit_cost,
+                    component.labor_cost,
+                    component.mobilization_cost,
+                    component.real_cost_growth,
+                )
+            )
+    for event in lifecycle.common_cause_events:
+        specs.extend(
+            (
+                event.annual_probability,
+                event.downtime_hours,
+                event.cost_per_event,
+                event.real_cost_growth,
+            )
+        )
+    return tuple(specs)
+
+
+def _v6_oldest_first(
+    survivors: Sequence[np.ndarray],
+    quantity: int,
+    *,
+    integer: bool,
+) -> list[np.ndarray]:
+    if not survivors:
+        return []
+    dtype = np.int64 if integer else np.float64
+    remaining = np.full(len(survivors[0]), quantity, dtype=dtype)
+    selected = [np.zeros_like(cohort, dtype=dtype) for cohort in survivors]
+    for age in range(len(survivors) - 1, -1, -1):
+        selected[age] = np.minimum(survivors[age], remaining).astype(dtype, copy=False)
+        remaining = remaining - selected[age]
+    return selected
+
+
+def _v6_weibull_probability(
+    beta: np.ndarray,
+    eta: np.ndarray,
+    age: int,
+) -> np.ndarray:
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        cumulative_increment = (
+            np.power((age + 1.0) / eta, beta)
+            - np.power(age / eta, beta)
+        )
+        probability = -np.expm1(-cumulative_increment)
+    if (
+        not np.isfinite(probability).all()
+        or np.any(probability < 0)
+        or np.any(probability > 1)
+    ):
+        raise TechnoeconomicInvariantError(
+            "Validated Weibull inputs produced an invalid annual failure probability."
+        )
+    return np.clip(probability, 0.0, 1.0)
+
+
+def _v6_component_simulation(
+    request: TechnoeconomicRequest,
+    system: LifecycleSystemSpec,
+    component: LifecycleComponentSpec,
+    samples: Mapping[str, np.ndarray],
+    hours_by_year: np.ndarray,
+    trace_selections: Sequence[tuple[int, str, float]] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> Mapping[str, Any]:
+    n = request.n
+    life = request.project_life_years
+    shape = (n, life)
+    numeric_names = (
+        "event_failures",
+        "expected_failures",
+        "preventive_replacements",
+        "expected_preventive_replacements",
+        "stocked_replacements",
+        "emergency_replacements",
+        "restock_quantity",
+        "downtime_fraction",
+        "expected_downtime_fraction",
+        "hardware_cost_usd",
+        "labor_cost_usd",
+        "mobilization_cost_usd",
+        "warranty_credit_usd",
+        "corrective_cost_usd",
+        "preventive_cost_usd",
+        "expected_corrective_cost_usd",
+        "expected_preventive_cost_usd",
+        "spares_start",
+        "spares_end",
+    )
+    values: dict[str, np.ndarray] = {
+        name: np.zeros(shape, dtype=np.float64) for name in numeric_names
+    }
+    beta = samples[component.weibull_beta.input_id]
+    eta = samples[component.weibull_eta_years.input_id]
+    repair_hours = samples[component.repair_hours.input_id]
+    logistics_hours = samples[component.logistics_hours.input_id]
+    emergency_cost = samples[component.emergency_unit_cost.input_id]
+    restock_cost = samples[component.restock_unit_cost.input_id]
+    labor_cost = samples[component.labor_cost.input_id]
+    mobilization_cost = samples[component.mobilization_cost.input_id]
+    cost_growth = samples[component.real_cost_growth.input_id]
+    event_cohorts: list[np.ndarray] = [
+        np.full(n, component.count, dtype=np.int64)
+    ]
+    expected_cohorts: list[np.ndarray] = [
+        np.full(n, float(component.count), dtype=np.float64)
+    ]
+    event_spares = np.full(n, component.initial_spares, dtype=np.int64)
+    expected_spares = np.full(n, float(component.initial_spares), dtype=np.float64)
+    preventive_by_year = {
+        item.year: item.quantity for item in component.preventive_replacements
+    }
+    trace_rows: list[dict[str, Any]] = []
+
+    for year_index in range(life):
+        if cancel_check is not None:
+            cancel_check()
+        project_year = year_index + 1
+        probabilities = [
+            _v6_weibull_probability(beta, eta, age)
+            for age in range(len(event_cohorts))
+        ]
+        event_failures_by_age: list[np.ndarray] = []
+        expected_failures_by_age: list[np.ndarray] = []
+        for age, (cohort, expected_cohort, probability) in enumerate(
+            zip(event_cohorts, expected_cohorts, probabilities)
+        ):
+            stable_id = (
+                f"{system.technology}.{component.component_id}."
+                f"t{project_year:04d}.a{age:04d}"
+            )
+            generator = np.random.Generator(
+                _lifecycle_substream(
+                    request.seed,
+                    "component-binomial",
+                    stable_id,
+                )
+            )
+            event_failures = generator.binomial(cohort, probability).astype(
+                np.int64,
+                copy=False,
+            )
+            event_failures_by_age.append(event_failures)
+            expected_failures_by_age.append(expected_cohort * probability)
+
+        event_survivors = [
+            cohort - failures
+            for cohort, failures in zip(event_cohorts, event_failures_by_age)
+        ]
+        expected_survivors = [
+            cohort - failures
+            for cohort, failures in zip(
+                expected_cohorts,
+                expected_failures_by_age,
+            )
+        ]
+        preventive_quantity = preventive_by_year.get(project_year, 0)
+        event_preventive_by_age = _v6_oldest_first(
+            event_survivors,
+            preventive_quantity,
+            integer=True,
+        )
+        expected_preventive_by_age = _v6_oldest_first(
+            expected_survivors,
+            preventive_quantity,
+            integer=False,
+        )
+        event_failures = np.sum(event_failures_by_age, axis=0, dtype=np.int64)
+        expected_failures = np.sum(
+            expected_failures_by_age,
+            axis=0,
+            dtype=np.float64,
+        )
+        event_preventive = np.sum(
+            event_preventive_by_age,
+            axis=0,
+            dtype=np.int64,
+        )
+        expected_preventive = np.sum(
+            expected_preventive_by_age,
+            axis=0,
+            dtype=np.float64,
+        )
+        stocked = np.minimum(event_failures, event_spares)
+        emergency = event_failures - stocked
+        restock = component.spare_target - (event_spares - stocked)
+        expected_stocked = np.minimum(expected_failures, expected_spares)
+        expected_emergency = expected_failures - expected_stocked
+        expected_restock = component.spare_target - (
+            expected_spares - expected_stocked
+        )
+        if np.any(restock < 0) or np.any(expected_restock < -1e-12):
+            raise TechnoeconomicInvariantError(
+                "Spare restock calculation produced a negative quantity."
+            )
+        growth_factor = np.power(1.0 + cost_growth, year_index)
+        event_hardware = (
+            emergency * emergency_cost + restock * restock_cost
+        ) * growth_factor
+        event_labor = event_failures * labor_cost * growth_factor
+        event_batches = np.where(
+            event_failures > 0,
+            np.ceil(event_failures / component.batch_size),
+            0.0,
+        )
+        event_mobilization = event_batches * mobilization_cost * growth_factor
+        expected_hardware = (
+            expected_emergency * emergency_cost
+            + expected_restock * restock_cost
+        ) * growth_factor
+        expected_labor = expected_failures * labor_cost * growth_factor
+        expected_batches = np.where(
+            expected_failures > 0,
+            np.ceil(expected_failures / component.batch_size),
+            0.0,
+        )
+        expected_mobilization = (
+            expected_batches * mobilization_cost * growth_factor
+        )
+
+        event_credit = np.zeros(n, dtype=np.float64)
+        expected_credit = np.zeros(n, dtype=np.float64)
+        if component.warranty is not None and component.warranty.fraction > 0:
+            covered_ages = range(
+                min(component.warranty.age_limit_years, len(event_cohorts))
+            )
+            eligible_event_count = np.sum(
+                [event_failures_by_age[age] for age in covered_ages],
+                axis=0,
+                dtype=np.int64,
+            ) if component.warranty.age_limit_years > 0 else np.zeros(n, dtype=np.int64)
+            eligible_expected_count = np.sum(
+                [expected_failures_by_age[age] for age in covered_ages],
+                axis=0,
+                dtype=np.float64,
+            ) if component.warranty.age_limit_years > 0 else np.zeros(n, dtype=np.float64)
+            event_ratio = np.divide(
+                eligible_event_count,
+                event_failures,
+                out=np.zeros(n, dtype=np.float64),
+                where=event_failures > 0,
+            )
+            expected_ratio = np.divide(
+                eligible_expected_count,
+                expected_failures,
+                out=np.zeros(n, dtype=np.float64),
+                where=expected_failures > 0,
+            )
+            event_eligible_gross = np.zeros(n, dtype=np.float64)
+            expected_eligible_gross = np.zeros(n, dtype=np.float64)
+            categories = set(component.warranty.covered_cost_categories)
+            if "hardware" in categories:
+                event_eligible_gross += event_hardware * event_ratio
+                expected_eligible_gross += expected_hardware * expected_ratio
+            if "labor" in categories:
+                event_eligible_gross += event_labor * event_ratio
+                expected_eligible_gross += expected_labor * expected_ratio
+            if "mobilization" in categories:
+                event_eligible_gross += event_mobilization * event_ratio
+                expected_eligible_gross += expected_mobilization * expected_ratio
+            event_credit = np.minimum(
+                event_eligible_gross,
+                component.warranty.fraction * event_eligible_gross,
+            )
+            expected_credit = np.minimum(
+                expected_eligible_gross,
+                component.warranty.fraction * expected_eligible_gross,
+            )
+
+        event_corrective = (
+            event_hardware + event_labor + event_mobilization - event_credit
+        )
+        expected_corrective = (
+            expected_hardware
+            + expected_labor
+            + expected_mobilization
+            - expected_credit
+        )
+        event_preventive_cost = (
+            event_preventive * (restock_cost + labor_cost)
+            + np.where(
+                event_preventive > 0,
+                np.ceil(event_preventive / component.batch_size),
+                0.0,
+            )
+            * mobilization_cost
+        ) * growth_factor
+        expected_preventive_cost = (
+            expected_preventive * (restock_cost + labor_cost)
+            + np.where(
+                expected_preventive > 0,
+                np.ceil(expected_preventive / component.batch_size),
+                0.0,
+            )
+            * mobilization_cost
+        ) * growth_factor
+        hours = hours_by_year[:, year_index]
+        event_downtime = np.minimum(
+            1.0,
+            component.capacity_impact
+            * (
+                stocked * repair_hours
+                + emergency * (logistics_hours + repair_hours)
+            )
+            / hours,
+        )
+        expected_downtime = np.minimum(
+            1.0,
+            component.capacity_impact
+            * (
+                expected_stocked * repair_hours
+                + expected_emergency * (logistics_hours + repair_hours)
+            )
+            / hours,
+        )
+
+        for name, column in (
+            ("event_failures", event_failures),
+            ("expected_failures", expected_failures),
+            ("preventive_replacements", event_preventive),
+            ("expected_preventive_replacements", expected_preventive),
+            ("stocked_replacements", stocked),
+            ("emergency_replacements", emergency),
+            ("restock_quantity", restock),
+            ("downtime_fraction", event_downtime),
+            ("expected_downtime_fraction", expected_downtime),
+            ("hardware_cost_usd", event_hardware),
+            ("labor_cost_usd", event_labor),
+            ("mobilization_cost_usd", event_mobilization),
+            ("warranty_credit_usd", event_credit),
+            ("corrective_cost_usd", event_corrective),
+            ("preventive_cost_usd", event_preventive_cost),
+            ("expected_corrective_cost_usd", expected_corrective),
+            ("expected_preventive_cost_usd", expected_preventive_cost),
+            ("spares_start", event_spares),
+            ("spares_end", np.full(n, component.spare_target)),
+        ):
+            values[name][:, year_index] = column
+
+        if trace_selections:
+            for realization_index, selection_label, quantile in trace_selections:
+                for age in range(len(event_cohorts)):
+                    trace_rows.append(
+                        {
+                            "selection_label": selection_label,
+                            "quantile": float(quantile),
+                            "realization_index": int(realization_index + 1),
+                            "system": system.technology,
+                            "project_year": project_year,
+                            "component_id": component.component_id,
+                            "category": component.category,
+                            "cohort_age": age,
+                            "component_year_total_row": age == 0,
+                            "start_count": int(event_cohorts[age][realization_index]),
+                            "expected_start_count": float(expected_cohorts[age][realization_index]),
+                            "annual_failure_probability": float(probabilities[age][realization_index]),
+                            "event_failures": int(event_failures_by_age[age][realization_index]),
+                            "expected_failures": float(expected_failures_by_age[age][realization_index]),
+                            "preventive_replacements": int(event_preventive_by_age[age][realization_index]),
+                            "expected_preventive_replacements": float(expected_preventive_by_age[age][realization_index]),
+                            "spares_start": int(event_spares[realization_index]),
+                            "stocked_replacements": int(stocked[realization_index]),
+                            "emergency_replacements": int(emergency[realization_index]),
+                            "restock_quantity": int(restock[realization_index]),
+                            "spares_end": component.spare_target,
+                            "downtime_fraction": float(event_downtime[realization_index]),
+                            "expected_downtime_fraction": float(expected_downtime[realization_index]),
+                            "hardware_cost_usd": float(event_hardware[realization_index]),
+                            "labor_cost_usd": float(event_labor[realization_index]),
+                            "mobilization_cost_usd": float(event_mobilization[realization_index]),
+                            "warranty_credit_usd": float(event_credit[realization_index]),
+                            "corrective_cost_usd": float(event_corrective[realization_index]),
+                            "preventive_cost_usd": float(event_preventive_cost[realization_index]),
+                        }
+                    )
+
+        event_spares = np.full(n, component.spare_target, dtype=np.int64)
+        expected_spares = np.full(n, float(component.spare_target), dtype=np.float64)
+        event_new = event_failures + event_preventive
+        expected_new = expected_failures + expected_preventive
+        event_cohorts = [event_new.astype(np.int64, copy=False)] + [
+            survivor - preventive
+            for survivor, preventive in zip(
+                event_survivors,
+                event_preventive_by_age,
+            )
+        ]
+        expected_cohorts = [expected_new] + [
+            survivor - preventive
+            for survivor, preventive in zip(
+                expected_survivors,
+                expected_preventive_by_age,
+            )
+        ]
+        event_total = np.sum(event_cohorts, axis=0, dtype=np.int64)
+        expected_total = np.sum(expected_cohorts, axis=0, dtype=np.float64)
+        if np.any(event_total != component.count) or not np.allclose(
+            expected_total,
+            component.count,
+            rtol=0.0,
+            atol=1e-9,
+        ):
+            raise TechnoeconomicInvariantError(
+                f"Cohort renewal did not conserve {system.technology} "
+                f"{component.component_id} count."
+            )
+
+    values["component_id"] = component.component_id
+    values["category"] = component.category
+    values["trace_rows"] = tuple(trace_rows)
+    return values
+
+
+def _v6_source_energy_matrices(
+    request: TechnoeconomicRequest,
+    weather_paths: np.ndarray,
+) -> Mapping[SystemName, np.ndarray]:
+    rows = {row.year: row for row in request.paired_energy_rows}
+    result: dict[SystemName, np.ndarray] = {}
+    for technology, attribute in (
+        ("solectria", "sol_predicted_kwh_ac"),
+        ("solaredge", "se_predicted_kwh_ac"),
+    ):
+        matrix = np.empty(weather_paths.shape, dtype=np.float64)
+        for year_index in range(weather_paths.shape[1]):
+            matrix[:, year_index] = np.fromiter(
+                (
+                    getattr(rows[int(year)], attribute)
+                    for year in weather_paths[:, year_index]
+                ),
+                dtype=np.float64,
+                count=weather_paths.shape[0],
+            )
+        result[technology] = matrix
+    return result
+
+
+def _v6_common_cause_simulation(
+    request: TechnoeconomicRequest,
+    samples: Mapping[str, np.ndarray],
+    hours_by_year: np.ndarray,
+    cancel_check: Callable[[], None] | None = None,
+) -> Mapping[str, Any]:
+    lifecycle = request.paired_lifecycle
+    if lifecycle is None:
+        raise TechnoeconomicInvariantError("Validated v6 request lost paired_lifecycle.")
+    shape = hours_by_year.shape
+    event_availability = {
+        technology: np.ones(shape, dtype=np.float64)
+        for technology in ("solectria", "solaredge")
+    }
+    expected_availability = {
+        technology: np.ones(shape, dtype=np.float64)
+        for technology in ("solectria", "solaredge")
+    }
+    event_cost = {
+        technology: np.zeros(shape, dtype=np.float64)
+        for technology in ("solectria", "solaredge")
+    }
+    expected_cost = {
+        technology: np.zeros(shape, dtype=np.float64)
+        for technology in ("solectria", "solaredge")
+    }
+    details: dict[str, Mapping[str, np.ndarray]] = {}
+    for event in lifecycle.common_cause_events:
+        probability = samples[event.annual_probability.input_id]
+        downtime_hours = samples[event.downtime_hours.input_id]
+        unit_cost = samples[event.cost_per_event.input_id]
+        growth = samples[event.real_cost_growth.input_id]
+        event_matrix = np.zeros(shape, dtype=np.float64)
+        expected_matrix = np.broadcast_to(probability[:, None], shape).copy()
+        downtime_event = np.zeros(shape, dtype=np.float64)
+        downtime_expected = np.zeros(shape, dtype=np.float64)
+        cost_event = np.zeros(shape, dtype=np.float64)
+        cost_expected = np.zeros(shape, dtype=np.float64)
+        for year_index in range(request.project_life_years):
+            if cancel_check is not None:
+                cancel_check()
+            project_year = year_index + 1
+            stable_id = f"{event.event_id}.t{project_year:04d}"
+            generator = np.random.Generator(
+                _lifecycle_substream(
+                    request.seed,
+                    "common-cause-bernoulli",
+                    stable_id,
+                )
+            )
+            occurred = (
+                generator.random(request.n) < probability
+            ).astype(np.float64)
+            event_matrix[:, year_index] = occurred
+            downtime_event[:, year_index] = np.minimum(
+                1.0,
+                occurred
+                * event.capacity_impact
+                * downtime_hours
+                / hours_by_year[:, year_index],
+            )
+            downtime_expected[:, year_index] = np.minimum(
+                1.0,
+                probability
+                * event.capacity_impact
+                * downtime_hours
+                / hours_by_year[:, year_index],
+            )
+            growth_factor = np.power(1.0 + growth, year_index)
+            cost_event[:, year_index] = occurred * unit_cost * growth_factor
+            cost_expected[:, year_index] = probability * unit_cost * growth_factor
+        for technology in event.affected_systems:
+            event_availability[technology] *= 1.0 - downtime_event
+            expected_availability[technology] *= 1.0 - downtime_expected
+            event_cost[technology] += cost_event
+            expected_cost[technology] += cost_expected
+        details[event.event_id] = {
+            "event": event_matrix,
+            "expected_event": expected_matrix,
+            "downtime_fraction": downtime_event,
+            "expected_downtime_fraction": downtime_expected,
+            "cost_usd": cost_event,
+            "expected_cost_usd": cost_expected,
+        }
+    return {
+        "event_availability": event_availability,
+        "expected_availability": expected_availability,
+        "event_cost": event_cost,
+        "expected_cost": expected_cost,
+        "details": details,
+    }
+
+
+def _v6_system_simulation(
+    request: TechnoeconomicRequest,
+    system: LifecycleSystemSpec,
+    samples: Mapping[str, np.ndarray],
+    weather_paths: np.ndarray,
+    source_energy: np.ndarray,
+    hours_by_year: np.ndarray,
+    common: Mapping[str, Any],
+    *,
+    trace_selections: Sequence[tuple[int, str, float]] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> Mapping[str, Any]:
+    lifecycle = request.paired_lifecycle
+    if lifecycle is None or request.applied_capacities is None:
+        raise TechnoeconomicInvariantError("Validated v6 request lost lifecycle capacity data.")
+    n = request.n
+    life = request.project_life_years
+    shape = (n, life)
+    applied_map = {item.system: item for item in request.applied_capacities}
+    source_capacity = applied_map[system.technology].applied_capacity_w
+    target_source_energy = (
+        source_energy * lifecycle.target_capacity_w / source_capacity
+    )
+    degradation_rate = samples[system.degradation.input_id]
+    degradation_factor = np.power(
+        1.0 - degradation_rate[:, None],
+        np.arange(life, dtype=np.float64)[None, :],
+    )
+    base_availability = np.broadcast_to(
+        samples[system.base_availability.input_id][:, None],
+        shape,
+    ).copy()
+
+    component_availability_event = np.ones(shape, dtype=np.float64)
+    component_availability_expected = np.ones(shape, dtype=np.float64)
+    corrective_event = np.zeros(shape, dtype=np.float64)
+    corrective_expected = np.zeros(shape, dtype=np.float64)
+    preventive_event = np.zeros(shape, dtype=np.float64)
+    preventive_expected = np.zeros(shape, dtype=np.float64)
+    component_results: list[Mapping[str, Any]] = []
+    component_trace_rows: list[Mapping[str, Any]] = []
+    initial_spare_inventory = np.zeros(n, dtype=np.float64)
+    for component in system.components:
+        result = _v6_component_simulation(
+            request,
+            system,
+            component,
+            samples,
+            hours_by_year,
+            trace_selections,
+            cancel_check,
+        )
+        component_results.append(result)
+        component_availability_event *= 1.0 - result["downtime_fraction"]
+        component_availability_expected *= 1.0 - result[
+            "expected_downtime_fraction"
+        ]
+        corrective_event += result["corrective_cost_usd"]
+        corrective_expected += result["expected_corrective_cost_usd"]
+        preventive_event += result["preventive_cost_usd"]
+        preventive_expected += result["expected_preventive_cost_usd"]
+        component_trace_rows.extend(result["trace_rows"])
+        initial_spare_inventory += (
+            component.initial_spares
+            * samples[component.restock_unit_cost.input_id]
+        )
+
+    common_availability_event = common["event_availability"][system.technology]
+    common_availability_expected = common["expected_availability"][system.technology]
+    target_availability_event = (
+        base_availability
+        * component_availability_event
+        * common_availability_event
+    )
+    target_availability_expected = (
+        base_availability
+        * component_availability_expected
+        * common_availability_expected
+    )
+    source_availability = np.ones(shape, dtype=np.float64)
+    if lifecycle.source_energy_basis == "net":
+        availability_by_year = {
+            item.year: item.availability
+            for item in system.source_availability_by_year
+        }
+        for year_index in range(life):
+            source_availability[:, year_index] = np.fromiter(
+                (
+                    availability_by_year[int(year)]
+                    for year in weather_paths[:, year_index]
+                ),
+                dtype=np.float64,
+                count=n,
+            )
+    availability_adjustment_event = (
+        target_availability_event
+        if lifecycle.source_energy_basis == "gross"
+        else target_availability_event / source_availability
+    )
+    availability_adjustment_expected = (
+        target_availability_expected
+        if lifecycle.source_energy_basis == "gross"
+        else target_availability_expected / source_availability
+    )
+    energy_event = (
+        target_source_energy
+        * degradation_factor
+        * availability_adjustment_event
+    )
+    energy_expected = (
+        target_source_energy
+        * degradation_factor
+        * availability_adjustment_expected
+    )
+
+    initial_cost = initial_spare_inventory.copy()
+    for line in system.initial_cost_lines:
+        initial_cost += lifecycle.target_capacity_w * samples[line.cost_per_w.input_id]
+    year_indices = np.arange(life, dtype=np.float64)[None, :]
+    base_om_cost = (
+        lifecycle.target_capacity_w
+        * samples[system.base_om_cost_per_w_year.input_id][:, None]
+        * np.power(
+            1.0 + samples[system.base_om_real_growth.input_id][:, None],
+            year_indices,
+        )
+    )
+    scheduled_cost = np.zeros(shape, dtype=np.float64)
+    for line in system.scheduled_costs:
+        base_cost = samples[line.cost.input_id]
+        growth = samples[line.real_cost_growth.input_id]
+        for project_year in line.occurrence_years:
+            scheduled_cost[:, project_year - 1] += (
+                base_cost * np.power(1.0 + growth, project_year - 1)
+            )
+    common_cost_event = common["event_cost"][system.technology]
+    common_cost_expected = common["expected_cost"][system.technology]
+    annual_operating_cost_event = (
+        base_om_cost
+        + scheduled_cost
+        + preventive_event
+        + corrective_event
+        + common_cost_event
+    )
+    annual_operating_cost_expected = (
+        base_om_cost
+        + scheduled_cost
+        + preventive_expected
+        + corrective_expected
+        + common_cost_expected
+    )
+    terminal_cost = (
+        samples[system.decommissioning_cost.input_id]
+        - samples[system.salvage_value.input_id]
+    )
+    annual_cost_event = annual_operating_cost_event.copy()
+    annual_cost_expected = annual_operating_cost_expected.copy()
+    annual_cost_event[:, -1] += terminal_cost
+    annual_cost_expected[:, -1] += terminal_cost
+
+    selected_expected = lifecycle.reliability_mode == "expected"
+    return {
+        "technology": system.technology,
+        "source_energy_kwh": source_energy,
+        "target_source_energy_kwh": target_source_energy,
+        "degradation_factor": degradation_factor,
+        "base_availability": base_availability,
+        "component_availability_event": component_availability_event,
+        "component_availability_expected": component_availability_expected,
+        "common_cause_availability_event": common_availability_event,
+        "common_cause_availability_expected": common_availability_expected,
+        "target_availability_event": target_availability_event,
+        "target_availability_expected": target_availability_expected,
+        "source_availability": source_availability,
+        "availability_adjustment_event": availability_adjustment_event,
+        "availability_adjustment_expected": availability_adjustment_expected,
+        "energy_event_kwh": energy_event,
+        "energy_expected_kwh": energy_expected,
+        "delivered_energy_kwh": energy_expected if selected_expected else energy_event,
+        "initial_cost_usd": initial_cost,
+        "base_om_cost_usd": base_om_cost,
+        "scheduled_cost_usd": scheduled_cost,
+        "preventive_cost_event_usd": preventive_event,
+        "preventive_cost_expected_usd": preventive_expected,
+        "corrective_cost_event_usd": corrective_event,
+        "corrective_cost_expected_usd": corrective_expected,
+        "common_cause_cost_event_usd": common_cost_event,
+        "common_cause_cost_expected_usd": common_cost_expected,
+        "terminal_cost_usd": terminal_cost,
+        "annual_operating_cost_event_usd": annual_operating_cost_event,
+        "annual_operating_cost_expected_usd": annual_operating_cost_expected,
+        "annual_cost_event_usd": annual_cost_event,
+        "annual_cost_expected_usd": annual_cost_expected,
+        "annual_cost_usd": annual_cost_expected if selected_expected else annual_cost_event,
+        "component_results": tuple(component_results),
+        "component_trace_rows": tuple(component_trace_rows),
+    }
+
+
+def _v6_quantile_statistics(values: np.ndarray) -> Mapping[str, float]:
+    quantiles = np.quantile(values, [0.10, 0.50, 0.90], method="linear")
+    return {
+        "mean": float(np.mean(values)),
+        "p10": float(quantiles[0]),
+        "p50": float(quantiles[1]),
+        "p90": float(quantiles[2]),
+    }
+
+
+def _v6_probability_counts(
+    values: np.ndarray,
+    tolerances: np.ndarray,
+    *,
+    positive_label: str,
+    negative_label: str,
+) -> tuple[np.ndarray, Mapping[str, Any]]:
+    outcomes = np.where(
+        values > tolerances,
+        positive_label,
+        np.where(values < -tolerances, negative_label, "tie"),
+    ).astype(object)
+    positive = int(np.count_nonzero(outcomes == positive_label))
+    negative = int(np.count_nonzero(outcomes == negative_label))
+    tie = int(np.count_nonzero(outcomes == "tie"))
+    denominator = int(len(values))
+    return outcomes, {
+        "positive": positive,
+        "negative": negative,
+        "tie": tie,
+        "denominator": denominator,
+        "p_positive": positive / denominator,
+        "p_negative": negative / denominator,
+        "p_tie": tie / denominator,
+        "positive_label": positive_label,
+        "negative_label": negative_label,
+    }
+
+
+def _v6_add_decision_probability_convergence(
+    convergence: Mapping[str, Any],
+    outcome_sets: Mapping[str, tuple[np.ndarray, tuple[str, ...]]],
+) -> dict[str, Any]:
+    """Add prefix stability evidence for the probabilities that drive v6 decisions."""
+
+    result = dict(convergence)
+    raw_checkpoints = result.get("checkpoints")
+    if not isinstance(raw_checkpoints, Sequence) or len(raw_checkpoints) < 2:
+        return result
+    checkpoints: list[dict[str, Any]] = []
+    for raw_checkpoint in raw_checkpoints:
+        if not isinstance(raw_checkpoint, Mapping):
+            return result
+        checkpoint = dict(raw_checkpoint)
+        count = checkpoint.get("realization_count")
+        if not _is_int(count) or int(count) <= 0:
+            return result
+        probabilities: dict[str, Mapping[str, float]] = {}
+        for metric_id, (outcomes, categories) in sorted(outcome_sets.items()):
+            vector = np.asarray(outcomes, dtype=object)
+            if vector.ndim != 1 or int(count) > len(vector):
+                return result
+            probabilities[metric_id] = _category_probabilities(
+                vector[: int(count)],
+                categories,
+            )
+        checkpoint["decision_probabilities"] = probabilities
+        checkpoints.append(checkpoint)
+
+    probability_threshold = float(
+        result.get("class_probability_change_threshold", 0.001)
+    )
+    prior = checkpoints[-2]["decision_probabilities"]
+    final = checkpoints[-1]["decision_probabilities"]
+    reasons = [str(reason) for reason in (result.get("reasons") or ())]
+    for metric_id, (_, categories) in sorted(outcome_sets.items()):
+        for category in categories:
+            if (
+                abs(
+                    float(final[metric_id][category])
+                    - float(prior[metric_id][category])
+                )
+                > probability_threshold
+            ):
+                reasons.append(
+                    f"decision_probability_change:{metric_id}:{category}"
+                )
+    normalized_reasons = sorted(set(reasons))
+    result["checkpoints"] = checkpoints
+    result["reasons"] = normalized_reasons
+    result["status"] = "stable" if not normalized_reasons else "not_demonstrated"
+    result["decision_probability_change_threshold"] = probability_threshold
+    return result
+
+
+def _v6_representative_selections(
+    npv: np.ndarray,
+) -> tuple[tuple[int, str, float], ...]:
+    quantiles = np.quantile(npv, [0.10, 0.50, 0.90], method="linear")
+    labels = ("NPV-P10", "NPV-P50", "NPV-P90")
+    selections: list[tuple[int, str, float]] = []
+    for label, quantile in zip(labels, quantiles):
+        distances = np.abs(npv - quantile)
+        index = int(np.flatnonzero(distances == np.min(distances))[0])
+        selections.append((index, label, float(quantile)))
+    return tuple(selections)
+
+
+def _run_technoeconomic_v6(
+    request: TechnoeconomicRequest,
+    *,
+    progress_cb: Callable[[float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> TechnoeconomicResult:
+    def checkpoint(fraction: float, stage: str) -> None:
+        if cancel_check is not None:
+            cancel_check()
+        if progress_cb is not None:
+            progress_cb(fraction, stage)
+
+    checkpoint(0.0, "Validating v6 lifecycle inputs")
+    request = validate_request(request)
+    lifecycle = request.paired_lifecycle
+    if lifecycle is None or request.applied_capacities is None:
+        raise TechnoeconomicInvariantError("Validated v6 request lost lifecycle inputs.")
+    system_specs = {system.technology: system for system in lifecycle.systems}
+    component_count = sum(len(system.components) for system in lifecycle.systems)
+
+    checkpoint(0.06, "Generating domain-separated lifecycle samples")
+    samples = generate_lhs_v2(
+        request.n,
+        request.seed,
+        _v6_distribution_specs(request),
+    )
+    weather_paths = allocate_weather_paths_v2(
+        request.n,
+        request.seed,
+        [row.year for row in request.paired_energy_rows],
+        request.project_life_years,
+    )
+    hours_by_year = np.where(
+        np.vectorize(calendar.isleap, otypes=[bool])(weather_paths),
+        8784.0,
+        8760.0,
+    )
+    source_energy = _v6_source_energy_matrices(request, weather_paths)
+    common = _v6_common_cause_simulation(
+        request,
+        samples,
+        hours_by_year,
+        cancel_check,
+    )
+
+    checkpoint(0.22, "Simulating event and expected reliability cohorts")
+    systems: dict[SystemName, Mapping[str, Any]] = {}
+    for technology in ("solectria", "solaredge"):
+        systems[technology] = _v6_system_simulation(
+            request,
+            system_specs[technology],
+            samples,
+            weather_paths,
+            source_energy[technology],
+            hours_by_year,
+            common,
+            cancel_check=cancel_check,
+        )
+    checkpoint(0.52, "Calculating lifecycle finance and upgrade value")
+
+    discount_rate = samples[request.discount_rate.input_id]
+    project_years = np.arange(
+        1,
+        request.project_life_years + 1,
+        dtype=np.float64,
+    )
+    discount_factor = np.power(
+        1.0 + discount_rate[:, None],
+        -project_years[None, :],
+    )
+    _, crf_values = annuity_factor_and_crf(
+        discount_rate,
+        request.project_life_years,
+    )
+    crf = np.asarray(crf_values, dtype=np.float64)
+    electricity_value = (
+        samples[lifecycle.electricity_value.input_id][:, None]
+        * np.power(
+            1.0
+            + samples[lifecycle.electricity_value_real_growth.input_id][:, None],
+            project_years[None, :] - 1.0,
+        )
+    )
+
+    def financials(mode: LifecycleReliabilityMode) -> Mapping[str, Any]:
+        energy_key = "energy_event_kwh" if mode == "event" else "energy_expected_kwh"
+        cost_key = "annual_cost_event_usd" if mode == "event" else "annual_cost_expected_usd"
+        so_energy = systems["solectria"][energy_key]
+        se_energy = systems["solaredge"][energy_key]
+        so_annual_cost = systems["solectria"][cost_key]
+        se_annual_cost = systems["solaredge"][cost_key]
+        so_initial = systems["solectria"]["initial_cost_usd"]
+        se_initial = systems["solaredge"]["initial_cost_usd"]
+        so_pv_cost = so_initial + np.sum(so_annual_cost * discount_factor, axis=1)
+        se_pv_cost = se_initial + np.sum(se_annual_cost * discount_factor, axis=1)
+        so_pv_energy = np.sum(so_energy * discount_factor, axis=1)
+        se_pv_energy = np.sum(se_energy * discount_factor, axis=1)
+        if np.any(so_pv_energy <= 0) or np.any(se_pv_energy <= 0):
+            raise TechnoeconomicInvariantError(
+                "Version-6 delivered present energy must remain positive."
+            )
+        so_lcoe = so_pv_cost / so_pv_energy
+        se_lcoe = se_pv_cost / se_pv_energy
+        delta_initial = se_initial - so_initial
+        delta_annual_cost = se_annual_cost - so_annual_cost
+        delta_energy = se_energy - so_energy
+        pv_incremental_cashflow = (
+            electricity_value * delta_energy - delta_annual_cost
+        ) * discount_factor
+        upgrade_npv = -delta_initial + np.sum(
+            pv_incremental_cashflow,
+            axis=1,
+        )
+        return {
+            "so_energy": so_energy,
+            "se_energy": se_energy,
+            "so_annual_cost": so_annual_cost,
+            "se_annual_cost": se_annual_cost,
+            "so_initial": so_initial,
+            "se_initial": se_initial,
+            "so_pv_cost": so_pv_cost,
+            "se_pv_cost": se_pv_cost,
+            "so_pv_energy": so_pv_energy,
+            "se_pv_energy": se_pv_energy,
+            "so_lcoe": so_lcoe,
+            "se_lcoe": se_lcoe,
+            "delta_initial": delta_initial,
+            "delta_annual_cost": delta_annual_cost,
+            "delta_energy_annual": delta_energy,
+            "delta_pv_cost": se_pv_cost - so_pv_cost,
+            "delta_pv_energy": se_pv_energy - so_pv_energy,
+            "delta_lcoe": se_lcoe - so_lcoe,
+            "incremental_cashflow": electricity_value * delta_energy - delta_annual_cost,
+            "pv_incremental_cashflow": pv_incremental_cashflow,
+            "upgrade_npv": upgrade_npv,
+        }
+
+    event_financials = financials("event")
+    expected_financials = financials("expected")
+    selected = (
+        event_financials
+        if lifecycle.reliability_mode == "event"
+        else expected_financials
+    )
+    target_capacity = lifecycle.target_capacity_w
+    relative_tolerance = lifecycle.relative_tolerance
+    cost_tolerance = np.maximum(
+        lifecycle.cost_absolute_tolerance_usd_per_w * target_capacity,
+        relative_tolerance
+        * np.maximum(
+            np.abs(selected["se_pv_cost"]),
+            np.abs(selected["so_pv_cost"]),
+        ),
+    )
+    energy_tolerance = np.maximum(
+        lifecycle.energy_absolute_tolerance_kwh_per_w * target_capacity,
+        relative_tolerance
+        * np.maximum(
+            np.abs(selected["se_pv_energy"]),
+            np.abs(selected["so_pv_energy"]),
+        ),
+    )
+    npv_tolerance = np.maximum(
+        lifecycle.npv_absolute_tolerance_usd_per_w * target_capacity,
+        relative_tolerance
+        * np.maximum(
+            np.maximum(
+                np.abs(selected["se_pv_cost"]),
+                np.abs(selected["so_pv_cost"]),
+            ),
+            np.abs(selected["upgrade_npv"]),
+        ),
+    )
+    lcoe_tolerance = np.maximum(
+        lifecycle.lcoe_absolute_tolerance,
+        relative_tolerance
+        * np.maximum(
+            np.abs(selected["se_lcoe"]),
+            np.abs(selected["so_lcoe"]),
+        ),
+    )
+    cost_class = np.where(
+        selected["delta_pv_cost"] > cost_tolerance,
+        "cost_increase",
+        np.where(
+            selected["delta_pv_cost"] < -cost_tolerance,
+            "cost_saving",
+            "cost_neutral",
+        ),
+    ).astype(object)
+    energy_class = np.where(
+        selected["delta_pv_energy"] > energy_tolerance,
+        "positive_lifecycle_gain",
+        np.where(
+            selected["delta_pv_energy"] < -energy_tolerance,
+            "negative_lifecycle_gain",
+            "zero_lifecycle_gain",
+        ),
+    ).astype(object)
+    energy_suffix = {
+        "positive_lifecycle_gain": "energy_gain",
+        "negative_lifecycle_gain": "energy_loss",
+        "zero_lifecycle_gain": "zero_energy_change",
+    }
+    tradeoff_class = np.asarray(
+        [
+            f"{cost}_{energy_suffix[str(energy)]}"
+            for cost, energy in zip(cost_class, energy_class)
+        ],
+        dtype=object,
+    )
+    lcoo = np.full(request.n, np.nan, dtype=np.float64)
+    nonzero_energy = np.abs(selected["delta_pv_energy"]) > energy_tolerance
+    lcoo[nonzero_energy] = (
+        selected["delta_pv_cost"][nonzero_energy]
+        / selected["delta_pv_energy"][nonzero_energy]
+    )
+    lcoo_reason = np.where(
+        nonzero_energy,
+        None,
+        "near_zero_incremental_energy",
+    ).astype(object)
+    npv_outcome, npv_counts = _v6_probability_counts(
+        selected["upgrade_npv"],
+        npv_tolerance,
+        positive_label="positive",
+        negative_label="negative",
+    )
+    delta_lcoe_outcome, delta_lcoe_counts = _v6_probability_counts(
+        selected["delta_lcoe"],
+        lcoe_tolerance,
+        positive_label="higher",
+        negative_label="lower",
+    )
+    npv_counts = dict(npv_counts)
+    npv_counts["tolerance_rule"] = {
+        "absolute_usd_per_target_w": lifecycle.npv_absolute_tolerance_usd_per_w,
+        "relative": relative_tolerance,
+    }
+    delta_lcoe_counts = dict(delta_lcoe_counts)
+    delta_lcoe_counts["tolerance_rule"] = {
+        "absolute_usd_per_kwh": lifecycle.lcoe_absolute_tolerance,
+        "relative": relative_tolerance,
+    }
+
+    table: dict[str, np.ndarray] = {
+        "realization_index": np.arange(1, request.n + 1, dtype=np.int64),
+        "DiscountRate_real": discount_rate,
+        "CapitalRecoveryFactor_per_year": crf,
+        "LifecycleInitialCost_SOL_USD": selected["so_initial"],
+        "LifecycleInitialCost_SE_USD": selected["se_initial"],
+        "LifecyclePVCost_SOL_USD": selected["so_pv_cost"],
+        "LifecyclePVCost_SE_USD": selected["se_pv_cost"],
+        "LifecyclePVEnergy_SOL_kWh_AC": selected["so_pv_energy"],
+        "LifecyclePVEnergy_SE_kWh_AC": selected["se_pv_energy"],
+        "LifecycleEquivalentAnnualCost_SOL_USD_per_year": crf * selected["so_pv_cost"],
+        "LifecycleEquivalentAnnualCost_SE_USD_per_year": crf * selected["se_pv_cost"],
+        "LifecycleEquivalentAnnualEnergy_SOL_kWh_AC_per_year": crf * selected["so_pv_energy"],
+        "LifecycleEquivalentAnnualEnergy_SE_kWh_AC_per_year": crf * selected["se_pv_energy"],
+        "DeltaEquivalentAnnualCost_se_minus_sol_USD_per_year": crf * selected["delta_pv_cost"],
+        "DeltaEquivalentAnnualEnergy_se_minus_sol_kWh_AC_per_year": crf * selected["delta_pv_energy"],
+        "LifecycleLCOE_SOL_USD_per_kWh_AC": selected["so_lcoe"],
+        "LifecycleLCOE_SE_USD_per_kWh_AC": selected["se_lcoe"],
+        "DeltaLifecycleCost_se_minus_sol_USD": selected["delta_pv_cost"],
+        "DeltaLifecycleEnergy_se_minus_sol_kWh_AC": selected["delta_pv_energy"],
+        "DeltaLifecycleLCOE_se_minus_sol_USD_per_kWh_AC": selected["delta_lcoe"],
+        "IncrementalLCOO_se_minus_sol_USD_per_kWh_AC": lcoo,
+        "UpgradeNPV_se_minus_sol_USD": selected["upgrade_npv"],
+        "EventUpgradeNPV_se_minus_sol_USD": event_financials["upgrade_npv"],
+        "ExpectedUpgradeNPV_se_minus_sol_USD": expected_financials["upgrade_npv"],
+        "CostTolerance_USD": cost_tolerance,
+        "EnergyTolerance_kWh_AC": energy_tolerance,
+        "NPVTolerance_USD": npv_tolerance,
+        "LCOETolerance_USD_per_kWh_AC": lcoe_tolerance,
+        "cost_class": cost_class,
+        "energy_class": energy_class,
+        "tradeoff_class": tradeoff_class,
+        "IncrementalLCOOReason": lcoo_reason,
+        "NPVOutcome": npv_outcome,
+        "DeltaLCOEOutcome": delta_lcoe_outcome,
+    }
+    for identifier in sorted(samples, key=lambda value: value.encode("ascii")):
+        table[f"SampledInput::{identifier}"] = samples[identifier]
+    _require_finite_arrays(
+        "Version-6 lifecycle totals",
+        {
+            key: value
+            for key, value in table.items()
+            if value.dtype != object and key != "IncrementalLCOO_se_minus_sol_USD_per_kWh_AC"
+        },
+    )
+
+    checkpoint(0.64, "Summarizing lifecycle and reliability outputs")
+    summary_metrics = {
+        "lifecycle_cost_solectria": selected["so_pv_cost"],
+        "lifecycle_cost_solaredge": selected["se_pv_cost"],
+        "lifecycle_energy_solectria": selected["so_pv_energy"],
+        "lifecycle_energy_solaredge": selected["se_pv_energy"],
+        "lcoe_solectria": selected["so_lcoe"],
+        "lcoe_solaredge": selected["se_lcoe"],
+        "delta_cost": selected["delta_pv_cost"],
+        "delta_energy": selected["delta_pv_energy"],
+        "delta_lcoe": selected["delta_lcoe"],
+        "lcoo": lcoo,
+        "upgrade_npv": selected["upgrade_npv"],
+        "event_upgrade_npv": event_financials["upgrade_npv"],
+        "expected_upgrade_npv": expected_financials["upgrade_npv"],
+    }
+    summaries: dict[str, Any] = {
+        "result_version": LIFECYCLE_RESULT_VERSION,
+        **{
+            name: _commercial_v4_metric_summary(
+                values,
+                empty_reason=(
+                    "near_zero_incremental_energy"
+                    if name == "lcoo"
+                    else "no_finite_values"
+                ),
+            )
+            for name, values in summary_metrics.items()
+        },
+    }
+    summaries["probability_counts"] = {
+        "upgrade_npv": npv_counts,
+        "delta_lcoe": delta_lcoe_counts,
+    }
+    summaries["cost_energy_quadrants"] = {
+        category: {
+            "count": int(np.count_nonzero(tradeoff_class == category)),
+            "probability": float(np.mean(tradeoff_class == category)),
+        }
+        for category in TRADEOFF_CLASSES
+    }
+
+    annual_rows: list[dict[str, Any]] = []
+    annual_metric_specs = (
+        ("delivered_energy", "kWh_AC", "delivered_energy_kwh"),
+        ("target_availability", "fraction", "target_availability_event" if lifecycle.reliability_mode == "event" else "target_availability_expected"),
+        ("annual_system_cost", "real USD", "annual_operating_cost_event_usd" if lifecycle.reliability_mode == "event" else "annual_operating_cost_expected_usd"),
+        ("annual_lifecycle_cash_cost", "real USD", "annual_cost_usd"),
+        ("base_om_cost", "real USD", "base_om_cost_usd"),
+        ("scheduled_cost", "real USD", "scheduled_cost_usd"),
+        ("corrective_cost", "real USD", "corrective_cost_event_usd" if lifecycle.reliability_mode == "event" else "corrective_cost_expected_usd"),
+        ("preventive_cost", "real USD", "preventive_cost_event_usd" if lifecycle.reliability_mode == "event" else "preventive_cost_expected_usd"),
+        ("common_cause_cost", "real USD", "common_cause_cost_event_usd" if lifecycle.reliability_mode == "event" else "common_cause_cost_expected_usd"),
+    )
+    for technology in ("solectria", "solaredge"):
+        result = systems[technology]
+        for year_index in range(request.project_life_years):
+            for metric, unit, key in annual_metric_specs:
+                statistics = _v6_quantile_statistics(result[key][:, year_index])
+                for statistic, value in statistics.items():
+                    annual_rows.append(
+                        {
+                            "system": technology,
+                            "project_year": year_index + 1,
+                            "metric": metric,
+                            "statistic": statistic,
+                            "value": value,
+                            "unit": unit,
+                            "reliability_mode": lifecycle.reliability_mode,
+                        }
+                    )
+    summaries["annual_lifecycle"] = tuple(annual_rows)
+
+    reliability_rows: list[dict[str, Any]] = []
+    component_metric_specs = (
+        ("event", "failures", "components", "event_failures"),
+        ("expected", "failures", "expected components", "expected_failures"),
+        ("event", "downtime", "fraction", "downtime_fraction"),
+        ("expected", "downtime", "fraction", "expected_downtime_fraction"),
+        ("event", "corrective_cost", "real USD", "corrective_cost_usd"),
+        ("expected", "corrective_cost", "real USD", "expected_corrective_cost_usd"),
+        ("event", "preventive_replacements", "components", "preventive_replacements"),
+        ("expected", "preventive_replacements", "expected components", "expected_preventive_replacements"),
+    )
+    for technology in ("solectria", "solaredge"):
+        for component_result in systems[technology]["component_results"]:
+            for year_index in range(request.project_life_years):
+                for mode, metric, unit, key in component_metric_specs:
+                    statistics = _v6_quantile_statistics(
+                        component_result[key][:, year_index]
+                    )
+                    for statistic, value in statistics.items():
+                        reliability_rows.append(
+                            {
+                                "system": technology,
+                                "project_year": year_index + 1,
+                                "component_id": component_result["component_id"],
+                                "category": component_result["category"],
+                                "mode": mode,
+                                "metric": metric,
+                                "statistic": statistic,
+                                "value": value,
+                                "unit": unit,
+                            }
+                        )
+    for event in lifecycle.common_cause_events:
+        detail = common["details"][event.event_id]
+        for technology in event.affected_systems:
+            for year_index in range(request.project_life_years):
+                for mode, key in (("event", "event"), ("expected", "expected_event")):
+                    statistics = _v6_quantile_statistics(detail[key][:, year_index])
+                    for statistic, value in statistics.items():
+                        reliability_rows.append(
+                            {
+                                "system": technology,
+                                "project_year": year_index + 1,
+                                "component_id": event.event_id,
+                                "category": "common_cause",
+                                "mode": mode,
+                                "metric": "events",
+                                "statistic": statistic,
+                                "value": value,
+                                "unit": "events/year",
+                            }
+                        )
+    summaries["reliability_summary"] = tuple(reliability_rows)
+
+    coverage_rows: list[dict[str, Any]] = []
+    for technology in ("solectria", "solaredge"):
+        system = system_specs[technology]
+        sources: list[tuple[str, Sequence[str]]] = [
+            ("base_om", system.base_om_coverage_ids),
+        ]
+        sources.extend(
+            (f"initial:{line.input_id}", line.coverage_ids)
+            for line in system.initial_cost_lines
+        )
+        sources.extend(
+            (f"scheduled:{line.input_id}", line.coverage_ids)
+            for line in system.scheduled_costs
+        )
+        for component in system.components:
+            sources.append((f"component:{component.component_id}", component.coverage_ids))
+            if component.warranty is not None:
+                sources.append((f"warranty:{component.component_id}", component.warranty.coverage_ids))
+            sources.extend(
+                (
+                    f"preventive:{component.component_id}:{item.year}",
+                    item.coverage_ids,
+                )
+                for item in component.preventive_replacements
+            )
+        for owner, identifiers in sources:
+            for identifier in identifiers:
+                coverage_rows.append(
+                    {
+                        "system": technology,
+                        "coverage_id": identifier,
+                        "owner": owner,
+                        "status": "OK",
+                    }
+                )
+    for event in lifecycle.common_cause_events:
+        for technology in event.affected_systems:
+            for identifier in event.coverage_ids:
+                coverage_rows.append(
+                    {
+                        "system": technology,
+                        "coverage_id": identifier,
+                        "owner": f"common:{event.event_id}",
+                        "status": "OK",
+                    }
+                )
+    summaries["cost_coverage_audit"] = tuple(coverage_rows)
+
+    provisional_inputs: list[str] = []
+    for technology in ("solectria", "solaredge"):
+        system = system_specs[technology]
+        if system.evidence.get("status") == "provisional":
+            provisional_inputs.append(f"system:{technology}")
+        for line in system.initial_cost_lines:
+            if line.evidence.get("status") == "provisional":
+                provisional_inputs.append(f"initial:{technology}:{line.input_id}")
+        for line in system.scheduled_costs:
+            if line.evidence.get("status") == "provisional":
+                provisional_inputs.append(f"scheduled:{technology}:{line.input_id}")
+        for component in system.components:
+            if component.evidence.get("status") == "provisional":
+                provisional_inputs.append(f"component:{technology}:{component.component_id}")
+    for event in lifecycle.common_cause_events:
+        if event.evidence.get("status") == "provisional":
+            provisional_inputs.append(f"common:{event.event_id}")
+    warnings: list[dict[str, Any]] = []
+    if provisional_inputs:
+        warnings.append(
+            {
+                "code": "accepted_provisional_inputs",
+                "inputs": tuple(sorted(provisional_inputs)),
+            }
+        )
+    negative_systems = [
+        technology
+        for technology, key in (
+            ("solectria", "so_pv_cost"),
+            ("solaredge", "se_pv_cost"),
+        )
+        if np.any(selected[key] < 0)
+    ]
+    if negative_systems:
+        warnings.append(
+            {
+                "code": "negative_derived_lifecycle_cost",
+                "systems": tuple(negative_systems),
+            }
+        )
+
+    convergence = convergence_diagnostics(
+        {
+            "upgrade_npv": selected["upgrade_npv"],
+            "delta_lcoe": selected["delta_lcoe"],
+        },
+        {
+            "upgrade_npv": max(
+                lifecycle.npv_absolute_tolerance_usd_per_w * target_capacity,
+                np.finfo(np.float64).tiny,
+            ),
+            "delta_lcoe": max(
+                lifecycle.lcoe_absolute_tolerance,
+                np.finfo(np.float64).tiny,
+            ),
+        },
+        weather_paths[:, 0],
+        [row.year for row in request.paired_energy_rows],
+        energy_classes=energy_class,
+        tradeoff_classes=tradeoff_class,
+    )
+    convergence = _v6_add_decision_probability_convergence(
+        convergence,
+        {
+            "delta_lcoe": (
+                delta_lcoe_outcome,
+                ("higher", "lower", "tie"),
+            ),
+            "upgrade_npv": (
+                npv_outcome,
+                ("positive", "negative", "tie"),
+            ),
+        },
+    )
+    decision_reasons: list[str] = []
+    if lifecycle.reliability_mode != "event":
+        decision_reasons.append("expected_mode_diagnostic_only")
+    if convergence["status"] != "stable":
+        decision_reasons.append("unstable_convergence")
+    if decision_reasons:
+        decision = "Decision suppressed"
+        preferred_system = None
+        decision_status = "suppressed"
+    elif npv_counts["p_positive"] >= lifecycle.decision_probability_threshold:
+        decision = "SolarEdge preferred"
+        preferred_system = "solaredge"
+        decision_status = "available"
+    elif npv_counts["p_negative"] >= lifecycle.decision_probability_threshold:
+        decision = "Solectria preferred"
+        preferred_system = "solectria"
+        decision_status = "available"
+    else:
+        decision = "No decisive winner"
+        preferred_system = None
+        decision_status = "available"
+    summaries["headline_decision"] = {
+        "decision": decision,
+        "preferred_system": preferred_system,
+        "status": decision_status,
+        "reason_codes": tuple(decision_reasons),
+        "probability_threshold": lifecycle.decision_probability_threshold,
+        "reliability_mode": lifecycle.reliability_mode,
+    }
+    summaries["warnings"] = tuple(warnings)
+    summaries["formula_registry"] = formula_registry()
+
+    checkpoint(0.78, "Selecting sealed representative event traces")
+    trace_selections = _v6_representative_selections(
+        event_financials["upgrade_npv"]
+    )
+    component_trace_rows: list[Mapping[str, Any]] = []
+    for technology in ("solectria", "solaredge"):
+        for component in system_specs[technology].components:
+            component_result = _v6_component_simulation(
+                request,
+                system_specs[technology],
+                component,
+                samples,
+                hours_by_year,
+                trace_selections,
+                cancel_check,
+            )
+            component_trace_rows.extend(component_result["trace_rows"])
+    event_delta_energy = event_financials["delta_energy_annual"]
+    event_delta_cost = event_financials["delta_annual_cost"]
+    event_incremental_cashflow = event_financials["incremental_cashflow"]
+    event_pv_incremental = event_financials["pv_incremental_cashflow"]
+    annual_trace_rows: list[dict[str, Any]] = []
+    selection_rows: list[dict[str, Any]] = []
+    for realization_index, selection_label, quantile in trace_selections:
+        selection_rows.append(
+            {
+                "selection_label": selection_label,
+                "quantile": quantile,
+                "realization_index": realization_index + 1,
+                "upgrade_npv_usd": float(event_financials["upgrade_npv"][realization_index]),
+            }
+        )
+        cumulative = -float(event_financials["delta_initial"][realization_index])
+        cumulative_by_year: list[float] = []
+        for year_index in range(request.project_life_years):
+            cumulative += float(event_pv_incremental[realization_index, year_index])
+            cumulative_by_year.append(cumulative)
+        for technology in ("solectria", "solaredge"):
+            result = systems[technology]
+            for year_index in range(request.project_life_years):
+                terminal = (
+                    float(result["terminal_cost_usd"][realization_index])
+                    if year_index == request.project_life_years - 1
+                    else 0.0
+                )
+                annual_trace_rows.append(
+                    {
+                        "selection_label": selection_label,
+                        "quantile": quantile,
+                        "realization_index": realization_index + 1,
+                        "system": technology,
+                        "project_year": year_index + 1,
+                        "weather_year": int(weather_paths[realization_index, year_index]),
+                        "source_energy_kwh": float(result["source_energy_kwh"][realization_index, year_index]),
+                        "target_source_energy_kwh": float(result["target_source_energy_kwh"][realization_index, year_index]),
+                        "degradation_factor": float(result["degradation_factor"][realization_index, year_index]),
+                        "base_availability": float(result["base_availability"][realization_index, year_index]),
+                        "component_availability": float(result["component_availability_event"][realization_index, year_index]),
+                        "common_cause_availability": float(result["common_cause_availability_event"][realization_index, year_index]),
+                        "target_availability": float(result["target_availability_event"][realization_index, year_index]),
+                        "source_availability": float(result["source_availability"][realization_index, year_index]),
+                        "availability_adjustment": float(result["availability_adjustment_event"][realization_index, year_index]),
+                        "delivered_energy_kwh": float(result["energy_event_kwh"][realization_index, year_index]),
+                        "discount_factor": float(discount_factor[realization_index, year_index]),
+                        "base_om_cost_usd": float(result["base_om_cost_usd"][realization_index, year_index]),
+                        "scheduled_cost_usd": float(result["scheduled_cost_usd"][realization_index, year_index]),
+                        "preventive_cost_usd": float(result["preventive_cost_event_usd"][realization_index, year_index]),
+                        "corrective_cost_usd": float(result["corrective_cost_event_usd"][realization_index, year_index]),
+                        "common_cause_cost_usd": float(result["common_cause_cost_event_usd"][realization_index, year_index]),
+                        "terminal_cost_usd": terminal,
+                        "annual_cost_usd": float(
+                            result["base_om_cost_usd"][realization_index, year_index]
+                            + result["scheduled_cost_usd"][realization_index, year_index]
+                            + result["preventive_cost_event_usd"][realization_index, year_index]
+                            + result["corrective_cost_event_usd"][realization_index, year_index]
+                            + result["common_cause_cost_event_usd"][realization_index, year_index]
+                        ),
+                        "annual_cost_with_terminal_usd": float(result["annual_cost_event_usd"][realization_index, year_index]),
+                        "delta_energy_kwh": float(event_delta_energy[realization_index, year_index]),
+                        "delta_cost_usd": float(event_delta_cost[realization_index, year_index]),
+                        "electricity_value_usd_per_kwh": float(electricity_value[realization_index, year_index]),
+                        "incremental_cashflow_usd": float(event_incremental_cashflow[realization_index, year_index]),
+                        "pv_incremental_cashflow_usd": float(event_pv_incremental[realization_index, year_index]),
+                        "cumulative_upgrade_npv_usd": cumulative_by_year[year_index],
+                    }
+                )
+    summaries["representative_event_traces"] = {
+        "selection": tuple(selection_rows),
+        "annual": tuple(annual_trace_rows),
+        "components": tuple(component_trace_rows),
+    }
+
+    per_weather_year: list[dict[str, Any]] = []
+    for technology in ("solectria", "solaredge"):
+        energy_matrix = systems[technology]["delivered_energy_kwh"]
+        for weather_year in sorted(row.year for row in request.paired_energy_rows):
+            mask = weather_paths == weather_year
+            values = energy_matrix[mask]
+            statistics = _v6_quantile_statistics(values)
+            per_weather_year.append(
+                {
+                    "system": technology,
+                    "weather_year": weather_year,
+                    "assignment_count": int(np.count_nonzero(mask)),
+                    "delivered_energy_kwh": statistics,
+                    "unit": "kWh_AC/year",
+                }
+            )
+
+    checkpoint(0.88, "Calculating sensitivity and audit diagnostics")
+    predictors = {
+        identifier: values
+        for identifier, values in samples.items()
+        if not np.all(values == values[0])
+    }
+    sensitivity_model = stepwise_rank_regression(
+        selected["upgrade_npv"],
+        predictors,
+    )
+    event_variance = float(np.var(event_financials["upgrade_npv"], ddof=0))
+    expected_variance = float(np.var(expected_financials["upgrade_npv"], ddof=0))
+    sensitivity = {
+        "upgrade_npv": sensitivity_model,
+        "interpretation": "association_not_causation",
+        "event_sampling_diagnostic": {
+            "event_npv_variance": event_variance,
+            "expected_hazard_npv_variance": expected_variance,
+            "incremental_event_variance": max(0.0, event_variance - expected_variance),
+            "event_variance_share": (
+                max(0.0, event_variance - expected_variance) / event_variance
+                if event_variance > 0
+                else 0.0
+            ),
+            "rank_model_unexplained_share": (
+                None
+                if sensitivity_model.get("final_r_squared") is None
+                else max(0.0, 1.0 - float(sensitivity_model["final_r_squared"]))
+            ),
+        },
+    }
+
+    memory = estimate_lifecycle_memory(
+        request.n,
+        request.project_life_years,
+        component_count,
+    )
+    safe_max = lifecycle_safe_realization_max(
+        request.project_life_years,
+        component_count,
+        realization_export_columns=len(table),
+    )
+    provenance = {
+        "result_version": LIFECYCLE_RESULT_VERSION,
+        "calculation_contract_version": LIFECYCLE_CALCULATION_CONTRACT_VERSION,
+        "sampling_version": LIFECYCLE_SAMPLING_VERSION,
+        "formula_registry": {
+            "version": FORMULA_REGISTRY_VERSION,
+            "count": len(TEA_V6_FORMULA_REGISTRY),
+            "sha256": formula_registry_hash(),
+        },
+        "numpy_version": np.__version__,
+        "scipy_version": scipy.__version__,
+        "numerics": numerical_fingerprint(),
+        "analysis_basis": request.basis,
+        "shape_discriminator": "paired_lifecycle",
+        "realization_count": request.n,
+        "seed": request.seed,
+        "project_life_years": request.project_life_years,
+        "constant_dollar_cost_year": request.constant_dollar_cost_year,
+        "target_capacity_w": lifecycle.target_capacity_w,
+        "target_rating_basis": lifecycle.target_rating_basis,
+        "source_energy_basis": lifecycle.source_energy_basis,
+        "reliability_mode": lifecycle.reliability_mode,
+        "economics_scope": "unlevered_pre_tax_real_dollar",
+        "excluded_economics": ("debt", "tax", "depreciation", "incentives"),
+        "sign_convention": "SolarEdge minus Solectria; positive NPV favors SolarEdge",
+        "rng": {
+            "bit_generator": "PCG64DXSM",
+            "seed_domain": "sbepv-tea-lhs-v2",
+            "weather_allocation": "balanced_iid_per_project_year",
+            "weather_pairing": "same weather year for both systems",
+            "domain_separation": "input/component/year/age/common-event stable IDs",
+        },
+        "tolerances": {
+            "cost_absolute_usd_per_target_w": lifecycle.cost_absolute_tolerance_usd_per_w,
+            "energy_absolute_kwh_per_target_w": lifecycle.energy_absolute_tolerance_kwh_per_w,
+            "npv_absolute_usd_per_target_w": lifecycle.npv_absolute_tolerance_usd_per_w,
+            "lcoe_absolute_usd_per_kwh": lifecycle.lcoe_absolute_tolerance,
+            "relative": lifecycle.relative_tolerance,
+        },
+        "decision_rule": {
+            "version": "tea-upgrade-npv-decision-v1",
+            "probability_threshold": lifecycle.decision_probability_threshold,
+            "unstable_convergence_suppresses": True,
+            "expected_mode_suppresses": True,
+        },
+        "admission": {**memory, **safe_max},
+        "representative_trace_rule": "nearest type-7 P10/P50/P90 event NPV; lowest realization index breaks ties",
+        "coverage_audit_status": "passed",
+        "warnings": tuple(warnings),
+    }
+    checkpoint(1.0, "Completed v6 lifecycle calculation")
+    return TechnoeconomicResult(
+        realization_table=table,
+        sampled_inputs=samples,
+        common_cost_audit=tuple(coverage_rows),
+        summaries=summaries,
+        per_weather_year=tuple(per_weather_year),
+        sensitivity=sensitivity,
+        convergence=convergence,
+        provenance=provenance,
+        energy_available=True,
+    )
+
+
 def run_technoeconomic(
     request: TechnoeconomicRequest,
     *,
@@ -4546,6 +7731,17 @@ def run_technoeconomic(
     deterministic stage boundaries.  Omitting them preserves the Phase-1 calling
     contract and calculation behavior.
     """
+
+    if (
+        isinstance(request, TechnoeconomicRequest)
+        and request.calculation_contract_version
+        == LIFECYCLE_CALCULATION_CONTRACT_VERSION
+    ):
+        return _run_technoeconomic_v6(
+            request,
+            progress_cb=progress_cb,
+            cancel_check=cancel_check,
+        )
 
     def checkpoint(fraction: float, stage: str) -> None:
         if cancel_check is not None:

@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class TechnoeconomicFrontendTests(unittest.TestCase):
-    """Contract tests for the server-authoritative Phase 5 TEA workspace."""
+    """Contract tests for the server-authoritative TEA workspace."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -620,13 +620,132 @@ function commercialDraft(transferEnabled = true) {
             'aria-describedby="technoeconomicAssumptionsDescription"',
             'aria-controls="technoeconomicAssumptionsDialog" aria-haspopup="dialog"',
             'id="technoeconomicAssumptionsCloseBtn"',
-            'id="technoeconomicAssumptionsFooterCloseBtn"',
-            'id="technoeconomicAssumptionsReviewBtn" type="submit">Review and calculate',
+            'id="technoeconomicAssumptionsReviewBtn" type="submit" hidden>Review &amp; calculate',
         ):
             self.assertIn(marker, self.markup)
 
+        self.assertNotIn('id="technoeconomicAssumptionsFooterCloseBtn"', self.markup)
         self.assertNotIn('id="technoeconomicAssumptionsDetails"', self.markup)
         self.assertNotIn('<details class="tea-standalone-assumptions"', self.markup)
+
+    def test_scenario_builder_is_guided_persistent_and_contract_aware(self) -> None:
+        dialog = self.markup.split(
+            '<dialog class="tea-assumptions-dialog" id="technoeconomicAssumptionsDialog"',
+            1,
+        )[1].split("</dialog>", 1)[0]
+        self.assertIn('aria-label="Scenario Builder sections"', dialog)
+        self.assertEqual(6, dialog.count('data-tea-builder-step='))
+        for label in (
+            "Source &amp; Scale", "Finance", "Lifecycle", "Reliability", "Value",
+            "Evidence &amp; Review",
+        ):
+            self.assertIn(label, dialog)
+        for summary_id in (
+            "technoeconomicBuilderTarget", "technoeconomicBuilderLife",
+            "technoeconomicBuilderTrials", "technoeconomicBuilderContract",
+            "technoeconomicBuilderSource", "technoeconomicBuilderCompletion",
+            "technoeconomicBuilderIssues",
+        ):
+            self.assertIn(f'id="{summary_id}"', dialog)
+        for control_id in (
+            "technoeconomicBuilderSaveBtn", "technoeconomicBuilderBackBtn",
+            "technoeconomicBuilderContinueBtn", "technoeconomicBuilderReviewSummary",
+        ):
+            self.assertIn(f'id="{control_id}"', dialog)
+        self.assertIn('data-tea-builder-v5-section="reliability"', dialog)
+        self.assertIn('data-tea-builder-v5-section="value"', dialog)
+        self.assertIn("function technoeconomicBuilderIssueTarget", self.script)
+        self.assertIn("function technoeconomicBuilderRenderInlineErrors", self.script)
+        self.assertIn("function technoeconomicBuilderGoTo", self.script)
+        self.assertIn("scrollIntoView", self.script)
+        self.assertIn("aria-invalid", self.script)
+        self.assertIn("path.includes(`.${prefix}.`)", self.script)
+        self.assertNotIn("path.includes(prefix)", self.script)
+        self.assertIn("'Review & calculate'", self.script)
+        self.assertIn('role="status" aria-live="polite"', dialog)
+        self.assertIn("Calculation blocked —", self.script)
+        self.assertNotIn("remaining.slice(0, 3)", self.script)
+        self.assertIn(
+            ".tea-builder-stage .tea-assumptions-table {", self.html
+        )
+        self.assertRegex(
+            self.html,
+            r"\.tea-builder-stage\s*\{[^}]*overflow:\s*visible;",
+        )
+        self.assertRegex(
+            self.html,
+            r"\.tea-assumptions-table-region\s*\{[^}]*overflow:\s*clip;",
+        )
+        self.assertRegex(
+            self.script,
+            r"if \(event\.target === technoeconomicElements\.calculationContract\) \{\s*"
+            r"technoeconomicRenderContractMode\(\);[\s\S]*?"
+            r"standaloneAssumptionsDialog\?\.open[\s\S]*?"
+            r"technoeconomicBuilderUpdate\(\);",
+        )
+        self.assertRegex(
+            self.styles,
+            r"\.tea-builder-summary-sticky\s*\{[^}]*position:\s*sticky;",
+        )
+        self.assertRegex(
+            self.styles,
+            r"\.tea-assumptions-dialog :is\([^}]*focus-visible",
+        )
+        self.assertIn(".tea-assumptions-table > thead", self.styles)
+        self.assertNotIn(".tea-assumptions-table thead", self.styles)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_scenario_builder_routes_evidence_and_distribution_issues(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const accept = {id: 'accept'};
+const note = {id: 'note'};
+const discountValue = {id: 'discount-value'};
+const degradationValue = {id: 'degradation-value'};
+const fieldContainer = (field) => ({
+  querySelector(selector) {
+    return selector === '[data-tea-v4-param="value"]' ? field : null;
+  },
+});
+technoeconomicElements = {
+  calculationContract: {value: TECHNOECONOMIC_PAIRED_CONTRACT_VERSION},
+  standaloneAccept: accept,
+  standaloneAssumptionNote: note,
+  standaloneDiscountFamily: {id: 'discount-family'},
+  standaloneDegradationFamily: {id: 'degradation-family'},
+  standaloneDiscountParameters: fieldContainer(discountValue),
+  standaloneDegradationParameters: fieldContainer(degradationValue),
+};
+for (const path of [
+  'evidence.explicit_acceptance',
+  'finance.real_discount_rate.evidence.explicit_acceptance',
+  'shared_degradation.annual_rate.evidence.explicit_acceptance',
+]) {
+  const target = technoeconomicBuilderIssueTarget({path});
+  assert.equal(target.section, 'review');
+  assert.equal(target.element, accept);
+}
+for (const path of [
+  'evidence.assumption_note',
+  'finance.real_discount_rate.evidence.acceptance_rationale',
+  'finance.real_discount_rate.evidence.citation.excerpt_or_derivation_note',
+  'shared_degradation.annual_rate.evidence.citation.stable_reference',
+]) {
+  const target = technoeconomicBuilderIssueTarget({path});
+  assert.equal(target.section, 'review');
+  assert.equal(target.element, note);
+}
+assert.equal(technoeconomicBuilderIssueTarget({
+  path: 'finance.real_discount_rate.distribution.value',
+}).element, discountValue);
+assert.equal(technoeconomicBuilderIssueTarget({
+  path: 'shared_degradation.annual_rate.distribution.value',
+}).element, degradationValue);
+console.log(JSON.stringify({ok: true}));
+"""
+        )
+        self.assertTrue(payload["ok"])
 
     def test_table_first_assumptions_are_accessible_shared_and_editable(self) -> None:
         dialog = self.markup.split(
@@ -640,8 +759,9 @@ function commercialDraft(transferEnabled = true) {
             "technoeconomic analysis.</caption>",
             dialog,
         )
-        self.assertEqual(5, dialog.count('scope="col"'))
-        self.assertEqual(4, dialog.count('scope="rowgroup"'))
+        primary_header = dialog.split("<thead>", 1)[1].split("</thead>", 1)[0]
+        self.assertEqual(5, primary_header.count('scope="col"'))
+        self.assertEqual(5, dialog.count('scope="rowgroup"'))
         for heading in (
             "Assumption",
             "Distribution",
@@ -649,7 +769,14 @@ function commercialDraft(transferEnabled = true) {
             "SolarEdge",
             "Unit / status",
         ):
-            self.assertRegex(dialog, rf'<th[^>]*scope="col"[^>]*>{re.escape(heading)}</th>')
+            self.assertRegex(
+                primary_header,
+                rf'<th[^>]*scope="col"[^>]*>{re.escape(heading)}</th>',
+            )
+
+        self.assertIn('id="technoeconomicFormulaRegistryBody"', dialog)
+        self.assertIn("/api/technoeconomic/formulas/v6", self.script)
+        self.assertIn("formula_registry_sha256", self.script)
 
         self.assertEqual(
             1, dialog.count('id="technoeconomicStandaloneSourceSelect"')
@@ -688,7 +815,7 @@ function commercialDraft(transferEnabled = true) {
         )
         self.assertRegex(
             self.styles,
-            r"\.tea-assumptions-table thead th\s*\{[^}]*position:\s*sticky;"
+            r"\.tea-assumptions-table > thead th\s*\{[^}]*position:\s*sticky;"
             r"[^}]*top:\s*0;",
         )
 
@@ -696,6 +823,8 @@ function commercialDraft(transferEnabled = true) {
             "technoeconomicStandaloneSourceSelect",
             "technoeconomicStandaloneTargetCapacityInput",
             "technoeconomicStandaloneRealizations",
+            "technoeconomicCalculationContract",
+            "technoeconomicLifecycleJson",
             "technoeconomicStandaloneSeed",
             "technoeconomicStandaloneProjectLife",
             "technoeconomicStandaloneDiscountFamily",
@@ -771,6 +900,19 @@ function commercialDraft(transferEnabled = true) {
             'id="technoeconomicStandaloneSubmitBtn"',
             'id="technoeconomicStandaloneSourceSelect"',
             'id="technoeconomicStandaloneTargetCapacityInput"',
+            'id="technoeconomicCalculationContract"',
+            'value="tea-calculation-v6" selected',
+            'id="technoeconomicLifecycleJson"',
+            'id="technoeconomicUseLifecycleTemplateBtn"',
+            'Use approved template values',
+            'Versioned provisional planning template',
+            'These are not approved vendor inputs.',
+            'Advanced methodology &amp; lifecycle data',
+            'Calculation methodology (advanced)',
+            'Generic 100-kW power-electronics equivalent',
+            'Generic 1-MW balance-of-system equivalent',
+            'Restock to target yearly',
+            'No scheduled costs or preventive replacements are included',
             'id="technoeconomicStandaloneDiscountParameters"',
             'id="technoeconomicStandaloneDegradationParameters"',
             'id="technoeconomicStandaloneSolectriaCostLines"',
@@ -796,6 +938,26 @@ function commercialDraft(transferEnabled = true) {
             'id="technoeconomicStandaloneProvenance"',
         ):
             self.assertIn(marker, standalone)
+
+        advanced = re.search(
+            r'<details\b(?P<open>[^>]*)id="technoeconomicLifecycleAdvancedDetails"'
+            r'(?P<body>.*?)</details>',
+            standalone,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(advanced)
+        self.assertNotRegex(advanced.group("open"), r"\bopen\b")
+        lifecycle_textarea = re.search(
+            r'<textarea\b[^>]*id="technoeconomicLifecycleJson"[^>]*>',
+            advanced.group("body"),
+        )
+        self.assertIsNotNone(lifecycle_textarea)
+        self.assertNotRegex(lifecycle_textarea.group(0), r"\brequired\b")
+        self.assertLess(
+            standalone.index('id="technoeconomicUseLifecycleTemplateBtn"'),
+            standalone.index('id="technoeconomicLifecycleAdvancedDetails"'),
+        )
+        self.assertIn("Reset to approved template values", self.script)
 
         self.assertLess(
             standalone.index('id="technoeconomicStandaloneResults"'),
@@ -1240,6 +1402,190 @@ console.log(JSON.stringify({
         self.assertEqual("0.022", payload["bounded"]["mean"])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_dashboard_submits_v6_explicitly_and_keeps_v5_compatibility(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const provisionalEvidence = {
+  evidence_class: 'engineering_judgment',
+  citation: {title: 'User lifecycle basis', stable_reference: 'project-note-1'},
+  explicit_acceptance: true,
+  acceptance_rationale: 'This stale JSON acceptance must not be trusted.',
+};
+const lifecycle = {
+  source_energy_basis: 'gross', reliability_mode: 'event',
+  decision_npv_tolerance_usd_per_target_w: 0.01,
+  electricity_value: {}, electricity_value_real_growth: {},
+  systems: [
+    {technology: 'solectria', evidence: provisionalEvidence,
+      components: [{component_id: 'so-a'}]},
+    {technology: 'solaredge', components: [{component_id: 'se-a'}]},
+  ],
+  common_cause_events: [],
+};
+const basePayload = {
+  shared_degradation: {annual_rate: {}},
+  paired_commercial: {
+    systems: [
+      {technology: 'solectria', cost_lines: [{input_id: 'legacy-so'}]},
+      {technology: 'solaredge', cost_lines: [{input_id: 'legacy-se'}]},
+    ],
+  },
+};
+technoeconomicSerializeStandaloneRequest = () => ({
+  payload: basePayload,
+  errors: [
+    {path: 'shared_degradation.annual_rate.distribution.value', message: 'legacy only'},
+    {path: 'paired_commercial.systems.0.cost_lines', message: 'legacy only'},
+  ],
+  valid: false, evidenceCount: 0,
+  provisionalEvidenceCount: 0, nonfixedPredictorCount: 0,
+});
+technoeconomicElements = {
+  calculationContract: {value: TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION},
+  lifecycleJson: {value: JSON.stringify(lifecycle)},
+  standaloneAccept: {checked: true},
+  standaloneAssumptionNote: {value: 'Accepted for this specific submitted run.'},
+};
+const v6 = technoeconomicSerializeCurrentRequest();
+assert.equal(v6.valid, true, JSON.stringify(v6.errors));
+assert.deepEqual(v6.errors, []);
+assert.equal(v6.provisionalEvidenceCount, 1);
+assert.equal(v6.payload.calculation_contract_version, 'tea-calculation-v6');
+assert.equal(Object.hasOwn(v6.payload, 'shared_degradation'), false);
+assert.equal(v6.payload.paired_commercial.lifecycle.weather_path_method,
+  TECHNOECONOMIC_LIFECYCLE_WEATHER_METHOD);
+assert.equal(v6.payload.paired_commercial.lifecycle.decision_probability_threshold, 0.75);
+assert.equal(v6.payload.paired_commercial.lifecycle.systems[0]
+  .evidence.explicit_acceptance, true);
+assert.equal(v6.payload.paired_commercial.lifecycle.systems[0]
+  .evidence.acceptance_rationale, 'Accepted for this specific submitted run.');
+assert.deepEqual(v6.payload.paired_commercial.systems.map((system) => system.cost_lines),
+  [[], []]);
+technoeconomicElements.calculationContract.value = TECHNOECONOMIC_PAIRED_CONTRACT_VERSION;
+const v5 = technoeconomicSerializeCurrentRequest();
+assert.equal(Object.hasOwn(v5.payload, 'calculation_contract_version'), false);
+assert.equal(Object.hasOwn(v5.payload, 'shared_degradation'), true);
+console.log(JSON.stringify({
+  v6Version: v6.payload.calculation_contract_version,
+  weather: v6.payload.paired_commercial.lifecycle.weather_path_method,
+  v5VersionPresent: Object.hasOwn(v5.payload, 'calculation_contract_version'),
+}));
+"""
+        )
+        self.assertEqual("tea-calculation-v6", payload["v6Version"])
+        self.assertFalse(payload["v5VersionPresent"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_v6_guided_template_builds_internal_contract_and_rejects_blanks(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+function control(value = '') {
+  return {
+    value, disabled: false, validationMessage: '',
+    setCustomValidity(message) { this.validationMessage = message; },
+  };
+}
+function textNode() { return {textContent: ''}; }
+const discountValue = control('5');
+discountValue.dataset = {teaV4Param: 'value'};
+const discountParameters = {
+  querySelectorAll(selector) {
+    return selector === '[data-tea-v4-param]' ? [discountValue] : [];
+  },
+};
+const fields = Object.fromEntries(Object.entries(
+  TECHNOECONOMIC_LIFECYCLE_TEMPLATE_DEFAULTS
+).map(([key, value]) => [key, control(value)]));
+Object.assign(fields, {
+  standaloneTargetCapacityInput: control('100'),
+  standaloneSourceSelect: control('annual-dc'),
+  standaloneDiscountFamily: control('fixed'),
+  standaloneDiscountParameters: discountParameters,
+  lifecycleJson: control(''),
+  lifecycleTemplateStatusPanel: {dataset: {}},
+  lifecycleTemplateStatus: textNode(), lifecycleTemplateStatusDetail: textNode(),
+  useLifecycleTemplateButton: textNode(),
+  lifecycleComponentACount: textNode(), lifecycleComponentBCount: textNode(),
+  lifecycleComponentAImpact: textNode(), lifecycleComponentBImpact: textNode(),
+  lifecycleComponentASpares: textNode(), lifecycleComponentBSpares: textNode(),
+  lifecycleScalingNote: textNode(), lifecycleInitialCostUnit: textNode(),
+  lifecycleBaseOmUnit: textNode(),
+});
+technoeconomicElements = fields;
+technoeconomicSources = [{
+  source_annual_job_id: 'annual-dc',
+  applied_capacity: {
+    solectria: {applied_capacity_w: 125000, rating_basis: 'dc_installed_nameplate'},
+    solaredge: {applied_capacity_w: 125000, rating_basis: 'dc_installed_nameplate'},
+  },
+}];
+technoeconomicResetLifecycleTemplateFields();
+assert.equal(fields.lifecycleSolectriaInitialCost.value, '1.17');
+assert.equal(fields.lifecycleSolarEdgeBaseOm.value, '16.58');
+assert.equal(fields.lifecycleInitialCostUnit.textContent, 'real 2022 USD/Wdc');
+assert.equal(technoeconomicSyncLifecycleTemplate(), true);
+assert.equal(fields.useLifecycleTemplateButton.textContent,
+  'Reset to approved template values');
+const lifecycle = JSON.parse(fields.lifecycleJson.value);
+assert.equal(lifecycle.source_energy_basis, 'gross');
+assert.equal(lifecycle.reliability_mode, 'event');
+assert.equal(lifecycle.systems.length, 2);
+assert.equal(lifecycle.systems[0].components.length, 2);
+assert.equal(lifecycle.systems[0].components[0].count, 1000);
+assert.equal(lifecycle.systems[0].components[0].initial_spares, 10);
+assert.equal(lifecycle.systems[0].components[0].spare_target, 10);
+assert.equal(lifecycle.systems[0].components[0].batch_size, 5);
+assert.equal(lifecycle.systems[0].scheduled_costs.length, 0);
+assert.equal(lifecycle.systems[0].components[0].preventive_replacements.length, 0);
+assert.equal(lifecycle.systems[0].initial_cost_lines[0].cost_per_w
+  .evidence.evidence_class, 'public_market_proxy_or_benchmark');
+assert.equal(lifecycle.systems[0].degradation.evidence.evidence_class,
+  'engineering_judgment');
+assert.equal(lifecycle.common_cause_events[0].annual_probability.distribution.value, 0.02);
+assert.equal(technoeconomicLifecycleMatchesTemplateShape(lifecycle), true);
+const spoofed = JSON.parse(JSON.stringify(lifecycle));
+spoofed.systems[0].components[0].component_id = 'vendor-inverter';
+assert.equal(technoeconomicLifecycleMatchesTemplateShape(spoofed), false);
+const hiddenCostTamper = JSON.parse(JSON.stringify(lifecycle));
+hiddenCostTamper.systems[0].components[0]
+  .emergency_unit_cost.distribution.value += 1;
+assert.equal(technoeconomicLifecycleMatchesTemplateShape(hiddenCostTamper), false);
+const thresholdTamper = JSON.parse(JSON.stringify(lifecycle));
+thresholdTamper.decision_probability_threshold = 0.5;
+assert.equal(technoeconomicLifecycleMatchesTemplateShape(thresholdTamper), false);
+fields.lifecycleSolectriaInitialCost.value = '1.23';
+fields.lifecycleSolectriaBaseOm.value = '17.50';
+assert.equal(technoeconomicSyncLifecycleTemplate(), true);
+const edited = JSON.parse(fields.lifecycleJson.value);
+assert.equal(edited.systems[0].initial_cost_lines[0].cost_per_w
+  .evidence.evidence_class, 'engineering_judgment');
+assert.equal(edited.systems[0].base_om_cost_per_w_year
+  .evidence.evidence_class, 'engineering_judgment');
+assert.equal(technoeconomicLifecycleMatchesTemplateShape(edited), true);
+fields.lifecycleCommonCost.value = '';
+const blank = technoeconomicBuildLifecycleTemplate();
+assert.equal(blank.lifecycle, null);
+assert.match(blank.errors[0], /Common-event cost/);
+assert.notEqual(fields.lifecycleCommonCost.validationMessage, '');
+console.log(JSON.stringify({
+  capex: lifecycle.systems[0].initial_cost_lines[0].cost_per_w.distribution.value,
+  om: lifecycle.systems[0].base_om_cost_per_w_year.distribution.value,
+  componentCount: lifecycle.systems[0].components[0].count,
+  editedEvidence: edited.systems[0].initial_cost_lines[0].cost_per_w
+    .evidence.evidence_class,
+  blankRejected: blank.lifecycle === null,
+}));
+"""
+        )
+        self.assertEqual(1.17, payload["capex"])
+        self.assertAlmostEqual(0.01658, payload["om"])
+        self.assertEqual(1000, payload["componentCount"])
+        self.assertEqual("engineering_judgment", payload["editedEvidence"])
+        self.assertTrue(payload["blankRejected"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_commercial_target_scales_from_the_frozen_source(self) -> None:
         payload = self.run_node(
             r"""
@@ -1279,8 +1625,13 @@ console.log(JSON.stringify({at100, at75, fallback}));
             "contractVersion === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION",
             route,
         )
+        self.assertIn(
+            "contractVersion === TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION",
+            route,
+        )
         self.assertIn("technoeconomicRenderStandaloneResult(job, result)", route)
         self.assertIn("technoeconomicRenderPairedResult(job, result)", route)
+        self.assertIn("technoeconomicRenderLifecycleResult(job, result)", route)
         self.assertIn("technoeconomicRenderDecision(result)", route)
         self.assertIn("technoeconomicRenderResultSummary(job, result)", route)
         self.assertNotIn("result.standalone_commercial", route)
@@ -1401,6 +1752,118 @@ console.log(JSON.stringify({
         )
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_v6_renderer_prioritizes_upgrade_npv_without_v5_shape(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const node = (tag, options = {}) => ({
+  tag, textContent: options.text || '', dataset: {}, children: [], hidden: false,
+  append(...children) { this.children.push(...children); },
+  appendChild(child) { this.children.push(child); },
+  replaceChildren(...children) { this.children = children; },
+});
+const container = () => node('div');
+const resultRoot = {dataset: {}};
+const interpretation = {textContent: ''};
+const decisionBody = container();
+const probabilities = container();
+const provenance = container();
+technoeconomicNode = node;
+technoeconomicElements = {
+  standaloneResults: resultRoot,
+  standaloneResultEyebrow: {textContent: ''},
+  standaloneResultsHeading: {textContent: ''},
+  standaloneResultStatus: {textContent: ''},
+  standaloneInterpretation: interpretation,
+  legacyPercentilePanel: {hidden: false},
+  v6DecisionPanel: {hidden: true},
+  v6ProbabilitySummary: probabilities,
+  v6PercentileBody: decisionBody,
+  standaloneRunContext: {textContent: ''},
+  standaloneScenarioSummary: container(),
+  standaloneSolectriaCostSummary: container(),
+  standaloneSolarEdgeCostSummary: container(),
+  standaloneProvenance: provenance,
+  standaloneCdfPlot: {alt: ''},
+  standaloneCdfCaption: {textContent: ''},
+  standaloneCdfFallback: null,
+  standaloneCdfLink: null,
+  standaloneCsvLink: null,
+  standaloneXlsxLink: null,
+  standaloneSubmitButton: {textContent: ''},
+};
+technoeconomicRenderStandaloneBridge = () => {};
+technoeconomicSetPlot = () => {};
+technoeconomicSetDownload = () => {};
+technoeconomicSources = [];
+const available = (p10, p50, p90) => ({
+  status: 'available', percentiles: {p10, p50, p90},
+});
+const job = {
+  job_id: 'tea-lifecycle-v6', source_annual_job_id: 'annual-source', artifacts: {},
+  request: {
+    n: 1000, source_annual_job_id: 'annual-source',
+    finance: {constant_dollar_cost_year: 2022, project_life_years: 30},
+  },
+};
+const result = {
+  calculation_contract_version: 'tea-calculation-v6',
+  result_version: 'tea-result-v6', sampling_version: 'tea-lhs-v2',
+  realization_count: 1000,
+  summaries: {
+    headline_decision: {
+      status: 'available', decision: 'solaredge_preferred',
+      preferred_system: 'solaredge', probability_threshold: 0.75,
+      reason_codes: [],
+    },
+    probability_counts: {upgrade_npv: {
+      positive: 800, negative: 150, tie: 50, denominator: 1000,
+      p_positive: 0.8, p_negative: 0.15, p_tie: 0.05,
+    }},
+    upgrade_npv: available(1000, 2000, 3000),
+    lcoe_solectria: available(0.04, 0.05, 0.06),
+    lcoe_solaredge: available(0.045, 0.055, 0.065),
+    delta_lcoe: available(0.004, 0.005, 0.006),
+    lcoo: available(0.01, 0.02, 0.03),
+    lifecycle_cost_solectria: available(1000000, 1200000, 1400000),
+    lifecycle_cost_solaredge: available(1100000, 1300000, 1500000),
+    lifecycle_energy_solectria: available(10000000, 11000000, 12000000),
+    lifecycle_energy_solaredge: available(10500000, 11500000, 12500000),
+  },
+  paired_lifecycle: {
+    target_capacity_w: 100000000, target_rating_basis: 'ac_operating_limit',
+    source_energy_basis: 'gross', reliability_mode: 'event',
+    constant_dollar_cost_year: 2022, warnings: [], reason_codes: [],
+    formula_registry: {
+      formula_registry_version: 'tea-formulas-v6',
+      formula_registry_sha256: 'a'.repeat(64),
+    },
+  },
+};
+assert.equal(Object.hasOwn(result, 'paired_commercial'), false);
+technoeconomicRenderLifecycleResult(job, result);
+assert.equal(resultRoot.dataset.state, 'done');
+assert.equal(technoeconomicElements.legacyPercentilePanel.hidden, true);
+assert.equal(technoeconomicElements.v6DecisionPanel.hidden, false);
+assert.equal(decisionBody.children.length, 3);
+assert.deepEqual(decisionBody.children[1].children.map((child) => child.textContent), [
+  'P50 (median)', '$2,000', '50 USD/MWh', '55 USD/MWh', '5 USD/MWh', '20 USD/MWh',
+]);
+assert.ok(interpretation.textContent.includes('Upgrade NPV P50 is $2,000'));
+assert.ok(interpretation.textContent.includes('Positive upgrade NPV favors SolarEdge'));
+assert.equal(probabilities.children.length, 4);
+console.log(JSON.stringify({
+  state: resultRoot.dataset.state,
+  p50: decisionBody.children[1].children.map((child) => child.textContent),
+  interpretation: interpretation.textContent,
+}));
+"""
+        )
+        self.assertEqual("done", payload["state"])
+        self.assertEqual("$2,000", payload["p50"][1])
+        self.assertIn("Positive upgrade NPV", payload["interpretation"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_standalone_unavailable_formatters_and_annual_cost_aggregation(self) -> None:
         payload = self.run_node(
             r"""
@@ -1466,6 +1929,17 @@ staleDraft.systems.solectria.cost_lines.find((line) => line.key === 'Om')
 memory.set(TECHNOECONOMIC_STANDALONE_PREVIOUS_DRAFT_STORAGE_KEY,
   JSON.stringify(staleDraft));
 assert.equal(technoeconomicLoadStandaloneDraft(), null);
+const preV6Draft = technoeconomicStandaloneDefaultDraft();
+delete preV6Draft.calculation_contract_version;
+delete preV6Draft.lifecycle_json;
+memory.set(TECHNOECONOMIC_STANDALONE_DRAFT_STORAGE_KEY,
+  JSON.stringify(preV6Draft));
+const preV6Loaded = technoeconomicLoadStandaloneDraft();
+assert.equal(preV6Loaded.calculation_contract_version,
+  TECHNOECONOMIC_PAIRED_CONTRACT_VERSION);
+assert.equal(technoeconomicStandaloneDefaultDraft().calculation_contract_version,
+  TECHNOECONOMIC_LIFECYCLE_CONTRACT_VERSION);
+memory.delete(TECHNOECONOMIC_STANDALONE_DRAFT_STORAGE_KEY);
 const control = (value, checked = false) => ({value, checked});
 const parameters = (values) => ({
   querySelectorAll() {
@@ -1514,8 +1988,10 @@ globalThis.document = {
 };
 technoeconomicElements = {
   standaloneResults: {},
+  calculationContract: control(TECHNOECONOMIC_PAIRED_CONTRACT_VERSION),
+  lifecycleJson: control(''),
   standaloneSourceSelect: control('annual-saved-v4'),
-  standaloneTargetCapacityInput: control('85'),
+  standaloneTargetCapacityInput: control('85.05'),
   standaloneRealizations: control('24000'),
   standaloneSeed: control('77'),
   standaloneCostYear: control('2022'),
@@ -1547,8 +2023,10 @@ assert.equal(TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION,
   'technoeconomic-paired-draft-v3');
 assert.equal(technoeconomicPersistStandaloneDraft(), true);
 const stored = JSON.parse(memory.get(TECHNOECONOMIC_STANDALONE_DRAFT_STORAGE_KEY));
+assert.equal(stored.calculation_contract_version,
+  TECHNOECONOMIC_PAIRED_CONTRACT_VERSION);
 assert.equal(stored.source_annual_job_id, 'annual-saved-v4');
-assert.equal(stored.target_capacity, '85');
+assert.equal(stored.target_capacity, '85.05');
 assert.equal(stored.n, '24000');
 assert.equal(stored.seed, '77');
 assert.equal(stored.project_life_years, '35');
@@ -1585,12 +2063,30 @@ technoeconomicStandaloneApplyCostDraft = (root, line) => {
   root.restoredLines = [...(root.restoredLines || []), line];
 };
 technoeconomicRenderStandaloneDraft = () => {};
+const hydrationSnapshots = [];
+technoeconomicHydrateLifecycleTemplate = () => {
+  const targetMw = Number(technoeconomicElements.standaloneTargetCapacityInput.value);
+  hydrationSnapshots.push({
+    targetMw,
+    componentA: Math.ceil(targetMw * 10),
+    componentB: Math.ceil(targetMw),
+    ratingBasis: technoeconomicElements.standaloneSolarEdgeCostLines.dataset.ratingBasis,
+  });
+};
 technoeconomicElements.standaloneSourceSelect.value = '';
 technoeconomicElements.standaloneTargetCapacityInput.value = '';
 technoeconomicElements.standaloneAccept.checked = true;
 assert.equal(technoeconomicStandaloneApplyDraft(loaded), true);
 assert.equal(technoeconomicElements.standaloneSourceSelect.value, 'annual-saved-v4');
-assert.equal(technoeconomicElements.standaloneTargetCapacityInput.value, '85');
+assert.equal(technoeconomicElements.standaloneTargetCapacityInput.value, '85.05');
+assert.deepEqual(hydrationSnapshots[0], {
+  targetMw: 85.05, componentA: 851, componentB: 86,
+  ratingBasis: 'dc_installed_nameplate',
+});
+assert.equal(technoeconomicElements.standaloneSolectriaCostLines.dataset.ratingBasis,
+  'dc_installed_nameplate');
+assert.equal(technoeconomicElements.standaloneSolarEdgeCostLines.dataset.ratingBasis,
+  'dc_installed_nameplate');
 assert.equal(technoeconomicElements.standaloneRealizations.value, '24000');
 assert.equal(technoeconomicElements.standaloneSeed.value, '77');
 assert.equal(technoeconomicElements.standaloneProjectLife.value, '35');
@@ -1885,6 +2381,8 @@ console.log(JSON.stringify(context));
             'path[0] === "technoeconomic"',
             '["sources", "jobs"].includes(path[1])',
             'path[1] === "jobs"',
+            'path[1] === "formulas"',
+            'path[2] === "v6"',
             'isSafeId(path[2])',
             '["cancel", "retry"].includes(path[3])',
             'path[3] === "exports"',
@@ -2916,7 +3414,7 @@ console.log(JSON.stringify({
         open_confirmation = self.script.split(
             "function technoeconomicOpenConfirmation", 1
         )[1].split("function technoeconomicCloseConfirmation", 1)[0]
-        self.assertIn("technoeconomicSerializeStandaloneRequest", open_confirmation)
+        self.assertIn("technoeconomicSerializeCurrentRequest", open_confirmation)
         self.assertIn("technoeconomicDeepFreeze", open_confirmation)
         self.assertIn("technoeconomicPendingSubmission", open_confirmation)
         self.assertIn("dialog.showModal()", open_confirmation)

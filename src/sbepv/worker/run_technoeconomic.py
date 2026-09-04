@@ -42,6 +42,7 @@ APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION = 2
 COMMERCIAL_SCALING_ROUTINE_RESULT_SCHEMA_VERSION = 3
 STANDALONE_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION = 4
 PAIRED_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION = 5
+LIFECYCLE_ROUTINE_RESULT_SCHEMA_VERSION = 6
 RESULT_PROVENANCE_SCHEMA_VERSION = 1
 SEALED_CALCULATION_FILENAME = "calculation_payload_v1.npz"
 _REQUIRED_EXPORT_ARTIFACT_IDS = frozenset(
@@ -750,11 +751,16 @@ def _routine_result(
         request.calculation_contract_version
         == kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
     )
+    lifecycle_contract = (
+        request.calculation_contract_version
+        == kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION
+    )
     applied_capacity_contract = request.calculation_contract_version in {
         kernel.CALCULATION_CONTRACT_VERSION,
         kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
         kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
         kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+        kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION,
     }
     if request.basis == "solartac_site":
         transfer_status = "not_applicable"
@@ -772,7 +778,9 @@ def _routine_result(
         commercial_reference = None
     result = {
         "schema_version": (
-            PAIRED_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION
+            LIFECYCLE_ROUTINE_RESULT_SCHEMA_VERSION
+            if lifecycle_contract
+            else PAIRED_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION
             if paired_commercial_contract
             else STANDALONE_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION
             if standalone_commercial_contract
@@ -1012,6 +1020,80 @@ def _routine_result(
             "unit": "constant_usd_per_kwh_ac",
             "percentiles": _json_safe(delta_percentiles),
             "cdf": _headline_cdf_display(delta_headline),
+        }
+    if lifecycle_contract:
+        lifecycle = request.paired_lifecycle
+        if lifecycle is None:
+            raise ValueError("The version-6 result is missing its lifecycle inputs")
+        result_version = calculation.provenance.get("result_version")
+        if result_version != kernel.LIFECYCLE_RESULT_VERSION:
+            raise ValueError("The version-6 calculation has an invalid result identity")
+        required_summary_keys = {
+            "headline_decision",
+            "probability_counts",
+            "upgrade_npv",
+            "delta_lcoe",
+            "lcoo",
+            "annual_lifecycle",
+            "reliability_summary",
+            "representative_event_traces",
+            "cost_coverage_audit",
+            "warnings",
+            "formula_registry",
+        }
+        missing = sorted(required_summary_keys - set(calculation.summaries))
+        if missing:
+            raise ValueError(
+                f"The version-6 calculation is missing summaries: {missing!r}"
+            )
+        headline = calculation.summaries["headline_decision"]
+        probabilities = calculation.summaries["probability_counts"]
+        if not isinstance(headline, Mapping) or not isinstance(probabilities, Mapping):
+            raise ValueError("The version-6 decision summaries are invalid")
+        reason_codes = list(headline.get("reason_codes") or ())
+        lcoo_summary = calculation.summaries["lcoo"]
+        if isinstance(lcoo_summary, Mapping) and lcoo_summary.get("status") != "available":
+            reason = lcoo_summary.get("reason")
+            if isinstance(reason, str) and reason and reason not in reason_codes:
+                reason_codes.append(reason)
+        result["result_version"] = kernel.LIFECYCLE_RESULT_VERSION
+        result["paired_lifecycle"] = {
+            "target_capacity_w": lifecycle.target_capacity_w,
+            "target_rating_basis": lifecycle.target_rating_basis,
+            "source_energy_basis": lifecycle.source_energy_basis,
+            "reliability_mode": lifecycle.reliability_mode,
+            "constant_dollar_cost_year": request.constant_dollar_cost_year,
+            "headline_metric_id": "upgrade_npv",
+            "headline_decision": _json_safe(headline),
+            "probability_counts": _json_safe(probabilities),
+            "upgrade_npv": _compact_cdf_points(
+                calculation.summaries["upgrade_npv"]
+            ),
+            "delta_lcoe": _compact_cdf_points(
+                calculation.summaries["delta_lcoe"]
+            ),
+            "lcoo": _compact_cdf_points(lcoo_summary),
+            "reason_codes": _json_safe(reason_codes),
+            "annual_lifecycle": _json_safe(
+                calculation.summaries["annual_lifecycle"]
+            ),
+            "reliability_summary": _json_safe(
+                calculation.summaries["reliability_summary"]
+            ),
+            "representative_event_traces": _json_safe(
+                calculation.summaries["representative_event_traces"]
+            ),
+            "cost_coverage_audit": _json_safe(
+                calculation.summaries["cost_coverage_audit"]
+            ),
+            "warnings": _json_safe(calculation.summaries["warnings"]),
+            "formula_registry": _json_safe(
+                calculation.provenance.get("formula_registry") or {}
+            ),
+            "formula_catalog_endpoint": "/api/technoeconomic/formulas/v6",
+            "admission": _json_safe(
+                calculation.provenance.get("admission") or {}
+            ),
         }
     return result
 
@@ -1424,6 +1506,22 @@ def _run_technoeconomic_job(
             },
             "kernel": kernel_provenance,
         }
+        if (
+            request.calculation_contract_version
+            == kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION
+        ):
+            result_provenance.update(
+                {
+                    "result_version": kernel.LIFECYCLE_RESULT_VERSION,
+                    "calculation_contract_version": (
+                        kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION
+                    ),
+                    "sampling_version": kernel.LIFECYCLE_SAMPLING_VERSION,
+                    "formula_registry": _json_safe(
+                        kernel_provenance.get("formula_registry") or {}
+                    ),
+                }
+            )
         set_progress(99, "Finalizing technoeconomic results")
         _verify_export_manifest(
             job_id,

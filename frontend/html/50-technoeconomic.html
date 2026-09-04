@@ -113,7 +113,7 @@
                             <article class="tea-standalone-cdf-card">
                                 <header class="tea-standalone-result-heading">
                                     <div>
-                                        <p class="tea-step-label">Result: paired commercial LCOE CDF</p>
+                                        <p class="tea-step-label" id="technoeconomicStandaloneResultEyebrow">Result: paired commercial LCOE CDF</p>
                                         <h3 id="technoeconomicStandaloneResultsHeading">Solectria and SolarEdge LCOE</h3>
                                         <p id="technoeconomicStandaloneResultStatus" role="status" aria-live="polite">Complete the assumptions, then calculate. Results are modeled, not a validated forecast.</p>
                                     </div>
@@ -127,14 +127,14 @@
                                     <figure class="tea-standalone-cdf-figure">
                                         <img id="technoeconomicStandaloneCdfPlot" alt="Empirical cumulative distributions of modeled commercial Solectria and SolarEdge lifecycle LCOE" hidden>
                                         <p class="tea-figure-fallback" id="technoeconomicStandaloneCdfFallback" role="status">The verified CDF chart will appear after a completed calculation.</p>
-                                        <figcaption>The curve shows the probability that modeled LCOE is at or below each real-USD value.</figcaption>
+                                        <figcaption id="technoeconomicStandaloneCdfCaption">The curve shows the probability that modeled LCOE is at or below each real-USD value.</figcaption>
                                     </figure>
                                     <div class="tea-standalone-interpretation">
                                         <section aria-labelledby="technoeconomicStandaloneInterpretationHeading">
                                             <h4 id="technoeconomicStandaloneInterpretationHeading">Interpretation</h4>
                                             <p id="technoeconomicStandaloneInterpretation">A completed server result is required before the probability distribution can be interpreted.</p>
                                         </section>
-                                        <div>
+                                        <div id="technoeconomicLegacyPercentilePanel">
                                             <h4 id="technoeconomicLcoePercentilesHeading">LCOE percentiles (real USD/MWh)</h4>
                                             <div class="tea-table-region" role="region" aria-labelledby="technoeconomicLcoePercentilesHeading" tabindex="0">
                                                 <table class="tea-table tea-standalone-percentile-table" id="technoeconomicLcoePercentileTable">
@@ -147,6 +147,26 @@
                                                         </tr>
                                                     </thead>
                                                     <tbody id="technoeconomicLcoePercentileBody"></tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                        <div id="technoeconomicV6DecisionPanel" hidden>
+                                            <h4 id="technoeconomicV6PercentilesHeading">Lifecycle decision metrics</h4>
+                                            <dl class="tea-v6-probability-summary" id="technoeconomicV6ProbabilitySummary" aria-label="Upgrade NPV decision probabilities"></dl>
+                                            <div class="tea-table-region" role="region" aria-labelledby="technoeconomicV6PercentilesHeading" tabindex="0">
+                                                <table class="tea-table tea-v6-decision-table" id="technoeconomicV6DecisionTable">
+                                                    <caption>Upgrade NPV and supporting lifecycle metric percentiles. Positive upgrade NPV favors SolarEdge.</caption>
+                                                    <thead>
+                                                        <tr>
+                                                            <th scope="col">Percentile</th>
+                                                            <th scope="col">Upgrade NPV (USD)</th>
+                                                            <th scope="col">Solectria LCOE (USD/MWh)</th>
+                                                            <th scope="col">SolarEdge LCOE (USD/MWh)</th>
+                                                            <th scope="col">ΔLCOE, SE−SO (USD/MWh)</th>
+                                                            <th scope="col">LCOO, SE−SO (USD/MWh)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody id="technoeconomicV6PercentileBody"></tbody>
                                                 </table>
                                             </div>
                                         </div>
@@ -199,14 +219,35 @@
                                         <header class="tea-assumptions-dialog-header">
                                             <div>
                                                 <p class="tea-step-label">Scenario inputs</p>
-                                                <h2 id="technoeconomicAssumptionsHeading">Edit assumptions</h2>
-                                                <p id="technoeconomicAssumptionsDescription">Review source, scale, cost, and finance inputs before calculation.</p>
+                                                <h2 id="technoeconomicAssumptionsHeading">Scenario Builder</h2>
+                                                <p id="technoeconomicAssumptionsDescription">Build, validate, and review one evidence-gated calculation scenario.</p>
                                             </div>
                                             <button class="tea-button tea-button-quiet" id="technoeconomicAssumptionsCloseBtn" type="button">Close</button>
                                         </header>
+                                    <nav class="tea-builder-nav" aria-label="Scenario Builder sections">
+                                        <ol id="technoeconomicBuilderSteps">
+                                            <li><button type="button" data-tea-builder-step="source" aria-current="step"><span>1</span>Source &amp; Scale<small>Required</small></button></li>
+                                            <li><button type="button" data-tea-builder-step="finance"><span>2</span>Finance<small>Required</small></button></li>
+                                            <li><button type="button" data-tea-builder-step="lifecycle"><span>3</span>Lifecycle<small>Required</small></button></li>
+                                            <li><button type="button" data-tea-builder-step="reliability"><span>4</span>Reliability<small>Required</small></button></li>
+                                            <li><button type="button" data-tea-builder-step="value"><span>5</span>Value<small>Required</small></button></li>
+                                            <li><button type="button" data-tea-builder-step="review"><span>6</span>Evidence &amp; Review<small>Required</small></button></li>
+                                        </ol>
+                                    </nav>
                                     <div class="tea-standalone-assumptions-body">
-                                        <div class="tea-alert" id="technoeconomicStandaloneFormErrors" role="alert" aria-live="assertive" tabindex="-1" hidden></div>
-                                        <div class="tea-assumptions-table-region" role="region" aria-labelledby="technoeconomicAssumptionsHeading" tabindex="0">
+                                        <main class="tea-builder-stage" id="technoeconomicBuilderStage" tabindex="-1">
+                                        <div class="tea-builder-section-heading">
+                                            <p class="tea-step-label" id="technoeconomicBuilderSectionEyebrow">Section 1 of 6</p>
+                                            <h3 id="technoeconomicBuilderSectionHeading">Source &amp; Scale</h3>
+                                            <p id="technoeconomicBuilderSectionDescription">Choose the verified Annual Simulation and define the commercial target and reproducible sampling.</p>
+                                        </div>
+                                        <div class="tea-alert tea-builder-error-summary" id="technoeconomicStandaloneFormErrors" role="alert" aria-live="assertive" tabindex="-1" hidden></div>
+                                        <section class="tea-builder-review" id="technoeconomicBuilderReview" aria-labelledby="technoeconomicBuilderReviewHeading" hidden>
+                                            <h4 id="technoeconomicBuilderReviewHeading">Final scenario review</h4>
+                                            <p>Review the exact shared and system-specific assumptions that will be frozen for calculation.</p>
+                                            <div class="tea-builder-review-grid" id="technoeconomicBuilderReviewSummary"></div>
+                                        </section>
+                                        <div class="tea-assumptions-table-region" role="region" aria-labelledby="technoeconomicBuilderSectionHeading" tabindex="0">
                                             <table class="tea-assumptions-table">
                                                 <caption>Editable shared and paired assumptions for the probabilistic technoeconomic analysis.</caption>
                                                 <thead>
@@ -218,7 +259,7 @@
                                                         <th scope="col">Unit / status</th>
                                                     </tr>
                                                 </thead>
-                                                <tbody class="tea-assumption-group" aria-labelledby="technoeconomicStandaloneSourceHeading technoeconomicStandaloneScaleHeading">
+                                                <tbody class="tea-assumption-group" data-tea-builder-section="source" aria-labelledby="technoeconomicStandaloneSourceHeading technoeconomicStandaloneScaleHeading">
                                                     <tr class="tea-assumption-group-heading">
                                                         <th colspan="5" scope="rowgroup">
                                                             <span id="technoeconomicStandaloneSourceHeading">Source &amp; scale</span>
@@ -270,6 +311,17 @@
                                                         <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Seeded LHS</strong><small>1–100,000 realizations</small></td>
                                                     </tr>
                                                     <tr class="tea-assumption-row">
+                                                        <th scope="row"><label for="technoeconomicCalculationContract">Calculation contract</label><small>New analyses use the evidence-gated lifecycle model.</small></th>
+                                                        <td class="tea-assumption-shared-marker" data-label="Distribution"><span class="tea-shared-value-label">Shared</span></td>
+                                                        <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
+                                                            <select id="technoeconomicCalculationContract" aria-describedby="technoeconomicCalculationContractHelp" required>
+                                                                <option value="tea-calculation-v6" selected>v6 · paired lifecycle and upgrade NPV</option>
+                                                                <option value="tea-calculation-v5">v5 · legacy paired LCOE compatibility</option>
+                                                            </select>
+                                                        </td>
+                                                        <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Explicit version</strong><small id="technoeconomicCalculationContractHelp">The dashboard submits v6 explicitly. Omitted-version paired requests remain v5 for compatibility.</small></td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row">
                                                         <th scope="row"><label for="technoeconomicStandaloneSeed">Sampling seed</label></th>
                                                         <td class="tea-assumption-shared-marker" data-label="Distribution"><span class="tea-shared-value-label">Shared</span></td>
                                                         <td class="tea-assumption-shared-cell" colspan="2" data-label="Shared value">
@@ -278,7 +330,7 @@
                                                         <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Reproducible</strong><small>Whole-number seed</small></td>
                                                     </tr>
                                                 </tbody>
-                                                <tbody class="tea-assumption-group" aria-labelledby="technoeconomicStandaloneFinanceHeading">
+                                                <tbody class="tea-assumption-group" data-tea-builder-section="finance" aria-labelledby="technoeconomicStandaloneFinanceHeading">
                                                     <tr class="tea-assumption-group-heading">
                                                         <th colspan="5" id="technoeconomicStandaloneFinanceHeading" scope="rowgroup">Finance</th>
                                                     </tr>
@@ -319,7 +371,7 @@
                                                         </td>
                                                         <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>Real % / year</strong><small>Enter percentages; the request stores a real fraction per year.</small></td>
                                                     </tr>
-                                                    <tr class="tea-assumption-row tea-v4-distribution" data-tea-v4-distribution="degradation">
+                                                    <tr class="tea-assumption-row tea-v4-distribution" id="technoeconomicLegacyDegradationRow" data-tea-v4-distribution="degradation">
                                                         <th scope="row">Annual module degradation</th>
                                                         <td data-label="Distribution">
                                                             <div class="tea-field">
@@ -338,7 +390,149 @@
                                                         <td class="tea-assumption-meta-cell" data-label="Unit / status"><strong>% / year</strong><small>Shared by both systems.</small></td>
                                                     </tr>
                                                 </tbody>
-                                                <tbody class="tea-assumption-group" aria-labelledby="technoeconomicStandaloneCostsHeading">
+                                                <tbody class="tea-assumption-group" id="technoeconomicLifecycleInputGroup" data-tea-builder-section="lifecycle reliability value" aria-labelledby="technoeconomicLifecycleInputHeading">
+                                                    <tr class="tea-assumption-group-heading">
+                                                        <th colspan="5" id="technoeconomicLifecycleInputHeading" scope="rowgroup">V6 lifecycle, reliability, and value specification</th>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row tea-v6-template-row">
+                                                        <td colspan="5" data-label="Lifecycle setup">
+                                                            <section class="tea-v6-template-builder" aria-labelledby="technoeconomicLifecycleTemplateHeading">
+                                                                <div class="tea-v6-template-heading" data-tea-builder-panel="lifecycle">
+                                                                    <div>
+                                                                        <span class="tea-template-badge">Versioned provisional planning template</span>
+                                                                        <h4 id="technoeconomicLifecycleTemplateHeading">Start with reviewed lifecycle values</h4>
+                                                                        <p>Review the pre-filled synthetic planning assumptions below and confirm the final set before calculation. You may override the visible planning fields; every override remains provisional until supported by project evidence. The generic component rules are fixed in this template and can only be replaced through the Advanced section. These are not approved vendor inputs. If the finance section has no discount rate, the button visibly fills a fixed 5% real planning rate. The dashboard prepares the technical request automatically.</p>
+                                                                    </div>
+                                                                    <button class="tea-button tea-button-primary" id="technoeconomicUseLifecycleTemplateBtn" type="button" aria-describedby="technoeconomicLifecycleTemplateStatusDetail" aria-controls="technoeconomicLifecycleTemplateStatusPanel">Use approved template values</button>
+                                                                </div>
+
+                                                                <div class="tea-v6-template-status" id="technoeconomicLifecycleTemplateStatusPanel" data-tea-builder-panel="lifecycle" data-state="ready" role="status" aria-live="polite">
+                                                                    <span class="tea-v6-template-status-dot" aria-hidden="true"></span>
+                                                                    <div>
+                                                                        <strong id="technoeconomicLifecycleTemplateStatus">Ready to apply</strong>
+                                                                        <small id="technoeconomicLifecycleTemplateStatusDetail">These are provisional planning assumptions, not SolarEdge or Solectria vendor claims. Select “Use approved template values,” review them, and provide the confirmation at the bottom of this form.</small>
+                                                                    </div>
+                                                                </div>
+
+                                                                <div class="tea-v6-template-grid" aria-label="Shared lifecycle assumptions">
+                                                                    <label class="tea-v6-template-field" data-tea-builder-panel="lifecycle" for="technoeconomicLifecycleSourceBasis">
+                                                                        <span>Source energy</span>
+                                                                        <select id="technoeconomicLifecycleSourceBasis">
+                                                                            <option value="gross" selected>Gross annual energy</option>
+                                                                            <option value="net" disabled>Net energy · requires year-by-year evidence</option>
+                                                                        </select>
+                                                                        <small><span class="tea-status-badge tea-status-verified">Verified</span> Annual-source availability is applied in v6.</small>
+                                                                    </label>
+                                                                    <label class="tea-v6-template-field" data-tea-builder-panel="reliability" for="technoeconomicLifecycleReliabilityMode">
+                                                                        <span>Reliability calculation</span>
+                                                                        <select id="technoeconomicLifecycleReliabilityMode">
+                                                                            <option value="event" selected>Event simulation</option>
+                                                                            <option value="expected" disabled>Expected hazard · diagnostic only</option>
+                                                                        </select>
+                                                                        <small><span class="tea-status-badge tea-status-approved">Locked</span> Contract default; drives the recommendation.</small>
+                                                                    </label>
+                                                                    <label class="tea-v6-template-field" data-tea-builder-panel="value" for="technoeconomicLifecycleElectricityValue">
+                                                                        <span>Electricity value</span>
+                                                                        <span class="tea-input-with-unit"><input id="technoeconomicLifecycleElectricityValue" type="number" min="0" step="0.001" value="0.07" inputmode="decimal"><span>USD/kWh</span></span>
+                                                                        <small><span class="tea-status-badge tea-status-provisional">Provisional</span> Fixed year-one value.</small>
+                                                                    </label>
+                                                                    <label class="tea-v6-template-field" data-tea-builder-panel="value" for="technoeconomicLifecycleElectricityGrowth">
+                                                                        <span>Real electricity-value growth</span>
+                                                                        <span class="tea-input-with-unit"><input id="technoeconomicLifecycleElectricityGrowth" type="number" step="0.01" value="0" inputmode="decimal"><span>%/year</span></span>
+                                                                        <small><span class="tea-status-badge tea-status-provisional">Provisional</span> Zero real growth.</small>
+                                                                    </label>
+                                                                    <label class="tea-v6-template-field" data-tea-builder-panel="value" for="technoeconomicLifecycleNpvTolerance">
+                                                                        <span>NPV tie tolerance</span>
+                                                                        <span class="tea-input-with-unit"><input id="technoeconomicLifecycleNpvTolerance" type="number" min="0.000001" step="0.001" value="0.01" inputmode="decimal"><span>USD/W</span></span>
+                                                                        <small><span class="tea-status-badge tea-status-approved">Locked</span> Decision-rule values inside this range are ties.</small>
+                                                                    </label>
+                                                                </div>
+
+                                                                <div class="tea-v6-decision-rule" data-tea-builder-panel="value" aria-label="Version 6 headline decision rule">
+                                                                    <span class="tea-status-badge tea-status-approved">Locked</span>
+                                                                    <div>
+                                                                        <strong>75% probability threshold</strong>
+                                                                        <p>SolarEdge is preferred when at least 75% of valid realizations have upgrade NPV above the tie tolerance. Solectria is preferred when at least 75% fall below the negative tolerance; otherwise the result reports no decisive winner.</p>
+                                                                    </div>
+                                                                </div>
+
+                                                                <div class="tea-v6-template-section-heading" data-tea-builder-panel="lifecycle">
+                                                                    <div><h5>System assumptions</h5><p>Both systems start with the same neutral template. Edit only where project-specific evidence supports a difference. CAPEX and O&amp;M use the rating-basis-specific NREL 2024 ATB utility-scale PV benchmark; <a href="https://data.openei.org/submissions/6006" target="_blank" rel="noreferrer">review the official NREL/OEDI benchmark record</a>.</p></div>
+                                                                    <span class="tea-status-badge tea-status-provisional">Provisional</span>
+                                                                </div>
+                                                                <div class="tea-v6-template-table-scroll" data-tea-builder-panel="lifecycle" tabindex="0" role="region" aria-labelledby="technoeconomicLifecycleSystemAssumptionsHeading">
+                                                                    <span class="sr-only" id="technoeconomicLifecycleSystemAssumptionsHeading">System assumptions comparison</span>
+                                                                    <table class="tea-v6-template-table">
+                                                                        <caption class="sr-only">Versioned provisional lifecycle planning assumptions for Solectria and SolarEdge.</caption>
+                                                                        <thead><tr><th scope="col">Assumption</th><th scope="col">Solectria</th><th scope="col">SolarEdge</th><th scope="col">Unit</th></tr></thead>
+                                                                        <tbody>
+                                                                            <tr><th scope="row">Annual degradation</th><td><input aria-label="Solectria annual degradation percent" id="technoeconomicLifecycleSolectriaDegradation" type="number" min="0" max="99.99" step="0.01" value="0.50" inputmode="decimal"></td><td><input aria-label="SolarEdge annual degradation percent" id="technoeconomicLifecycleSolarEdgeDegradation" type="number" min="0" max="99.99" step="0.01" value="0.50" inputmode="decimal"></td><td>%/year</td></tr>
+                                                                            <tr><th scope="row">Base availability</th><td><input aria-label="Solectria base availability percent" id="technoeconomicLifecycleSolectriaAvailability" type="number" min="0.01" max="100" step="0.01" value="99.50" inputmode="decimal"></td><td><input aria-label="SolarEdge base availability percent" id="technoeconomicLifecycleSolarEdgeAvailability" type="number" min="0.01" max="100" step="0.01" value="99.50" inputmode="decimal"></td><td>%</td></tr>
+                                                                            <tr><th scope="row">Initial installed cost</th><td><input aria-label="Solectria initial installed cost" id="technoeconomicLifecycleSolectriaInitialCost" type="number" min="0" step="0.01" value="1.56" inputmode="decimal"></td><td><input aria-label="SolarEdge initial installed cost" id="technoeconomicLifecycleSolarEdgeInitialCost" type="number" min="0" step="0.01" value="1.56" inputmode="decimal"></td><td id="technoeconomicLifecycleInitialCostUnit">real 2022 USD/Wac</td></tr>
+                                                                            <tr><th scope="row">Base O&amp;M</th><td><input aria-label="Solectria base operations and maintenance cost" id="technoeconomicLifecycleSolectriaBaseOm" type="number" min="0" step="0.01" value="22.00" inputmode="decimal"></td><td><input aria-label="SolarEdge base operations and maintenance cost" id="technoeconomicLifecycleSolarEdgeBaseOm" type="number" min="0" step="0.01" value="22.00" inputmode="decimal"></td><td id="technoeconomicLifecycleBaseOmUnit">real 2022 USD/kWac-year</td></tr>
+                                                                            <tr><th scope="row">Decommissioning cost</th><td><input aria-label="Solectria decommissioning cost" id="technoeconomicLifecycleSolectriaDecommissioning" type="number" min="0" step="1000" value="3000000" inputmode="decimal"></td><td><input aria-label="SolarEdge decommissioning cost" id="technoeconomicLifecycleSolarEdgeDecommissioning" type="number" min="0" step="1000" value="3000000" inputmode="decimal"></td><td>real 2022 USD</td></tr>
+                                                                            <tr><th scope="row">Salvage value</th><td><input aria-label="Solectria salvage value" id="technoeconomicLifecycleSolectriaSalvage" type="number" min="0" step="1000" value="2000000" inputmode="decimal"></td><td><input aria-label="SolarEdge salvage value" id="technoeconomicLifecycleSolarEdgeSalvage" type="number" min="0" step="1000" value="2000000" inputmode="decimal"></td><td>real 2022 USD</td></tr>
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+
+                                                                <div class="tea-v6-template-section-heading" data-tea-builder-panel="reliability">
+                                                                    <div><h5>Reliability component template</h5><p>Quantities scale visibly from target capacity using ceiling division. Both systems receive the same two generic planning classes.</p></div>
+                                                                    <span class="tea-status-badge tea-status-provisional">Provisional</span>
+                                                                </div>
+                                                                <div class="tea-v6-template-table-scroll" data-tea-builder-panel="reliability" tabindex="0" role="region" aria-labelledby="technoeconomicLifecycleComponentAssumptionsHeading">
+                                                                    <span class="sr-only" id="technoeconomicLifecycleComponentAssumptionsHeading">Reliability component assumptions</span>
+                                                                    <table class="tea-v6-template-table tea-v6-component-table">
+                                                                        <caption class="sr-only">Generic reliability component assumptions applied equally to each system by the provisional template.</caption>
+                                                                        <thead><tr><th scope="col">Component class</th><th scope="col">Quantity per system</th><th scope="col">Failure model</th><th scope="col">Service time</th><th scope="col">Initial / target spares</th><th scope="col">Corrective costs</th><th scope="col">Warranty and growth</th></tr></thead>
+                                                                        <tbody>
+                                                                            <tr><th scope="row">Generic 100-kW power-electronics equivalent</th><td><span id="technoeconomicLifecycleComponentACount">1,000</span><br><span id="technoeconomicLifecycleComponentAImpact">0.10% capacity/unit</span></td><td>Weibull β 1.5 · η 15 years</td><td>Repair 8 hours<br>Emergency logistics 72 hours</td><td><span id="technoeconomicLifecycleComponentASpares">10 units</span><br>Initial stock and yearly target<br>Restock to target yearly</td><td>Emergency hardware $15,750<br>Restock $15,000 · labor $1,000/failure<br>Mobilization $500/batch of 5</td><td>10 years · 80% hardware<br>0% real cost growth</td></tr>
+                                                                            <tr><th scope="row">Generic 1-MW balance-of-system equivalent</th><td><span id="technoeconomicLifecycleComponentBCount">100</span><br><span id="technoeconomicLifecycleComponentBImpact">1.00% capacity/unit</span></td><td>Weibull β 2.5 · η 30 years</td><td>Repair 24 hours<br>Emergency logistics 168 hours</td><td><span id="technoeconomicLifecycleComponentBSpares">1 unit</span><br>Initial stock and yearly target<br>Restock to target yearly</td><td>Emergency hardware $52,500<br>Restock $50,000 · labor $5,000/failure<br>Mobilization $2,000/batch of 1</td><td>5 years · 50% hardware<br>0% real cost growth</td></tr>
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+                                                                <p class="tea-v6-scaling-note" id="technoeconomicLifecycleScalingNote" data-tea-builder-panel="reliability" aria-live="polite">At the 100 MW target: ceil(100,000 kW ÷ 100 kW) and ceil(100,000 kW ÷ 1,000 kW). No scheduled costs or preventive replacements are included; base O&amp;M and corrective-cost growth are 0% real.</p>
+
+                                                                <div class="tea-v6-template-section-heading" data-tea-builder-panel="reliability">
+                                                                    <div><h5>Shared site-event example</h5><p>One paired draw represents a site-wide event affecting both systems.</p></div>
+                                                                    <span class="tea-status-badge tea-status-provisional">Provisional</span>
+                                                                </div>
+                                                                <div class="tea-v6-template-grid tea-v6-common-event-grid" data-tea-builder-panel="reliability">
+                                                                    <label class="tea-v6-template-field" for="technoeconomicLifecycleCommonProbability"><span>Annual probability</span><span class="tea-input-with-unit"><input id="technoeconomicLifecycleCommonProbability" type="number" min="0" max="100" step="0.01" value="2.00" inputmode="decimal"><span>%</span></span></label>
+                                                                    <label class="tea-v6-template-field" for="technoeconomicLifecycleCommonDowntime"><span>Downtime</span><span class="tea-input-with-unit"><input id="technoeconomicLifecycleCommonDowntime" type="number" min="0" step="1" value="48" inputmode="decimal"><span>hours</span></span></label>
+                                                                    <label class="tea-v6-template-field" for="technoeconomicLifecycleCommonImpact"><span>Capacity affected</span><span class="tea-input-with-unit"><input id="technoeconomicLifecycleCommonImpact" type="number" min="0.01" max="100" step="0.01" value="20" inputmode="decimal"><span>%</span></span></label>
+                                                                    <label class="tea-v6-template-field" for="technoeconomicLifecycleCommonCost"><span>Cost per event</span><span class="tea-input-with-unit"><input id="technoeconomicLifecycleCommonCost" type="number" min="0" step="1000" value="100000" inputmode="decimal"><span>USD</span></span><small>0% real cost growth · affects both systems</small></label>
+                                                                </div>
+
+                                                                <details class="tea-v6-advanced-lifecycle" id="technoeconomicLifecycleAdvancedDetails" data-tea-builder-panel="lifecycle">
+                                                                    <summary>Advanced methodology &amp; lifecycle data</summary>
+                                                                    <p>This technical editor is optional and intended for engineering/API users. Editing it switches from the versioned provisional template to a custom specification.</p>
+                                                                    <label for="technoeconomicLifecycleJson">Lifecycle data (JSON)</label>
+                                                                    <textarea id="technoeconomicLifecycleJson" rows="12" maxlength="200000" spellcheck="false" aria-describedby="technoeconomicLifecycleJsonHelp" placeholder="Advanced users may paste a complete v6 lifecycle specification here."></textarea>
+                                                                    <small id="technoeconomicLifecycleJsonHelp">The backend data is generated automatically when the guided template is used. Custom data must include complete evidence, component, warranty, spare, availability, cost, and terminal-value fields.</small>
+                                                                </details>
+                                                            </section>
+                                                        </td>
+                                                    </tr>
+                                                    <tr class="tea-assumption-row tea-v6-formula-registry-row" data-tea-builder-panel="lifecycle">
+                                                        <th scope="row">Calculation methodology (advanced)<small>The authoritative details remain available for reviewers and auditors.</small></th>
+                                                        <td colspan="4" data-label="Formula registry">
+                                                            <details class="tea-v6-formula-registry" id="technoeconomicFormulaRegistryDetails">
+                                                                <summary><span id="technoeconomicFormulaRegistryStatus" role="status" aria-live="polite">Loading the v6 formula catalog…</span></summary>
+                                                                <p class="tea-field-help" id="technoeconomicFormulaRegistryHash"></p>
+                                                                <div class="tea-v6-formula-registry-scroll" tabindex="0" aria-label="Version 6 formula catalog">
+                                                                    <table>
+                                                                        <thead>
+                                                                            <tr><th scope="col">ID</th><th scope="col">Equation</th><th scope="col">Units</th><th scope="col">Guard</th></tr>
+                                                                        </thead>
+                                                                        <tbody id="technoeconomicFormulaRegistryBody"></tbody>
+                                                                    </table>
+                                                                </div>
+                                                            </details>
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                                <tbody class="tea-assumption-group" id="technoeconomicLegacyCostGroup" data-tea-builder-section="lifecycle" aria-labelledby="technoeconomicStandaloneCostsHeading">
                                                     <tr class="tea-assumption-group-heading">
                                                         <th colspan="5" id="technoeconomicStandaloneCostsHeading" scope="rowgroup">System costs</th>
                                                     </tr>
@@ -392,15 +586,15 @@
                                                         </td>
                                                     </tr>
                                                 </tbody>
-                                                <tbody class="tea-assumption-group" aria-labelledby="technoeconomicStandaloneEvidenceHeading">
+                                                <tbody class="tea-assumption-group" data-tea-builder-section="review" aria-labelledby="technoeconomicStandaloneEvidenceHeading">
                                                     <tr class="tea-assumption-group-heading">
                                                         <th colspan="5" id="technoeconomicStandaloneEvidenceHeading" scope="rowgroup">Evidence</th>
                                                     </tr>
                                                     <tr class="tea-assumption-row">
-                                                        <th scope="row"><label for="technoeconomicStandaloneAssumptionNote">Source / justification</label><small>Discount-rate and degradation evidence.</small></th>
+                                                        <th scope="row"><label for="technoeconomicStandaloneAssumptionNote">Source / justification</label><small>Explain the discount rate and any accepted or customized lifecycle planning values.</small></th>
                                                         <td data-label="Requirement"><span class="tea-required-value-label">Required</span></td>
                                                         <td class="tea-assumption-shared-cell" colspan="2" data-label="Evidence">
-                                                            <textarea id="technoeconomicStandaloneAssumptionNote" rows="2" maxlength="4000" placeholder="Cite the source or explain these assumptions." required></textarea>
+                                                            <textarea id="technoeconomicStandaloneAssumptionNote" rows="2" maxlength="4000" placeholder="State why these financial, reliability, cost, and lifecycle assumptions are appropriate for this analysis." required></textarea>
                                                         </td>
                                                         <td class="tea-assumption-meta-cell" data-label="Status"><strong>Evidence needed</strong><small>Saved with the submitted request.</small></td>
                                                     </tr>
@@ -411,8 +605,8 @@
                                                             <label class="tea-checkbox-row" for="technoeconomicStandaloneAccept">
                                                                 <input id="technoeconomicStandaloneAccept" type="checkbox" required>
                                                                 <span>
-                                                                    <strong>I reviewed both system cost stacks, capacity scaling, benchmark limits, and financial assumptions.</strong>
-                                                                    <small>This acceptance is recorded with the submitted request.</small>
+                                                                    <strong>I reviewed the selected source, capacity scaling, financial inputs, and every cost, lifecycle, and evidence field shown for this calculation.</strong>
+                                                                    <small>This acceptance and my justification are recorded with the submitted request. Any provisional values are planning assumptions, not vendor claims.</small>
                                                                 </span>
                                                             </label>
                                                         </td>
@@ -420,11 +614,51 @@
                                                 </tbody>
                                             </table>
                                         </div>
+                                        <section class="tea-builder-compatibility" id="technoeconomicBuilderV5Reliability" data-tea-builder-v5-section="reliability" hidden>
+                                            <span class="tea-status-badge tea-status-locked">Locked</span>
+                                            <h4>V5 reliability treatment</h4>
+                                            <p>The v5 paired-LCOE contract does not simulate component failures, spares, warranties, or common-cause events. Its shared annual module degradation assumption remains editable in Finance.</p>
+                                        </section>
+                                        <section class="tea-builder-compatibility" id="technoeconomicBuilderV5Value" data-tea-builder-v5-section="value" hidden>
+                                            <span class="tea-status-badge tea-status-locked">Locked</span>
+                                            <h4>V5 value methodology</h4>
+                                            <p>V5 compares discounted lifecycle cost with discounted lifecycle AC energy for each system and reports paired LCOE distributions. It does not calculate the v6 upgrade-NPV decision rule.</p>
+                                            <details>
+                                                <summary>Advanced methodology</summary>
+                                                <p><strong>LCOE</strong> = discounted lifecycle cost ÷ discounted lifecycle AC energy.</p>
+                                                <p><strong>LCOO</strong> = (SolarEdge lifecycle cost − Solectria lifecycle cost) ÷ (SolarEdge lifecycle AC energy − Solectria lifecycle AC energy).</p>
+                                            </details>
+                                        </section>
+                                        </main>
+                                        <aside class="tea-builder-summary" aria-labelledby="technoeconomicBuilderSummaryHeading">
+                                            <div class="tea-builder-summary-sticky">
+                                                <h3 id="technoeconomicBuilderSummaryHeading">Scenario summary</h3>
+                                                <dl>
+                                                    <div><dt>Target capacity</dt><dd id="technoeconomicBuilderTarget">100 MW</dd></div>
+                                                    <div><dt>Project life</dt><dd id="technoeconomicBuilderLife">30 years</dd></div>
+                                                    <div><dt>Number of trials</dt><dd id="technoeconomicBuilderTrials">10,000</dd></div>
+                                                    <div><dt>Calculation contract</dt><dd id="technoeconomicBuilderContract">v6 · paired lifecycle</dd></div>
+                                                    <div><dt>Selected annual source</dt><dd id="technoeconomicBuilderSource">Not selected</dd></div>
+                                                </dl>
+                                                <div class="tea-builder-completion">
+                                                    <h4>Section completion</h4>
+                                                    <ul id="technoeconomicBuilderCompletion"></ul>
+                                                </div>
+                                                <div class="tea-builder-issues">
+                                                    <h4>Remaining validation issues <span id="technoeconomicBuilderIssueCount">0</span></h4>
+                                                    <ul id="technoeconomicBuilderIssues"></ul>
+                                                </div>
+                                            </div>
+                                        </aside>
                                     </div>
                                         <footer class="tea-assumptions-dialog-actions">
-                                            <p class="tea-assumptions-validation-summary">Complete the verified source, evidence, and acceptance before calculation.</p>
-                                            <button class="tea-button tea-button-secondary" id="technoeconomicAssumptionsFooterCloseBtn" type="button">Close</button>
-                                            <button class="tea-button tea-button-primary" id="technoeconomicAssumptionsReviewBtn" type="submit">Review and calculate</button>
+                                            <div class="tea-assumptions-validation-summary" id="technoeconomicBuilderFooterRequirements" role="status" aria-live="polite">Complete the verified source, evidence, and acceptance before calculation.</div>
+                                            <div class="tea-builder-footer-actions">
+                                                <button class="tea-button tea-button-quiet" id="technoeconomicBuilderSaveBtn" type="button">Save draft</button>
+                                                <button class="tea-button tea-button-secondary" id="technoeconomicBuilderBackBtn" type="button">Back</button>
+                                                <button class="tea-button tea-button-primary" id="technoeconomicBuilderContinueBtn" type="button">Continue</button>
+                                                <button class="tea-button tea-button-primary" id="technoeconomicAssumptionsReviewBtn" type="submit" hidden>Review &amp; calculate</button>
+                                            </div>
                                         </footer>
                                     </div>
                                 </dialog>
@@ -1092,7 +1326,7 @@
                                 </div>
                             </div>
 
-                            <section class="tea-formula-panel" aria-labelledby="technoeconomicFormulaHeading">
+                            <section class="tea-formula-panel" id="technoeconomicLegacyFormulaPanel" aria-labelledby="technoeconomicFormulaHeading">
                                 <h3 id="technoeconomicFormulaHeading">LCOE and LCOO formulas</h3>
                                 <p><strong>LCOE</strong> = discounted lifecycle cost / discounted lifecycle AC energy.</p>
                                 <p><strong>LCOO</strong> = (SolarEdge lifecycle cost − Solectria lifecycle cost) / (SolarEdge lifecycle AC energy − Solectria lifecycle AC energy).</p>

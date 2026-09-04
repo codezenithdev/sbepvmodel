@@ -2116,3 +2116,234 @@ partition.
 
 The authoritative product summary is
 `docs/TECHNOECONOMIC_V5_PRODUCT_REQUIREMENTS.md`.
+
+## 19. Version 6 addendum — paired lifecycle reliability and upgrade NPV
+
+Contract `tea-calculation-v6` adds a separate annual lifecycle execution path. It
+uses sampling contract `tea-lhs-v2`, routine-result schema `tea-result-v6`, formula
+registry `tea-formulas-v6`, and workbook family `technoeconomic-xlsx-v6`. Versions
+1 through 5 retain their request hashes, numerical behavior, results, retries, and
+exports. A public paired-commercial request that omits a contract version and has
+no lifecycle block resolves to version 5; lifecycle input is accepted only with an
+explicit `tea-calculation-v6`. The kernel's legacy dataclass default remains version
+1 for internal compatibility and is not the public API's version resolver.
+
+The public request nests the lifecycle object under `paired_commercial.lifecycle`.
+The API maps it to the kernel's top-level `paired_lifecycle` field so the canonical
+payload for every earlier contract remains byte-for-byte unchanged. Canonicalization
+also removes an absent nested lifecycle value and an omitted public version before
+hashing. The dashboard submits version 6 explicitly and offers version 5 only as a
+clearly labeled compatibility path.
+
+Version 6 is unlevered, pre-tax, and stated in constant base-year USD. Debt, tax,
+depreciation, and incentives are excluded. Production vendor-specific degradation,
+failure rates, BOMs, warranties, availability, and costs must be evidenced; missing
+evidence fails closed unless the user visibly accepts a provisional estimate.
+
+### 19.1 Indices, weather, and energy
+
+Let `i` identify a realization, `s` a system in `{SE, SO}`, `t=1...L` a project
+year, `c` a component class, `a` cohort age, and `P*` the target AC capacity. For
+each project-year column, the eligible weather years are independently permuted by
+a domain-separated seeded stream. Within that column every weather year appears
+either `floor(n/Y)` or `ceil(n/Y)` times. Both systems use the same `y(i,t)`.
+Therefore the design is balanced across realizations within each project year and
+independent across project years within a realization; it is not the version-5
+single-weather-year-for-life method. Provenance and interpretation must disclose
+that the annual method generally narrows interannual-weather uncertainty relative
+to version 5.
+
+```text
+B(i,s,t) = E_source(s,y(i,t)) * P* / P_source(s)
+D(i,s,t) = (1 - g(i,s))^(t-1)
+E(i,s,t) = B(i,s,t) * D(i,s,t) * A_adjust(i,s,t)
+```
+
+SolarEdge and Solectria receive independent degradation draws with `0 <= g < 1`.
+For gross source energy, `A_adjust=A_target`. For net source energy, an evidenced
+source availability is required for every eligible `(s,y)` and
+`A_adjust=A_target/A_source(s,y)`. Values above one are permitted and are not
+clamped. The source and target capacity rating bases must agree.
+
+### 19.2 Failure hazards, cohorts, spares, and availability
+
+For Weibull shape `beta` and scale `eta`, the conditional probability that a unit
+of age `a` fails during the next year is:
+
+```text
+p(s,c,a) = 1 - exp(-(((a+1)/eta)^beta - (a/eta)^beta))
+```
+
+`beta=1` is the exponential special case. Event mode is authoritative:
+
+```text
+K(i,s,c,t,a) ~ Binomial(N(i,s,c,t,a), p(i,s,c,a))
+K_expected(i,s,c,t,a) = N(i,s,c,t,a) * p(i,s,c,a)
+```
+
+Expected hazard is a diagnostic only and never drives the recommendation.
+Failures occur during the year; evidenced preventive replacements `Q` are then
+selected oldest-first from survivors:
+
+```text
+N(t+1,0)   = sum_a(K(t,a) + Q(t,a))
+N(t+1,a+1) = N(t,a) - K(t,a) - Q(t,a)
+```
+
+The implementation streams age-cohort state and annual aggregates. It must not
+materialize an `n × systems × components × project-years × ages` history. Complete
+annual/component traces are exported only for the realizations nearest the P10,
+P50, and P90 upgrade-NPV Type-7 quantiles, with the lowest realization index
+breaking a tie. These are labeled **NPV-P10/P50/P90 realizations** and are not
+claimed to be percentile cases for energy, availability, failure count, or LCOE.
+
+With beginning stock `S_start` and declared year-end target `S_target`:
+
+```text
+U     = min(K, S_start)
+M     = K - U
+R_qty = S_target - (S_start - U)
+u_c   = min(1, w_c * (U*h_repair + M*(h_logistics+h_repair)) / H_y)
+```
+
+`H_y` is 8,760 or 8,784 hours. Component failures are independent unless an
+explicit common-cause line provides dependence. Each common-cause line uses
+`J(i,k,t) ~ Bernoulli(q(k,t))` in event mode and `q(k,t)` in expected mode; the same
+shared-event ID causes one paired draw for both systems. Target availability is:
+
+```text
+A_target = A_base * product_c(1-u_c) * product_k(1-u_common,k)
+```
+
+Random streams are domain-separated by semantic identity, so adding or reordering
+a component cannot change weather, degradation, another component's failures, or
+a common-cause draw.
+
+### 19.3 Annual and lifecycle cost
+
+Any allowed recurring input `z` follows `z_t=z_1(1+e_z)^(t-1)`. Nonzero real
+growth requires evidence; zero exactly reproduces a constant-real-dollar line.
+
+```text
+C_OM(i,s,t) = P* * x_OM,1(i,s) * (1+e_OM(i,s))^(t-1)
+
+C_hardware = M*C_emergency + R_qty*C_restock
+C_corrective = C_hardware
+               + K*C_labor
+               + ceil(K/batch_size)*C_mobilization
+               - C_warranty
+
+C(i,s,t) = C_OM + C_scheduled + C_preventive
+           + C_corrective + C_common-cause
+
+C(i,s,0) = P* * sum(initial USD/W lines) + initial spare inventory
+```
+
+Warranty credit is limited by age, fraction, covered cost category, and coverage
+identity, and can never exceed eligible gross cost. Initial, base-O&M, scheduled,
+preventive, corrective, warranty, spare, labor, mobilization, availability, and
+common-cause coverage IDs must pass the no-double-counting audit.
+
+For a shared paired real discount-rate draw:
+
+```text
+DF(i,t) = (1+r(i))^(-t)
+C_PV = C_0 + sum_t([C_t + 1(t=L)*(C_decommission-S_salvage)] * DF_t)
+E_PV = sum_t(E_t * DF_t)
+
+CRF = r*(1+r)^L / ((1+r)^L-1), or 1/L when r=0
+C_EA = CRF*C_PV
+E_EA = CRF*E_PV
+LCOE_s = C_PV,s / E_PV,s
+```
+
+Salvage and decommissioning are separate nonnegative inputs. A negative derived
+lifecycle cost remains valid but produces a prominent warning.
+
+### 19.4 Incremental economics and decision
+
+```text
+DeltaC       = C_SE - C_SO
+DeltaE       = E_SE - E_SO
+DeltaLCOE    = LCOE_SE - LCOE_SO
+V(i,t)       = V_1(i) * (1+e_V(i))^(t-1)
+NPV_upgrade  = -DeltaC_0 + sum_t([V_t*DeltaE_t - DeltaC_t] * DF_t)
+```
+
+The final-year `DeltaC_t` includes decommissioning and salvage. Positive upgrade
+NPV favors SolarEdge. Incremental LCOO is `DeltaC_PV/DeltaE_PV` only when the
+energy difference is outside the recorded scale-aware tolerance; otherwise it is
+undefined and the cost/energy quadrant is still reported.
+
+The economic decision tolerance has a physical floor in USD per target W and is
+separate from the binary64 audit tie-out tolerance. Results report positive,
+negative, and tie counts and denominators for both NPV and DeltaLCOE. With approved
+threshold `T=75%`:
+
+```text
+P(NPV_upgrade > tolerance)  >= T  -> SolarEdge preferred
+P(NPV_upgrade < -tolerance) >= T  -> Solectria preferred
+otherwise                         -> no decisive winner
+```
+
+Failed checks or unstable probability convergence suppress the headline. Event
+sampling is ordinary domain-separated Monte Carlo rather than an LHS predictor;
+sensitivity output therefore labels the residual/unexplained contribution and
+describes ranked associations rather than causal effects. Convergence evaluates
+the decision probabilities as well as distribution quantiles.
+
+### 19.5 Registry, result, admission, and export controls
+
+One immutable structured registry in the kernel is the authority for formula IDs,
+mathematical equations, Excel audit templates, inputs, units, timing, guards,
+outputs, and contract sections. API serialization, dashboard formula disclosure,
+checks, and the workbook consume that registry. Formula-registry count and SHA-256
+are independent of the workbook's physical and logical sheet hashes. Formula text
+is normalized through its canonical registry/template hash so a harmless cell-row
+move does not masquerade as a calculation change.
+
+The routine result retains complete realization-level totals, annual lifecycle and
+reliability summaries, incremental metrics, probability counts, reason codes,
+formula/version provenance, and selected NPV-percentile traces. The workbook uses
+25 sheets in this order: Summary; Decision Charts; Lifecycle Charts; Reliability
+Charts; Formula Catalog; Calculation Audit; Realizations; Annual Lifecycle;
+Reliability Summary; Representative Event Traces; Input Specifications; Target
+Design; Reliability Inputs; Energy Snapshot; Weather Summary; Capacity and Basis;
+Common-Cost Audit; Cost-Coverage Audit; Commercial Transfer; Commercial LCOE;
+Metric CDFs; Sensitivity; Convergence; Provenance; Checks. `Weather Summary` is the
+version-6 rename of the earlier per-weather-year table; `Annual Lifecycle` is by
+project year.
+
+Kernel-written frozen values are authoritative. Excel formulas are nonvolatile
+audit replicas beside frozen value, difference, tolerance, and pass/fail columns.
+The workbook does not reproduce PCG64DXSM, LHS, truncation, binomial, or Bernoulli
+random generation. It embeds the official hashed CDF, sensitivity, and convergence
+PNGs and includes native formula-backed decision, annual energy, availability,
+annual cost, cumulative NPV, failure, downtime, and corrective-cost charts. Its CSV
+manifest enumerates the 21 tabular exports explicitly; chart-only sheets are not
+pretended to be CSV tables.
+
+Public requests remain capped at 100,000 realizations. Admission also computes a
+request-specific safe maximum and accepts only when both conditions hold:
+
+```text
+estimated_peak = 256 MiB + 2 * sum(planned ndarray bytes) <= 1.2 GiB
+realization export cells <= 8,000,000
+```
+
+The estimator includes the sealed calculation payload, sensitivity design, export
+buffers, and streaming cohort state rather than only headline arrays. Rejection
+returns the safe maximum and limiting dimension. The deterministic analytical
+matrix in `tools/benchmark_tea_v6_admission.py` targets the deployed 2-GB service
+explicitly and covers realization count, life, component-count growth, and the
+export-cell limiter; the committed Render plan label is not treated as memory
+authority. Its output identifies itself as an estimate and never presents the
+contract high-water estimate as measured process RSS. A deployment RSS benchmark
+is a separate operational qualification when the service image or allocator
+changes.
+
+All outputs retain deterministic ZIP normalization, formula-injection protection,
+logical and physical hashes, lease fencing, recalculation-on-open, cancellation,
+and provenance tie-outs. Set `TECHNOECONOMIC_V6_SUBMISSIONS_ENABLED=false` to stop
+new v6 submission during rollback while preserving reading, downloading, and retry
+provenance for completed v6 jobs.

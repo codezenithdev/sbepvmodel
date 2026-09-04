@@ -139,6 +139,11 @@ MAX_ACTIVE_MODEL_JOBS = int(
         "PV_DASHBOARD_MAX_ACTIVE_JOBS", 25, minimum=1, maximum=500
     )
 )
+# Rollback switch for creation only. Existing V6 jobs must remain readable,
+# downloadable, cancellable, and retryable after new submissions are disabled.
+TECHNOECONOMIC_V6_SUBMISSIONS_ENABLED = _env_flag(
+    "TECHNOECONOMIC_V6_SUBMISSIONS_ENABLED", True
+)
 JOB_HEARTBEAT_SECONDS = _bounded_env_number(
     "PV_DASHBOARD_JOB_HEARTBEAT_SECONDS", 10, minimum=1, maximum=60
 )

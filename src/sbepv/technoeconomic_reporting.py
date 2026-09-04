@@ -32,6 +32,9 @@ matplotlib.use("Agg")
 import numpy as np
 import openpyxl
 from openpyxl.cell import WriteOnlyCell
+from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.chart.series import SeriesLabel
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from sbepv import technoeconomic as technoeconomic_kernel
@@ -75,6 +78,14 @@ PAIRED_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION = (
 PAIRED_COMMERCIAL_CSV_FORMAT_VERSION = "technoeconomic-csv-v5"
 PAIRED_COMMERCIAL_CSV_BUNDLE_SCHEMA_VERSION = "technoeconomic-csv-bundle-v5"
 PAIRED_COMMERCIAL_XLSX_SCHEMA_VERSION = "technoeconomic-xlsx-v5"
+
+LIFECYCLE_EXPORT_MANIFEST_SCHEMA_VERSION = "technoeconomic-exports-manifest-v6"
+LIFECYCLE_CSV_FORMAT_VERSION = "technoeconomic-csv-v6"
+LIFECYCLE_CSV_BUNDLE_SCHEMA_VERSION = "technoeconomic-csv-bundle-v6"
+LIFECYCLE_XLSX_SCHEMA_VERSION = "technoeconomic-xlsx-v6"
+LIFECYCLE_XLSX_LOGICAL_HASH_VERSION = "technoeconomic-xlsx-logical-row-v2"
+LIFECYCLE_FORMULA_TEMPLATE_HASH_VERSION = "tea-formula-template-hash-v1"
+LIFECYCLE_DECISION_RULE_VERSION = "tea-upgrade-decision-v1"
 
 CSV_BUNDLE_FILENAME = "technoeconomic-results-csv-v1.zip"
 XLSX_FILENAME = "technoeconomic-results-v1.xlsx"
@@ -136,6 +147,21 @@ def export_contract_versions(calculation_contract_version: str) -> dict[str, str
             "png": PNG_SCHEMA_VERSION,
             "xlsx_logical_hash": XLSX_LOGICAL_HASH_VERSION,
         }
+    if calculation_contract_version == getattr(
+        technoeconomic_kernel,
+        "LIFECYCLE_CALCULATION_CONTRACT_VERSION",
+        "tea-calculation-v6",
+    ):
+        return {
+            "manifest": LIFECYCLE_EXPORT_MANIFEST_SCHEMA_VERSION,
+            "csv_format": LIFECYCLE_CSV_FORMAT_VERSION,
+            "csv_bundle": LIFECYCLE_CSV_BUNDLE_SCHEMA_VERSION,
+            "csv_bundle_manifest_filename": "csv-bundle-manifest-v6.json",
+            "xlsx": LIFECYCLE_XLSX_SCHEMA_VERSION,
+            "png": PNG_SCHEMA_VERSION,
+            "xlsx_logical_hash": LIFECYCLE_XLSX_LOGICAL_HASH_VERSION,
+            "formula_template_hash": LIFECYCLE_FORMULA_TEMPLATE_HASH_VERSION,
+        }
     if (
         calculation_contract_version
         == technoeconomic_kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION
@@ -163,6 +189,150 @@ _BLUE_LIGHT = "#B9CEE2"
 _GOLD = "#C4932D"
 _INK = "#26323D"
 _GRID = "#D8DEE5"
+
+LIFECYCLE_WORKBOOK_SHEET_ORDER = (
+    "Summary",
+    "Decision Charts",
+    "Lifecycle Charts",
+    "Reliability Charts",
+    "Formula Catalog",
+    "Calculation Audit",
+    "Realizations",
+    "Annual Lifecycle",
+    "Reliability Summary",
+    "Representative Event Traces",
+    "Input Specifications",
+    "Target Design",
+    "Reliability Inputs",
+    "Energy Snapshot",
+    "Weather Summary",
+    "Capacity and Basis",
+    "Common-Cost Audit",
+    "Cost-Coverage Audit",
+    "Commercial Transfer",
+    "Commercial LCOE",
+    "Metric CDFs",
+    "Sensitivity",
+    "Convergence",
+    "Provenance",
+    "Checks",
+)
+
+LIFECYCLE_FORMULA_CATALOG_COLUMNS = (
+    "formula_id",
+    "name",
+    "equation",
+    "excel_template",
+    "inputs",
+    "units",
+    "timing",
+    "guards",
+    "output",
+    "contract_section",
+)
+LIFECYCLE_AUDIT_COLUMNS = (
+    "audit_id",
+    "formula_id",
+    "selection_label",
+    "realization_index",
+    "system",
+    "project_year",
+    "component_id",
+    "frozen_authority",
+    "formula_replica",
+    "difference",
+    "binary64_tolerance",
+    "status",
+    "economic_decision_tolerance",
+    "notes",
+)
+LIFECYCLE_TRACE_SELECTION_COLUMNS = (
+    "selection_label",
+    "quantile",
+    "realization_index",
+    "upgrade_npv_usd",
+)
+LIFECYCLE_TRACE_ANNUAL_COLUMNS = (
+    "selection_label",
+    "quantile",
+    "realization_index",
+    "system",
+    "project_year",
+    "weather_year",
+    "source_energy_kwh",
+    "target_source_energy_kwh",
+    "degradation_factor",
+    "base_availability",
+    "component_availability",
+    "common_cause_availability",
+    "target_availability",
+    "source_availability",
+    "availability_adjustment",
+    "delivered_energy_kwh",
+    "discount_factor",
+    "base_om_cost_usd",
+    "scheduled_cost_usd",
+    "preventive_cost_usd",
+    "corrective_cost_usd",
+    "common_cause_cost_usd",
+    "terminal_cost_usd",
+    "annual_cost_usd",
+    "annual_cost_with_terminal_usd",
+    "delta_energy_kwh",
+    "delta_cost_usd",
+    "electricity_value_usd_per_kwh",
+    "incremental_cashflow_usd",
+    "pv_incremental_cashflow_usd",
+    "cumulative_upgrade_npv_usd",
+)
+LIFECYCLE_TRACE_COMPONENT_COLUMNS = (
+    "selection_label",
+    "realization_index",
+    "system",
+    "project_year",
+    "component_id",
+    "category",
+    "cohort_age",
+    "component_year_total_row",
+    "start_count",
+    "expected_start_count",
+    "annual_failure_probability",
+    "event_failures",
+    "expected_failures",
+    "preventive_replacements",
+    "expected_preventive_replacements",
+    "spares_start",
+    "stocked_replacements",
+    "emergency_replacements",
+    "restock_quantity",
+    "spares_end",
+    "downtime_fraction",
+    "expected_downtime_fraction",
+    "hardware_cost_usd",
+    "labor_cost_usd",
+    "mobilization_cost_usd",
+    "warranty_credit_usd",
+    "corrective_cost_usd",
+    "preventive_cost_usd",
+)
+LIFECYCLE_TRACE_COLUMNS = (
+    "record_type",
+    *LIFECYCLE_TRACE_SELECTION_COLUMNS,
+    *tuple(
+        column
+        for column in LIFECYCLE_TRACE_ANNUAL_COLUMNS
+        if column not in LIFECYCLE_TRACE_SELECTION_COLUMNS
+    ),
+    *tuple(
+        column
+        for column in LIFECYCLE_TRACE_COMPONENT_COLUMNS
+        if column
+        not in {
+            *LIFECYCLE_TRACE_SELECTION_COLUMNS,
+            *LIFECYCLE_TRACE_ANNUAL_COLUMNS,
+        }
+    ),
+)
 
 
 CHART_CONTRACTS: dict[str, dict[str, Any]] = {
@@ -260,6 +430,20 @@ PAIRED_COMMERCIAL_CHART_CONTRACTS: dict[str, dict[str, Any]] = {
     "convergence_v1": CHART_CONTRACTS["convergence_v1"],
 }
 
+LIFECYCLE_CDF_CHART_CONTRACT_ID = "lifecycle_upgrade_npv_and_lcoe_cdf_v1"
+LIFECYCLE_CHART_CONTRACTS: dict[str, dict[str, Any]] = {
+    LIFECYCLE_CDF_CHART_CONTRACT_ID: {
+        **CHART_CONTRACTS["cdf_v1"],
+        "question": (
+            "What are the empirical Upgrade-NPV, standalone-LCOE, and "
+            "incremental lifecycle distributions?"
+        ),
+        "primary_metric": "UpgradeNPV_se_minus_sol_USD",
+    },
+    "sensitivity_v1": CHART_CONTRACTS["sensitivity_v1"],
+    "convergence_v1": CHART_CONTRACTS["convergence_v1"],
+}
+
 
 class TechnoeconomicExportError(ValueError):
     """A sealed calculation or generated export failed validation."""
@@ -297,6 +481,208 @@ class _Table:
         self.sheet_name = sheet_name
         self.columns = tuple(columns)
         self.rows_factory = rows_factory
+
+
+def _is_lifecycle_contract(value: Any) -> bool:
+    return value == getattr(
+        technoeconomic_kernel,
+        "LIFECYCLE_CALCULATION_CONTRACT_VERSION",
+        "tea-calculation-v6",
+    )
+
+
+def _mapping_sequence(value: Any, *, label: str) -> tuple[Mapping[str, Any], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise TechnoeconomicExportError(f"{label} must be a row sequence")
+    rows: list[Mapping[str, Any]] = []
+    for row in value:
+        if not isinstance(row, Mapping):
+            raise TechnoeconomicExportError(f"{label} contains a non-object row")
+        rows.append(dict(row))
+    return tuple(rows)
+
+
+def _records_to_table(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    preferred_columns: Sequence[str] = (),
+    empty_columns: Sequence[str] = ("record_type", "notes"),
+) -> tuple[tuple[str, ...], tuple[tuple[Any, ...], ...]]:
+    keys = {str(key) for record in records for key in record}
+    columns = tuple(column for column in preferred_columns if column in keys)
+    columns += tuple(sorted(keys - set(columns)))
+    if not columns:
+        columns = tuple(empty_columns)
+    rows = tuple(
+        tuple(_safe_public_value(record.get(column)) for column in columns)
+        for record in records
+    )
+    return columns, rows
+
+
+def _formula_registry_records() -> tuple[Mapping[str, Any], ...]:
+    registry_function = getattr(technoeconomic_kernel, "formula_registry", None)
+    if not callable(registry_function):
+        raise TechnoeconomicExportError("The v6 formula registry is unavailable")
+    registry = _mapping_sequence(
+        registry_function(),
+        label="The v6 formula registry",
+    )
+    required = set(LIFECYCLE_FORMULA_CATALOG_COLUMNS)
+    identifiers: set[str] = set()
+    for record in registry:
+        if set(record) != required:
+            raise TechnoeconomicExportError(
+                "A v6 formula-registry record has the wrong fields"
+            )
+        identifier = record.get("formula_id")
+        if not isinstance(identifier, str) or not identifier or identifier in identifiers:
+            raise TechnoeconomicExportError(
+                "The v6 formula registry has an invalid formula ID"
+            )
+        identifiers.add(identifier)
+        for text_field in (
+            "name",
+            "equation",
+            "excel_template",
+            "units",
+            "timing",
+            "guards",
+            "output",
+            "contract_section",
+        ):
+            if not isinstance(record.get(text_field), str):
+                raise TechnoeconomicExportError(
+                    f"Formula registry field {text_field!r} is not text"
+                )
+        inputs = record.get("inputs")
+        if not isinstance(inputs, (list, tuple)) or not all(
+            isinstance(item, str) for item in inputs
+        ):
+            raise TechnoeconomicExportError(
+                "Formula registry inputs must be a sequence of strings"
+            )
+    if not registry:
+        raise TechnoeconomicExportError("The v6 formula registry is empty")
+    return registry
+
+
+def _formula_registry_sha256(
+    registry: Sequence[Mapping[str, Any]],
+) -> str:
+    registry_function = getattr(
+        technoeconomic_kernel,
+        "formula_registry_hash",
+        None,
+    )
+    if callable(registry_function):
+        digest = registry_function()
+        return _require_digest(digest, "Formula-registry digest")
+    return _canonical_json_sha256(list(registry))
+
+
+def _formula_template_sha256(
+    registry: Sequence[Mapping[str, Any]],
+) -> str:
+    """Hash canonical formula templates separately from exact sheet text."""
+
+    normalized = [
+        {
+            "formula_id": record["formula_id"],
+            "excel_template": str(record["excel_template"])
+            .replace("\r\n", "\n")
+            .replace("\r", "\n"),
+        }
+        for record in registry
+    ]
+    return _canonical_json_sha256(
+        {
+            "version": LIFECYCLE_FORMULA_TEMPLATE_HASH_VERSION,
+            "templates": normalized,
+        }
+    )
+
+
+def _lifecycle_summaries(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
+    summaries = metadata.get("summaries")
+    if not isinstance(summaries, Mapping):
+        raise TechnoeconomicExportError("Sealed v6 summaries are unavailable")
+    return summaries
+
+
+def _representative_trace_records(
+    metadata: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    summaries = _lifecycle_summaries(metadata)
+    raw = summaries.get("representative_event_traces")
+    if raw is None:
+        raw = metadata.get("representative_event_traces")
+    bundles: list[Mapping[str, Any]] = []
+    if isinstance(raw, Mapping) and (
+        "annual" in raw or "components" in raw or "selection" in raw
+    ):
+        bundles.append(raw)
+    elif isinstance(raw, Mapping):
+        bundles.extend(
+            value for _, value in sorted(raw.items()) if isinstance(value, Mapping)
+        )
+    elif isinstance(raw, (list, tuple)):
+        bundles.extend(value for value in raw if isinstance(value, Mapping))
+    else:
+        raise TechnoeconomicExportError(
+            "Representative v6 event traces are unavailable"
+        )
+
+    records: list[Mapping[str, Any]] = []
+    selection_labels: set[str] = set()
+    for bundle in bundles:
+        raw_selection = bundle.get("selection")
+        selection_defaults = (
+            raw_selection if isinstance(raw_selection, Mapping) else {}
+        )
+        selection_label = selection_defaults.get("label")
+        selection_rows = (
+            (raw_selection,)
+            if isinstance(raw_selection, Mapping)
+            and "selection_label" in raw_selection
+            else _mapping_sequence(
+                raw_selection,
+                label="Representative trace selection",
+            )
+            if raw_selection is not None and not isinstance(raw_selection, Mapping)
+            else ()
+        )
+        for raw_row in selection_rows:
+            row = dict(raw_row)
+            row["record_type"] = "selection"
+            label = row.get("selection_label")
+            if isinstance(label, str):
+                selection_labels.add(label)
+            records.append(row)
+        for record_type, field_name in (("annual", "annual"), ("component", "components")):
+            for raw_row in _mapping_sequence(
+                bundle.get(field_name),
+                label=f"Representative trace {field_name}",
+            ):
+                row = dict(raw_row)
+                if selection_label is not None:
+                    row.setdefault("selection_label", selection_label)
+                for key in ("quantile", "realization_index"):
+                    if key in selection_defaults:
+                        row.setdefault(key, selection_defaults[key])
+                row["record_type"] = record_type
+                label = row.get("selection_label")
+                if isinstance(label, str):
+                    selection_labels.add(label)
+                records.append(row)
+    expected_labels = {"NPV-P10", "NPV-P50", "NPV-P90"}
+    if selection_labels != expected_labels:
+        raise TechnoeconomicExportError(
+            "Representative v6 traces must contain NPV-P10, NPV-P50, and NPV-P90"
+        )
+    return tuple(records)
 
 
 def _canonical_json_text(value: Any) -> str:
@@ -1866,6 +2252,20 @@ PAIRED_COMMERCIAL_CDF_COLUMNS = (
     *STANDALONE_COMMERCIAL_CDF_COLUMNS,
 )
 
+LIFECYCLE_CDF_COLUMNS = (
+    "metric_id",
+    "status",
+    "reason",
+    "population_count",
+    "point_index",
+    "value",
+    "cumulative_count",
+    "cumulative_probability",
+    "p10",
+    "p50",
+    "p90",
+)
+
 
 def _metric_summaries(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
     summaries = metadata.get("summaries")
@@ -1916,6 +2316,50 @@ def _cdf_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
                 percentiles.get("p5"),
                 percentiles.get("p50"),
                 percentiles.get("p95"),
+            )
+
+
+def _lifecycle_cdf_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
+    for metric_id, summary in sorted(_metric_summaries(metadata).items()):
+        if not isinstance(summary, Mapping) or "percentiles" not in summary:
+            continue
+        percentiles = summary.get("percentiles") or {}
+        cdf = summary.get("cdf")
+        if not isinstance(cdf, Mapping):
+            yield (
+                metric_id,
+                summary.get("status"),
+                summary.get("reason"),
+                summary.get("count", 0),
+                None,
+                None,
+                None,
+                None,
+                percentiles.get("p10"),
+                percentiles.get("p50"),
+                percentiles.get("p90"),
+            )
+            continue
+        values = cdf.get("values") or []
+        counts = cdf.get("cumulative_count") or []
+        probabilities = cdf.get("cumulative_probability") or []
+        if not (len(values) == len(counts) == len(probabilities)):
+            raise TechnoeconomicExportError("Sealed v6 CDF arrays are inconsistent")
+        for index, (value, count, probability) in enumerate(
+            zip(values, counts, probabilities), start=1
+        ):
+            yield (
+                metric_id,
+                summary.get("status"),
+                summary.get("reason"),
+                cdf.get("population_count"),
+                index,
+                value,
+                count,
+                probability,
+                percentiles.get("p10"),
+                percentiles.get("p50"),
+                percentiles.get("p90"),
             )
 
 
@@ -2351,6 +2795,50 @@ SENSITIVITY_COLUMNS = (
 def _sensitivity_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
     models = metadata.get("sensitivity") or {}
     for response_id, model in sorted(models.items()):
+        if not isinstance(model, Mapping):
+            yield (
+                response_id,
+                "diagnostic",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                _canonical_json_text({"value": model}),
+                None,
+                "[]",
+            )
+            continue
+        if "steps" not in model and "status" not in model:
+            yield (
+                response_id,
+                "diagnostic",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                _canonical_json_text(model),
+                None,
+                "[]",
+            )
+            continue
         common = (
             response_id,
             model.get("status"),
@@ -2442,6 +2930,10 @@ CONVERGENCE_COLUMNS = (
     "relative_change_threshold",
     "class_probability_change_threshold",
 )
+LIFECYCLE_CONVERGENCE_COLUMNS = (
+    *CONVERGENCE_COLUMNS,
+    "decision_probability_change_threshold",
+)
 
 
 def _convergence_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
@@ -2514,6 +3006,38 @@ def _convergence_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
                     common_tail[2],
                     common_tail[3],
                 )
+        decision_probabilities = checkpoint.get("decision_probabilities")
+        if isinstance(decision_probabilities, Mapping):
+            for metric_id, probabilities in sorted(
+                decision_probabilities.items()
+            ):
+                if not isinstance(probabilities, Mapping):
+                    continue
+                for category, probability in sorted(probabilities.items()):
+                    yield (
+                        "decision_probability",
+                        checkpoint_index,
+                        count,
+                        metric_id,
+                        category,
+                        count,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        probability,
+                        common_tail[0],
+                        common_tail[1],
+                        None,
+                        common_tail[2],
+                        common_tail[3],
+                    )
         year_counts = checkpoint.get("weather_year_counts") or {}
         year_shares = checkpoint.get("weather_year_shares") or {}
         for year, year_count in sorted(year_counts.items(), key=lambda pair: int(pair[0])):
@@ -2541,6 +3065,19 @@ def _convergence_rows(metadata: Mapping[str, Any]) -> Iterator[tuple[Any, ...]]:
                 common_tail[2],
                 common_tail[3],
             )
+
+
+def _lifecycle_convergence_rows(
+    metadata: Mapping[str, Any],
+) -> Iterator[tuple[Any, ...]]:
+    convergence = metadata.get("convergence") or {}
+    threshold = (
+        convergence.get("decision_probability_change_threshold")
+        if isinstance(convergence, Mapping)
+        else None
+    )
+    for row in _convergence_rows(metadata):
+        yield (*row, threshold)
 
 
 PROVENANCE_COLUMNS = ("section", "field_path", "value_json")
@@ -2590,6 +3127,112 @@ def _provenance_rows(
         "submission": submission_provenance,
         "routine_result": routine_result,
         "kernel": metadata.get("kernel_provenance") or {},
+    }
+    for section, value in sections.items():
+        for field_path, encoded in _flatten_leaves("", value):
+            yield section, field_path, encoded
+
+
+def _lifecycle_provenance_rows(
+    request_payload: Mapping[str, Any],
+    source_snapshot: Mapping[str, Any],
+    submission_provenance: Mapping[str, Any],
+    routine_result: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    registry: Sequence[Mapping[str, Any]],
+    checks: Sequence[Sequence[Any]],
+) -> Iterator[tuple[str, str, str]]:
+    """Emit compact v6 provenance without duplicating exported trace tables."""
+
+    request_identity = {
+        key: request_payload.get(key)
+        for key in (
+            "calculation_contract_version",
+            "source_annual_job_id",
+            "basis",
+            "n",
+            "seed",
+            "cost_stack_completeness",
+        )
+    }
+    request_identity["finance"] = request_payload.get("finance") or {}
+    source_identity = {
+        "source_annual_job_id": source_snapshot.get("source_annual_job_id"),
+        "source_snapshot_sha256": submission_provenance.get(
+            "source_snapshot_sha256"
+        ),
+        "midc_source_artifact": source_snapshot.get("midc_source_artifact") or {},
+    }
+    submission_identity = {
+        key: submission_provenance.get(key)
+        for key in (
+            "request_sha256",
+            "source_snapshot_sha256",
+            "validated_kernel_request_sha256",
+            "calculation_contract_version",
+            "sampling_version",
+            "source_annual_job_id",
+            "commercial_transfer_status",
+        )
+    }
+    routine_identity = {
+        key: routine_result.get(key)
+        for key in (
+            "schema_version",
+            "result_version",
+            "calculation_contract_version",
+            "sampling_version",
+            "analysis_basis",
+            "realization_count",
+            "seed",
+            "project_life_years",
+            "source_snapshot_sha256",
+            "capacity_basis",
+            "energy_available",
+        )
+    }
+    routine_identity["sealed_calculation"] = routine_result.get(
+        "sealed_calculation"
+    ) or {}
+    reporting_identity = {
+        "workbook_schema_version": LIFECYCLE_XLSX_SCHEMA_VERSION,
+        "workbook_logical_hash_version": LIFECYCLE_XLSX_LOGICAL_HASH_VERSION,
+        "csv_format_version": LIFECYCLE_CSV_FORMAT_VERSION,
+        "formula_registry": {
+            "version": getattr(
+                technoeconomic_kernel,
+                "FORMULA_REGISTRY_VERSION",
+                "tea-formulas-v6",
+            ),
+            "count": len(registry),
+            "sha256": _formula_registry_sha256(registry),
+            "template_hash_version": LIFECYCLE_FORMULA_TEMPLATE_HASH_VERSION,
+            "template_sha256": _formula_template_sha256(registry),
+        },
+        "decision_rule_version": LIFECYCLE_DECISION_RULE_VERSION,
+        "audit_tie_outs": [
+            {
+                "check_id": row[0],
+                "status": row[5],
+                "actual": row[1],
+                "expected": row[2],
+                "difference": row[3],
+                "tolerance": row[4],
+            }
+            for row in checks
+        ],
+        "chart_and_image_integrity": (
+            "Native chart ranges/anchors and embedded image hashes are sealed "
+            "in the export manifest."
+        ),
+    }
+    sections = {
+        "request_identity": request_identity,
+        "source_identity": source_identity,
+        "submission_identity": submission_identity,
+        "routine_identity": routine_identity,
+        "kernel": metadata.get("kernel_provenance") or {},
+        "reporting": reporting_identity,
     }
     for section, value in sections.items():
         for field_path, encoded in _flatten_leaves("", value):
@@ -4779,6 +5422,1109 @@ def _paired_commercial_summary_rows(
     )
 
 
+def _lifecycle_request(request_payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    lifecycle = request_payload.get("paired_lifecycle")
+    if isinstance(lifecycle, Mapping):
+        return lifecycle
+    paired = request_payload.get("paired_commercial")
+    paired = paired if isinstance(paired, Mapping) else {}
+    nested = paired.get("lifecycle")
+    if not isinstance(nested, Mapping):
+        raise TechnoeconomicExportError(
+            "The v6 export requires paired_commercial.lifecycle"
+        )
+    unit = str(paired.get("target_capacity_unit") or "w").lower()
+    multipliers = {"w": 1.0, "kw": 1_000.0, "mw": 1_000_000.0}
+    if unit not in multipliers:
+        raise TechnoeconomicExportError("The v6 target capacity unit is invalid")
+    normalized = dict(nested)
+    normalized["target_capacity_w"] = (
+        float(paired.get("target_capacity") or 0.0) * multipliers[unit]
+    )
+    normalized["target_rating_basis"] = paired.get("target_rating_basis")
+    normalized["npv_absolute_tolerance_usd_per_w"] = nested.get(
+        "decision_npv_tolerance_usd_per_target_w"
+    )
+    return normalized
+
+
+def _lifecycle_input_records(
+    request_payload: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    records: list[Mapping[str, Any]] = []
+    for section, value in (
+        ("finance", request_payload.get("finance")),
+        ("paired_lifecycle", _lifecycle_request(request_payload)),
+    ):
+        for field_path, encoded in _flatten_leaves(
+            "", value if value is not None else {}
+        ):
+            records.append(
+                {
+                    "section": section,
+                    "field_path": field_path,
+                    "value_json": encoded,
+                }
+            )
+    return tuple(records)
+
+
+def _lifecycle_target_design_records(
+    request_payload: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    lifecycle = _lifecycle_request(request_payload)
+    systems = lifecycle.get("systems")
+    if not isinstance(systems, list):
+        raise TechnoeconomicExportError("The v6 target systems are invalid")
+    records: list[Mapping[str, Any]] = []
+    for system in systems:
+        if not isinstance(system, Mapping):
+            raise TechnoeconomicExportError("A v6 target system is invalid")
+        records.append(
+            {
+                "technology": system.get("technology"),
+                "target_capacity_w": lifecycle.get("target_capacity_w"),
+                "target_rating_basis": lifecycle.get("target_rating_basis"),
+                "source_energy_basis": lifecycle.get("source_energy_basis"),
+                "reliability_mode": lifecycle.get("reliability_mode"),
+                "degradation_json": system.get("degradation"),
+                "base_availability_json": system.get("base_availability"),
+                "base_om_cost_per_w_year_json": system.get(
+                    "base_om_cost_per_w_year"
+                ),
+                "base_om_real_growth_json": system.get("base_om_real_growth"),
+                "initial_cost_lines_json": system.get("initial_cost_lines") or [],
+                "scheduled_costs_json": system.get("scheduled_costs") or [],
+                "decommissioning_cost_json": system.get("decommissioning_cost"),
+                "salvage_value_json": system.get("salvage_value"),
+                "base_om_coverage_ids_json": system.get("base_om_coverage_ids") or [],
+                "evidence_json": system.get("evidence") or {},
+            }
+        )
+    return tuple(records)
+
+
+def _lifecycle_reliability_input_records(
+    request_payload: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    lifecycle = _lifecycle_request(request_payload)
+    records: list[Mapping[str, Any]] = []
+    systems = lifecycle.get("systems")
+    if not isinstance(systems, list):
+        raise TechnoeconomicExportError("The v6 target systems are invalid")
+    for system in systems:
+        if not isinstance(system, Mapping):
+            raise TechnoeconomicExportError("A v6 target system is invalid")
+        components = system.get("components") or []
+        if not isinstance(components, list):
+            raise TechnoeconomicExportError("A v6 component list is invalid")
+        for component in components:
+            if not isinstance(component, Mapping):
+                raise TechnoeconomicExportError("A v6 component input is invalid")
+            record = {
+                "record_type": "component",
+                "technology": system.get("technology"),
+            }
+            record.update(
+                {
+                    str(key): _safe_public_value(value)
+                    for key, value in component.items()
+                }
+            )
+            records.append(record)
+    events = lifecycle.get("common_cause_events") or []
+    if not isinstance(events, list):
+        raise TechnoeconomicExportError("The v6 common-cause inputs are invalid")
+    for event in events:
+        if not isinstance(event, Mapping):
+            raise TechnoeconomicExportError("A v6 common-cause event is invalid")
+        record = {"record_type": "common_cause", "technology": "shared"}
+        record.update(
+            {str(key): _safe_public_value(value) for key, value in event.items()}
+        )
+        records.append(record)
+    return tuple(records)
+
+
+def _lifecycle_weather_records(
+    metadata: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    summaries = _lifecycle_summaries(metadata)
+    if "per_weather_year" in metadata:
+        return _mapping_sequence(
+            metadata.get("per_weather_year"), label="The v6 weather summary"
+        )
+    for key in ("weather_summary", "annual_weather_summary"):
+        if key in summaries:
+            return _mapping_sequence(
+                summaries.get(key), label="The v6 weather summary"
+            )
+    counts: dict[tuple[Any, Any], int] = {}
+    seen: set[tuple[Any, Any, Any]] = set()
+    for record in _representative_trace_records(metadata):
+        if record.get("record_type") != "annual":
+            continue
+        identity = (
+            record.get("realization_index"),
+            record.get("project_year"),
+            record.get("weather_year"),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        key = (record.get("project_year"), record.get("weather_year"))
+        counts[key] = counts.get(key, 0) + 1
+    return tuple(
+        {
+            "project_year": project_year,
+            "weather_year": weather_year,
+            "representative_path_count": count,
+            "allocation_method": "seeded_balanced_iid_per_project_year",
+            "paired_system_weather": True,
+        }
+        for (project_year, weather_year), count in sorted(counts.items())
+    )
+
+
+def _lifecycle_capacity_records(
+    request_payload: Mapping[str, Any],
+    submission_provenance: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    lifecycle = _lifecycle_request(request_payload)
+    records: list[Mapping[str, Any]] = [
+        {
+            "record_type": "target",
+            "technology": "paired",
+            "capacity_w": lifecycle.get("target_capacity_w"),
+            "rating_basis": lifecycle.get("target_rating_basis"),
+            "source_field": "paired_lifecycle.target_capacity_w",
+        }
+    ]
+    receipt = submission_provenance.get("normalization_receipt") or {}
+    capacities = (
+        receipt.get("applied_capacities") if isinstance(receipt, Mapping) else {}
+    )
+    if isinstance(capacities, Mapping):
+        for technology, record in sorted(capacities.items()):
+            if isinstance(record, Mapping):
+                records.append(
+                    {
+                        "record_type": "source",
+                        "technology": technology,
+                        "capacity_w": record.get("applied_capacity_w"),
+                        "rating_basis": record.get("rating_basis"),
+                        "source_field": record.get("source_field"),
+                    }
+                )
+    return tuple(records)
+
+
+def _lifecycle_lcoe_records(
+    calculation: _SealedCalculation,
+) -> tuple[Mapping[str, Any], ...]:
+    fields = (
+        ("solectria", "LifecycleLCOE_SOL_USD_per_kWh_AC"),
+        ("solaredge", "LifecycleLCOE_SE_USD_per_kWh_AC"),
+        (
+            "delta_se_minus_sol",
+            "DeltaLifecycleLCOE_se_minus_sol_USD_per_kWh_AC",
+        ),
+        ("incremental", "IncrementalLCOO_se_minus_sol_USD_per_kWh_AC"),
+    )
+    records: list[Mapping[str, Any]] = []
+    for technology, field_name in fields:
+        if field_name not in calculation.by_name:
+            continue
+        values = _finite_values(calculation.by_name[field_name])
+        percentiles = (
+            np.quantile(values, (0.10, 0.50, 0.90), method="linear")
+            if len(values)
+            else (None, None, None)
+        )
+        records.append(
+            {
+                "technology": technology,
+                "metric_id": field_name,
+                "unit": "constant USD/kWh_AC",
+                "population_count": len(values),
+                "p10": percentiles[0],
+                "p50": percentiles[1],
+                "p90": percentiles[2],
+            }
+        )
+    return tuple(records)
+
+
+def _lifecycle_economic_npv_tolerance(
+    request_payload: Mapping[str, Any],
+) -> float:
+    lifecycle = _lifecycle_request(request_payload)
+    target_w = float(lifecycle.get("target_capacity_w") or 0.0)
+    per_w = float(lifecycle.get("npv_absolute_tolerance_usd_per_w") or 0.0)
+    return target_w * per_w
+
+
+def _lifecycle_realization_value_map(
+    calculation: _SealedCalculation,
+    field_name: str,
+) -> dict[int, float]:
+    """Return one-based realization keys matching representative trace rows."""
+
+    values = calculation.by_name.get(field_name)
+    if values is None:
+        return {}
+    realization_values = calculation.by_name.get("Realization")
+    if realization_values is None:
+        realization_values = np.arange(calculation.row_count, dtype=np.int64)
+    result: dict[int, float] = {}
+    for raw_index, raw_value in zip(realization_values, values):
+        if isinstance(raw_value, bool):
+            continue
+        try:
+            value = float(raw_value)
+            trace_index = int(raw_index) + 1
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if math.isfinite(value):
+            result[trace_index] = value
+    return result
+
+
+def _registry_formula_id(
+    registry: Sequence[Mapping[str, Any]],
+    *needles: str,
+) -> str:
+    lowered_needles = tuple(needle.lower() for needle in needles)
+    for record in registry:
+        haystack = " ".join(
+            str(record.get(field) or "")
+            for field in ("name", "equation", "output")
+        ).lower()
+        if all(needle in haystack for needle in lowered_needles):
+            return str(record["formula_id"])
+    return str(registry[0]["formula_id"])
+
+
+def _lifecycle_audit_records(
+    trace_records: Sequence[Mapping[str, Any]],
+    registry: Sequence[Mapping[str, Any]],
+    *,
+    economic_decision_tolerance: float,
+    economic_decision_tolerances: Mapping[int, float] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    column_index = {
+        name: openpyxl.utils.get_column_letter(index)
+        for index, name in enumerate(LIFECYCLE_TRACE_COLUMNS, start=1)
+    }
+    records: list[Mapping[str, Any]] = []
+
+    def add(
+        *,
+        trace: Mapping[str, Any],
+        formula_id: str,
+        output_field: str,
+        formula: str,
+        replica: float,
+        inputs: Sequence[float],
+        suffix: str,
+    ) -> None:
+        frozen = trace.get(output_field)
+        if isinstance(frozen, bool) or not isinstance(frozen, (int, float)):
+            return
+        frozen_number = float(frozen)
+        scale_values = np.asarray([frozen_number, replica, *inputs], dtype=np.float64)
+        tolerance = _binary64_tie_out_tolerance(scale_values)
+        difference = replica - frozen_number
+        raw_realization = trace.get("realization_index")
+        try:
+            realization_index = int(raw_realization)
+        except (TypeError, ValueError, OverflowError):
+            realization_index = -1
+        decision_tolerance = float(
+            (economic_decision_tolerances or {}).get(
+                realization_index,
+                economic_decision_tolerance,
+            )
+        )
+        records.append(
+            {
+                "audit_id": (
+                    f"{trace.get('selection_label')}::{trace.get('system')}::"
+                    f"{trace.get('project_year')}::{suffix}::"
+                    f"{trace.get('component_id') or ''}::"
+                    f"{trace.get('cohort_age') if trace.get('cohort_age') is not None else ''}"
+                ),
+                "formula_id": formula_id,
+                "selection_label": trace.get("selection_label"),
+                "realization_index": trace.get("realization_index"),
+                "system": trace.get("system"),
+                "project_year": trace.get("project_year"),
+                "component_id": trace.get("component_id"),
+                "frozen_authority": frozen_number,
+                "formula_replica": formula,
+                "difference": difference,
+                "binary64_tolerance": tolerance,
+                "status": "OK" if abs(difference) <= tolerance else "FAIL",
+                "economic_decision_tolerance": decision_tolerance,
+                "notes": (
+                    "Binary64 audit tolerance tests the replica tie-out only; "
+                    "the economic tolerance is a separate decision materiality threshold."
+                ),
+            }
+        )
+
+    def cell(field: str, row: int) -> str:
+        return f"'Representative Event Traces'!{column_index[field]}{row}"
+
+    for trace_row, trace in enumerate(trace_records, start=2):
+        if trace.get("record_type") == "annual":
+            base = float(trace.get("base_availability") or 0.0)
+            component = float(trace.get("component_availability") or 0.0)
+            common = float(trace.get("common_cause_availability") or 0.0)
+            add(
+                trace=trace,
+                formula_id=_registry_formula_id(registry, "target", "availability"),
+                output_field="target_availability",
+                formula=(
+                    f"={cell('base_availability', trace_row)}*"
+                    f"{cell('component_availability', trace_row)}*"
+                    f"{cell('common_cause_availability', trace_row)}"
+                ),
+                replica=base * component * common,
+                inputs=(base, component, common),
+                suffix="target_availability",
+            )
+            target = float(trace.get("target_availability") or 0.0)
+            source = trace.get("source_availability")
+            source_number = (
+                float(source)
+                if isinstance(source, (int, float)) and not isinstance(source, bool)
+                else None
+            )
+            adjustment = target if source_number is None else target / source_number
+            source_inputs: tuple[float, ...] = (
+                () if source_number is None else (source_number,)
+            )
+            add(
+                trace=trace,
+                formula_id=_registry_formula_id(registry, "availability", "source"),
+                output_field="availability_adjustment",
+                formula=(
+                    f"=IF({cell('source_availability', trace_row)}=\"\","
+                    f"{cell('target_availability', trace_row)},"
+                    f"{cell('target_availability', trace_row)}/"
+                    f"{cell('source_availability', trace_row)})"
+                ),
+                replica=adjustment,
+                inputs=(target, *source_inputs),
+                suffix="availability_adjustment",
+            )
+            target_energy = float(trace.get("target_source_energy_kwh") or 0.0)
+            degradation = float(trace.get("degradation_factor") or 0.0)
+            availability_adjustment = float(
+                trace.get("availability_adjustment") or 0.0
+            )
+            add(
+                trace=trace,
+                formula_id=_registry_formula_id(registry, "delivered", "energy"),
+                output_field="delivered_energy_kwh",
+                formula=(
+                    f"={cell('target_source_energy_kwh', trace_row)}*"
+                    f"{cell('degradation_factor', trace_row)}*"
+                    f"{cell('availability_adjustment', trace_row)}"
+                ),
+                replica=target_energy * degradation * availability_adjustment,
+                inputs=(target_energy, degradation, availability_adjustment),
+                suffix="delivered_energy",
+            )
+            cost_fields = (
+                "base_om_cost_usd",
+                "scheduled_cost_usd",
+                "preventive_cost_usd",
+                "corrective_cost_usd",
+                "common_cause_cost_usd",
+            )
+            costs = tuple(float(trace.get(field) or 0.0) for field in cost_fields)
+            add(
+                trace=trace,
+                formula_id=_registry_formula_id(registry, "annual", "cost"),
+                output_field="annual_cost_usd",
+                formula="=SUM("
+                + ",".join(cell(field, trace_row) for field in cost_fields)
+                + ")",
+                replica=sum(costs),
+                inputs=costs,
+                suffix="annual_cost",
+            )
+            cashflow = float(trace.get("incremental_cashflow_usd") or 0.0)
+            discount_factor = float(trace.get("discount_factor") or 0.0)
+            add(
+                trace=trace,
+                formula_id=_registry_formula_id(registry, "upgrade", "npv"),
+                output_field="pv_incremental_cashflow_usd",
+                formula=(
+                    f"={cell('incremental_cashflow_usd', trace_row)}*"
+                    f"{cell('discount_factor', trace_row)}"
+                ),
+                replica=cashflow * discount_factor,
+                inputs=(cashflow, discount_factor),
+                suffix="pv_incremental_cashflow",
+            )
+        elif trace.get("record_type") == "component":
+            start = float(
+                trace.get("expected_start_count")
+                if trace.get("expected_start_count") is not None
+                else trace.get("start_count")
+                or 0.0
+            )
+            probability = float(trace.get("annual_failure_probability") or 0.0)
+            add(
+                trace=trace,
+                formula_id=_registry_formula_id(registry, "expected", "failure"),
+                output_field="expected_failures",
+                formula=(
+                    f"={cell('expected_start_count', trace_row)}*"
+                    f"{cell('annual_failure_probability', trace_row)}"
+                ),
+                replica=start * probability,
+                inputs=(start, probability),
+                suffix="expected_failures",
+            )
+            if trace.get("component_year_total_row") is not True:
+                continue
+            spares_start = float(trace.get("spares_start") or 0.0)
+            stocked = float(trace.get("stocked_replacements") or 0.0)
+            restock = float(trace.get("restock_quantity") or 0.0)
+            add(
+                trace=trace,
+                formula_id=_registry_formula_id(registry, "spare"),
+                output_field="spares_end",
+                formula=(
+                    f"={cell('spares_start', trace_row)}-"
+                    f"{cell('stocked_replacements', trace_row)}+"
+                    f"{cell('restock_quantity', trace_row)}"
+                ),
+                replica=spares_start - stocked + restock,
+                inputs=(spares_start, stocked, restock),
+                suffix="spares_end",
+            )
+            cost_fields = (
+                "hardware_cost_usd",
+                "labor_cost_usd",
+                "mobilization_cost_usd",
+            )
+            costs = tuple(float(trace.get(field) or 0.0) for field in cost_fields)
+            warranty = float(trace.get("warranty_credit_usd") or 0.0)
+            add(
+                trace=trace,
+                formula_id=_registry_formula_id(registry, "corrective", "cost"),
+                output_field="corrective_cost_usd",
+                formula="=SUM("
+                + ",".join(cell(field, trace_row) for field in cost_fields)
+                + f")-{cell('warranty_credit_usd', trace_row)}",
+                replica=sum(costs) - warranty,
+                inputs=(*costs, warranty),
+                suffix="corrective_cost",
+            )
+    return tuple(records)
+
+
+def _build_lifecycle_checks(
+    calculation: _SealedCalculation,
+    routine_result: Mapping[str, Any],
+    registry: Sequence[Mapping[str, Any]],
+    trace_records: Sequence[Mapping[str, Any]],
+    audit_records: Sequence[Mapping[str, Any]],
+) -> list[tuple[Any, ...]]:
+    expected_rows = routine_result.get("realization_count")
+    if isinstance(expected_rows, bool) or not isinstance(expected_rows, int):
+        raise TechnoeconomicExportError("Routine v6 realization count is invalid")
+    checks = [
+        _numeric_check(
+            "realization_count",
+            calculation.row_count,
+            expected_rows,
+            tolerance=0.0,
+            notes="Sealed v6 realization rows equal the durable result count.",
+        ),
+        _numeric_check(
+            "formula_registry_count",
+            len(registry),
+            int(
+                (
+                    (calculation.metadata.get("kernel_provenance") or {}).get(
+                        "formula_registry"
+                    )
+                    or {}
+                ).get("count")
+                or len(registry)
+            ),
+            tolerance=0.0,
+            notes="Every canonical formula-registry entry is exported.",
+        ),
+    ]
+    required_fields = {
+        "LifecyclePVCost_SOL_USD",
+        "LifecyclePVCost_SE_USD",
+        "LifecyclePVEnergy_SOL_kWh_AC",
+        "LifecyclePVEnergy_SE_kWh_AC",
+        "LifecycleLCOE_SOL_USD_per_kWh_AC",
+        "LifecycleLCOE_SE_USD_per_kWh_AC",
+        "DeltaLifecycleCost_se_minus_sol_USD",
+        "DeltaLifecycleEnergy_se_minus_sol_kWh_AC",
+        "DeltaLifecycleLCOE_se_minus_sol_USD_per_kWh_AC",
+        "IncrementalLCOO_se_minus_sol_USD_per_kWh_AC",
+        "UpgradeNPV_se_minus_sol_USD",
+    }
+    missing = sorted(required_fields - set(calculation.column_names))
+    checks.append(
+        (
+            "required_v6_realization_fields",
+            ",".join(missing),
+            "",
+            None,
+            0.0,
+            "OK" if not missing else "FAIL",
+            "Required lifecycle decision fields are present in the sealed payload.",
+        )
+    )
+    trace_labels = sorted(
+        {
+            str(record.get("selection_label"))
+            for record in trace_records
+            if record.get("selection_label") is not None
+        }
+    )
+    checks.append(
+        (
+            "representative_npv_trace_labels",
+            ",".join(trace_labels),
+            "NPV-P10,NPV-P50,NPV-P90",
+            None,
+            0.0,
+            "OK"
+            if trace_labels == ["NPV-P10", "NPV-P50", "NPV-P90"]
+            else "FAIL",
+            "Representative traces use explicit Upgrade-NPV quantile labels.",
+        )
+    )
+    failed_audits = [
+        record for record in audit_records if record.get("status") != "OK"
+    ]
+    checks.append(
+        _numeric_check(
+            "representative_formula_audits",
+            len(failed_audits),
+            0,
+            tolerance=0.0,
+            notes=(
+                "Representative formula replicas tie to frozen kernel values at "
+                "the binary64 audit tolerance, not the economic decision tolerance."
+            ),
+        )
+    )
+    provenance_registry = (calculation.metadata.get("kernel_provenance") or {}).get(
+        "formula_registry"
+    )
+    provenance_registry = (
+        provenance_registry if isinstance(provenance_registry, Mapping) else {}
+    )
+    provenance_digest = provenance_registry.get("sha256")
+    if provenance_digest is not None:
+        actual_digest = _formula_registry_sha256(registry)
+        checks.append(
+            (
+                "formula_registry_hash",
+                actual_digest,
+                provenance_digest,
+                None,
+                0.0,
+                "OK"
+                if secrets.compare_digest(str(actual_digest), str(provenance_digest))
+                else "FAIL",
+                "Kernel and exporter consume one canonical v6 formula registry.",
+            )
+        )
+    return checks
+
+
+def _verify_lifecycle_routine_result(
+    *,
+    metadata: Mapping[str, Any],
+    routine_result: Mapping[str, Any],
+    request_payload: Mapping[str, Any],
+    source_snapshot: Mapping[str, Any],
+    submission_provenance: Mapping[str, Any],
+    sealed_calculation_artifact: Mapping[str, Any],
+) -> None:
+    """Bind the complete durable v6 projection to sealed export authority."""
+
+    lifecycle_version = getattr(
+        technoeconomic_kernel,
+        "LIFECYCLE_CALCULATION_CONTRACT_VERSION",
+        "tea-calculation-v6",
+    )
+    sampling_version = getattr(
+        technoeconomic_kernel,
+        "LIFECYCLE_SAMPLING_VERSION",
+        "tea-lhs-v2",
+    )
+    result_version = getattr(
+        technoeconomic_kernel,
+        "LIFECYCLE_RESULT_VERSION",
+        "tea-result-v6",
+    )
+    if (
+        submission_provenance.get("calculation_contract_version")
+        != lifecycle_version
+        or submission_provenance.get("sampling_version") != sampling_version
+    ):
+        raise TechnoeconomicExportError(
+            "Frozen v6 submission provenance has the wrong contract identity"
+        )
+    kernel_provenance = metadata.get("kernel_provenance")
+    summaries = metadata.get("summaries")
+    if not isinstance(kernel_provenance, Mapping) or not isinstance(
+        summaries, Mapping
+    ):
+        raise TechnoeconomicExportError(
+            "Sealed v6 result authority is incomplete"
+        )
+    if (
+        kernel_provenance.get("calculation_contract_version")
+        != lifecycle_version
+        or kernel_provenance.get("sampling_version") != sampling_version
+        or kernel_provenance.get("result_version") != result_version
+        or summaries.get("result_version") != result_version
+    ):
+        raise TechnoeconomicExportError(
+            "Sealed v6 result authority has the wrong contract identity"
+        )
+
+    finance = request_payload.get("finance")
+    finance = finance if isinstance(finance, Mapping) else {}
+    manifest = source_snapshot.get("capacity_manifest")
+    manifest = manifest if isinstance(manifest, Mapping) else {}
+    manifest_systems = manifest.get("systems")
+    if not isinstance(manifest_systems, Mapping):
+        raise TechnoeconomicExportError("Frozen v6 capacity manifest is invalid")
+    capacities: dict[str, Any] = {}
+    for system, record in sorted(manifest_systems.items()):
+        if not isinstance(record, Mapping):
+            raise TechnoeconomicExportError("Frozen v6 capacity record is invalid")
+        capacities[str(system)] = {
+            "module_model": record.get("module_model"),
+            "installed_wdc": record.get("installed_wdc"),
+            "physics_version": record.get("calibration_physics_version"),
+            "physics_fingerprint": record.get(
+                "calibration_physics_fingerprint"
+            ),
+        }
+    eligible_rows = source_snapshot.get("eligible_paired_energy_rows")
+    if not isinstance(eligible_rows, list):
+        raise TechnoeconomicExportError("Frozen v6 eligible energy rows are invalid")
+    try:
+        eligible_years = [row["year"] for row in eligible_rows]
+    except (KeyError, TypeError) as exc:
+        raise TechnoeconomicExportError(
+            "Frozen v6 eligible energy rows are incomplete"
+        ) from exc
+    evidence_receipt = submission_provenance.get("evidence_receipt")
+    if not isinstance(evidence_receipt, Mapping):
+        raise TechnoeconomicExportError("Frozen v6 evidence receipt is invalid")
+    public_identity_fields = (
+        "schema_version",
+        "artifact_kind",
+        "media_type",
+        "sha256",
+        "byte_count",
+        "row_count",
+        "column_count",
+        "pickle_allowed",
+        "public",
+    )
+    try:
+        sealed_identity = {
+            key: sealed_calculation_artifact[key]
+            for key in public_identity_fields
+        }
+    except KeyError as exc:
+        raise TechnoeconomicExportError(
+            "Frozen v6 sealed-calculation identity is incomplete"
+        ) from exc
+    authority = _applied_capacity_authority(submission_provenance)
+    lifecycle = _lifecycle_request(request_payload)
+
+    lcoo_summary = summaries.get("lcoo")
+    headline = summaries.get("headline_decision")
+    probabilities = summaries.get("probability_counts")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (lcoo_summary, headline, probabilities)
+    ):
+        raise TechnoeconomicExportError(
+            "Sealed v6 decision summaries are invalid"
+        )
+    reason_codes = list(headline.get("reason_codes") or ())
+    if lcoo_summary.get("status") != "available":
+        reason = lcoo_summary.get("reason")
+        if isinstance(reason, str) and reason and reason not in reason_codes:
+            reason_codes.append(reason)
+
+    required_summary_fields = (
+        "upgrade_npv",
+        "delta_lcoe",
+        "annual_lifecycle",
+        "reliability_summary",
+        "representative_event_traces",
+        "cost_coverage_audit",
+        "warnings",
+    )
+    if any(field not in summaries for field in required_summary_fields):
+        raise TechnoeconomicExportError("Sealed v6 summaries are incomplete")
+    expected = {
+        "schema_version": 6,
+        "calculation_contract_version": lifecycle_version,
+        "sampling_version": sampling_version,
+        "analysis_basis": request_payload.get("basis"),
+        "realization_count": request_payload.get("n"),
+        "seed": request_payload.get("seed"),
+        "project_life_years": finance.get("project_life_years"),
+        "cost_stack_completeness": request_payload.get(
+            "cost_stack_completeness"
+        ),
+        "energy_available": metadata.get("energy_available"),
+        "commercial_transfer_status": submission_provenance.get(
+            "commercial_transfer_status"
+        ),
+        "commercial_reference_design": submission_provenance.get(
+            "commercial_reference_design"
+        ),
+        "source_snapshot_sha256": submission_provenance.get(
+            "source_snapshot_sha256"
+        ),
+        "eligible_weather_years": eligible_years,
+        "capacity_basis": "frozen_annual_applied_capacity_w",
+        "capacities": capacities,
+        "input_status": evidence_receipt.get("status"),
+        "evidence_class_counts": evidence_receipt.get(
+            "evidence_class_counts"
+        )
+        or {},
+        "common_cost_audit": metadata.get("common_cost_audit"),
+        "summaries": _compact_cdf_points_for_binding(summaries),
+        "per_weather_year": _compact_cdf_points_for_binding(
+            metadata.get("per_weather_year")
+        ),
+        "sensitivity": metadata.get("sensitivity"),
+        "convergence": metadata.get("convergence"),
+        "sealed_calculation": sealed_identity,
+        "applied_capacities": {
+            system: {
+                "applied_capacity_w": authority[system].get(
+                    "applied_capacity_w"
+                ),
+                "rating_basis": authority[system].get("rating_basis"),
+            }
+            for system in ("solaredge", "solectria")
+        },
+        "result_version": result_version,
+        "paired_lifecycle": {
+            "target_capacity_w": lifecycle.get("target_capacity_w"),
+            "target_rating_basis": lifecycle.get("target_rating_basis"),
+            "source_energy_basis": lifecycle.get("source_energy_basis"),
+            "reliability_mode": lifecycle.get("reliability_mode"),
+            "constant_dollar_cost_year": finance.get(
+                "constant_dollar_cost_year"
+            ),
+            "headline_metric_id": "upgrade_npv",
+            "headline_decision": headline,
+            "probability_counts": probabilities,
+            "upgrade_npv": _compact_cdf_points_for_binding(
+                summaries["upgrade_npv"]
+            ),
+            "delta_lcoe": _compact_cdf_points_for_binding(
+                summaries["delta_lcoe"]
+            ),
+            "lcoo": _compact_cdf_points_for_binding(lcoo_summary),
+            "reason_codes": reason_codes,
+            "annual_lifecycle": summaries["annual_lifecycle"],
+            "reliability_summary": summaries["reliability_summary"],
+            "representative_event_traces": summaries[
+                "representative_event_traces"
+            ],
+            "cost_coverage_audit": summaries["cost_coverage_audit"],
+            "warnings": summaries["warnings"],
+            "formula_registry": kernel_provenance.get("formula_registry") or {},
+            "formula_catalog_endpoint": "/api/technoeconomic/formulas/v6",
+            "admission": kernel_provenance.get("admission") or {},
+        },
+    }
+    actual_digest = _canonical_json_sha256(routine_result)
+    expected_digest = _canonical_json_sha256(expected)
+    if not secrets.compare_digest(actual_digest, expected_digest):
+        raise TechnoeconomicExportError(
+            "Durable v6 routine result differs from frozen or sealed authority"
+        )
+
+
+def _build_lifecycle_tables(
+    calculation: _SealedCalculation,
+    request_payload: Mapping[str, Any],
+    source_snapshot: Mapping[str, Any],
+    submission_provenance: Mapping[str, Any],
+    routine_result: Mapping[str, Any],
+    checks: Sequence[Sequence[Any]],
+    registry: Sequence[Mapping[str, Any]],
+    trace_records: Sequence[Mapping[str, Any]],
+    audit_records: Sequence[Mapping[str, Any]],
+) -> tuple[_Table, ...]:
+    summaries = _lifecycle_summaries(calculation.metadata)
+    annual_records = _mapping_sequence(
+        summaries.get("annual_lifecycle"), label="The v6 annual lifecycle summary"
+    )
+    reliability_records = _mapping_sequence(
+        summaries.get("reliability_summary"),
+        label="The v6 reliability summary",
+    )
+    coverage_records = _mapping_sequence(
+        summaries.get("cost_coverage_audit") or (),
+        label="The v6 cost-coverage audit",
+    )
+    reliability_input_records = _lifecycle_reliability_input_records(request_payload)
+    common_cause_records = tuple(
+        record
+        for record in reliability_input_records
+        if record.get("record_type") == "common_cause"
+    )
+    registry_rows = tuple(
+        tuple(
+            _canonical_json_text(list(record[column]))
+            if column == "inputs"
+            else record[column]
+            for column in LIFECYCLE_FORMULA_CATALOG_COLUMNS
+        )
+        for record in registry
+    )
+    audit_rows = tuple(
+        tuple(record.get(column) for column in LIFECYCLE_AUDIT_COLUMNS)
+        for record in audit_records
+    )
+    trace_rows = tuple(
+        tuple(record.get(column) for column in LIFECYCLE_TRACE_COLUMNS)
+        for record in trace_records
+    )
+
+    dynamic: dict[str, tuple[tuple[str, ...], tuple[tuple[Any, ...], ...]]] = {}
+    for name, records, preferred in (
+        ("annual", annual_records, ("system", "project_year", "statistic", "value", "unit")),
+        (
+            "reliability",
+            reliability_records,
+            ("system", "component_id", "project_year", "statistic", "value", "unit"),
+        ),
+        (
+            "input",
+            _lifecycle_input_records(request_payload),
+            ("section", "field_path", "value_json"),
+        ),
+        (
+            "target",
+            _lifecycle_target_design_records(request_payload),
+            ("technology", "target_capacity_w", "target_rating_basis"),
+        ),
+        (
+            "reliability_input",
+            reliability_input_records,
+            ("record_type", "technology", "component_id", "category", "count"),
+        ),
+        (
+            "weather",
+            _lifecycle_weather_records(calculation.metadata),
+            ("project_year", "weather_year"),
+        ),
+        (
+            "capacity",
+            _lifecycle_capacity_records(request_payload, submission_provenance),
+            ("record_type", "technology", "capacity_w", "rating_basis"),
+        ),
+        (
+            "common",
+            common_cause_records,
+            ("record_type", "technology", "event_id", "affected_systems"),
+        ),
+        (
+            "coverage",
+            coverage_records,
+            ("coverage_id", "status", "owner", "notes"),
+        ),
+        (
+            "lcoe",
+            _lifecycle_lcoe_records(calculation),
+            ("technology", "metric_id", "unit", "population_count", "p10", "p50", "p90"),
+        ),
+    ):
+        dynamic[name] = _records_to_table(records, preferred_columns=preferred)
+
+    source_snapshot_sha256 = str(submission_provenance.get("source_snapshot_sha256"))
+    transfer_records = tuple(
+        {
+            "section": "submission_provenance",
+            "field_path": field_path,
+            "value_json": encoded,
+        }
+        for field_path, encoded in _flatten_leaves(
+            "",
+            submission_provenance.get("paired_lifecycle_receipt")
+            or submission_provenance.get("normalization_receipt")
+            or {},
+        )
+    )
+    transfer_columns, transfer_rows = _records_to_table(
+        transfer_records,
+        preferred_columns=("section", "field_path", "value_json"),
+    )
+    provenance_rows = tuple(
+        _lifecycle_provenance_rows(
+            request_payload,
+            source_snapshot,
+            submission_provenance,
+            routine_result,
+            calculation.metadata,
+            registry,
+            checks,
+        )
+    )
+    return (
+        _Table(
+            "formula-catalog.csv",
+            "Formula Catalog",
+            LIFECYCLE_FORMULA_CATALOG_COLUMNS,
+            lambda: iter(registry_rows),
+        ),
+        _Table(
+            "calculation-audit.csv",
+            "Calculation Audit",
+            LIFECYCLE_AUDIT_COLUMNS,
+            lambda: iter(audit_rows),
+        ),
+        _Table(
+            "realizations.csv",
+            "Realizations",
+            calculation.column_names,
+            calculation.rows,
+        ),
+        _Table(
+            "annual-lifecycle.csv",
+            "Annual Lifecycle",
+            dynamic["annual"][0],
+            lambda: iter(dynamic["annual"][1]),
+        ),
+        _Table(
+            "reliability-summary.csv",
+            "Reliability Summary",
+            dynamic["reliability"][0],
+            lambda: iter(dynamic["reliability"][1]),
+        ),
+        _Table(
+            "representative-event-traces.csv",
+            "Representative Event Traces",
+            LIFECYCLE_TRACE_COLUMNS,
+            lambda: iter(trace_rows),
+        ),
+        _Table(
+            "input-specifications.csv",
+            "Input Specifications",
+            dynamic["input"][0],
+            lambda: iter(dynamic["input"][1]),
+        ),
+        _Table(
+            "target-design.csv",
+            "Target Design",
+            dynamic["target"][0],
+            lambda: iter(dynamic["target"][1]),
+        ),
+        _Table(
+            "reliability-inputs.csv",
+            "Reliability Inputs",
+            dynamic["reliability_input"][0],
+            lambda: iter(dynamic["reliability_input"][1]),
+        ),
+        _Table(
+            "energy-snapshot.csv",
+            "Energy Snapshot",
+            ENERGY_COLUMNS,
+            lambda: _energy_rows(source_snapshot, source_snapshot_sha256),
+        ),
+        _Table(
+            "weather-summary.csv",
+            "Weather Summary",
+            dynamic["weather"][0],
+            lambda: iter(dynamic["weather"][1]),
+        ),
+        _Table(
+            "capacity-and-basis.csv",
+            "Capacity and Basis",
+            dynamic["capacity"][0],
+            lambda: iter(dynamic["capacity"][1]),
+        ),
+        _Table(
+            "common-cost-audit.csv",
+            "Common-Cost Audit",
+            dynamic["common"][0],
+            lambda: iter(dynamic["common"][1]),
+        ),
+        _Table(
+            "cost-coverage-audit.csv",
+            "Cost-Coverage Audit",
+            dynamic["coverage"][0],
+            lambda: iter(dynamic["coverage"][1]),
+        ),
+        _Table(
+            "commercial-transfer.csv",
+            "Commercial Transfer",
+            transfer_columns,
+            lambda: iter(transfer_rows),
+        ),
+        _Table(
+            "commercial-lcoe.csv",
+            "Commercial LCOE",
+            dynamic["lcoe"][0],
+            lambda: iter(dynamic["lcoe"][1]),
+        ),
+        _Table(
+            "metric-cdfs.csv",
+            "Metric CDFs",
+            LIFECYCLE_CDF_COLUMNS,
+            lambda: _lifecycle_cdf_rows(calculation.metadata),
+        ),
+        _Table(
+            "sensitivity.csv",
+            "Sensitivity",
+            SENSITIVITY_COLUMNS,
+            lambda: _sensitivity_rows(calculation.metadata),
+        ),
+        _Table(
+            "convergence.csv",
+            "Convergence",
+            LIFECYCLE_CONVERGENCE_COLUMNS,
+            lambda: _lifecycle_convergence_rows(calculation.metadata),
+        ),
+        _Table(
+            "provenance.csv",
+            "Provenance",
+            PROVENANCE_COLUMNS,
+            lambda: iter(provenance_rows),
+        ),
+        _Table(
+            "checks.csv",
+            "Checks",
+            CHECK_COLUMNS,
+            lambda: iter(checks),
+        ),
+    )
+
+
 def _build_tables(
     calculation: _SealedCalculation,
     request_payload: Mapping[str, Any],
@@ -5050,6 +6796,7 @@ def _write_csv_bundle(
     cancellation_check: Callable[[], None],
     *,
     schema_versions: Mapping[str, str] | None = None,
+    bundle_provenance: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     schema_versions = schema_versions or export_contract_versions(
         technoeconomic_kernel.LEGACY_CALCULATION_CONTRACT_VERSION
@@ -5076,6 +6823,8 @@ def _write_csv_bundle(
             "table_count": len(metadata),
             "tables": metadata,
         }
+        if bundle_provenance is not None:
+            bundle_metadata["provenance"] = _safe_public_value(bundle_provenance)
         manifest_bytes = (
             _canonical_json_text(bundle_metadata) + "\n"
         ).encode("utf-8")
@@ -5111,6 +6860,20 @@ _HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 _SECTION_FILL = PatternFill("solid", fgColor="D9EAF7")
 _PASS_FILL = PatternFill("solid", fgColor="DDEBF7")
 _FAIL_FILL = PatternFill("solid", fgColor="FCE4D6")
+_V6_SEALED_FILL = PatternFill("solid", fgColor="E7E6E6")
+_V6_WARNING_FILL = PatternFill("solid", fgColor="FFF2CC")
+_V6_FAIL_FILL = PatternFill("solid", fgColor="F4CCCC")
+_V6_REFERENCE_FONT = Font(name="Aptos", size=10, color="008000")
+_V6_REFERENCE_SHEETS = frozenset(
+    {
+        "Input Specifications",
+        "Target Design",
+        "Reliability Inputs",
+        "Energy Snapshot",
+        "Capacity and Basis",
+        "Commercial Transfer",
+    }
+)
 _FAST_STREAMING_SHEETS = frozenset({"Realizations", "Metric CDFs"})
 
 
@@ -5289,6 +7052,41 @@ def _new_logical_sheet_hash() -> Any:
     digest = hashlib.sha256()
     digest.update((XLSX_LOGICAL_HASH_VERSION + "\n").encode("ascii"))
     return digest
+
+
+def _new_lifecycle_logical_sheet_hash() -> Any:
+    digest = hashlib.sha256()
+    digest.update((LIFECYCLE_XLSX_LOGICAL_HASH_VERSION + "\n").encode("ascii"))
+    return digest
+
+
+def _update_lifecycle_logical_sheet_hash(
+    digest: Any,
+    values: Sequence[Any],
+    *,
+    formula_identities: Mapping[int, str] | None = None,
+) -> None:
+    """Hash v6 formula semantics without binding identity to A1 row numbers.
+
+    The normalized XLSX physical SHA still seals the exact formula text.  This
+    logical hash uses stable semantic roles, so inserting a trace row does not
+    misrepresent an otherwise unchanged audit formula as a contract change.
+    """
+
+    identities = dict(formula_identities or {})
+    normalized_values = [
+        (
+            {"formula_identity": identities[index]}
+            if index in identities
+            else _excel_value(value)
+        )
+        for index, value in enumerate(values)
+    ]
+    row = {
+        "values": normalized_values,
+        "formula_indexes": sorted(identities),
+    }
+    digest.update((_canonical_json_text(row) + "\n").encode("utf-8"))
 
 
 def _write_standalone_summary_sheet(
@@ -5738,10 +7536,950 @@ def _write_workbook(
     return sheets, sum(int(record["row_count"]) for record in sheets)
 
 
+def _lifecycle_percentiles(
+    calculation: _SealedCalculation,
+    field_name: str,
+) -> tuple[float | None, float | None, float | None]:
+    if field_name not in calculation.by_name:
+        return None, None, None
+    values = _finite_values(calculation.by_name[field_name])
+    if not len(values):
+        return None, None, None
+    percentiles = np.quantile(values, (0.10, 0.50, 0.90), method="linear")
+    return tuple(float(value) for value in percentiles)  # type: ignore[return-value]
+
+
+def _lifecycle_decision_values(
+    calculation: _SealedCalculation,
+    request_payload: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    summaries = _lifecycle_summaries(metadata)
+    decision = summaries.get("headline_decision") or summaries.get("decision")
+    decision = decision if isinstance(decision, Mapping) else {}
+    probability_counts = summaries.get("probability_counts")
+    probability_counts = (
+        probability_counts if isinstance(probability_counts, Mapping) else {}
+    )
+    npv_counts = probability_counts.get("upgrade_npv")
+    npv_counts = npv_counts if isinstance(npv_counts, Mapping) else {}
+    delta_lcoe_counts = probability_counts.get("delta_lcoe")
+    delta_lcoe_counts = (
+        delta_lcoe_counts if isinstance(delta_lcoe_counts, Mapping) else {}
+    )
+    absolute_tolerance = _lifecycle_economic_npv_tolerance(request_payload)
+    if "UpgradeNPV_se_minus_sol_USD" in calculation.by_name:
+        raw_npv = np.asarray(
+            calculation.by_name["UpgradeNPV_se_minus_sol_USD"],
+            dtype=np.float64,
+        )
+    else:
+        raw_npv = np.asarray([], dtype=np.float64)
+    raw_tolerances = np.asarray(
+        calculation.by_name.get(
+            "NPVTolerance_USD",
+            np.full(len(raw_npv), absolute_tolerance, dtype=np.float64),
+        ),
+        dtype=np.float64,
+    )
+    if raw_tolerances.shape != raw_npv.shape:
+        raise TechnoeconomicExportError(
+            "The v6 NPV decision-tolerance vector is inconsistent"
+        )
+    finite_mask = np.isfinite(raw_npv) & np.isfinite(raw_tolerances)
+    npv = raw_npv[finite_mask]
+    tolerances = raw_tolerances[finite_mask]
+    positive = int(
+        npv_counts.get("positive")
+        if npv_counts.get("positive") is not None
+        else np.count_nonzero(npv > tolerances)
+    )
+    negative = int(
+        npv_counts.get("negative")
+        if npv_counts.get("negative") is not None
+        else np.count_nonzero(npv < -tolerances)
+    )
+    tie = int(
+        npv_counts.get("tie")
+        if npv_counts.get("tie") is not None
+        else np.count_nonzero((npv >= -tolerances) & (npv <= tolerances))
+    )
+    denominator = int(npv_counts.get("denominator") or len(npv))
+    threshold = float(
+        _lifecycle_request(request_payload).get("decision_probability_threshold")
+        or 0.75
+    )
+    if denominator and positive / denominator >= threshold:
+        derived_decision = "SolarEdge preferred"
+    elif denominator and negative / denominator >= threshold:
+        derived_decision = "Solectria preferred"
+    else:
+        derived_decision = "No decisive winner"
+    headline = (
+        decision.get("headline_decision") or decision.get("headline") or decision.get("decision")
+        or derived_decision
+    )
+    warnings = summaries.get("warnings") or metadata.get("warnings") or []
+    if isinstance(warnings, str):
+        warnings = [warnings]
+    if not isinstance(warnings, (list, tuple)):
+        warnings = []
+    warning_text = tuple(
+        _canonical_json_text(value)
+        if isinstance(value, (Mapping, list, tuple))
+        else str(value)
+        for value in warnings
+    )
+    warning_codes = tuple(
+        str(value.get("code"))
+        for value in warnings
+        if isinstance(value, Mapping) and value.get("code") is not None
+    )
+    quadrants = summaries.get("cost_energy_quadrants")
+    quadrants = quadrants if isinstance(quadrants, Mapping) else {}
+    quadrant_rows = [
+        (
+            str(name),
+            int(record.get("count") or 0),
+            float(record.get("probability") or 0.0),
+        )
+        for name, record in quadrants.items()
+        if isinstance(record, Mapping)
+    ]
+    dominant_quadrant = (
+        sorted(quadrant_rows, key=lambda row: (-row[2], row[0]))[0]
+        if quadrant_rows
+        else ("unavailable", 0, 0.0)
+    )
+    reliability_rows = _mapping_sequence(
+        summaries.get("reliability_summary"),
+        label="The v6 reliability summary",
+    )
+    corrective_by_component: dict[str, float] = {}
+    for row in reliability_rows:
+        if (
+            row.get("mode") != "event"
+            or row.get("metric") != "corrective_cost"
+            or row.get("statistic") != "p50"
+        ):
+            continue
+        identity = f"{row.get('system')}::{row.get('component_id')}"
+        corrective_by_component[identity] = corrective_by_component.get(
+            identity, 0.0
+        ) + float(row.get("value") or 0.0)
+    reliability_contributor = (
+        sorted(
+            corrective_by_component.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[0]
+        if corrective_by_component
+        else ("unavailable", 0.0)
+    )
+    convergence = metadata.get("convergence")
+    convergence = convergence if isinstance(convergence, Mapping) else {}
+    tolerance_percentiles = (
+        tuple(
+            float(value)
+            for value in np.quantile(
+                tolerances,
+                (0.10, 0.50, 0.90),
+                method="linear",
+            )
+        )
+        if len(tolerances)
+        else (absolute_tolerance, absolute_tolerance, absolute_tolerance)
+    )
+    return {
+        "headline": headline,
+        "threshold": threshold,
+        "tolerance": tolerance_percentiles[1],
+        "tolerance_percentiles": tolerance_percentiles,
+        "positive_count": positive,
+        "negative_count": negative,
+        "tie_count": tie,
+        "denominator": denominator,
+        "positive_probability": positive / denominator if denominator else None,
+        "negative_probability": negative / denominator if denominator else None,
+        "tie_probability": tie / denominator if denominator else None,
+        "npv_percentiles": _lifecycle_percentiles(
+            calculation, "UpgradeNPV_se_minus_sol_USD"
+        ),
+        "delta_lcoe_positive_count": int(delta_lcoe_counts.get("positive") or 0),
+        "delta_lcoe_negative_count": int(delta_lcoe_counts.get("negative") or 0),
+        "delta_lcoe_tie_count": int(delta_lcoe_counts.get("tie") or 0),
+        "delta_lcoe_denominator": int(delta_lcoe_counts.get("denominator") or 0),
+        "warnings": warning_text,
+        "warning_codes": warning_codes,
+        "dominant_quadrant": dominant_quadrant,
+        "reliability_contributor": reliability_contributor,
+        "convergence_status": convergence.get("status") or "unavailable",
+        "suppressed": decision.get("status") == "suppressed"
+        or bool(decision.get("suppressed")),
+        "reason_codes": _safe_public_value(decision.get("reason_codes") or []),
+    }
+
+
+def _lifecycle_chart_rows(
+    calculation: _SealedCalculation,
+    request_payload: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]], list[tuple[Any, ...]]]:
+    decision = _lifecycle_decision_values(calculation, request_payload, metadata)
+    denominator = int(decision["denominator"] or 0)
+    delta_lcoe_denominator = int(decision["delta_lcoe_denominator"] or 0)
+    decision_rows = [
+        (
+            label,
+            npv_count,
+            delta_lcoe_count,
+            npv_count / denominator if denominator else 0.0,
+            (
+                delta_lcoe_count / delta_lcoe_denominator
+                if delta_lcoe_denominator
+                else 0.0
+            ),
+        )
+        for label, npv_count, delta_lcoe_count in (
+            (
+                "Positive / higher",
+                decision["positive_count"],
+                decision["delta_lcoe_positive_count"],
+            ),
+            ("Tie", decision["tie_count"], decision["delta_lcoe_tie_count"]),
+            (
+                "Negative / lower",
+                decision["negative_count"],
+                decision["delta_lcoe_negative_count"],
+            ),
+        )
+    ]
+
+    annual_by_year: dict[int, dict[str, Any]] = {}
+    reliability_by_component: dict[str, dict[str, float]] = {}
+    for record in _representative_trace_records(metadata):
+        if record.get("selection_label") != "NPV-P50":
+            continue
+        if record.get("record_type") == "annual":
+            year = int(record.get("project_year") or 0)
+            system = str(record.get("system") or "").lower()
+            key = "se" if "edge" in system or system == "se" else "so"
+            row = annual_by_year.setdefault(year, {"year": year})
+            row[f"{key}_energy"] = record.get("delivered_energy_kwh")
+            row[f"{key}_availability"] = record.get("target_availability")
+            row[f"{key}_cost"] = record.get("annual_cost_usd")
+            if record.get("cumulative_upgrade_npv_usd") is not None:
+                row["cumulative_npv"] = record.get("cumulative_upgrade_npv_usd")
+        elif record.get("record_type") == "component":
+            component = f"{record.get('system')}::{record.get('component_id')}"
+            row = reliability_by_component.setdefault(
+                component,
+                {"failures": 0.0, "downtime": 0.0, "corrective": 0.0},
+            )
+            row["failures"] += float(record.get("event_failures") or 0.0)
+            if record.get("component_year_total_row") is True:
+                row["downtime"] += float(record.get("downtime_fraction") or 0.0)
+                row["corrective"] += float(
+                    record.get("corrective_cost_usd") or 0.0
+                )
+    annual_rows = [
+        (
+            year,
+            row.get("so_energy"),
+            row.get("se_energy"),
+            row.get("so_availability"),
+            row.get("se_availability"),
+            row.get("so_cost"),
+            row.get("se_cost"),
+            row.get("cumulative_npv"),
+        )
+        for year, row in sorted(annual_by_year.items())
+    ]
+    reliability_rows = [
+        (component, values["failures"], values["downtime"], values["corrective"])
+        for component, values in sorted(reliability_by_component.items())
+    ]
+    return decision_rows, annual_rows, reliability_rows
+
+
+def _write_lifecycle_summary_sheet(
+    sheet: Any,
+    calculation: _SealedCalculation,
+    request_payload: Mapping[str, Any],
+    routine_result: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    checks: Sequence[Sequence[Any]],
+) -> tuple[int, int, str]:
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A5"
+    for letter, width in {"A": 56, "B": 25, "C": 25, "D": 72}.items():
+        sheet.column_dimensions[letter].width = width
+    sheet.row_dimensions[1].height = 28
+    sheet.row_dimensions[2].height = 32
+    digest = _new_lifecycle_logical_sheet_hash()
+
+    title_values = ("TEA v6 — Upgrade NPV Decision", None, None, None)
+    title = _write_only_cell(sheet, title_values[0], section=True)
+    title.font = Font(name="Aptos Display", size=18, bold=True, color="FFFFFF")
+    title.fill = _HEADER_FILL
+    title.alignment = Alignment(vertical="center", wrap_text=False)
+    sheet.append(
+        [title, _write_only_cell(sheet, None), _write_only_cell(sheet, None), _write_only_cell(sheet, None)]
+    )
+    _update_lifecycle_logical_sheet_hash(digest, title_values)
+    note = (
+        "Kernel-written frozen values are authoritative; Excel formulas are audit replicas.",
+        None,
+        None,
+        "All signed quantities are SolarEdge minus Solectria; positive Upgrade NPV favors SolarEdge.",
+    )
+    sheet.append([_write_only_cell(sheet, value) for value in note])
+    _update_lifecycle_logical_sheet_hash(digest, note)
+    blank = (None, None, None, None)
+    sheet.append([_write_only_cell(sheet, None) for _ in blank])
+    _update_lifecycle_logical_sheet_hash(digest, blank)
+    headers = ("Decision item", "Frozen authority", "Formula/status", "Interpretation")
+    _append_header(sheet, headers)
+    _update_lifecycle_logical_sheet_hash(digest, headers)
+
+    decision = _lifecycle_decision_values(calculation, request_payload, metadata)
+    p10, p50, p90 = decision["npv_percentiles"]
+    tolerance_p10, tolerance_p50, tolerance_p90 = decision[
+        "tolerance_percentiles"
+    ]
+    _, so_lcoe_p50, _ = _lifecycle_percentiles(
+        calculation,
+        "LifecycleLCOE_SOL_USD_per_kWh_AC",
+    )
+    _, se_lcoe_p50, _ = _lifecycle_percentiles(
+        calculation,
+        "LifecycleLCOE_SE_USD_per_kWh_AC",
+    )
+    _, lcoo_p50, _ = _lifecycle_percentiles(
+        calculation,
+        "IncrementalLCOO_se_minus_sol_USD_per_kWh_AC",
+    )
+    dominant_quadrant, quadrant_count, quadrant_probability = decision[
+        "dominant_quadrant"
+    ]
+    reliability_component, reliability_cost = decision[
+        "reliability_contributor"
+    ]
+    check_end = len(checks) + 1
+    rows = (
+        (
+            "Model status",
+            "OK" if all(row[5] == "OK" for row in checks) else "FAIL",
+            f'=IF(COUNTIF(\'Checks\'!F2:F{check_end},"FAIL")=0,"OK","FAIL")',
+            "Failed export checks suppress the recommendation.",
+        ),
+        (
+            "Headline decision",
+            decision["headline"],
+            None,
+            f"Requires at least {float(decision['threshold']):.0%} probability beyond the economic NPV tolerance.",
+        ),
+        ("P(NPV > tolerance)", decision["positive_probability"], None, "SolarEdge-favorable probability."),
+        ("P(NPV < -tolerance)", decision["negative_probability"], None, "Solectria-favorable probability."),
+        ("P(|NPV| <= tolerance)", decision["tie_probability"], None, "Economically tied probability."),
+        ("Economic NPV tolerance P10 (USD)", tolerance_p10, None, "Scale-aware decision materiality threshold; never used for formula tie-outs."),
+        ("Economic NPV tolerance P50 (USD)", tolerance_p50, None, "Median scale-aware decision materiality threshold."),
+        ("Economic NPV tolerance P90 (USD)", tolerance_p90, None, "Upper scale-aware decision materiality threshold."),
+        ("Upgrade NPV P10 (USD)", p10, None, "10th percentile."),
+        ("Upgrade NPV P50 (USD)", p50, None, "Median."),
+        ("Upgrade NPV P90 (USD)", p90, None, "90th percentile."),
+        ("Solectria standalone LCOE P50 (USD/kWh_AC)", so_lcoe_p50, None, "Supporting standalone metric."),
+        ("SolarEdge standalone LCOE P50 (USD/kWh_AC)", se_lcoe_p50, None, "Supporting standalone metric."),
+        ("Incremental LCOO P50 (USD/kWh_AC)", lcoo_p50, None, "Diagnostic only; undefined near zero incremental energy."),
+        (
+            "Dominant cost/energy quadrant",
+            dominant_quadrant,
+            None,
+            f"{quadrant_count} realizations ({quadrant_probability:.1%}); signed SolarEdge-minus-Solectria classification.",
+        ),
+        (
+            "Largest P50 event corrective-cost contributor",
+            reliability_component,
+            None,
+            f"Summed annual P50 corrective cost: {reliability_cost:,.2f} constant USD.",
+        ),
+        (
+            "Convergence condition",
+            decision["convergence_status"],
+            None,
+            "An unstable condition suppresses the headline decision.",
+        ),
+        (
+            "Provisional-input condition",
+            "present" if "accepted_provisional_inputs" in decision["warning_codes"] else "none",
+            None,
+            "Accepted provisional evidence remains visibly flagged and requires review.",
+        ),
+        (
+            "Sensitivity interpretation",
+            "association_not_causation",
+            None,
+            "Rank sensitivity describes association, not causation.",
+        ),
+        ("Realizations", routine_result.get("realization_count"), None, "Complete sealed realization population."),
+        ("Calculation contract", routine_result.get("calculation_contract_version"), None, "Additive v6 lifecycle path."),
+        (
+            "Weather-path method",
+            _lifecycle_request(request_payload).get("weather_path_method"),
+            None,
+            "V6 balances weather years across realizations and samples project years independently; versus v5's one-weather-year-for-life method, this methodological change generally narrows interannual-weather uncertainty and is not a causal performance claim.",
+        ),
+        ("Sampling contract", routine_result.get("sampling_version"), None, "Balanced weather and domain-separated random streams."),
+        ("Decision rule", LIFECYCLE_DECISION_RULE_VERSION, None, _canonical_json_text(decision["reason_codes"])),
+        ("Warnings", "; ".join(decision["warnings"]), None, "Review all warnings and provisional inputs before use."),
+    )
+    for label, value, formula, notes in rows:
+        status = value if label == "Model status" else None
+        frozen = _write_only_cell(sheet, value, status=status)
+        if label != "Model status":
+            frozen.fill = _V6_SEALED_FILL
+        elif value == "FAIL":
+            frozen.fill = _V6_FAIL_FILL
+        formula_cell = _write_only_cell(sheet, formula)
+        if isinstance(formula, str) and formula.startswith("="):
+            formula_cell.data_type = "f"
+            formula_cell.font = Font(name="Aptos", size=10, color="000000")
+        cells = [
+            _write_only_cell(sheet, label),
+            frozen,
+            formula_cell,
+            _write_only_cell(sheet, notes),
+        ]
+        warning_row = (
+            (label == "Warnings" and bool(value))
+            or (label == "Provisional-input condition" and value == "present")
+            or (label == "Convergence condition" and value != "stable")
+            or (label == "Headline decision" and decision["suppressed"])
+        )
+        if warning_row:
+            for cell in cells:
+                cell.fill = _V6_WARNING_FILL
+        sheet.append(cells)
+        _update_lifecycle_logical_sheet_hash(
+            digest,
+            (label, value, formula, notes),
+            formula_identities={2: "summary_check_status"} if formula else {},
+        )
+    return len(rows) + 4, 4, digest.hexdigest()
+
+
+def _write_lifecycle_chart_sheet(
+    sheet: Any,
+    *,
+    title: str,
+    interpretation: str,
+    columns: Sequence[str],
+    rows: Sequence[Sequence[Any]],
+    charts: Sequence[Mapping[str, Any]],
+    image_path: Path | None = None,
+    image_anchor: str | None = None,
+) -> tuple[int, int, str, list[dict[str, Any]], list[dict[str, Any]]]:
+    _set_sheet_layout(sheet, columns)
+    sheet.freeze_panes = "A4"
+    sheet.column_dimensions["A"].width = max(
+        float(sheet.column_dimensions["A"].width or 0),
+        52.0,
+    )
+    digest = _new_lifecycle_logical_sheet_hash()
+    title_values = (title, *([None] * (len(columns) - 1)))
+    title_cell = _write_only_cell(sheet, title, section=True)
+    title_cell.font = Font(name="Aptos Display", size=16, bold=True, color="FFFFFF")
+    title_cell.fill = _HEADER_FILL
+    title_cell.alignment = Alignment(vertical="center", wrap_text=False)
+    sheet.row_dimensions[1].height = 30
+    sheet.row_dimensions[2].height = 48
+    sheet.append(
+        [title_cell, *[_write_only_cell(sheet, None) for _ in columns[1:]]]
+    )
+    _update_lifecycle_logical_sheet_hash(digest, title_values)
+    interpretation_values = (
+        interpretation,
+        *([None] * (len(columns) - 1)),
+    )
+    interpretation_cells = [
+        _write_only_cell(sheet, value) for value in interpretation_values
+    ]
+    interpretation_cells[0].alignment = Alignment(vertical="top", wrap_text=True)
+    sheet.append(interpretation_cells)
+    _update_lifecycle_logical_sheet_hash(digest, interpretation_values)
+    blank = tuple(None for _ in columns)
+    sheet.append([_write_only_cell(sheet, None) for _ in columns])
+    _update_lifecycle_logical_sheet_hash(digest, blank)
+    _append_header(sheet, columns)
+    _update_lifecycle_logical_sheet_hash(digest, columns)
+    for row in rows:
+        sheet.append(
+            [
+                _write_only_cell(
+                    sheet,
+                    value,
+                    number_format=_number_format_for_header(header, value),
+                )
+                for header, value in zip(columns, row)
+            ]
+        )
+        _update_lifecycle_logical_sheet_hash(digest, row)
+    max_row = max(5, len(rows) + 4)
+    chart_records: list[dict[str, Any]] = []
+    for specification in charts:
+        chart = BarChart() if specification.get("type") == "bar" else LineChart()
+        chart.title = str(specification["title"])
+        chart.style = 10
+        chart.height = 7.2
+        chart.width = 11.8
+        chart.y_axis.title = str(specification.get("y_title") or "")
+        chart.x_axis.title = str(specification.get("x_title") or "")
+        if specification.get("y_number_format"):
+            chart.y_axis.numFmt = str(specification["y_number_format"])
+        if specification.get("y_min") is not None:
+            chart.y_axis.scaling.min = float(specification["y_min"])
+        if specification.get("y_max") is not None:
+            chart.y_axis.scaling.max = float(specification["y_max"])
+        data = Reference(
+            sheet,
+            min_col=int(specification["min_col"]),
+            max_col=int(specification.get("max_col") or specification["min_col"]),
+            min_row=4,
+            max_row=max_row,
+        )
+        categories = Reference(
+            sheet,
+            min_col=int(specification.get("category_col") or 1),
+            min_row=5,
+            max_row=max_row,
+        )
+        chart.add_data(data, titles_from_data=True)
+        first_series_column = int(specification["min_col"])
+        for offset, series in enumerate(chart.series):
+            source_column = first_series_column + offset
+            if source_column <= len(columns):
+                series_title = str(columns[source_column - 1]).replace("_", " ").title()
+                for source, target in (
+                    ("Npv", "NPV"),
+                    ("Lcoe", "LCOE"),
+                    ("Kwh", "kWh"),
+                    ("Usd", "USD"),
+                ):
+                    series_title = series_title.replace(source, target)
+                series.tx = SeriesLabel(
+                    v=series_title
+                )
+        chart.set_categories(categories)
+        chart.legend.position = "b"
+        anchor = str(specification["anchor"])
+        sheet.add_chart(chart, anchor)
+        chart_records.append(
+            {
+                "sheet_name": sheet.title,
+                "title": str(specification["title"]),
+                "source_range": (
+                    f"{openpyxl.utils.get_column_letter(int(specification['min_col']))}4:"
+                    f"{openpyxl.utils.get_column_letter(int(specification.get('max_col') or specification['min_col']))}{max_row}"
+                ),
+                "category_range": (
+                    f"{openpyxl.utils.get_column_letter(int(specification.get('category_col') or 1))}5:"
+                    f"{openpyxl.utils.get_column_letter(int(specification.get('category_col') or 1))}{max_row}"
+                ),
+                "anchor": anchor,
+            }
+        )
+    image_records: list[dict[str, Any]] = []
+    if image_path is not None and image_anchor is not None:
+        image = XLImage(str(image_path))
+        original_width = float(image.width)
+        original_height = float(image.height)
+        image.width = min(original_width, 820.0)
+        if original_width:
+            image.height = image.width * original_height / original_width
+        sheet.add_image(image, image_anchor)
+        image_records.append(
+            {
+                "sheet_name": sheet.title,
+                "anchor": image_anchor,
+                "sha256": _sha256_file(image_path),
+                "filename": image_path.name,
+            }
+        )
+    sheet.auto_filter.ref = (
+        f"A4:{openpyxl.utils.get_column_letter(len(columns))}{max_row}"
+    )
+    return (
+        len(rows) + 4,
+        len(columns),
+        digest.hexdigest(),
+        chart_records,
+        image_records,
+    )
+
+
+def _write_lifecycle_table_sheet(
+    sheet: Any,
+    table: _Table,
+    cancellation_check: Callable[[], None],
+    *,
+    image_path: Path | None = None,
+    image_anchor: str = "J2",
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    workbook_columns = (
+        table.columns + ("display_formula_status",)
+        if table.sheet_name == "Checks"
+        else table.columns
+    )
+    _set_sheet_layout(sheet, workbook_columns)
+    if table.sheet_name == "Formula Catalog":
+        for letter, width in {
+            "A": 16,
+            "B": 30,
+            "C": 62,
+            "D": 62,
+            "E": 40,
+            "F": 24,
+            "G": 18,
+            "H": 38,
+            "I": 26,
+            "J": 20,
+        }.items():
+            sheet.column_dimensions[letter].width = width
+    elif table.sheet_name == "Calculation Audit":
+        for letter, width in {
+            "A": 48,
+            "B": 16,
+            "C": 16,
+            "D": 16,
+            "E": 16,
+            "F": 16,
+            "G": 26,
+            "H": 22,
+            "I": 54,
+            "J": 20,
+            "K": 22,
+            "L": 16,
+            "M": 26,
+            "N": 72,
+        }.items():
+            sheet.column_dimensions[letter].width = width
+    fast_streaming = table.sheet_name in _FAST_STREAMING_SHEETS
+    if fast_streaming:
+        _apply_fast_streaming_formats(sheet, workbook_columns)
+    _append_header(sheet, workbook_columns)
+    digest = _new_lifecycle_logical_sheet_hash()
+    _update_lifecycle_logical_sheet_hash(digest, workbook_columns)
+    row_count = 0
+    for row_count, raw_row in enumerate(table.rows_factory(), start=1):
+        if len(raw_row) != len(table.columns):
+            raise TechnoeconomicExportError(
+                f"Workbook table {table.sheet_name} produced an inconsistent row width"
+            )
+        if row_count % _CANCEL_INTERVAL == 0:
+            cancellation_check()
+        if fast_streaming:
+            cells = [_fast_streaming_value(sheet, value) for value in raw_row]
+        else:
+            cells = [
+                _write_only_cell(
+                    sheet,
+                    value,
+                    status=(
+                        value
+                        if header in {"status", "status_authority"}
+                        else None
+                    ),
+                    number_format=_number_format_for_header(header, value),
+                )
+                for header, value in zip(table.columns, raw_row)
+            ]
+            if table.sheet_name in _V6_REFERENCE_SHEETS:
+                for cell, value in zip(cells, raw_row):
+                    if value is not None:
+                        cell.font = _V6_REFERENCE_FONT
+            for cell, value in zip(cells, raw_row):
+                if "provisional" in str(value).lower():
+                    cell.fill = _V6_WARNING_FILL
+        logical_values = list(raw_row)
+        formula_identities: dict[int, str] = {}
+        if table.sheet_name == "Calculation Audit":
+            excel_row = row_count + 1
+            formula_index = table.columns.index("formula_replica")
+            difference_index = table.columns.index("difference")
+            status_index = table.columns.index("status")
+            formula = str(raw_row[formula_index])
+            cells[formula_index] = _write_only_cell(sheet, formula)
+            cells[formula_index].data_type = "f"
+            cells[formula_index].font = Font(name="Aptos", size=10, color="000000")
+            difference_formula = f"=I{excel_row}-H{excel_row}"
+            cells[difference_index] = _write_only_cell(sheet, difference_formula)
+            cells[difference_index].data_type = "f"
+            cells[difference_index].font = Font(name="Aptos", size=10, color="000000")
+            status_formula = (
+                f'=IF(ABS(J{excel_row})<=K{excel_row},"OK","FAIL")'
+            )
+            cells[status_index] = _write_only_cell(sheet, status_formula)
+            cells[status_index].data_type = "f"
+            cells[status_index].font = Font(name="Aptos", size=10, color="000000")
+            cells[status_index].fill = (
+                _PASS_FILL if raw_row[status_index] == "OK" else _V6_FAIL_FILL
+            )
+            logical_values[difference_index] = difference_formula
+            logical_values[status_index] = status_formula
+            formula_identifier = str(
+                raw_row[table.columns.index("formula_id")]
+            )
+            formula_identities.update(
+                {
+                    formula_index: f"registry:{formula_identifier}",
+                    difference_index: "audit_difference",
+                    status_index: "audit_binary64_status",
+                }
+            )
+            cells[table.columns.index("frozen_authority")].fill = _V6_SEALED_FILL
+        if table.sheet_name == "Checks":
+            excel_row = row_count + 1
+            formula = (
+                f'=IF(OR(ISTEXT(B{excel_row}),ISTEXT(C{excel_row})),'
+                f'IF(B{excel_row}=C{excel_row},"OK","FAIL"),'
+                f'IF(ABS(B{excel_row}-C{excel_row})<=E{excel_row},"OK","FAIL"))'
+            )
+            formula_cell = _write_only_cell(sheet, formula)
+            formula_cell.data_type = "f"
+            formula_cell.font = Font(name="Aptos", size=10, color="000000")
+            cells.append(formula_cell)
+            logical_values.append(formula)
+            formula_identities[len(logical_values) - 1] = "check_status"
+            status_index = table.columns.index("status_authority")
+            if raw_row[status_index] == "FAIL":
+                cells[status_index].fill = _V6_FAIL_FILL
+        sheet.append(cells)
+        _update_lifecycle_logical_sheet_hash(
+            digest,
+            logical_values,
+            formula_identities=formula_identities,
+        )
+    if len(workbook_columns) <= 200:
+        sheet.auto_filter.ref = (
+            f"A1:{openpyxl.utils.get_column_letter(len(workbook_columns))}{row_count + 1}"
+        )
+    image_records: list[dict[str, Any]] = []
+    if image_path is not None:
+        image = XLImage(str(image_path))
+        original_width = float(image.width)
+        original_height = float(image.height)
+        image.width = min(original_width, 900.0)
+        if original_width:
+            image.height = image.width * original_height / original_width
+        sheet.add_image(image, image_anchor)
+        image_records.append(
+            {
+                "sheet_name": sheet.title,
+                "anchor": image_anchor,
+                "sha256": _sha256_file(image_path),
+                "filename": image_path.name,
+            }
+        )
+    return (
+        {
+            "sheet_name": table.sheet_name,
+            "row_count": row_count,
+            "column_count": len(workbook_columns),
+            "logical_sha256": digest.hexdigest(),
+            "logical_hash_version": LIFECYCLE_XLSX_LOGICAL_HASH_VERSION,
+        },
+        image_records,
+    )
+
+
+def _write_lifecycle_workbook(
+    raw_path: Path,
+    tables: Sequence[_Table],
+    calculation: _SealedCalculation,
+    request_payload: Mapping[str, Any],
+    routine_result: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    checks: Sequence[Sequence[Any]],
+    registry: Sequence[Mapping[str, Any]],
+    cancellation_check: Callable[[], None],
+    *,
+    image_paths: Mapping[str, Path],
+) -> tuple[list[dict[str, Any]], int, dict[str, Any]]:
+    workbook = openpyxl.Workbook(write_only=True)
+    workbook.properties.creator = "SBE PV technoeconomic reporting"
+    workbook.properties.title = "TEA v6 Sealed-Audit Workbook"
+    workbook.properties.subject = "Frozen lifecycle results and formula replicas"
+    fixed_time = datetime(1980, 1, 1)
+    workbook.properties.created = fixed_time
+    workbook.properties.modified = fixed_time
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
+    workbook.calculation.calcMode = "auto"
+    sheets_by_name = {
+        name: workbook.create_sheet(name) for name in LIFECYCLE_WORKBOOK_SHEET_ORDER
+    }
+    if tuple(sheets_by_name) != LIFECYCLE_WORKBOOK_SHEET_ORDER:
+        raise TechnoeconomicExportError("The v6 workbook sheet order is invalid")
+
+    sheet_records: list[dict[str, Any]] = []
+    summary_rows, summary_columns, summary_hash = _write_lifecycle_summary_sheet(
+        sheets_by_name["Summary"],
+        calculation,
+        request_payload,
+        routine_result,
+        metadata,
+        checks,
+    )
+    sheet_records.append(
+        {
+            "sheet_name": "Summary",
+            "row_count": summary_rows,
+            "column_count": summary_columns,
+            "logical_sha256": summary_hash,
+            "logical_hash_version": LIFECYCLE_XLSX_LOGICAL_HASH_VERSION,
+        }
+    )
+
+    decision_rows, annual_rows, reliability_rows = _lifecycle_chart_rows(
+        calculation, request_payload, metadata
+    )
+    chart_contracts: list[dict[str, Any]] = []
+    image_contracts: list[dict[str, Any]] = []
+    chart_specs = (
+        (
+            "Decision Charts",
+            "Upgrade NPV and ΔLCOE decision probabilities",
+            "Positive NPV favors SolarEdge; lower ΔLCOE favors SolarEdge; each tie uses its own scale-aware economic tolerance.",
+            (
+                "outcome class",
+                "upgrade_npv_count",
+                "delta_lcoe_count",
+                "upgrade_npv_probability",
+                "delta_lcoe_probability",
+            ),
+            decision_rows,
+            (
+                {"type": "bar", "title": "Decision outcome counts", "min_col": 2, "max_col": 3, "category_col": 1, "anchor": "G4", "y_title": "Realizations"},
+                {"type": "bar", "title": "Decision outcome probabilities", "min_col": 4, "max_col": 5, "category_col": 1, "anchor": "G19", "y_title": "Probability", "y_number_format": "0%", "y_min": 0.0, "y_max": 1.0},
+            ),
+            image_paths.get("cdf_plot"),
+            "A40",
+        ),
+        (
+            "Lifecycle Charts",
+            "P50 representative lifecycle",
+            "These native charts use the sealed NPV-P50 trace; they are representative, not expected-value forecasts.",
+            ("project_year", "solectria_energy_kwh", "solaredge_energy_kwh", "solectria_availability", "solaredge_availability", "solectria_cost_usd", "solaredge_cost_usd", "cumulative_upgrade_npv_usd"),
+            annual_rows,
+            (
+                {"type": "line", "title": "Annual delivered energy", "min_col": 2, "max_col": 3, "category_col": 1, "anchor": "J4", "y_title": "kWh_AC"},
+                {"type": "line", "title": "Target availability", "min_col": 4, "max_col": 5, "category_col": 1, "anchor": "J19", "y_title": "Availability", "y_number_format": "0.0%"},
+                {"type": "line", "title": "Annual lifecycle cost", "min_col": 6, "max_col": 7, "category_col": 1, "anchor": "S4", "y_title": "constant USD"},
+                {"type": "line", "title": "Cumulative Upgrade NPV", "min_col": 8, "category_col": 1, "anchor": "S19", "y_title": "constant USD"},
+            ),
+            None,
+            None,
+        ),
+        (
+            "Reliability Charts",
+            "P50 representative reliability contribution",
+            "Event failures are the headline reliability result; expected failures remain a diagnostic.",
+            ("system_component", "event_failures", "downtime_fraction", "corrective_cost_usd"),
+            reliability_rows,
+            (
+                {"type": "bar", "title": "Event failures by component", "min_col": 2, "category_col": 1, "anchor": "F4", "y_title": "Failures"},
+                {"type": "bar", "title": "Downtime by component", "min_col": 3, "category_col": 1, "anchor": "F19", "y_title": "Fraction", "y_number_format": "0.000%"},
+                {"type": "bar", "title": "Corrective cost by component", "min_col": 4, "category_col": 1, "anchor": "O4", "y_title": "constant USD"},
+            ),
+            None,
+            None,
+        ),
+    )
+    for (
+        sheet_name,
+        title,
+        interpretation,
+        columns,
+        rows,
+        charts,
+        image_path,
+        image_anchor,
+    ) in chart_specs:
+        result = _write_lifecycle_chart_sheet(
+            sheets_by_name[sheet_name],
+            title=title,
+            interpretation=interpretation,
+            columns=columns,
+            rows=rows,
+            charts=charts,
+            image_path=image_path,
+            image_anchor=image_anchor,
+        )
+        row_count, column_count, logical_hash, chart_rows, image_rows = result
+        sheet_records.append(
+            {
+                "sheet_name": sheet_name,
+                "row_count": row_count,
+                "column_count": column_count,
+                "logical_sha256": logical_hash,
+                "logical_hash_version": LIFECYCLE_XLSX_LOGICAL_HASH_VERSION,
+            }
+        )
+        chart_contracts.extend(chart_rows)
+        image_contracts.extend(image_rows)
+
+    table_by_sheet = {table.sheet_name: table for table in tables}
+    expected_table_sheets = LIFECYCLE_WORKBOOK_SHEET_ORDER[4:]
+    if set(table_by_sheet) != set(expected_table_sheets):
+        raise TechnoeconomicExportError(
+            "The v6 workbook table set does not match its sealed-audit schema"
+        )
+    for sheet_name in expected_table_sheets:
+        cancellation_check()
+        image_path = None
+        image_anchor = "J2"
+        if sheet_name == "Sensitivity":
+            image_path = image_paths.get("sensitivity_plot")
+            image_anchor = "X2"
+        elif sheet_name == "Convergence":
+            image_path = image_paths.get("convergence_plot")
+            image_anchor = "X2"
+        record, image_rows = _write_lifecycle_table_sheet(
+            sheets_by_name[sheet_name],
+            table_by_sheet[sheet_name],
+            cancellation_check,
+            image_path=image_path,
+            image_anchor=image_anchor,
+        )
+        sheet_records.append(record)
+        image_contracts.extend(image_rows)
+    if tuple(record["sheet_name"] for record in sheet_records) != LIFECYCLE_WORKBOOK_SHEET_ORDER:
+        raise TechnoeconomicExportError("The v6 workbook sheet manifest is out of order")
+    workbook.save(raw_path)
+    registry_hash = _formula_registry_sha256(registry)
+    return (
+        sheet_records,
+        sum(int(record["row_count"]) for record in sheet_records),
+        {
+            "formula_registry_version": getattr(
+                technoeconomic_kernel, "FORMULA_REGISTRY_VERSION", "tea-formulas-v6"
+            ),
+            "formula_registry_count": len(registry),
+            "formula_registry_sha256": registry_hash,
+            "formula_template_hash_version": LIFECYCLE_FORMULA_TEMPLATE_HASH_VERSION,
+            "formula_template_sha256": _formula_template_sha256(registry),
+            "native_charts": chart_contracts,
+            "embedded_images": image_contracts,
+            "decision_rule_version": LIFECYCLE_DECISION_RULE_VERSION,
+        },
+    )
+
+
 def _normalize_xlsx_archive(
     source: Path,
     target: Path,
     cancellation_check: Callable[[], None],
+    *,
+    canonicalize_core_properties: bool = False,
 ) -> None:
     with zipfile.ZipFile(source, "r") as incoming, zipfile.ZipFile(
         target,
@@ -5755,11 +8493,74 @@ def _normalize_xlsx_archive(
             with incoming.open(name, "r") as source_handle, outgoing.open(
                 info, "w"
             ) as target_handle:
-                _copy_with_cancellation(
-                    source_handle,
-                    target_handle,
-                    cancellation_check,
+                if canonicalize_core_properties and name == "docProps/core.xml":
+                    cancellation_check()
+                    normalized, replacement_count = re.subn(
+                        rb"(<dcterms:modified\b[^>]*>)[^<]*(</dcterms:modified>)",
+                        rb"\g<1>1980-01-01T00:00:00Z\g<2>",
+                        source_handle.read(),
+                        count=1,
+                    )
+                    if replacement_count != 1:
+                        raise TechnoeconomicExportError(
+                            "The v6 workbook core-properties timestamp is invalid"
+                        )
+                    target_handle.write(normalized)
+                else:
+                    _copy_with_cancellation(
+                        source_handle,
+                        target_handle,
+                        cancellation_check,
+                    )
+
+
+def _validate_lifecycle_xlsx(path: Path) -> dict[str, Any]:
+    """Fail closed on unsafe or broken v6 workbook formula structures."""
+
+    formula_count = 0
+    forbidden_functions = re.compile(
+        r"\b(?:INDIRECT|OFFSET|RAND|RANDBETWEEN|NOW|TODAY)\s*\(",
+        re.IGNORECASE,
+    )
+    with zipfile.ZipFile(path, "r") as archive:
+        names = archive.namelist()
+        if any(name.startswith("xl/externalLinks/") for name in names):
+            raise TechnoeconomicExportError(
+                "The v6 workbook contains an external workbook link"
+            )
+        for name in names:
+            if not name.startswith("xl/worksheets/") or not name.endswith(".xml"):
+                continue
+            xml = archive.read(name).decode("utf-8")
+            if any(token in xml for token in ("#REF!", "#DIV/0!", "#VALUE!", "#NAME?")):
+                raise TechnoeconomicExportError(
+                    "The v6 workbook contains a formula error token"
                 )
+            formulas = re.findall(r"<f(?:\s[^>]*)?>(.*?)</f>", xml, flags=re.DOTALL)
+            formula_count += len(formulas)
+            for formula in formulas:
+                normalized = (
+                    formula.replace("&apos;", "'")
+                    .replace("&quot;", '"')
+                    .replace("&amp;", "&")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                )
+                if "[" in normalized or forbidden_functions.search(normalized):
+                    raise TechnoeconomicExportError(
+                        "The v6 workbook contains an external or volatile formula"
+                    )
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=False)
+    try:
+        if tuple(workbook.sheetnames) != LIFECYCLE_WORKBOOK_SHEET_ORDER:
+            raise TechnoeconomicExportError(
+                "The normalized v6 workbook sheet order changed"
+            )
+    finally:
+        workbook.close()
+    if formula_count <= 0:
+        raise TechnoeconomicExportError("The v6 workbook contains no audit formulas")
+    return {"formula_count": formula_count, "formula_scan_status": "passed"}
 
 
 def _human_metric(
@@ -6299,7 +9100,12 @@ def _render_sensitivity_plot(
         isinstance(kernel_provenance, Mapping)
         and isinstance(kernel_provenance.get("capacity_normalization"), Mapping)
     )
-    entries = list(sorted(models.items()))
+    entries = [
+        (response_id, model)
+        for response_id, model in sorted(models.items())
+        if isinstance(model, Mapping)
+        and ("steps" in model or "status" in model)
+    ]
     figure, axes = _figure_axes(
         len(entries),
         title="Forward stepwise rank sensitivity",
@@ -6544,6 +9350,9 @@ def generate_technoeconomic_exports(
         routine_result.get("calculation_contract_version")
         == technoeconomic_kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
     )
+    lifecycle_contract = _is_lifecycle_contract(
+        routine_result.get("calculation_contract_version")
+    )
     cancellation_check()
     attempt_directory = attempt_directory.resolve(strict=True)
     _confined(attempt_directory, config.OUTPUT_DIR.resolve(strict=True), label="Attempt directory")
@@ -6555,33 +9364,79 @@ def generate_technoeconomic_exports(
         source_snapshot=source_snapshot,
         submission_provenance=submission_provenance,
     )
-    _verify_routine_result(
-        metadata=calculation.metadata,
-        routine_result=routine_result,
-        request_payload=request_payload,
-        source_snapshot=source_snapshot,
-        submission_provenance=submission_provenance,
-        sealed_calculation_artifact=sealed_calculation_artifact,
-    )
-    checks = _build_checks(
-        calculation,
-        source_snapshot,
-        submission_provenance,
-        routine_result,
-    )
+    registry: tuple[Mapping[str, Any], ...] = ()
+    trace_records: tuple[Mapping[str, Any], ...] = ()
+    audit_records: tuple[Mapping[str, Any], ...] = ()
+    if lifecycle_contract:
+        _verify_lifecycle_routine_result(
+            metadata=calculation.metadata,
+            routine_result=routine_result,
+            request_payload=request_payload,
+            source_snapshot=source_snapshot,
+            submission_provenance=submission_provenance,
+            sealed_calculation_artifact=sealed_calculation_artifact,
+        )
+        registry = _formula_registry_records()
+        trace_records = _representative_trace_records(calculation.metadata)
+        audit_records = _lifecycle_audit_records(
+            trace_records,
+            registry,
+            economic_decision_tolerance=_lifecycle_economic_npv_tolerance(
+                request_payload
+            ),
+            economic_decision_tolerances=_lifecycle_realization_value_map(
+                calculation,
+                "NPVTolerance_USD",
+            ),
+        )
+        checks = _build_lifecycle_checks(
+            calculation,
+            routine_result,
+            registry,
+            trace_records,
+            audit_records,
+        )
+    else:
+        _verify_routine_result(
+            metadata=calculation.metadata,
+            routine_result=routine_result,
+            request_payload=request_payload,
+            source_snapshot=source_snapshot,
+            submission_provenance=submission_provenance,
+            sealed_calculation_artifact=sealed_calculation_artifact,
+        )
+        checks = _build_checks(
+            calculation,
+            source_snapshot,
+            submission_provenance,
+            routine_result,
+        )
     failed_checks = [str(row[0]) for row in checks if row[5] != "OK"]
     if failed_checks:
         raise TechnoeconomicExportError(
             "Export tie-outs failed: " + ", ".join(failed_checks[:5])
         )
-    tables = _build_tables(
-        calculation,
-        request_payload,
-        source_snapshot,
-        submission_provenance,
-        routine_result,
-        checks,
-    )
+    if lifecycle_contract:
+        tables = _build_lifecycle_tables(
+            calculation,
+            request_payload,
+            source_snapshot,
+            submission_provenance,
+            routine_result,
+            checks,
+            registry,
+            trace_records,
+            audit_records,
+        )
+    else:
+        tables = _build_tables(
+            calculation,
+            request_payload,
+            source_snapshot,
+            submission_provenance,
+            routine_result,
+            checks,
+        )
 
     artifacts: dict[str, dict[str, Any]] = {}
     csv_pending = attempt_directory / ".pending-csv.zip"
@@ -6608,6 +9463,29 @@ def generate_technoeconomic_exports(
             tables,
             cancellation_check,
             schema_versions=schema_versions,
+            bundle_provenance=(
+                {
+                    "calculation_contract_version": routine_result.get(
+                        "calculation_contract_version"
+                    ),
+                    "sampling_version": routine_result.get("sampling_version"),
+                    "result_version": routine_result.get("result_version"),
+                    "formula_registry_version": getattr(
+                        technoeconomic_kernel,
+                        "FORMULA_REGISTRY_VERSION",
+                        "tea-formulas-v6",
+                    ),
+                    "formula_registry_count": len(registry),
+                    "formula_registry_sha256": _formula_registry_sha256(registry),
+                    "formula_template_hash_version": (
+                        LIFECYCLE_FORMULA_TEMPLATE_HASH_VERSION
+                    ),
+                    "formula_template_sha256": _formula_template_sha256(registry),
+                    "decision_rule_version": LIFECYCLE_DECISION_RULE_VERSION,
+                }
+                if lifecycle_contract
+                else None
+            ),
         )
         artifacts["csv_bundle"] = _publish_artifact(
             artifact_id="csv_bundle",
@@ -6624,20 +9502,59 @@ def generate_technoeconomic_exports(
             },
         )
 
-        workbook_sheets, workbook_row_count = _write_workbook(
-            workbook_raw,
-            tables,
-            routine_result,
-            calculation.metadata,
-            checks,
-            cancellation_check,
-        )
+        lifecycle_plot_metadata: dict[str, tuple[Any, ...]] = {}
+        workbook_audit: dict[str, Any] = {}
+        if lifecycle_contract:
+            lifecycle_plot_metadata["cdf_plot"] = _render_cdf_plot(
+                calculation.metadata,
+                cdf_pending,
+            )
+            lifecycle_plot_metadata["sensitivity_plot"] = _render_sensitivity_plot(
+                calculation.metadata,
+                sensitivity_pending,
+            )
+            lifecycle_plot_metadata["convergence_plot"] = _render_convergence_plot(
+                calculation.metadata,
+                convergence_pending,
+            )
+            (
+                workbook_sheets,
+                workbook_row_count,
+                workbook_audit,
+            ) = _write_lifecycle_workbook(
+                workbook_raw,
+                tables,
+                calculation,
+                request_payload,
+                routine_result,
+                calculation.metadata,
+                checks,
+                registry,
+                cancellation_check,
+                image_paths={
+                    "cdf_plot": cdf_pending,
+                    "sensitivity_plot": sensitivity_pending,
+                    "convergence_plot": convergence_pending,
+                },
+            )
+        else:
+            workbook_sheets, workbook_row_count = _write_workbook(
+                workbook_raw,
+                tables,
+                routine_result,
+                calculation.metadata,
+                checks,
+                cancellation_check,
+            )
         cancellation_check()
         _normalize_xlsx_archive(
             workbook_raw,
             workbook_pending,
             cancellation_check,
+            canonicalize_core_properties=lifecycle_contract,
         )
+        if lifecycle_contract:
+            workbook_audit.update(_validate_lifecycle_xlsx(workbook_pending))
         workbook_raw.unlink(missing_ok=True)
         artifacts["xlsx_workbook"] = _publish_artifact(
             artifact_id="xlsx_workbook",
@@ -6652,15 +9569,21 @@ def generate_technoeconomic_exports(
                 "row_count": workbook_row_count,
                 "sheets": workbook_sheets,
                 "write_only_streaming": True,
+                **workbook_audit,
             },
         )
 
-        width, height, row_count, display_count = _render_cdf_plot(
-            calculation.metadata,
-            cdf_pending,
-            headline_only=standalone_contract,
-            paired_headlines_only=paired_contract,
-        )
+        if lifecycle_contract:
+            width, height, row_count, display_count = lifecycle_plot_metadata[
+                "cdf_plot"
+            ]
+        else:
+            width, height, row_count, display_count = _render_cdf_plot(
+                calculation.metadata,
+                cdf_pending,
+                headline_only=standalone_contract,
+                paired_headlines_only=paired_contract,
+            )
         artifacts["cdf_plot"] = _publish_artifact(
             artifact_id="cdf_plot",
             pending_path=cdf_pending,
@@ -6676,7 +9599,9 @@ def generate_technoeconomic_exports(
                 "width_px": width,
                 "height_px": height,
                 "chart_contract_id": (
-                    PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID
+                    LIFECYCLE_CDF_CHART_CONTRACT_ID
+                    if lifecycle_contract
+                    else PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID
                     if paired_contract
                     else STANDALONE_COMMERCIAL_CDF_CHART_CONTRACT_ID
                     if standalone_contract
@@ -6684,10 +9609,15 @@ def generate_technoeconomic_exports(
                 ),
             },
         )
-        width, height, row_count, display_count = _render_sensitivity_plot(
-            calculation.metadata,
-            sensitivity_pending,
-        )
+        if lifecycle_contract:
+            width, height, row_count, display_count = lifecycle_plot_metadata[
+                "sensitivity_plot"
+            ]
+        else:
+            width, height, row_count, display_count = _render_sensitivity_plot(
+                calculation.metadata,
+                sensitivity_pending,
+            )
         artifacts["sensitivity_plot"] = _publish_artifact(
             artifact_id="sensitivity_plot",
             pending_path=sensitivity_pending,
@@ -6705,10 +9635,15 @@ def generate_technoeconomic_exports(
                 "chart_contract_id": "sensitivity_v1",
             },
         )
-        width, height, row_count = _render_convergence_plot(
-            calculation.metadata,
-            convergence_pending,
-        )
+        if lifecycle_contract:
+            width, height, row_count = lifecycle_plot_metadata[
+                "convergence_plot"
+            ]
+        else:
+            width, height, row_count = _render_convergence_plot(
+                calculation.metadata,
+                convergence_pending,
+            )
         artifacts["convergence_plot"] = _publish_artifact(
             artifact_id="convergence_plot",
             pending_path=convergence_pending,
@@ -6772,13 +9707,32 @@ def generate_technoeconomic_exports(
             "signed_metric_value_counts": _signed_metric_counts(calculation),
         },
         "chart_contracts": (
-            PAIRED_COMMERCIAL_CHART_CONTRACTS
+            LIFECYCLE_CHART_CONTRACTS
+            if lifecycle_contract
+            else PAIRED_COMMERCIAL_CHART_CONTRACTS
             if paired_contract
             else STANDALONE_COMMERCIAL_CHART_CONTRACTS
             if standalone_contract
             else CHART_CONTRACTS
         ),
     }
+    if lifecycle_contract:
+        manifest["formula_registry"] = {
+            "version": workbook_audit["formula_registry_version"],
+            "count": workbook_audit["formula_registry_count"],
+            "sha256": workbook_audit["formula_registry_sha256"],
+            "template_hash_version": workbook_audit[
+                "formula_template_hash_version"
+            ],
+            "template_sha256": workbook_audit["formula_template_sha256"],
+        }
+        manifest["workbook_audit"] = {
+            "native_charts": workbook_audit["native_charts"],
+            "embedded_images": workbook_audit["embedded_images"],
+            "decision_rule_version": workbook_audit["decision_rule_version"],
+            "formula_count": workbook_audit["formula_count"],
+            "formula_scan_status": workbook_audit["formula_scan_status"],
+        }
     manifest["manifest_sha256"] = _canonical_json_sha256(manifest)
     return manifest
 
@@ -6795,6 +9749,16 @@ __all__ = [
     "CHART_CONTRACTS",
     "CSV_FORMAT_VERSION",
     "EXPORT_MANIFEST_SCHEMA_VERSION",
+    "LIFECYCLE_CDF_CHART_CONTRACT_ID",
+    "LIFECYCLE_CHART_CONTRACTS",
+    "LIFECYCLE_CSV_BUNDLE_SCHEMA_VERSION",
+    "LIFECYCLE_CSV_FORMAT_VERSION",
+    "LIFECYCLE_DECISION_RULE_VERSION",
+    "LIFECYCLE_EXPORT_MANIFEST_SCHEMA_VERSION",
+    "LIFECYCLE_FORMULA_TEMPLATE_HASH_VERSION",
+    "LIFECYCLE_WORKBOOK_SHEET_ORDER",
+    "LIFECYCLE_XLSX_LOGICAL_HASH_VERSION",
+    "LIFECYCLE_XLSX_SCHEMA_VERSION",
     "PAIRED_COMMERCIAL_CDF_CHART_CONTRACT_ID",
     "PAIRED_COMMERCIAL_CHART_CONTRACTS",
     "PAIRED_COMMERCIAL_CSV_BUNDLE_SCHEMA_VERSION",

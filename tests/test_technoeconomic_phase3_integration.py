@@ -272,6 +272,7 @@ class TechnoeconomicRenderProxyTests(unittest.TestCase):
         cases = [
             (["technoeconomic", "sources"], True),
             (["technoeconomic", "jobs"], True),
+            (["technoeconomic", "formulas", "v6"], True),
             (["technoeconomic", "jobs", "tea_abc123"], True),
             (["technoeconomic", "jobs", "tea_abc123", "cancel"], True),
             (["technoeconomic", "jobs", "tea_abc123", "retry"], True),
@@ -284,6 +285,8 @@ class TechnoeconomicRenderProxyTests(unittest.TestCase):
             (["technoeconomic", "jobs", ".."], False),
             (["technoeconomic", "jobs", "tea_abc123", "delete"], False),
             (["technoeconomic", "sources", "extra"], False),
+            (["technoeconomic", "formulas", "v5"], False),
+            (["technoeconomic", "formulas", "v6", "extra"], False),
             (["technoeconomic", "jobs", "tea_abc123", "cancel", "extra"], False),
             (["technoeconomic", "jobs", "tea_abc123", "exports", "png"], False),
             (["technoeconomic", "jobs", "tea_abc123", "exports", "csv", "extra"], False),

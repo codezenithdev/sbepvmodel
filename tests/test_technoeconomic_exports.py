@@ -30,6 +30,7 @@ from tests.test_technoeconomic_api import (
     _paired_commercial_request_payload,
     _site_request_payload,
     _standalone_commercial_request_payload,
+    _v6_lifecycle_request_payload,
 )
 
 
@@ -1138,6 +1139,529 @@ class TechnoeconomicExportTests(unittest.TestCase):
             ][5],
         )
 
+    def test_v6_exports_sealed_audit_workbook_and_explicit_csv_manifest(self) -> None:
+        payload = _v6_lifecycle_request_payload(n=8)
+        payload["source_annual_job_id"] = "annual-export-source"
+        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
+        request_payload = technoeconomic_api.canonical_submission_request_payload(
+            parsed
+        )
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        snapshot_sha256 = technoeconomic_api.canonical_json_sha256(snapshot)
+        request = technoeconomic_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = technoeconomic_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": snapshot_sha256,
+            },
+            request,
+        )
+        calculation = kernel.run_technoeconomic(request)
+        job_id = "tea_export_v6"
+        sealed_artifact = run_technoeconomic._write_sealed_calculation_payload(
+            job_id,
+            "lease_v6",
+            calculation,
+            request_sha256=technoeconomic_api.canonical_json_sha256(
+                request_payload
+            ),
+            source_snapshot_sha256=snapshot_sha256,
+            submission_provenance_sha256=technoeconomic_api.canonical_json_sha256(
+                provenance
+            ),
+            publish_check=lambda: None,
+        )
+        sealed_path = self.output / Path(sealed_artifact["storage_key"])
+        routine_result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            sealed_artifact,
+            provenance,
+        )
+
+        manifest = reporting.generate_technoeconomic_exports(
+            job_id=job_id,
+            attempt_directory=sealed_path.parent,
+            sealed_calculation_path=sealed_path,
+            sealed_calculation_artifact=sealed_artifact,
+            request_payload=request_payload,
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+            routine_result=routine_result,
+            cancellation_check=lambda: None,
+            publish_check=lambda: None,
+        )
+
+        self.assertEqual(
+            reporting.LIFECYCLE_EXPORT_MANIFEST_SCHEMA_VERSION,
+            manifest["schema_version"],
+        )
+        self.assertEqual(
+            reporting.LIFECYCLE_CSV_FORMAT_VERSION,
+            manifest["csv_format_version"],
+        )
+        self.assertEqual("passed", manifest["tie_outs"]["status"])
+        self.assertEqual(
+            kernel.formula_registry_hash(),
+            manifest["formula_registry"]["sha256"],
+        )
+        self.assertEqual(9, len(manifest["workbook_audit"]["native_charts"]))
+        self.assertEqual(3, len(manifest["workbook_audit"]["embedded_images"]))
+        self.assertEqual(
+            "passed", manifest["workbook_audit"]["formula_scan_status"]
+        )
+        self.assertTrue(
+            all(
+                sheet["logical_hash_version"]
+                == reporting.LIFECYCLE_XLSX_LOGICAL_HASH_VERSION
+                for sheet in manifest["artifacts"]["xlsx_workbook"]["sheets"]
+            )
+        )
+
+        csv_path = self.output / Path(
+            manifest["artifacts"]["csv_bundle"]["storage_key"]
+        )
+        with zipfile.ZipFile(csv_path) as archive:
+            self.assertIn("csv-bundle-manifest-v6.json", archive.namelist())
+            csv_manifest = json.loads(
+                archive.read("csv-bundle-manifest-v6.json").decode("utf-8")
+            )
+            self.assertEqual(21, csv_manifest["table_count"])
+            self.assertEqual(
+                kernel.formula_registry_hash(),
+                csv_manifest["provenance"]["formula_registry_sha256"],
+            )
+            self.assertIn("weather-summary.csv", archive.namelist())
+            self.assertIn("representative-event-traces.csv", archive.namelist())
+            convergence_rows = list(
+                csv.DictReader(
+                    io.StringIO(
+                        archive.read("convergence.csv").decode("utf-8")
+                    )
+                )
+            )
+            decision_probability_rows = [
+                row
+                for row in convergence_rows
+                if row["record_type"] == "decision_probability"
+            ]
+            self.assertTrue(decision_probability_rows)
+            self.assertEqual(
+                {"upgrade_npv", "delta_lcoe"},
+                {row["metric_id"] for row in decision_probability_rows},
+            )
+            self.assertTrue(
+                all(
+                    row["decision_probability_change_threshold"]
+                    for row in decision_probability_rows
+                )
+            )
+
+        workbook_path = self.output / Path(
+            manifest["artifacts"]["xlsx_workbook"]["storage_key"]
+        )
+        repeat_attempt = self.output / "v6-determinism-repeat"
+        repeat_attempt.mkdir(parents=True)
+        repeat_sealed_path = repeat_attempt / sealed_path.name
+        shutil.copy2(sealed_path, repeat_sealed_path)
+        repeat_manifest = reporting.generate_technoeconomic_exports(
+            job_id=job_id,
+            attempt_directory=repeat_attempt,
+            sealed_calculation_path=repeat_sealed_path,
+            sealed_calculation_artifact=sealed_artifact,
+            request_payload=request_payload,
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+            routine_result=routine_result,
+            cancellation_check=lambda: None,
+            publish_check=lambda: None,
+        )
+        repeat_workbook_path = self.output / Path(
+            repeat_manifest["artifacts"]["xlsx_workbook"]["storage_key"]
+        )
+        self.assertEqual(workbook_path.read_bytes(), repeat_workbook_path.read_bytes())
+        self.assertEqual(
+            manifest["artifacts"]["xlsx_workbook"]["sha256"],
+            repeat_manifest["artifacts"]["xlsx_workbook"]["sha256"],
+        )
+        self.assertEqual(
+            manifest["artifacts"]["xlsx_workbook"]["sheets"],
+            repeat_manifest["artifacts"]["xlsx_workbook"]["sheets"],
+        )
+        with zipfile.ZipFile(workbook_path) as first_archive, zipfile.ZipFile(
+            repeat_workbook_path
+        ) as second_archive:
+            first_sheet_hashes = tuple(
+                hashlib.sha256(
+                    first_archive.read(f"xl/worksheets/sheet{index}.xml")
+                ).hexdigest()
+                for index in range(1, len(reporting.LIFECYCLE_WORKBOOK_SHEET_ORDER) + 1)
+            )
+            second_sheet_hashes = tuple(
+                hashlib.sha256(
+                    second_archive.read(f"xl/worksheets/sheet{index}.xml")
+                ).hexdigest()
+                for index in range(1, len(reporting.LIFECYCLE_WORKBOOK_SHEET_ORDER) + 1)
+            )
+        self.assertEqual(first_sheet_hashes, second_sheet_hashes)
+        workbook = openpyxl.load_workbook(
+            workbook_path,
+            read_only=False,
+            data_only=False,
+        )
+        try:
+            self.assertEqual(
+                list(reporting.LIFECYCLE_WORKBOOK_SHEET_ORDER),
+                workbook.sheetnames,
+            )
+            self.assertEqual(
+                len(kernel.formula_registry()),
+                workbook["Formula Catalog"].max_row - 1,
+            )
+            labels = {
+                row[1].value
+                for row in workbook["Representative Event Traces"].iter_rows(
+                    min_row=2
+                )
+                if row[1].value is not None
+            }
+            self.assertEqual({"NPV-P10", "NPV-P50", "NPV-P90"}, labels)
+            audit = workbook["Calculation Audit"]
+            self.assertGreater(audit.max_row, 1)
+            self.assertEqual("f", audit["I2"].data_type)
+            self.assertEqual("f", audit["J2"].data_type)
+            self.assertEqual("f", audit["L2"].data_type)
+            self.assertEqual("E7E6E6", audit["H2"].fill.fgColor.rgb[-6:])
+            for coordinate in ("I2", "J2", "L2"):
+                self.assertEqual("000000", audit[coordinate].font.color.rgb[-6:])
+            summary_rows = {
+                row[0].value: row
+                for row in workbook["Summary"].iter_rows(min_row=5)
+                if row[0].value is not None
+            }
+            weather_interpretation = summary_rows["Weather-path method"][3].value
+            self.assertIn("balances weather years across realizations", weather_interpretation)
+            self.assertIn("samples project years independently", weather_interpretation)
+            self.assertIn("v5's one-weather-year-for-life", weather_interpretation)
+            self.assertIn("not a causal performance claim", weather_interpretation)
+            self.assertLess(workbook["Provenance"].max_row, 1_000)
+            self.assertGreaterEqual(
+                workbook["Decision Charts"].column_dimensions["A"].width,
+                52.0,
+            )
+            self.assertGreaterEqual(len(workbook["Decision Charts"]._charts), 2)
+            self.assertGreaterEqual(len(workbook["Lifecycle Charts"]._charts), 4)
+            self.assertGreaterEqual(len(workbook["Reliability Charts"]._charts), 3)
+            decision_probability_axis = workbook["Decision Charts"]._charts[1].y_axis
+            self.assertEqual("0%", decision_probability_axis.numFmt.formatCode)
+            self.assertEqual(0.0, decision_probability_axis.scaling.min)
+            self.assertEqual(1.0, decision_probability_axis.scaling.max)
+            self.assertEqual(
+                "0.0%",
+                workbook["Lifecycle Charts"]._charts[1].y_axis.numFmt.formatCode,
+            )
+            self.assertEqual(
+                "0.000%",
+                workbook["Reliability Charts"]._charts[1].y_axis.numFmt.formatCode,
+            )
+        finally:
+            workbook.close()
+
+    def test_v6_logical_formula_identity_ignores_only_a1_row_references(self) -> None:
+        first = reporting._new_lifecycle_logical_sheet_hash()
+        second = reporting._new_lifecycle_logical_sheet_hash()
+        reporting._update_lifecycle_logical_sheet_hash(
+            first,
+            ("audit", "=I2-H2"),
+            formula_identities={1: "audit_difference"},
+        )
+        reporting._update_lifecycle_logical_sheet_hash(
+            second,
+            ("audit", "=I901-H901"),
+            formula_identities={1: "audit_difference"},
+        )
+        self.assertEqual(first.hexdigest(), second.hexdigest())
+
+        registry = [dict(kernel.formula_registry()[0])]
+        changed = deepcopy(registry)
+        changed[0]["excel_template"] = "=SEMANTICALLY_DIFFERENT(InputA,InputB)"
+        self.assertNotEqual(
+            reporting._formula_template_sha256(registry),
+            reporting._formula_template_sha256(changed),
+        )
+
+    def test_v6_routine_result_is_exactly_bound_to_sealed_authority(self) -> None:
+        payload = _v6_lifecycle_request_payload(n=8)
+        payload["source_annual_job_id"] = "annual-export-source"
+        request_payload = technoeconomic_api.canonical_submission_request_payload(
+            TechnoeconomicSubmissionRequest.model_validate(payload)
+        )
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        snapshot_sha256 = technoeconomic_api.canonical_json_sha256(snapshot)
+        request = technoeconomic_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = technoeconomic_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": snapshot_sha256,
+            },
+            request,
+        )
+        calculation = kernel.run_technoeconomic(request)
+        artifact = run_technoeconomic._write_sealed_calculation_payload(
+            "tea_export_v6_binding",
+            "lease_v6_binding",
+            calculation,
+            request_sha256=technoeconomic_api.canonical_json_sha256(
+                request_payload
+            ),
+            source_snapshot_sha256=snapshot_sha256,
+            submission_provenance_sha256=technoeconomic_api.canonical_json_sha256(
+                provenance
+            ),
+            publish_check=lambda: None,
+        )
+        sealed_path = self.output / Path(artifact["storage_key"])
+        sealed = reporting._load_sealed_calculation(
+            attempt_directory=sealed_path.parent,
+            sealed_calculation_path=sealed_path,
+            sealed_calculation_artifact=artifact,
+            request_payload=request_payload,
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+        )
+        routine_result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            artifact,
+            provenance,
+        )
+        arguments = {
+            "metadata": sealed.metadata,
+            "request_payload": request_payload,
+            "source_snapshot": snapshot,
+            "submission_provenance": provenance,
+            "sealed_calculation_artifact": artifact,
+        }
+        reporting._verify_lifecycle_routine_result(
+            routine_result=routine_result,
+            **arguments,
+        )
+
+        tampered_results = []
+        for path, value in (
+            (("schema_version",), 5),
+            (("result_version",), None),
+            (("paired_lifecycle", "headline_metric_id"), "delta_lcoe"),
+            (("summaries", "headline_decision", "status"), "tampered"),
+            (("sealed_calculation", "sha256"), "0" * 64),
+        ):
+            tampered = deepcopy(routine_result)
+            cursor = tampered
+            for key in path[:-1]:
+                cursor = cursor[key]
+            cursor[path[-1]] = value
+            tampered_results.append((".".join(path), tampered))
+        extra = deepcopy(routine_result)
+        extra["unsealed_extra"] = True
+        tampered_results.append(("extra field", extra))
+
+        for label, tampered in tampered_results:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    reporting.TechnoeconomicExportError,
+                    "differs from frozen or sealed authority",
+                ):
+                    reporting._verify_lifecycle_routine_result(
+                        routine_result=tampered,
+                        **arguments,
+                    )
+
+    def test_v6_finance_palette_marks_warnings_failures_and_formula_roles(self) -> None:
+        raw_path = self.output / "v6-finance-palette.xlsx"
+        workbook = openpyxl.Workbook(write_only=True)
+        summary_sheet = workbook.create_sheet("Summary")
+        summary_metadata = {
+            "summaries": {
+                "headline_decision": {
+                    "decision": "Decision suppressed",
+                    "status": "suppressed",
+                    "reason_codes": ["unstable_convergence"],
+                },
+                "probability_counts": {
+                    "upgrade_npv": {
+                        "positive": 0,
+                        "negative": 0,
+                        "tie": 1,
+                        "denominator": 1,
+                    },
+                    "delta_lcoe": {
+                        "positive": 0,
+                        "negative": 0,
+                        "tie": 1,
+                        "denominator": 1,
+                    },
+                },
+                "cost_energy_quadrants": {
+                    "cost_neutral_zero_energy_change": {
+                        "count": 1,
+                        "probability": 1.0,
+                    }
+                },
+                "reliability_summary": [],
+                "warnings": [
+                    {
+                        "code": "accepted_provisional_inputs",
+                        "inputs": ["component:solaredge:fixture"],
+                    }
+                ],
+            },
+            "convergence": {"status": "unstable"},
+        }
+        summary_calculation = reporting._SealedCalculation(
+            metadata=summary_metadata,
+            column_names=(
+                "Realization",
+                "UpgradeNPV_se_minus_sol_USD",
+                "NPVTolerance_USD",
+                "LifecycleLCOE_SOL_USD_per_kWh_AC",
+                "LifecycleLCOE_SE_USD_per_kWh_AC",
+                "IncrementalLCOO_se_minus_sol_USD_per_kWh_AC",
+            ),
+            columns=(
+                np.asarray([0]),
+                np.asarray([0.0]),
+                np.asarray([1.0]),
+                np.asarray([0.10]),
+                np.asarray([0.11]),
+                np.asarray([0.0]),
+            ),
+            row_count=1,
+        )
+        reporting._write_lifecycle_summary_sheet(
+            summary_sheet,
+            summary_calculation,
+            {
+                "paired_commercial": {
+                    "target_capacity": 100.0,
+                    "target_capacity_unit": "mw",
+                    "target_rating_basis": "ac_operating_limit",
+                    "lifecycle": {
+                        "decision_probability_threshold": 0.75,
+                        "decision_npv_tolerance_usd_per_target_w": 0.01,
+                    },
+                }
+            },
+            {
+                "realization_count": 1,
+                "calculation_contract_version": "tea-calculation-v6",
+                "sampling_version": "tea-lhs-v2",
+            },
+            summary_metadata,
+            (("fixture", 1, 1, 0, 0, "OK", "fixture"),),
+        )
+        input_sheet = workbook.create_sheet("Input Specifications")
+        reporting._write_lifecycle_table_sheet(
+            input_sheet,
+            reporting._Table(
+                "input-specifications.csv",
+                "Input Specifications",
+                ("field_path", "value_json"),
+                lambda: iter((("systems.0.evidence.status", "provisional"),)),
+            ),
+            lambda: None,
+        )
+        audit_sheet = workbook.create_sheet("Calculation Audit")
+        reporting._write_lifecycle_table_sheet(
+            audit_sheet,
+            reporting._Table(
+                "calculation-audit.csv",
+                "Calculation Audit",
+                reporting.LIFECYCLE_AUDIT_COLUMNS,
+                lambda: iter(
+                    (
+                        (
+                            "audit-1",
+                            "V6-F001",
+                            "NPV-P50",
+                            1,
+                            "solaredge",
+                            1,
+                            "generic-inverter",
+                            1.0,
+                            "='Representative Event Traces'!B2",
+                            0.25,
+                            1e-12,
+                            "FAIL",
+                            100.0,
+                            "fixture",
+                        ),
+                    )
+                ),
+            ),
+            lambda: None,
+        )
+        checks_sheet = workbook.create_sheet("Checks")
+        reporting._write_lifecycle_table_sheet(
+            checks_sheet,
+            reporting._Table(
+                "checks.csv",
+                "Checks",
+                reporting.CHECK_COLUMNS,
+                lambda: iter((("failed-check", 1.0, 2.0, -1.0, 0.0, "FAIL", "fixture"),)),
+            ),
+            lambda: None,
+        )
+        workbook.save(raw_path)
+
+        loaded = openpyxl.load_workbook(raw_path, read_only=False, data_only=False)
+        try:
+            summary = loaded["Summary"]
+            warning_labels = {
+                "Headline decision",
+                "Convergence condition",
+                "Provisional-input condition",
+                "Warnings",
+            }
+            seen_warning_labels = set()
+            for row in summary.iter_rows(min_row=5):
+                if row[0].value in warning_labels:
+                    seen_warning_labels.add(row[0].value)
+                    self.assertEqual("FFF2CC", row[1].fill.fgColor.rgb[-6:])
+            self.assertEqual(warning_labels, seen_warning_labels)
+            inputs = loaded["Input Specifications"]
+            self.assertEqual("FFF2CC", inputs["B2"].fill.fgColor.rgb[-6:])
+            self.assertEqual("008000", inputs["B2"].font.color.rgb[-6:])
+            audit = loaded["Calculation Audit"]
+            self.assertEqual("E7E6E6", audit["H2"].fill.fgColor.rgb[-6:])
+            for coordinate in ("I2", "J2", "L2"):
+                self.assertEqual("000000", audit[coordinate].font.color.rgb[-6:])
+            self.assertEqual("F4CCCC", audit["L2"].fill.fgColor.rgb[-6:])
+            checks = loaded["Checks"]
+            self.assertEqual("F4CCCC", checks["F2"].fill.fgColor.rgb[-6:])
+            self.assertEqual("000000", checks["H2"].font.color.rgb[-6:])
+        finally:
+            loaded.close()
+
     def test_v3_commercial_cost_timing_and_zero_reason_checks_are_independent(self) -> None:
         for timing in ("lifecycle_present_value", "equivalent_annual"):
             with self.subTest(timing=timing):
@@ -2185,6 +2709,52 @@ class TechnoeconomicExportTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "cancelled during normalization"):
             reporting._normalize_xlsx_archive(source, target, cancelled)
         self.assertEqual(1, calls)
+
+    def test_v6_xlsx_normalization_canonicalizes_only_modified_timestamp(self) -> None:
+        def write_source(path: Path, modified: str) -> None:
+            core_properties = (
+                '<cp:coreProperties xmlns:cp="urn:cp" xmlns:dcterms="urn:dcterms">'
+                f'<dcterms:modified xsi:type="dcterms:W3CDTF" '
+                f'xmlns:xsi="urn:xsi">{modified}</dcterms:modified>'
+                "</cp:coreProperties>"
+            ).encode("utf-8")
+            with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("docProps/core.xml", core_properties)
+                archive.writestr("xl/workbook.xml", b"same workbook payload")
+
+        source_a = self.attempt_directory / "v6-core-a.xlsx"
+        source_b = self.attempt_directory / "v6-core-b.xlsx"
+        normalized_a = self.attempt_directory / "v6-normalized-a.xlsx"
+        normalized_b = self.attempt_directory / "v6-normalized-b.xlsx"
+        legacy_normalized = self.attempt_directory / "legacy-normalized.xlsx"
+        write_source(source_a, "2026-09-03T01:02:03Z")
+        write_source(source_b, "2026-09-03T04:05:06Z")
+
+        reporting._normalize_xlsx_archive(
+            source_a,
+            normalized_a,
+            lambda: None,
+            canonicalize_core_properties=True,
+        )
+        reporting._normalize_xlsx_archive(
+            source_b,
+            normalized_b,
+            lambda: None,
+            canonicalize_core_properties=True,
+        )
+        self.assertEqual(normalized_a.read_bytes(), normalized_b.read_bytes())
+        with zipfile.ZipFile(normalized_a) as archive:
+            core = archive.read("docProps/core.xml")
+        self.assertIn(b"1980-01-01T00:00:00Z", core)
+
+        reporting._normalize_xlsx_archive(
+            source_a,
+            legacy_normalized,
+            lambda: None,
+        )
+        with zipfile.ZipFile(legacy_normalized) as archive:
+            legacy_core = archive.read("docProps/core.xml")
+        self.assertIn(b"2026-09-03T01:02:03Z", legacy_core)
 
 
 if __name__ == "__main__":

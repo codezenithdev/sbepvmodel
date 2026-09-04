@@ -27,6 +27,7 @@ from tests.test_technoeconomic_api import (
     _paired_commercial_request_payload,
     _site_request_payload,
     _standalone_commercial_request_payload,
+    _v6_lifecycle_request_payload,
 )
 
 
@@ -668,6 +669,134 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         self.assertEqual(point_count - 1, capped["values"][-1])
         self.assertEqual(capped, run_technoeconomic._headline_cdf_display(full_summary))
 
+    def test_v6_routine_result_exposes_upgrade_decision_and_reason_codes(self) -> None:
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        payload = _v6_lifecycle_request_payload(n=16)
+        payload["source_annual_job_id"] = self.source_id
+        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
+        request_payload = tea_api.canonical_submission_request_payload(parsed)
+        request = tea_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": tea_api.canonical_json_sha256(snapshot),
+            },
+            request,
+        )
+        calculation = run_technoeconomic.kernel.run_technoeconomic(request)
+        artifact = {
+            "schema_version": 1,
+            "artifact_kind": "sealed_technoeconomic_calculation",
+            "media_type": "application/x-npz",
+            "sha256": "a" * 64,
+            "byte_count": 1,
+            "row_count": 16,
+            "column_count": len(calculation.realization_table),
+            "pickle_allowed": False,
+            "public": False,
+        }
+
+        result = run_technoeconomic._routine_result(
+            request,
+            calculation,
+            artifact,
+            provenance,
+        )
+
+        self.assertEqual(6, result["schema_version"])
+        self.assertEqual("tea-result-v6", result["result_version"])
+        lifecycle = result["paired_lifecycle"]
+        self.assertEqual("upgrade_npv", lifecycle["headline_metric_id"])
+        self.assertIn(lifecycle["headline_decision"]["status"], {"available", "suppressed"})
+        self.assertEqual(
+            {"upgrade_npv", "delta_lcoe"},
+            set(lifecycle["probability_counts"]),
+        )
+        self.assertEqual(
+            "/api/technoeconomic/formulas/v6",
+            lifecycle["formula_catalog_endpoint"],
+        )
+        self.assertEqual("tea-formulas-v6", lifecycle["formula_registry"]["version"])
+        self.assertEqual(3, len(lifecycle["representative_event_traces"]["selection"]))
+
+    def test_v6_retry_runs_through_sealed_exports_and_fenced_completion(self) -> None:
+        self.store.cancel_technoeconomic_job(self.job_id)
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        snapshot_sha256 = tea_api.canonical_json_sha256(snapshot)
+        payload = _v6_lifecycle_request_payload(n=16)
+        payload["source_annual_job_id"] = self.source_id
+        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
+        request_payload = tea_api.canonical_submission_request_payload(parsed)
+        kernel_request = tea_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": snapshot_sha256,
+            },
+            kernel_request,
+        )
+        artifact = self.source_artifact
+        original_id = "tea_worker_v6_original"
+        self.store.create_technoeconomic_job(
+            job_id=original_id,
+            request=request_payload,
+            source_annual_job_id=self.source_id,
+            source_artifact_storage_key=artifact["storage_key"],
+            source_artifact_sha256=artifact["sha256"],
+            source_artifact_bytes=artifact["byte_count"],
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+            atomic_source_check=lambda _connection: snapshot_sha256,
+        )
+        self.store.cancel_technoeconomic_job(original_id)
+        retried = self.store.retry_technoeconomic_job(
+            original_id,
+            new_job_id="tea_worker_v6_retry",
+        )
+        self.assertEqual(original_id, retried["retry_of_job_id"])
+
+        record = self._claim()
+        self._run(record)
+
+        completed = self.store.get_technoeconomic_job(record["id"])
+        self.assertEqual("done", completed["state"])
+        self.assertEqual(request_payload, completed["request"])
+        self.assertEqual(provenance, completed["submission_provenance"])
+        self.assertEqual(6, completed["result"]["schema_version"])
+        self.assertEqual("tea-result-v6", completed["result"]["result_version"])
+        self.assertEqual(
+            "technoeconomic-exports-manifest-v6",
+            completed["result"]["exports"]["schema_version"],
+        )
+        self.assertEqual(
+            "tea-result-v6",
+            completed["result_provenance"]["result_version"],
+        )
+        self.assertEqual(
+            "tea-formulas-v6",
+            completed["result_provenance"]["formula_registry"]["version"],
+        )
+
     def test_v2_retry_replays_frozen_request_through_complete_worker(self) -> None:
         self.store.cancel_technoeconomic_job(self.job_id)
         snapshot = deepcopy(self.snapshot)
@@ -903,6 +1032,179 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         self.assertEqual("cancelled", frozen_original["state"])
         self.assertEqual(request_payload, frozen_original["request"])
         self.assertEqual(provenance, frozen_original["submission_provenance"])
+
+    def test_v5_retry_replays_pre_v6_frozen_shape_through_exports(self) -> None:
+        self.store.cancel_technoeconomic_job(self.job_id)
+        snapshot = deepcopy(self.snapshot)
+        snapshot["source_annual_job"] = {
+            "request": {
+                "curtailment_enabled": True,
+                "curtailment_limit_kw": 125.0,
+            }
+        }
+        snapshot_sha256 = tea_api.canonical_json_sha256(snapshot)
+        payload = _paired_commercial_request_payload(n=8)
+        payload["source_annual_job_id"] = self.source_id
+        request_payload = TechnoeconomicSubmissionRequest.model_validate(
+            payload
+        ).model_dump(mode="json", exclude_none=False)
+        request_payload.pop("commercial_scaling", None)
+        request_payload.pop("standalone_commercial", None)
+        self.assertNotIn("calculation_contract_version", request_payload)
+        self.assertNotIn("lifecycle", request_payload["paired_commercial"])
+
+        expected_request_sha256 = (
+            "82ba548de85c209b46a4a2ccb080f978903ad337547963a2a78d8b9e077889a9"
+        )
+        expected_kernel_sha256 = (
+            "f1ec14f571fe61cf233885e058dc480ea556909b27608cb58a7a0840b1f9dfe8"
+        )
+        expected_provenance_sha256 = (
+            "16978bbe1c799fed55a4714c3e377cd55760eb3b43aee1642854543da81b4a8c"
+        )
+        request_json = tea_api.canonical_json_text(request_payload)
+        self.assertEqual(
+            expected_request_sha256,
+            tea_api.canonical_json_sha256(request_payload),
+        )
+        kernel_request = tea_api.build_technoeconomic_kernel_request(
+            request_payload,
+            snapshot,
+        )
+        self.assertEqual(
+            expected_kernel_sha256,
+            tea_api.canonical_json_sha256(
+                run_technoeconomic.kernel.canonical_request_payload(kernel_request)
+            ),
+        )
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            request_payload,
+            {
+                "source_snapshot": snapshot,
+                "source_snapshot_sha256": snapshot_sha256,
+            },
+            kernel_request,
+        )
+        provenance_json = tea_api.canonical_json_text(provenance)
+        self.assertEqual(
+            expected_provenance_sha256,
+            tea_api.canonical_json_sha256(provenance),
+        )
+        self.assertEqual(expected_request_sha256, provenance["request_sha256"])
+        self.assertEqual(
+            expected_kernel_sha256,
+            provenance["validated_kernel_request_sha256"],
+        )
+
+        original_id = "tea_worker_v5_original"
+        artifact = self.source_artifact
+        original = self.store.create_technoeconomic_job(
+            job_id=original_id,
+            request=request_payload,
+            source_annual_job_id=self.source_id,
+            source_artifact_storage_key=artifact["storage_key"],
+            source_artifact_sha256=artifact["sha256"],
+            source_artifact_bytes=artifact["byte_count"],
+            source_snapshot=snapshot,
+            submission_provenance=provenance,
+            atomic_source_check=lambda _connection: snapshot_sha256,
+        )
+        self.assertEqual(
+            expected_provenance_sha256,
+            original["submission_provenance_sha256"],
+        )
+        self.store.cancel_technoeconomic_job(original_id)
+        retried = self.store.retry_technoeconomic_job(
+            original_id,
+            new_job_id="tea_worker_v5_retry",
+        )
+
+        self.assertEqual(original_id, retried["retry_of_job_id"])
+        self.assertEqual(
+            request_json,
+            tea_api.canonical_json_text(retried["request"]),
+        )
+        self.assertEqual(
+            expected_request_sha256,
+            tea_api.canonical_json_sha256(retried["request"]),
+        )
+        self.assertEqual(snapshot, retried["source_snapshot"])
+        self.assertEqual(snapshot_sha256, retried["source_snapshot_sha256"])
+        self.assertEqual(
+            provenance_json,
+            tea_api.canonical_json_text(retried["submission_provenance"]),
+        )
+        self.assertEqual(
+            expected_provenance_sha256,
+            retried["submission_provenance_sha256"],
+        )
+
+        record = self._claim()
+        with patch.object(
+            self.store,
+            "get_job",
+            side_effect=AssertionError("worker must use the frozen Annual snapshot"),
+        ):
+            self._run(record)
+
+        completed = self.store.get_technoeconomic_job(record["id"])
+        self.assertEqual("done", completed["state"])
+        self.assertEqual(100.0, completed["progress"])
+        self.assertEqual(original_id, completed["retry_of_job_id"])
+        self.assertEqual(
+            request_json,
+            tea_api.canonical_json_text(completed["request"]),
+        )
+        self.assertEqual(
+            provenance_json,
+            tea_api.canonical_json_text(completed["submission_provenance"]),
+        )
+        self.assertEqual(5, completed["result"]["schema_version"])
+        self.assertEqual(
+            run_technoeconomic.kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
+            completed["result"]["calculation_contract_version"],
+        )
+        self.assertEqual(
+            run_technoeconomic.kernel.SAMPLING_VERSION,
+            completed["result"]["sampling_version"],
+        )
+        self.assertIn("paired_commercial", completed["result"])
+        self.assertNotIn("paired_lifecycle", completed["result"])
+        self.assertNotIn("result_version", completed["result"])
+
+        exports = completed["artifacts"]["exports"]
+        self.assertEqual(
+            run_technoeconomic.technoeconomic_reporting
+            .PAIRED_COMMERCIAL_EXPORT_MANIFEST_SCHEMA_VERSION,
+            exports["schema_version"],
+        )
+        self.assertEqual("passed", exports["tie_outs"]["status"])
+        self.assertEqual(expected_request_sha256, exports["request_sha256"])
+        self.assertEqual(snapshot_sha256, exports["source_snapshot_sha256"])
+        self.assertEqual(
+            expected_provenance_sha256,
+            exports["submission_provenance_sha256"],
+        )
+        self.assertEqual(
+            run_technoeconomic.technoeconomic_reporting
+            .PAIRED_COMMERCIAL_XLSX_SCHEMA_VERSION,
+            exports["artifacts"]["xlsx_workbook"]["schema_version"],
+        )
+        self.assertEqual(
+            exports["manifest_sha256"],
+            completed["result_provenance"]["exports"]["manifest_sha256"],
+        )
+
+        frozen_original = self.store.get_technoeconomic_job(original_id)
+        self.assertEqual("cancelled", frozen_original["state"])
+        self.assertEqual(
+            request_json,
+            tea_api.canonical_json_text(frozen_original["request"]),
+        )
+        self.assertEqual(
+            provenance_json,
+            tea_api.canonical_json_text(frozen_original["submission_provenance"]),
+        )
 
     def test_snapshot_digest_tampering_fails_before_calculation(self) -> None:
         record = self._claim()
