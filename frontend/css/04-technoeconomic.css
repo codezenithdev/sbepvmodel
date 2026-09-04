@@ -2789,6 +2789,17 @@
             border-top: 1px solid var(--border);
         }
 
+        .tea-standalone-primary[data-presentation="lifecycle"]
+        .tea-standalone-result-body {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .tea-standalone-primary[data-presentation="lifecycle"]
+        .tea-standalone-cdf-figure {
+            border-right: 0;
+            border-bottom: 1px solid var(--border);
+        }
+
         .tea-standalone-cdf-figure {
             display: grid;
             min-width: 0;
@@ -2887,14 +2898,39 @@
             overflow-wrap: anywhere;
         }
 
-        .tea-v6-decision-table {
-            min-width: 940px;
+        .tea-standalone-primary[data-presentation="lifecycle"]
+        .tea-v6-probability-summary {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .tea-table.tea-v6-decision-table {
+            width: 100%;
+            min-width: 0;
+            table-layout: fixed;
         }
 
         .tea-v6-decision-table th,
         .tea-v6-decision-table td {
             padding: 8px 9px;
-            white-space: nowrap;
+            overflow-wrap: anywhere;
+            vertical-align: top;
+            white-space: normal;
+        }
+
+        .tea-v6-decision-table td {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .tea-v6-decision-table th:nth-child(1) { width: 14%; }
+        .tea-v6-decision-table th:nth-child(2) { width: 19%; }
+        .tea-v6-decision-table th:nth-child(3),
+        .tea-v6-decision-table th:nth-child(4) { width: 16%; }
+        .tea-v6-decision-table th:nth-child(5) { width: 17%; }
+        .tea-v6-decision-table th:nth-child(6) { width: 18%; }
+
+        .tea-v6-decision-table td::before {
+            display: none;
+            content: attr(data-label);
         }
 
         .tea-v6-decision-table tr[data-percentile="p50"] {
@@ -4296,6 +4332,73 @@
                 justify-content: flex-start;
             }
 
+            .tea-standalone-primary[data-presentation="lifecycle"]
+            .tea-v6-probability-summary {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .tea-v6-decision-table,
+            .tea-v6-decision-table tbody {
+                display: block;
+            }
+
+            .tea-v6-decision-table thead {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                overflow: hidden;
+                clip-path: inset(50%);
+                white-space: nowrap;
+            }
+
+            .tea-v6-decision-table tbody {
+                padding: 8px;
+            }
+
+            .tea-v6-decision-table tbody tr {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 1px;
+                margin-bottom: 8px;
+                overflow: hidden;
+                border: 1px solid var(--border);
+                border-radius: 7px;
+                background: var(--surface);
+            }
+
+            .tea-v6-decision-table tbody tr:last-child {
+                margin-bottom: 0;
+            }
+
+            .tea-v6-decision-table tbody th[scope="row"] {
+                grid-column: 1 / -1;
+                width: auto;
+                border-bottom: 1px solid var(--border);
+                background: var(--surface-muted);
+            }
+
+            .tea-v6-decision-table tbody td {
+                display: block;
+                width: auto;
+                min-width: 0;
+                border-bottom: 0;
+                white-space: normal;
+            }
+
+            .tea-v6-decision-table tbody td:last-child {
+                grid-column: 1 / -1;
+            }
+
+            .tea-v6-decision-table td::before {
+                display: block;
+                margin-bottom: 3px;
+                color: var(--muted);
+                font-size: 9px;
+                font-weight: 800;
+                letter-spacing: .04em;
+                text-transform: uppercase;
+            }
+
             .tea-bridge-steps,
             .tea-scenario-rail,
             .tea-standalone-result-body,
@@ -4397,6 +4500,16 @@
             .tea-metric-percentiles,
             .tea-v6-probability-summary {
                 grid-template-columns: 1fr;
+            }
+
+            .tea-standalone-primary[data-presentation="lifecycle"]
+            .tea-v6-probability-summary,
+            .tea-v6-decision-table tbody tr {
+                grid-template-columns: 1fr;
+            }
+
+            .tea-v6-decision-table tbody td:last-child {
+                grid-column: auto;
             }
 
             .tea-section-heading {

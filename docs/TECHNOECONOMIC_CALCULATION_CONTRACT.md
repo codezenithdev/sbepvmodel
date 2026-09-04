@@ -2323,6 +2323,14 @@ annual cost, cumulative NPV, failure, downtime, and corrective-cost charts. Its 
 manifest enumerates the 21 tabular exports explicitly; chart-only sheets are not
 pretended to be CSV tables.
 
+The official version-6 CDF PNG is the decision-facing two-system lifecycle-LCOE
+comparison: a bounded display projection of the complete right-continuous Solectria
+and SolarEdge CDFs shares one real-USD/MWh_AC axis and uses both color and line
+style. Upgrade NPV remains the headline decision metric and is shown with its
+probabilities and percentiles in the result table. Its full CDF, and every other
+supporting metric CDF, remain in the sealed payload, CSV bundle, and workbook rather
+than being reduced to unreadable small multiples in the dashboard.
+
 Public requests remain capped at 100,000 realizations. Admission also computes a
 request-specific safe maximum and accepts only when both conditions hold:
 

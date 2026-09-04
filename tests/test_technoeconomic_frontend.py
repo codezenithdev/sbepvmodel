@@ -787,7 +787,8 @@ console.log(JSON.stringify({ok: true}));
             dialog,
         )
         self.assertIn(
-            "The selected source is frozen and re-verified when the job is queued.",
+            "Only currently eligible runs are listed and each selection is "
+            "re-verified when the job is queued.",
             dialog,
         )
         self.assertIn('class="tea-assumption-cost-distribution-cell"', dialog)
@@ -1045,6 +1046,9 @@ console.log(JSON.stringify({
             ".tea-bridge-steps",
             ".tea-standalone-primary",
             ".tea-standalone-percentile-table",
+            '.tea-standalone-primary[data-presentation="lifecycle"]',
+            ".tea-table.tea-v6-decision-table",
+            "content: attr(data-label);",
             ".tea-paired-system-cost-grid",
             ".tea-assumptions-table",
             "@media (max-width: 1080px)",
@@ -1793,14 +1797,23 @@ technoeconomicElements = {
   standaloneSubmitButton: {textContent: ''},
 };
 technoeconomicRenderStandaloneBridge = () => {};
-technoeconomicSetPlot = () => {};
+let renderedPlotUrl = null;
+let renderedPlotFallback = '';
+technoeconomicSetPlot = (_image, _fallback, url, fallbackText) => {
+  renderedPlotUrl = url;
+  renderedPlotFallback = fallbackText;
+};
 technoeconomicSetDownload = () => {};
 technoeconomicSources = [];
 const available = (p10, p50, p90) => ({
   status: 'available', percentiles: {p10, p50, p90},
 });
 const job = {
-  job_id: 'tea-lifecycle-v6', source_annual_job_id: 'annual-source', artifacts: {},
+  job_id: 'tea_lifecycle_v6', source_annual_job_id: 'annual-source',
+  artifacts: {exports: {artifacts: {cdf_plot: {
+    url: '/api/technoeconomic/jobs/tea_lifecycle_v6/artifacts/cdf_plot',
+    chart_contract_id: 'lifecycle_system_lcoe_cdf_v2',
+  }}}},
   request: {
     n: 1000, source_annual_job_id: 'annual-source',
     finance: {constant_dollar_cost_year: 2022, project_life_years: 30},
@@ -1843,15 +1856,32 @@ const result = {
 assert.equal(Object.hasOwn(result, 'paired_commercial'), false);
 technoeconomicRenderLifecycleResult(job, result);
 assert.equal(resultRoot.dataset.state, 'done');
+assert.equal(resultRoot.dataset.presentation, 'lifecycle');
 assert.equal(technoeconomicElements.legacyPercentilePanel.hidden, true);
 assert.equal(technoeconomicElements.v6DecisionPanel.hidden, false);
 assert.equal(decisionBody.children.length, 3);
 assert.deepEqual(decisionBody.children[1].children.map((child) => child.textContent), [
-  'P50 (median)', '$2,000', '50 USD/MWh', '55 USD/MWh', '5 USD/MWh', '20 USD/MWh',
+  'P50 (median)', '$2,000', '50', '55', '5', '20',
+]);
+assert.deepEqual(decisionBody.children[1].children.slice(1).map(
+  (child) => child.dataset.label
+), [
+  'Upgrade NPV (USD)', 'Solectria LCOE (USD/MWh)',
+  'SolarEdge LCOE (USD/MWh)', 'Delta LCOE, SE minus SO (USD/MWh)',
+  'LCOO, SE minus SO (USD/MWh)',
 ]);
 assert.ok(interpretation.textContent.includes('Upgrade NPV P50 is $2,000'));
 assert.ok(interpretation.textContent.includes('Positive upgrade NPV favors SolarEdge'));
 assert.equal(probabilities.children.length, 4);
+assert.equal(
+  renderedPlotUrl,
+  '/api/technoeconomic/jobs/tea_lifecycle_v6/artifacts/cdf_plot'
+);
+job.artifacts.exports.artifacts.cdf_plot.chart_contract_id =
+  'lifecycle_upgrade_npv_and_lcoe_cdf_v1';
+technoeconomicRenderLifecycleResult(job, result);
+assert.equal(renderedPlotUrl, null);
+assert.ok(renderedPlotFallback.includes('Recalculate'));
 console.log(JSON.stringify({
   state: resultRoot.dataset.state,
   p50: decisionBody.children[1].children.map((child) => child.textContent),
@@ -1874,6 +1904,7 @@ for (const missing of [null, undefined, '', '   ']) {
 }
 assert.equal(technoeconomicStandaloneFormatUsd(0), '$0');
 assert.equal(technoeconomicStandaloneFormatLcoePerMwh(0), '0 USD/MWh');
+assert.equal(technoeconomicStandaloneFormatLcoeTableValue(0), '0');
 const annual = [
   {timing: 'annual_year_end', percentiles: {p50: 2200000}},
   {timing: 'annual_year_end', percentiles: {p50: '3300000'}},
@@ -2675,6 +2706,173 @@ console.log(JSON.stringify({solectria, solaredge, ranged, lifecycleRange}));
             payload["solectria"]["lcoeLow"],
             payload["solectria"]["lcoeHigh"],
         )
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_annual_source_selectors_only_render_eligible_runs(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const node = (tag, options = {}) => ({
+  tag, value: options.value === undefined ? '' : String(options.value),
+  textContent: options.text === undefined ? '' : String(options.text),
+  disabled: Boolean(options.disabled),
+});
+const select = () => ({
+  children: [], value: '',
+  get options() { return this.children; },
+  replaceChildren(...children) { this.children = children; },
+  appendChild(child) { this.children.push(child); },
+});
+const guidedSelect = select();
+const lifecycleSelect = select();
+technoeconomicNode = node;
+technoeconomicElements = {
+  sourceSelect: guidedSelect,
+  standaloneSourceSelect: lifecycleSelect,
+};
+technoeconomicRenderSelectedSource = () => {};
+technoeconomicRenderStandaloneDraft = () => {};
+technoeconomicSources = [
+  {
+    source_annual_job_id: 'annual-eligible-old', eligible: true,
+    eligible_years: [2023, 2024], provenance: {completed_at: '2026-01-01'},
+  },
+  {
+    source_annual_job_id: 'annual-ineligible', eligible: false,
+    reason_code: 'annual_temporal_semantics_obsolete',
+    provenance: {completed_at: '2026-09-01'},
+  },
+  {
+    source_annual_job_id: 'annual-eligible-new', eligible: true,
+    eligible_years: [2024, 2025], provenance: {completed_at: '2026-08-01'},
+  },
+];
+
+technoeconomicStandaloneEnsureSourceOption('annual-ineligible');
+technoeconomicEnsureSourceOption('annual-ineligible');
+assert.equal(lifecycleSelect.options.length, 0);
+assert.equal(guidedSelect.options.length, 0);
+technoeconomicRenderSourceOptions('annual-ineligible');
+for (const target of [guidedSelect, lifecycleSelect]) {
+  assert.deepEqual(target.options.map((option) => option.value), [
+    '', 'annual-eligible-new', 'annual-eligible-old',
+  ]);
+  assert.equal(target.value, 'annual-eligible-new');
+  assert.equal(target.options.some((option) => option.disabled), false);
+  assert.equal(target.options.some(
+    (option) => option.textContent.toLowerCase().includes('ineligible')
+  ), false);
+}
+
+technoeconomicEnsureSourceOption('annual-eligible-old');
+technoeconomicRenderSourceOptions();
+assert.equal(guidedSelect.value, 'annual-eligible-old');
+assert.equal(lifecycleSelect.value, 'annual-eligible-old');
+console.log(JSON.stringify({
+  options: lifecycleSelect.options.map((option) => option.textContent),
+  selected: lifecycleSelect.value,
+}));
+"""
+        )
+        self.assertEqual("annual-eligible-old", payload["selected"])
+        self.assertEqual(3, len(payload["options"]))
+        self.assertFalse(any("ineligible" in item.lower() for item in payload["options"]))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_source_refresh_stays_retryable_while_verification_is_pending(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+(async () => {
+const optionNode = (tag, options = {}) => ({
+  tag, value: options.value === undefined ? '' : String(options.value),
+  textContent: options.text === undefined ? '' : String(options.text),
+});
+const select = () => ({
+  children: [{tag: 'option', value: '', textContent: 'Select a source'}],
+  value: '', attributes: {},
+  get options() { return this.children; },
+  replaceChildren(...children) { this.children = children; },
+  appendChild(child) { this.children.push(child); },
+  setAttribute(name, value) { this.attributes[name] = String(value); },
+});
+const button = () => ({
+  disabled: true, textContent: 'Refresh sources', attributes: {},
+  setAttribute(name, value) { this.attributes[name] = String(value); },
+});
+const guidedSelect = select();
+const lifecycleSelect = select();
+const guidedRefresh = button();
+const lifecycleRefresh = button();
+const sourceStatusPanel = {dataset: {}};
+const lifecycleStatusPanel = {dataset: {}};
+const sourceStatus = {textContent: ''};
+const sourceDetail = {textContent: ''};
+const lifecycleStatus = {textContent: ''};
+const lifecycleHelp = {textContent: ''};
+technoeconomicNode = optionNode;
+technoeconomicElements = {
+  sourceSelect: guidedSelect,
+  standaloneSourceSelect: lifecycleSelect,
+  refreshSourcesButton: guidedRefresh,
+  standaloneRefreshSourcesButton: lifecycleRefresh,
+  sourceStatusPanel,
+  standaloneSourceStatusPanel: lifecycleStatusPanel,
+  sourceStatus,
+  sourceDetail,
+  standaloneSourceStatus: lifecycleStatus,
+  standaloneSourceHelp: lifecycleHelp,
+};
+technoeconomicCloseStaleAdvancedPreview = () => {};
+technoeconomicRenderSelectedSource = () => technoeconomicSetSourceState(
+  'ready', 'Calibrated annual energy is ready', 'Selection verified.'
+);
+technoeconomicRenderStandaloneDraft = () => {};
+technoeconomicJob = null;
+let resolveSources;
+technoeconomicFetchJson = () => new Promise((resolve) => { resolveSources = resolve; });
+
+const pending = refreshTechnoeconomicSources();
+for (const control of [guidedRefresh, lifecycleRefresh]) {
+  assert.equal(control.disabled, false);
+  assert.equal(control.textContent, 'Retry source check');
+  assert.equal(control.attributes['aria-busy'], 'true');
+}
+assert.equal(
+  lifecycleSelect.options[0].textContent,
+  'Checking verified Annual Simulations…'
+);
+assert.equal(lifecycleStatus.textContent, 'Checking Annual Simulation sources');
+resolveSources({sources: [
+  {source_annual_job_id: 'annual-eligible', eligible: true, eligible_years: [2025]},
+  {source_annual_job_id: 'annual-obsolete', eligible: false},
+]});
+await pending;
+assert.deepEqual(lifecycleSelect.options.map((option) => option.value), [
+  '', 'annual-eligible',
+]);
+assert.equal(lifecycleSelect.value, 'annual-eligible');
+for (const control of [guidedRefresh, lifecycleRefresh]) {
+  assert.equal(control.disabled, false);
+  assert.equal(control.textContent, 'Refresh sources');
+  assert.equal(control.attributes['aria-busy'], 'false');
+}
+assert.equal(lifecycleStatusPanel.dataset.state, 'ready');
+assert.equal(lifecycleStatus.textContent, 'Calibrated annual energy is ready');
+console.log(JSON.stringify({
+  options: lifecycleSelect.options.map((option) => option.textContent),
+  refreshLabel: lifecycleRefresh.textContent,
+  status: lifecycleStatus.textContent,
+}));
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+"""
+        )
+        self.assertEqual("Refresh sources", payload["refreshLabel"])
+        self.assertEqual("Calibrated annual energy is ready", payload["status"])
+        self.assertEqual(2, len(payload["options"]))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_selected_source_renders_only_energy_capacity_and_actual_operating_limit(

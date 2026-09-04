@@ -1212,6 +1212,14 @@ class TechnoeconomicExportTests(unittest.TestCase):
         )
         self.assertEqual("passed", manifest["tie_outs"]["status"])
         self.assertEqual(
+            reporting.LIFECYCLE_CDF_CHART_CONTRACT_ID,
+            manifest["artifacts"]["cdf_plot"]["chart_contract_id"],
+        )
+        self.assertEqual(
+            set(reporting.LIFECYCLE_CHART_CONTRACTS),
+            set(manifest["chart_contracts"]),
+        )
+        self.assertEqual(
             kernel.formula_registry_hash(),
             manifest["formula_registry"]["sha256"],
         )
@@ -2388,7 +2396,7 @@ class TechnoeconomicExportTests(unittest.TestCase):
             )
             self.assertIn(
                 "4 runs per system • 2 distinct outcomes per system • "
-                "Exact empirical CDF",
+                "Right-continuous empirical CDF",
                 {text.get_text() for text in figure.texts},
             )
             figure_copy = " ".join(text.get_text() for text in figure.texts)
@@ -2443,9 +2451,113 @@ class TechnoeconomicExportTests(unittest.TestCase):
         ]
         self.assertEqual(
             "Solectria: 16 runs, 2 outcomes • "
-            "SolarEdge: 12 runs, 3 outcomes • Exact empirical CDF",
+            "SolarEdge: 12 runs, 3 outcomes • Right-continuous empirical CDF",
             reporting._paired_cdf_subtitle(available),
         )
+
+    def test_lifecycle_cdf_decision_view_focuses_on_two_system_lcoe(self) -> None:
+        from matplotlib import pyplot as plt
+
+        metadata = {
+            "kernel_provenance": {"constant_dollar_cost_year": 2022},
+            "summaries": {
+                "lcoe_solectria": {
+                    "cdf": {
+                        "values": [0.063, 0.065],
+                        "cumulative_probability": [0.5, 1.0],
+                        "population_count": 4,
+                    },
+                    "percentiles": {
+                        "p10": 0.063,
+                        "p50": 0.064,
+                        "p90": 0.065,
+                    },
+                },
+                "lcoe_solaredge": {
+                    "cdf": {
+                        "values": [0.061, 0.063],
+                        "cumulative_probability": [0.5, 1.0],
+                        "population_count": 4,
+                    },
+                    "percentiles": {
+                        "p10": 0.061,
+                        "p50": 0.062,
+                        "p90": 0.063,
+                    },
+                },
+                "upgrade_npv": {
+                    "cdf": {
+                        "values": [1_000.0, 2_000.0],
+                        "cumulative_probability": [0.5, 1.0],
+                        "population_count": 4,
+                    },
+                    "percentiles": {
+                        "p10": 1_000.0,
+                        "p50": 1_500.0,
+                        "p90": 2_000.0,
+                    },
+                },
+            },
+        }
+        captured: dict[str, object] = {}
+
+        def capture_figure(figure, _path, *, layout_bottom=0.035):
+            captured["figure"] = figure
+            captured["layout_bottom"] = layout_bottom
+            return 1600, 1000
+
+        with patch.object(reporting, "_save_figure", side_effect=capture_figure):
+            result = reporting._render_cdf_plot(
+                metadata,
+                self.output / "lifecycle-cdf.png",
+                lifecycle_headlines_only=True,
+            )
+
+        figure = captured["figure"]
+        try:
+            self.assertEqual((1600, 1000, 4, 4), result)
+            self.assertEqual(0.16, captured["layout_bottom"])
+            self.assertEqual(1, len(figure.axes))
+            axis = figure.axes[0]
+            step_lines = [
+                line
+                for line in axis.lines
+                if line.get_drawstyle() == "steps-post"
+            ]
+            self.assertEqual(2, len(step_lines))
+            self.assertEqual(
+                [[61.0, 63.0], [63.0, 65.0]],
+                sorted(line.get_xdata().tolist() for line in step_lines),
+            )
+            self.assertEqual(
+                {"SolarEdge", "Solectria"},
+                {text.get_text() for text in axis.texts},
+            )
+            self.assertNotIn(
+                "upgrade npv",
+                " ".join(text.get_text() for text in figure.texts).lower(),
+            )
+            self.assertEqual(
+                "Lifecycle LCOE (real 2022 USD/MWh AC)",
+                axis.get_xlabel(),
+            )
+            self.assertEqual(
+                "lifecycle_system_lcoe_cdf_v2",
+                reporting.LIFECYCLE_CDF_CHART_CONTRACT_ID,
+            )
+            contract = reporting.LIFECYCLE_CHART_CONTRACTS[
+                reporting.LIFECYCLE_CDF_CHART_CONTRACT_ID
+            ]
+            self.assertEqual(
+                "paired_right_continuous_empirical_cdf_decision_view",
+                contract["variant"],
+            )
+            self.assertEqual(
+                "upgrade_npv",
+                contract["decision_context_metric"],
+            )
+        finally:
+            plt.close(figure)
 
     def test_plots_are_nonempty_pngs_with_auditable_contracts(self) -> None:
         manifest = self._generate()

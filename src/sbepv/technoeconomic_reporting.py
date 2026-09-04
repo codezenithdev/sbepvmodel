@@ -430,15 +430,33 @@ PAIRED_COMMERCIAL_CHART_CONTRACTS: dict[str, dict[str, Any]] = {
     "convergence_v1": CHART_CONTRACTS["convergence_v1"],
 }
 
-LIFECYCLE_CDF_CHART_CONTRACT_ID = "lifecycle_upgrade_npv_and_lcoe_cdf_v1"
+LIFECYCLE_CDF_CHART_CONTRACT_ID = "lifecycle_system_lcoe_cdf_v2"
 LIFECYCLE_CHART_CONTRACTS: dict[str, dict[str, Any]] = {
     LIFECYCLE_CDF_CHART_CONTRACT_ID: {
-        **CHART_CONTRACTS["cdf_v1"],
+        "family": "distribution_comparison",
+        "variant": "paired_right_continuous_empirical_cdf_decision_view",
         "question": (
-            "What are the empirical Upgrade-NPV, standalone-LCOE, and "
-            "incremental lifecycle distributions?"
+            "How do the modeled Solectria and SolarEdge lifecycle LCOE "
+            "distributions compare?"
         ),
-        "primary_metric": "UpgradeNPV_se_minus_sol_USD",
+        "fields": ["technology", "value", "cumulative_probability"],
+        "source_value_unit": "constant USD/kWh_AC",
+        "display_value_unit": "constant-dollar-year USD/MWh_AC",
+        "display_value_transform": "source value multiplied by 1000",
+        "probability_display": "percent",
+        "population": "finite version-6 lifecycle LCOE realizations",
+        "denominator": "shown for each technology",
+        "palette_policy": "two named systems with non-color line cues",
+        "palette": [_GOLD, _BLUE, _INK, _GRID],
+        "non_color_cues": [
+            "Solectria dashed line",
+            "SolarEdge solid line",
+            "direct curve labels",
+            "P10/P50/P90 value rows with P50 chart markers",
+        ],
+        "render_point_cap_per_metric": 1200,
+        "decision_context_metric": "upgrade_npv",
+        "filename": CDF_PLOT_FILENAME,
     },
     "sensitivity_v1": CHART_CONTRACTS["sensitivity_v1"],
     "convergence_v1": CHART_CONTRACTS["convergence_v1"],
@@ -8691,6 +8709,8 @@ def _paired_cdf_subtitle(
     labels = {
         technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE: "Solectria",
         technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE: "SolarEdge",
+        "lcoe_solectria": "Solectria",
+        "lcoe_solaredge": "SolarEdge",
     }
     for metric_id, summary in available:
         cdf = summary.get("cdf")
@@ -8713,11 +8733,11 @@ def _paired_cdf_subtitle(
         return (
             f"{populations[0]:,} runs per system • "
             f"{outcome_counts[0]:,} distinct outcomes per system • "
-            "Exact empirical CDF"
+            "Right-continuous empirical CDF"
         )
     if system_details:
-        return " • ".join((*system_details, "Exact empirical CDF"))
-    return "Exact empirical CDF"
+        return " • ".join((*system_details, "Right-continuous empirical CDF"))
+    return "Right-continuous empirical CDF"
 
 
 def _cdf_value_text(value: Any) -> str:
@@ -8740,9 +8760,11 @@ def _paired_cdf_constant_dollar_year(metadata: Mapping[str, Any]) -> int | None:
     if not isinstance(provenance, Mapping):
         return None
     paired = provenance.get("commercial_paired")
-    if not isinstance(paired, Mapping):
-        return None
-    year = paired.get("constant_dollar_cost_year")
+    year = (
+        paired.get("constant_dollar_cost_year")
+        if isinstance(paired, Mapping)
+        else provenance.get("constant_dollar_cost_year")
+    )
     if (
         not isinstance(year, int)
         or isinstance(year, bool)
@@ -8795,14 +8817,26 @@ def _render_cdf_plot(
     *,
     headline_only: bool = False,
     paired_headlines_only: bool = False,
+    lifecycle_headlines_only: bool = False,
 ) -> tuple[int, int, int, int]:
+    if sum((headline_only, paired_headlines_only, lifecycle_headlines_only)) > 1:
+        raise TechnoeconomicExportError(
+            "CDF plot headline modes are mutually exclusive"
+        )
     paired_metric_ids = (
-        technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
-        technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+        ("lcoe_solectria", "lcoe_solaredge")
+        if lifecycle_headlines_only
+        else (
+            technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+        )
+    )
+    comparison_headlines_only = (
+        paired_headlines_only or lifecycle_headlines_only
     )
     available: list[tuple[str, Mapping[str, Any]]] = []
     for metric_id, summary in sorted(_metric_summaries(metadata).items()):
-        if paired_headlines_only and metric_id not in paired_metric_ids:
+        if comparison_headlines_only and metric_id not in paired_metric_ids:
             continue
         if (
             headline_only
@@ -8812,7 +8846,7 @@ def _render_cdf_plot(
             continue
         if isinstance(summary, Mapping) and isinstance(summary.get("cdf"), Mapping):
             available.append((metric_id, summary))
-    if paired_headlines_only:
+    if comparison_headlines_only:
         from matplotlib.ticker import PercentFormatter
 
         available.sort(key=lambda item: paired_metric_ids.index(item[0]))
@@ -8826,13 +8860,13 @@ def _render_cdf_plot(
         point_count = 0
         display_point_count = 0
         styles = {
-            technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE: (
+            paired_metric_ids[0]: (
                 "Solectria",
                 _GOLD,
                 "--",
                 0.90,
             ),
-            technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE: (
+            paired_metric_ids[1]: (
                 "SolarEdge",
                 _BLUE,
                 "-",
@@ -8948,11 +8982,11 @@ def _render_cdf_plot(
         summary_by_metric = dict(available)
         percentile_rows = (
             (
-                technoeconomic_kernel.COMMERCIAL_STANDALONE_FIELD_LCOE,
+                paired_metric_ids[1],
                 0.095,
             ),
             (
-                technoeconomic_kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+                paired_metric_ids[0],
                 0.055,
             ),
         )
@@ -9508,6 +9542,7 @@ def generate_technoeconomic_exports(
             lifecycle_plot_metadata["cdf_plot"] = _render_cdf_plot(
                 calculation.metadata,
                 cdf_pending,
+                lifecycle_headlines_only=True,
             )
             lifecycle_plot_metadata["sensitivity_plot"] = _render_sensitivity_plot(
                 calculation.metadata,

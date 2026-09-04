@@ -18,6 +18,9 @@
             'paired-yearwise-balanced-across-realizations-independent-across-project-years-v1';
         const TECHNOECONOMIC_LIFECYCLE_TEMPLATE_REFERENCE =
             'tea-v6-provisional-template-v1';
+        const TECHNOECONOMIC_LIFECYCLE_LCOE_CDF_CHART_CONTRACT =
+            'lifecycle_system_lcoe_cdf_v2';
+        const TECHNOECONOMIC_SOURCE_REFRESH_TIMEOUT_MS = 15000;
         const TECHNOECONOMIC_LIFECYCLE_TEMPLATE_DEFAULTS = Object.freeze({
             lifecycleSourceBasis: 'gross', lifecycleReliabilityMode: 'event',
             lifecycleElectricityValue: '0.07', lifecycleElectricityGrowth: '0',
@@ -206,6 +209,7 @@
         let technoeconomicSources = [];
         let technoeconomicDraftRevision = 0;
         let technoeconomicPendingSubmission = null;
+        let technoeconomicPendingSourceId = '';
         let technoeconomicSourceRequestRevision = 0;
         let technoeconomicStatusRequestRevision = 0;
         let technoeconomicSourceAbortController = null;
@@ -1607,14 +1611,8 @@
         }
 
         function technoeconomicStandaloneEnsureSourceOption(sourceId) {
-            const select = technoeconomicElements.standaloneSourceSelect;
-            if (!select || !sourceId || Array.from(select.options || []).some(
-                (option) => option.value === sourceId
-            )) return;
-            select.appendChild(technoeconomicNode('option', {
-                value: sourceId,
-                text: `Saved Annual source ${sourceId} (refresh to verify)`,
-            }));
+            if (!sourceId) return;
+            technoeconomicPendingSourceId = sourceId;
         }
 
         function technoeconomicStandaloneApplyDistributionDraft(
@@ -3463,6 +3461,13 @@
                 : 'Unavailable';
         }
 
+        function technoeconomicStandaloneFormatLcoeTableValue(value) {
+            const number = technoeconomicStandaloneOptionalNumber(value);
+            return number !== null
+                ? technoeconomicFormatNumber(number * 1000, 1)
+                : 'Unavailable';
+        }
+
         function technoeconomicStandaloneFormatUsd(value, suffix = '') {
             const number = technoeconomicStandaloneOptionalNumber(value);
             if (number === null) return 'Unavailable';
@@ -3487,6 +3492,9 @@
         function technoeconomicSetStandaloneResultPresentation(kind) {
             const lifecycle = kind === 'lifecycle';
             const standalone = kind === 'standalone';
+            if (technoeconomicElements.standaloneResults) {
+                technoeconomicElements.standaloneResults.dataset.presentation = kind;
+            }
             if (technoeconomicElements.legacyPercentilePanel) {
                 technoeconomicElements.legacyPercentilePanel.hidden = lifecycle;
             }
@@ -3510,12 +3518,12 @@
             }
             if (technoeconomicElements.standaloneCdfCaption) {
                 technoeconomicElements.standaloneCdfCaption.textContent = lifecycle
-                    ? 'The official sealed chart shows the modeled upgrade-NPV distribution; positive values favor SolarEdge.'
+                    ? 'The curves show the probability that modeled lifecycle LCOE is at or below each real-USD value for Solectria and SolarEdge.'
                     : 'The curve shows the probability that modeled LCOE is at or below each real-USD value.';
             }
             if (technoeconomicElements.standaloneCdfPlot) {
                 technoeconomicElements.standaloneCdfPlot.alt = lifecycle
-                    ? 'Empirical distribution of SolarEdge-relative-to-Solectria upgrade NPV'
+                    ? 'Empirical cumulative distributions of modeled Solectria and SolarEdge lifecycle LCOE'
                     : standalone
                         ? 'Empirical cumulative distribution of modeled commercial SolarEdge lifecycle LCOE'
                         : 'Empirical cumulative distributions of modeled commercial Solectria and SolarEdge lifecycle LCOE';
@@ -3988,11 +3996,15 @@
             if (body) {
                 body.replaceChildren();
                 const summariesByColumn = [
-                    [upgradeNpv, technoeconomicStandaloneFormatUsd],
-                    [lcoeSolectria, technoeconomicStandaloneFormatLcoePerMwh],
-                    [lcoeSolarEdge, technoeconomicStandaloneFormatLcoePerMwh],
-                    [deltaLcoe, technoeconomicStandaloneFormatLcoePerMwh],
-                    [lcoo, technoeconomicStandaloneFormatLcoePerMwh],
+                    [upgradeNpv, technoeconomicStandaloneFormatUsd, 'Upgrade NPV (USD)'],
+                    [lcoeSolectria, technoeconomicStandaloneFormatLcoeTableValue,
+                        'Solectria LCOE (USD/MWh)'],
+                    [lcoeSolarEdge, technoeconomicStandaloneFormatLcoeTableValue,
+                        'SolarEdge LCOE (USD/MWh)'],
+                    [deltaLcoe, technoeconomicStandaloneFormatLcoeTableValue,
+                        'Delta LCOE, SE minus SO (USD/MWh)'],
+                    [lcoo, technoeconomicStandaloneFormatLcoeTableValue,
+                        'LCOO, SE minus SO (USD/MWh)'],
                 ];
                 for (const [key, label] of [
                     ['p10', 'P10'], ['p50', 'P50 (median)'], ['p90', 'P90'],
@@ -4000,10 +4012,12 @@
                     const row = technoeconomicNode('tr');
                     row.dataset.percentile = key;
                     row.append(technoeconomicNode('th', {text: label, scope: 'row'}));
-                    for (const [summary, formatter] of summariesByColumn) {
-                        row.append(technoeconomicNode('td', {
+                    for (const [summary, formatter, columnLabel] of summariesByColumn) {
+                        const cell = technoeconomicNode('td', {
                             text: formatter(technoeconomicStandalonePercentile(summary, key)),
-                        }));
+                        });
+                        cell.dataset.label = columnLabel;
+                        row.append(cell);
                     }
                     body.appendChild(row);
                 }
@@ -4104,12 +4118,20 @@
             const safe = (artifactId) => technoeconomicSafeArtifactUrl(
                 job.job_id, artifactId, technoeconomicPlainObject(entries[artifactId]).url
             );
-            const cdfUrl = safe('cdf_plot');
+            const cdfArtifact = technoeconomicPlainObject(entries.cdf_plot);
+            const hasLegacyCdf = Boolean(cdfArtifact.url)
+                && cdfArtifact.chart_contract_id
+                    !== TECHNOECONOMIC_LIFECYCLE_LCOE_CDF_CHART_CONTRACT;
+            const cdfUrl = cdfArtifact.chart_contract_id
+                === TECHNOECONOMIC_LIFECYCLE_LCOE_CDF_CHART_CONTRACT
+                ? safe('cdf_plot') : null;
             technoeconomicSetPlot(
                 technoeconomicElements.standaloneCdfPlot,
                 technoeconomicElements.standaloneCdfFallback,
                 cdfUrl,
-                'The verified upgrade-NPV CDF chart is not available.'
+                hasLegacyCdf
+                    ? 'This saved v6 result uses the earlier multi-metric diagnostic chart. Recalculate to generate the focused Solectria and SolarEdge lifecycle LCOE cumulative distributions.'
+                    : 'The verified Solectria and SolarEdge lifecycle LCOE CDF chart is not available.'
             );
             technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, cdfUrl);
             technoeconomicSetDownload(
@@ -5224,14 +5246,9 @@
         }
 
         function technoeconomicEnsureSourceOption(sourceId) {
-            const select = technoeconomicElements.sourceSelect;
-            if (!select || !sourceId || Array.from(select.options).some((option) => option.value === sourceId)) {
-                return;
+            if (sourceId && !technoeconomicPendingSourceId) {
+                technoeconomicPendingSourceId = sourceId;
             }
-            const option = technoeconomicNode('option', {
-                value: sourceId, text: `Saved Annual source ${sourceId} (refresh to verify)`,
-            });
-            select.appendChild(option);
         }
 
         function applyTechnoeconomicFormState(value) {
@@ -6397,8 +6414,46 @@
             if (technoeconomicElements.sourceStatusPanel) {
                 technoeconomicElements.sourceStatusPanel.dataset.state = state;
             }
+            if (technoeconomicElements.standaloneSourceStatusPanel) {
+                technoeconomicElements.standaloneSourceStatusPanel.dataset.state = state;
+            }
             if (technoeconomicElements.sourceStatus) technoeconomicElements.sourceStatus.textContent = title;
             if (technoeconomicElements.sourceDetail) technoeconomicElements.sourceDetail.textContent = detail;
+            if (technoeconomicElements.standaloneSourceStatus) {
+                technoeconomicElements.standaloneSourceStatus.textContent = title;
+            }
+            if (technoeconomicElements.standaloneSourceHelp) {
+                technoeconomicElements.standaloneSourceHelp.textContent = detail;
+            }
+        }
+
+        function technoeconomicSetSourceRefreshBusy(busy) {
+            for (const button of [
+                technoeconomicElements.refreshSourcesButton,
+                technoeconomicElements.standaloneRefreshSourcesButton,
+            ]) {
+                if (!button) continue;
+                button.disabled = false;
+                button.textContent = busy ? 'Retry source check' : 'Refresh sources';
+                button.setAttribute?.('aria-busy', String(busy));
+            }
+            for (const select of [
+                technoeconomicElements.sourceSelect,
+                technoeconomicElements.standaloneSourceSelect,
+            ]) select?.setAttribute?.('aria-busy', String(busy));
+        }
+
+        function technoeconomicSetSourcePlaceholder(text) {
+            for (const select of [
+                technoeconomicElements.sourceSelect,
+                technoeconomicElements.standaloneSourceSelect,
+            ]) {
+                if (!select) continue;
+                const placeholder = Array.from(select.options || []).find(
+                    (option) => option.value === ''
+                );
+                if (placeholder) placeholder.textContent = text;
+            }
         }
 
         function technoeconomicDefinition(root, term, description) {
@@ -6855,14 +6910,19 @@
         function technoeconomicRenderSourceOptions(selectedId = '') {
             const select = technoeconomicElements.sourceSelect;
             if (!select) return;
-            const ordered = [...technoeconomicSources].sort((left, right) =>
-                String(right.provenance?.completed_at || '').localeCompare(
-                    String(left.provenance?.completed_at || '')
-                ));
-            const resolvedSelectedId = selectedId
+            const ordered = technoeconomicSources.filter(
+                (source) => source?.eligible === true
+            ).sort((left, right) => String(
+                right.provenance?.completed_at || ''
+            ).localeCompare(String(left.provenance?.completed_at || '')));
+            const requestedSelectedId = selectedId
+                || technoeconomicPendingSourceId
                 || technoeconomicElements.standaloneSourceSelect?.value
-                || ordered.find((source) => source.eligible === true)?.source_annual_job_id
+                || technoeconomicElements.sourceSelect?.value
                 || '';
+            const resolvedSelectedId = ordered.some(
+                (source) => source.source_annual_job_id === requestedSelectedId
+            ) ? requestedSelectedId : ordered[0]?.source_annual_job_id || '';
             const populate = (target) => {
                 if (!target) return;
                 target.replaceChildren(technoeconomicNode('option', {
@@ -6871,25 +6931,16 @@
                 for (const source of ordered) {
                     const years = Array.isArray(source.eligible_years)
                         ? ` | ${source.eligible_years.join(', ')}` : '';
-                    const label = `${source.source_annual_job_id}${years}${
-                        source.eligible === true ? '' : ` | ineligible: ${source.reason_code || 'verification failed'}`
-                    }`;
                     target.appendChild(technoeconomicNode('option', {
-                        value: source.source_annual_job_id, text: label,
-                        disabled: source.eligible !== true,
-                    }));
-                }
-                if (resolvedSelectedId
-                    && !ordered.some((source) => source.source_annual_job_id === resolvedSelectedId)) {
-                    target.appendChild(technoeconomicNode('option', {
-                        value: resolvedSelectedId,
-                        text: `${resolvedSelectedId} | refresh required`,
+                        value: source.source_annual_job_id,
+                        text: `${source.source_annual_job_id}${years}`,
                     }));
                 }
                 target.value = resolvedSelectedId;
             };
             populate(select);
             populate(technoeconomicElements.standaloneSourceSelect);
+            technoeconomicPendingSourceId = '';
             technoeconomicRenderSelectedSource();
             technoeconomicRenderStandaloneDraft();
             if (technoeconomicJob?.state === 'done' && technoeconomicJob.result) {
@@ -6900,24 +6951,28 @@
         async function refreshTechnoeconomicSources(options = {}) {
             const revision = ++technoeconomicSourceRequestRevision;
             if (technoeconomicSourceAbortController) technoeconomicSourceAbortController.abort();
-            technoeconomicSourceAbortController = new AbortController();
-            const selectedId = options.selectedId
-                ?? technoeconomicElements.standaloneSourceSelect?.value
-                ?? technoeconomicElements.sourceSelect?.value
-                ?? '';
-            if (technoeconomicElements.refreshSourcesButton) {
-                technoeconomicElements.refreshSourcesButton.disabled = true;
-            }
-            if (technoeconomicElements.standaloneRefreshSourcesButton) {
-                technoeconomicElements.standaloneRefreshSourcesButton.disabled = true;
-            }
+            const controller = new AbortController();
+            technoeconomicSourceAbortController = controller;
+            let timedOut = false;
+            const timeoutId = setTimeout(() => {
+                timedOut = true;
+                controller.abort();
+            }, TECHNOECONOMIC_SOURCE_REFRESH_TIMEOUT_MS);
+            const selectedId = options.selectedId !== undefined
+                ? options.selectedId
+                : technoeconomicPendingSourceId
+                    || technoeconomicElements.standaloneSourceSelect?.value
+                    || technoeconomicElements.sourceSelect?.value
+                    || '';
+            technoeconomicSetSourceRefreshBusy(true);
+            technoeconomicSetSourcePlaceholder('Checking verified Annual Simulations…');
             technoeconomicSetSourceState(
                 'loading', 'Checking Annual Simulation sources',
-                'The server is verifying immutable artifacts, capacities, coverage, and calibration lineage.'
+                'Eligible runs will appear automatically. Choose Retry source check if this request stalls.'
             );
             try {
                 const body = await technoeconomicFetchJson('/api/technoeconomic/sources', {
-                    signal: technoeconomicSourceAbortController.signal,
+                    signal: controller.signal,
                 });
                 if (revision !== technoeconomicSourceRequestRevision) return technoeconomicSources;
                 const rows = Array.isArray(body.sources) ? body.sources : [];
@@ -6927,27 +6982,37 @@
                 }).map((row) => ({...row}));
                 technoeconomicCloseStaleAdvancedPreview();
                 technoeconomicRenderSourceOptions(selectedId);
-                if (!technoeconomicSources.length) technoeconomicSetSourceState(
-                    'empty', 'No verified Annual Simulation sources',
-                    'Complete a calibrated Annual Simulation, then refresh this list.'
-                );
+                if (!technoeconomicSources.some((source) => source.eligible === true)) {
+                    technoeconomicSetSourceState(
+                        'empty', 'No verified Annual Simulation sources',
+                        'Complete a calibrated Annual Simulation, then refresh this list.'
+                    );
+                }
                 return technoeconomicSources;
             } catch (error) {
-                if (revision !== technoeconomicSourceRequestRevision || error.code === 'request_aborted') {
+                if (revision !== technoeconomicSourceRequestRevision) {
                     return technoeconomicSources;
                 }
+                if (error.code === 'request_aborted' && !timedOut) {
+                    return technoeconomicSources;
+                }
+                technoeconomicSetSourcePlaceholder(
+                    timedOut
+                        ? 'Source check timed out — refresh to retry'
+                        : 'Sources unavailable — refresh to retry'
+                );
                 technoeconomicSetSourceState(
-                    'reconnecting', 'Could not refresh sources', error.message
+                    'reconnecting',
+                    timedOut ? 'Source check timed out' : 'Could not refresh sources',
+                    timedOut
+                        ? 'The server did not answer within 15 seconds. Choose Refresh sources to try again.'
+                        : error.message
                 );
                 return technoeconomicSources;
             } finally {
-                if (revision === technoeconomicSourceRequestRevision
-                    && technoeconomicElements.refreshSourcesButton) {
-                    technoeconomicElements.refreshSourcesButton.disabled = false;
-                }
-                if (revision === technoeconomicSourceRequestRevision
-                    && technoeconomicElements.standaloneRefreshSourcesButton) {
-                    technoeconomicElements.standaloneRefreshSourcesButton.disabled = false;
+                clearTimeout(timeoutId);
+                if (revision === technoeconomicSourceRequestRevision) {
+                    technoeconomicSetSourceRefreshBusy(false);
                 }
             }
         }
