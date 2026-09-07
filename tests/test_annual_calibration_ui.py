@@ -419,7 +419,10 @@ console.log(JSON.stringify({{
     def test_validation_dates_reset_after_cached_form_restore(self) -> None:
         for marker in (
             "function applyValidationDateDefaults()",
-            "fromInput.value = '2025-12-12'",
+            "fromInput.value = bazefieldDefaultStartDate()",
+            "function bazefieldDefaultStartDate(value = new Date())",
+            "const BAZEFIELD_SITE_FIRST_DATE = '2025-12-12'",
+            "shiftIsoDate(dateIsoInTimeZone(value), -365)",
             "dateIsoInTimeZone()",
             "timeZone = 'America/Denver'",
             "toInput.max = today",

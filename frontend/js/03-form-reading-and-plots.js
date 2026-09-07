@@ -72,11 +72,18 @@
             return value.toISOString().slice(0, 10);
         }
 
+        function bazefieldDefaultStartDate(value = new Date()) {
+            const rollingStart = shiftIsoDate(dateIsoInTimeZone(value), -365);
+            return rollingStart < BAZEFIELD_SITE_FIRST_DATE
+                ? BAZEFIELD_SITE_FIRST_DATE
+                : rollingStart;
+        }
+
         function applyValidationDateDefaults() {
             const fromInput = document.getElementById('fromDate');
             const toInput = document.getElementById('toDate');
             const today = dateIsoInTimeZone();
-            fromInput.value = '2025-12-12';
+            fromInput.value = bazefieldDefaultStartDate();
             fromInput.max = today;
             toInput.value = today;
             toInput.max = today;

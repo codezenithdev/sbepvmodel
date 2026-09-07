@@ -213,6 +213,9 @@
         let technoeconomicSourceRequestRevision = 0;
         let technoeconomicStatusRequestRevision = 0;
         let technoeconomicSourceAbortController = null;
+        let technoeconomicSourceRefreshPromise = null;
+        let technoeconomicSourceRefreshTrailing = false;
+        let technoeconomicSourceRefreshSelectedId = '';
         let technoeconomicStatusAbortController = null;
         let technoeconomicLifecycleAbortController = null;
         let technoeconomicSubmissionAbortController = null;
@@ -6443,6 +6446,17 @@
             ]) select?.setAttribute?.('aria-busy', String(busy));
         }
 
+        function technoeconomicSetSourceRefreshQueued() {
+            for (const button of [
+                technoeconomicElements.refreshSourcesButton,
+                technoeconomicElements.standaloneRefreshSourcesButton,
+            ]) {
+                if (!button) continue;
+                button.textContent = 'Retry queued';
+                button.setAttribute?.('aria-busy', 'true');
+            }
+        }
+
         function technoeconomicSetSourcePlaceholder(text) {
             for (const select of [
                 technoeconomicElements.sourceSelect,
@@ -6948,9 +6962,42 @@
             }
         }
 
-        async function refreshTechnoeconomicSources(options = {}) {
+        function refreshTechnoeconomicSources(options = {}) {
+            const requestedSelectedId = options.selectedId !== undefined
+                ? options.selectedId
+                : technoeconomicPendingSourceId
+                    || technoeconomicElements.standaloneSourceSelect?.value
+                    || technoeconomicElements.sourceSelect?.value
+                    || '';
+            if (requestedSelectedId) {
+                technoeconomicSourceRefreshSelectedId = requestedSelectedId;
+            }
+            if (technoeconomicSourceRefreshPromise) {
+                if (options.invalidate === true || options.retry === true) {
+                    technoeconomicSourceRefreshTrailing = true;
+                }
+                if (options.retry === true) technoeconomicSetSourceRefreshQueued();
+                return technoeconomicSourceRefreshPromise;
+            }
+            technoeconomicSourceRefreshPromise = technoeconomicDrainSourceRefreshes();
+            return technoeconomicSourceRefreshPromise;
+        }
+
+        async function technoeconomicDrainSourceRefreshes() {
+            try {
+                do {
+                    technoeconomicSourceRefreshTrailing = false;
+                    await technoeconomicRefreshSourcesOnce();
+                } while (technoeconomicSourceRefreshTrailing);
+                return technoeconomicSources;
+            } finally {
+                technoeconomicSetSourceRefreshBusy(false);
+                technoeconomicSourceRefreshPromise = null;
+            }
+        }
+
+        async function technoeconomicRefreshSourcesOnce() {
             const revision = ++technoeconomicSourceRequestRevision;
-            if (technoeconomicSourceAbortController) technoeconomicSourceAbortController.abort();
             const controller = new AbortController();
             technoeconomicSourceAbortController = controller;
             let timedOut = false;
@@ -6958,12 +7005,6 @@
                 timedOut = true;
                 controller.abort();
             }, TECHNOECONOMIC_SOURCE_REFRESH_TIMEOUT_MS);
-            const selectedId = options.selectedId !== undefined
-                ? options.selectedId
-                : technoeconomicPendingSourceId
-                    || technoeconomicElements.standaloneSourceSelect?.value
-                    || technoeconomicElements.sourceSelect?.value
-                    || '';
             technoeconomicSetSourceRefreshBusy(true);
             technoeconomicSetSourcePlaceholder('Checking verified Annual Simulations…');
             technoeconomicSetSourceState(
@@ -6981,7 +7022,16 @@
                     return typeof id === 'string' && id.length > 0 && id.length <= 200;
                 }).map((row) => ({...row}));
                 technoeconomicCloseStaleAdvancedPreview();
-                technoeconomicRenderSourceOptions(selectedId);
+                technoeconomicRenderSourceOptions(
+                    technoeconomicSourceRefreshSelectedId
+                    || technoeconomicPendingSourceId
+                    || technoeconomicElements.standaloneSourceSelect?.value
+                    || technoeconomicElements.sourceSelect?.value
+                    || ''
+                );
+                if (!technoeconomicSourceRefreshTrailing) {
+                    technoeconomicSourceRefreshSelectedId = '';
+                }
                 if (!technoeconomicSources.some((source) => source.eligible === true)) {
                     technoeconomicSetSourceState(
                         'empty', 'No verified Annual Simulation sources',
@@ -7011,8 +7061,8 @@
                 return technoeconomicSources;
             } finally {
                 clearTimeout(timeoutId);
-                if (revision === technoeconomicSourceRequestRevision) {
-                    technoeconomicSetSourceRefreshBusy(false);
+                if (technoeconomicSourceAbortController === controller) {
+                    technoeconomicSourceAbortController = null;
                 }
             }
         }
@@ -10025,10 +10075,10 @@
                 }
             });
             technoeconomicElements.refreshSourcesButton?.addEventListener(
-                'click', () => refreshTechnoeconomicSources()
+                'click', () => refreshTechnoeconomicSources({retry: true})
             );
             technoeconomicElements.standaloneRefreshSourcesButton?.addEventListener(
-                'click', () => refreshTechnoeconomicSources()
+                'click', () => refreshTechnoeconomicSources({retry: true})
             );
             technoeconomicElements.openAnnualButton?.addEventListener('click', () => {
                 if (typeof switchMode === 'function') switchMode('annual');

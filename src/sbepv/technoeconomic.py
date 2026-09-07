@@ -81,6 +81,8 @@ LIFECYCLE_RNG_DOMAIN = b"sbepv-tea-lhs-v2\0"
 LIFECYCLE_MEMORY_BASE_BYTES = 256 * 1024 * 1024
 LIFECYCLE_MEMORY_LIMIT_BYTES = int(1.2 * 1024 * 1024 * 1024)
 LIFECYCLE_EXPORT_CELL_LIMIT = 8_000_000
+LIFECYCLE_SENSITIVITY_WORK_LIMIT = 25_000_000
+LIFECYCLE_REALIZATION_COLUMN_OVERHEAD = 64
 
 R2_ENTRY_THRESHOLD = 1e-6
 R2_TIE_ABSOLUTE_TOLERANCE = 1e-12
@@ -1698,10 +1700,78 @@ def allocate_weather_paths_v2(
     return paths
 
 
+def _lifecycle_distribution_specs(
+    discount_rate: DistributionSpec,
+    lifecycle: PairedLifecycleSpec,
+) -> tuple[DistributionSpec, ...]:
+    specs: list[DistributionSpec] = [
+        discount_rate,
+        lifecycle.electricity_value,
+        lifecycle.electricity_value_real_growth,
+    ]
+    for system in lifecycle.systems:
+        specs.extend(
+            (
+                system.degradation,
+                system.base_availability,
+                system.base_om_cost_per_w_year,
+                system.base_om_real_growth,
+                system.decommissioning_cost,
+                system.salvage_value,
+            )
+        )
+        specs.extend(line.cost_per_w for line in system.initial_cost_lines)
+        for line in system.scheduled_costs:
+            specs.extend((line.cost, line.real_cost_growth))
+        for component in system.components:
+            specs.extend(
+                (
+                    component.weibull_beta,
+                    component.weibull_eta_years,
+                    component.repair_hours,
+                    component.logistics_hours,
+                    component.emergency_unit_cost,
+                    component.restock_unit_cost,
+                    component.labor_cost,
+                    component.mobilization_cost,
+                    component.real_cost_growth,
+                )
+            )
+    for event in lifecycle.common_cause_events:
+        specs.extend(
+            (
+                event.annual_probability,
+                event.downtime_hours,
+                event.cost_per_event,
+                event.real_cost_growth,
+            )
+        )
+    return tuple(specs)
+
+
+def _distribution_is_nonfixed(spec: DistributionSpec) -> bool:
+    return spec.family != "fixed" and not (
+        spec.family in {"uniform", "triangular"} and spec.low == spec.high
+    )
+
+
+def lifecycle_sensitivity_predictor_count(
+    discount_rate: DistributionSpec,
+    lifecycle: PairedLifecycleSpec,
+) -> int:
+    """Return the exact v6 predictor count charged by the CPU admission gate."""
+
+    return sum(
+        _distribution_is_nonfixed(spec)
+        for spec in _lifecycle_distribution_specs(discount_rate, lifecycle)
+    )
+
+
 def estimate_lifecycle_memory(
     n: int,
     project_life_years: int,
     component_count: int,
+    common_cause_event_count: int = 0,
 ) -> Mapping[str, int]:
     """Conservatively estimate the v6 in-memory ndarray high-water mark."""
 
@@ -1711,12 +1781,23 @@ def estimate_lifecycle_memory(
         raise TechnoeconomicValidationError(
             "component_count must be a nonnegative integer."
         )
+    if (
+        not _is_int(common_cause_event_count)
+        or int(common_cause_event_count) < 0
+    ):
+        raise TechnoeconomicValidationError(
+            "common_cause_event_count must be a nonnegative integer."
+        )
     components = int(component_count)
+    common_causes = int(common_cause_event_count)
     # V6 deliberately rolls cohort state.  The estimate includes realization
     # vectors, both systems' annual arrays, per-component annual audit arrays,
     # and one rolling cohort workspace rather than an n*C*L*L history cube.
+    # Each common-cause event adds four sampled realization vectors and retains
+    # six n-by-life matrices for event/expected events, downtime, and cost.
     planned_float64_values = n * (
         40 + 34 * life + components * (13 * life + 2 * (life + 1))
+        + common_causes * (4 + 6 * life)
     )
     planned_int64_values = n * (life + components * (7 * life + life + 1))
     planned_bytes = 8 * (planned_float64_values + planned_int64_values)
@@ -1731,8 +1812,10 @@ def estimate_lifecycle_memory(
 def lifecycle_safe_realization_max(
     project_life_years: int,
     component_count: int,
+    common_cause_event_count: int = 0,
     *,
     realization_export_columns: int = 28,
+    sensitivity_predictor_count: int = 0,
 ) -> Mapping[str, int | str]:
     """Return the request-specific v6 ceiling and its limiting dimension."""
 
@@ -1745,20 +1828,44 @@ def lifecycle_safe_realization_max(
         raise TechnoeconomicValidationError(
             "realization_export_columns must be a positive integer."
         )
+    if (
+        not _is_int(sensitivity_predictor_count)
+        or int(sensitivity_predictor_count) < 0
+    ):
+        raise TechnoeconomicValidationError(
+            "sensitivity_predictor_count must be a nonnegative integer."
+        )
     components = int(component_count)
+    if (
+        not _is_int(common_cause_event_count)
+        or int(common_cause_event_count) < 0
+    ):
+        raise TechnoeconomicValidationError(
+            "common_cause_event_count must be a nonnegative integer."
+        )
+    common_causes = int(common_cause_event_count)
     columns = int(realization_export_columns)
+    predictors = int(sensitivity_predictor_count)
     per_realization_planned_bytes = int(
-        estimate_lifecycle_memory(1, life, components)["planned_ndarray_bytes"]
+        estimate_lifecycle_memory(1, life, components, common_causes)[
+            "planned_ndarray_bytes"
+        ]
     )
     available = max(0, LIFECYCLE_MEMORY_LIMIT_BYTES - LIFECYCLE_MEMORY_BASE_BYTES)
     memory_max = available // max(1, 2 * per_realization_planned_bytes)
     export_max = LIFECYCLE_EXPORT_CELL_LIMIT // columns
-    safe_max = min(MAX_REALIZATIONS, memory_max, export_max)
+    sensitivity_max = (
+        MAX_REALIZATIONS
+        if predictors == 0
+        else LIFECYCLE_SENSITIVITY_WORK_LIMIT // predictors**2
+    )
+    safe_max = min(MAX_REALIZATIONS, memory_max, export_max, sensitivity_max)
     limiting = min(
         (
             (MAX_REALIZATIONS, "public_realization_ceiling"),
             (memory_max, "estimated_peak_memory"),
             (export_max, "realization_export_cells"),
+            (sensitivity_max, "sensitivity_work_budget"),
         ),
         key=lambda item: (item[0], item[1]),
     )[1]
@@ -1766,6 +1873,10 @@ def lifecycle_safe_realization_max(
         "safe_max_realizations": int(safe_max),
         "memory_safe_max": int(memory_max),
         "export_safe_max": int(export_max),
+        "realization_export_columns": columns,
+        "sensitivity_safe_max": int(sensitivity_max),
+        "sensitivity_predictor_count": predictors,
+        "sensitivity_work_limit": LIFECYCLE_SENSITIVITY_WORK_LIMIT,
         "public_ceiling": MAX_REALIZATIONS,
         "limiting_dimension": limiting,
     }
@@ -4170,19 +4281,6 @@ def _validate_lifecycle_request(
             )
         )
 
-    safe = lifecycle_safe_realization_max(
-        life,
-        component_count,
-        realization_export_columns=64 + len(input_owners),
-    )
-    if n > int(safe["safe_max_realizations"]):
-        raise TechnoeconomicValidationError(
-            f"Requested {n} realizations exceeds the v6 safe maximum "
-            f"{safe['safe_max_realizations']} limited by {safe['limiting_dimension']}."
-        )
-    for endpoint in distribution_support(discount):
-        annuity_factor_and_crf(endpoint, life)
-
     normalized_lifecycle = replace(
         lifecycle,
         target_capacity_w=target_capacity,
@@ -4194,7 +4292,7 @@ def _validate_lifecycle_request(
         electricity_value_evidence=electricity_value_evidence,
         **tolerance_values,
     )
-    return replace(
+    normalized_request = replace(
         request,
         n=n,
         seed=seed,
@@ -4206,6 +4304,27 @@ def _validate_lifecycle_request(
         constant_dollar_cost_year=int(request.constant_dollar_cost_year),
         paired_lifecycle=normalized_lifecycle,
     )
+    sensitivity_predictor_count = lifecycle_sensitivity_predictor_count(
+        discount,
+        normalized_lifecycle,
+    )
+    safe = lifecycle_safe_realization_max(
+        life,
+        component_count,
+        len(common_causes),
+        realization_export_columns=(
+            LIFECYCLE_REALIZATION_COLUMN_OVERHEAD + len(input_owners)
+        ),
+        sensitivity_predictor_count=sensitivity_predictor_count,
+    )
+    if n > int(safe["safe_max_realizations"]):
+        raise TechnoeconomicValidationError(
+            f"Requested {n} realizations exceeds the v6 safe maximum "
+            f"{safe['safe_max_realizations']} limited by {safe['limiting_dimension']}."
+        )
+    for endpoint in distribution_support(discount):
+        annuity_factor_and_crf(endpoint, life)
+    return normalized_request
 
 
 def validate_request(request: TechnoeconomicRequest) -> TechnoeconomicRequest:
@@ -6065,49 +6184,7 @@ def _v6_distribution_specs(request: TechnoeconomicRequest) -> tuple[Distribution
     lifecycle = request.paired_lifecycle
     if lifecycle is None:
         raise TechnoeconomicInvariantError("Validated v6 request lost paired_lifecycle.")
-    specs: list[DistributionSpec] = [
-        request.discount_rate,
-        lifecycle.electricity_value,
-        lifecycle.electricity_value_real_growth,
-    ]
-    for system in lifecycle.systems:
-        specs.extend(
-            [
-                system.degradation,
-                system.base_availability,
-                system.base_om_cost_per_w_year,
-                system.base_om_real_growth,
-                system.decommissioning_cost,
-                system.salvage_value,
-            ]
-        )
-        specs.extend(line.cost_per_w for line in system.initial_cost_lines)
-        for line in system.scheduled_costs:
-            specs.extend((line.cost, line.real_cost_growth))
-        for component in system.components:
-            specs.extend(
-                (
-                    component.weibull_beta,
-                    component.weibull_eta_years,
-                    component.repair_hours,
-                    component.logistics_hours,
-                    component.emergency_unit_cost,
-                    component.restock_unit_cost,
-                    component.labor_cost,
-                    component.mobilization_cost,
-                    component.real_cost_growth,
-                )
-            )
-    for event in lifecycle.common_cause_events:
-        specs.extend(
-            (
-                event.annual_probability,
-                event.downtime_hours,
-                event.cost_per_event,
-                event.real_cost_growth,
-            )
-        )
-    return tuple(specs)
+    return _lifecycle_distribution_specs(request.discount_rate, lifecycle)
 
 
 def _v6_oldest_first(
@@ -6949,6 +7026,10 @@ def _run_technoeconomic_v6(
         raise TechnoeconomicInvariantError("Validated v6 request lost lifecycle inputs.")
     system_specs = {system.technology: system for system in lifecycle.systems}
     component_count = sum(len(system.components) for system in lifecycle.systems)
+    sensitivity_predictor_count = lifecycle_sensitivity_predictor_count(
+        request.discount_rate,
+        lifecycle,
+    )
 
     checkpoint(0.06, "Generating domain-separated lifecycle samples")
     samples = generate_lhs_v2(
@@ -7398,6 +7479,8 @@ def _run_technoeconomic_v6(
     summaries["cost_coverage_audit"] = tuple(coverage_rows)
 
     provisional_inputs: list[str] = []
+    if lifecycle.electricity_value_evidence.get("status") == "provisional":
+        provisional_inputs.append("electricity-value")
     for technology in ("solectria", "solaredge"):
         system = system_specs[technology]
         if system.evidence.get("status") == "provisional":
@@ -7411,6 +7494,23 @@ def _run_technoeconomic_v6(
         for component in system.components:
             if component.evidence.get("status") == "provisional":
                 provisional_inputs.append(f"component:{technology}:{component.component_id}")
+            if (
+                component.warranty is not None
+                and component.warranty.evidence.get("status") == "provisional"
+            ):
+                provisional_inputs.append(
+                    f"warranty:{technology}:{component.component_id}"
+                )
+            for item in component.preventive_replacements:
+                if item.evidence.get("status") == "provisional":
+                    provisional_inputs.append(
+                        f"preventive:{technology}:{component.component_id}:{item.year}"
+                    )
+        for item in system.source_availability_by_year:
+            if item.evidence.get("status") == "provisional":
+                provisional_inputs.append(
+                    f"source-availability:{technology}:{item.year}"
+                )
     for event in lifecycle.common_cause_events:
         if event.evidence.get("status") == "provisional":
             provisional_inputs.append(f"common:{event.event_id}")
@@ -7648,11 +7748,17 @@ def _run_technoeconomic_v6(
         request.n,
         request.project_life_years,
         component_count,
+        len(lifecycle.common_cause_events),
     )
     safe_max = lifecycle_safe_realization_max(
         request.project_life_years,
         component_count,
-        realization_export_columns=len(table),
+        len(lifecycle.common_cause_events),
+        realization_export_columns=(
+            LIFECYCLE_REALIZATION_COLUMN_OVERHEAD
+            + len(_v6_distribution_specs(request))
+        ),
+        sensitivity_predictor_count=sensitivity_predictor_count,
     )
     provenance = {
         "result_version": LIFECYCLE_RESULT_VERSION,

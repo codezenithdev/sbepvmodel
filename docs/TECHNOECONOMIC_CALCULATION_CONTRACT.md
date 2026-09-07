@@ -2332,19 +2332,24 @@ supporting metric CDF, remain in the sealed payload, CSV bundle, and workbook ra
 than being reduced to unreadable small multiples in the dashboard.
 
 Public requests remain capped at 100,000 realizations. Admission also computes a
-request-specific safe maximum and accepts only when both conditions hold:
+request-specific safe maximum and accepts only when all conditions hold. For `p`
+nonfixed sensitivity predictors:
 
 ```text
 estimated_peak = 256 MiB + 2 * sum(planned ndarray bytes) <= 1.2 GiB
 realization export cells <= 8,000,000
+sensitivity work units = realizations * p^2 <= 25,000,000
 ```
 
 The estimator includes the sealed calculation payload, sensitivity design, export
-buffers, and streaming cohort state rather than only headline arrays. Rejection
-returns the safe maximum and limiting dimension. The deterministic analytical
+buffers, and streaming cohort state rather than only headline arrays. Each
+common-cause event is charged for its four sampled realization vectors and six
+retained realization-by-project-year matrices. Rejection returns the safe maximum
+and limiting dimension. The deterministic analytical
 matrix in `tools/benchmark_tea_v6_admission.py` targets the deployed 2-GB service
-explicitly and covers realization count, life, component-count growth, and the
-export-cell limiter; the committed Render plan label is not treated as memory
+explicitly and covers realization count, life, component-count growth,
+common-cause-event growth, sensitivity-predictor growth, and the export-cell
+limiter; the committed Render plan label is not treated as memory
 authority. Its output identifies itself as an estimate and never presents the
 contract high-water estimate as measured process RSS. A deployment RSS benchmark
 is a separate operational qualification when the service image or allocator

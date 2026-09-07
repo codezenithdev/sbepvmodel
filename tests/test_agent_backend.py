@@ -12,7 +12,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from sbepv import model
-from sbepv.api import config, plots, state
+from sbepv.api import config, job_store, plots, state
 from sbepv.worker import completion
 from sbepv.worker import run_validation
 from sbepv.agent import chat
@@ -436,6 +436,73 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
             ["Validation omitted 1 unusable weather interval."],
             completed_result["warnings"],
         )
+
+    def test_cancellation_wins_atomic_final_model_transition(self) -> None:
+        _, canonical = scenario_math._canonical_request(
+            "validation", self.validation_config(calibrate_model=False)
+        )
+        source = self.root / "cancel-final-source.csv"
+        source.write_text(
+            "timestamp,dni,ghi,dhi,temp_air,wind_speed\n"
+            "2026-06-20 14:00:00,700,500,100,25,2\n",
+            encoding="utf-8",
+        )
+        self.generated_files.append(source)
+        source_hash = sha256_file(source)
+        state.AGENT_STORE.create_job(
+            job_id="cancel-final",
+            kind="manual",
+            mode="validation",
+            request=canonical,
+            source_path=str(source.resolve()),
+            source_hash=source_hash,
+        )
+        claimed = state.AGENT_STORE.claim_next_queued_job(worker_id="worker-a")
+        update_job = state.AGENT_STORE.update_job
+        cancellation_injected = False
+
+        def cancel_immediately_before_done(job_id: str, **fields):
+            nonlocal cancellation_injected
+            if fields.get("state") == "done" and not cancellation_injected:
+                cancellation_injected = True
+                state.AGENT_STORE.cancel_job(job_id)
+            return update_job(job_id, **fields)
+
+        with (
+            patch.object(plots, "_render_input_data_plots", return_value={}),
+            patch.object(
+                app.model,
+                "run_model",
+                return_value={
+                    "ac_png": str(self.root / "cancel-final-ac.png"),
+                    "energy_png": str(self.root / "cancel-final-energy.png"),
+                    "excel": str(self.root / "cancel-final.xlsx"),
+                },
+            ),
+            patch.object(
+                state.AGENT_STORE,
+                "update_job",
+                side_effect=cancel_immediately_before_done,
+            ),
+            patch.object(job_store.logger, "exception") as store_error_log,
+            patch.object(completion.logger, "error") as completion_error_log,
+        ):
+            run_validation._run_job(
+                "cancel-final",
+                app.RunRequest(**canonical),
+                source_path=str(source.resolve()),
+                expected_source_hash=source_hash,
+                worker_id="worker-a",
+                lease_token=claimed["lease_token"],
+            )
+
+        terminal = state.AGENT_STORE.get_job("cancel-final")
+        self.assertTrue(cancellation_injected)
+        self.assertEqual("cancelled", terminal["state"])
+        self.assertTrue(terminal["cancel_requested"])
+        self.assertIsNone(terminal["result"])
+        store_error_log.assert_not_called()
+        completion_error_log.assert_not_called()
 
     def test_delete_removes_artifacts_from_every_lease_attempt(self) -> None:
         job_id = "candidate-attempt-cleanup"

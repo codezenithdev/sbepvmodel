@@ -15,6 +15,7 @@ from sbepv.api import state
 from sbepv.store import (
     TECHNOECONOMIC_ID_PREFIX,
     AgentStoreError,
+    JobCompletionCancelled,
     LeaseOwnershipLost,
 )
 
@@ -75,6 +76,10 @@ def _get_job_record(job_id: str) -> dict[str, Any] | None:
     return {"id": normalized_job_id, **cached}
 
 
+class _JobCancelled(RuntimeError):
+    pass
+
+
 def _update_job(
     job_id: str,
     *,
@@ -93,6 +98,11 @@ def _update_job(
             )
             _cache_job_record(record)
             return record
+    except JobCompletionCancelled:
+        if fields.get("state") == "done":
+            raise _JobCancelled("Cancellation requested") from None
+        logger.exception("Could not update durable job %s", job_id)
+        raise
     except LeaseOwnershipLost:
         raise
     except AgentStoreError:
@@ -124,10 +134,6 @@ def _job_cancel_requested(
     if record.get("cancel_requested"):
         return True
     return bool(state.JOBS.get(job_id, {}).get("cancel_requested"))
-
-
-class _JobCancelled(RuntimeError):
-    pass
 
 
 def _check_job_cancelled(

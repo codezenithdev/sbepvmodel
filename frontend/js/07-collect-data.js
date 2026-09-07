@@ -11,6 +11,7 @@
             error: document.getElementById('collectDataError'),
             status: document.getElementById('collectDataStatus'),
             stateLabel: document.getElementById('collectDataStateLabel'),
+            collectionId: document.getElementById('collectDataCollectionId'),
             stage: document.getElementById('collectDataStage'),
             progress: document.getElementById('collectDataProgress'),
             progressFill: document.getElementById('collectDataProgressFill'),
@@ -22,6 +23,7 @@
             seriesCount: document.getElementById('collectDataSeriesCount'),
             solarEdgeEnergy: document.getElementById('collectDataSolarEdgeEnergy'),
             solectriaEnergy: document.getElementById('collectDataSolectriaEnergy'),
+            qualityNote: document.getElementById('collectDataQualityNote'),
             plots: document.getElementById('collectDataPlots'),
             acPowerCard: document.getElementById('collectDataAcPowerCard'),
             acPowerPlot: document.getElementById('collectDataAcPowerPlot'),
@@ -37,6 +39,49 @@
         let collectDataActiveId = null;
         let collectDataPollFailures = 0;
         let collectDataBusy = false;
+        const COLLECT_DATA_ACTIVE_ID_STORAGE_KEY = 'sb-energy-data-collection-active-id-v1';
+        const COLLECT_DATA_ID_PATTERN = /^collect_[a-f0-9]{24}$/;
+
+        function collectDataValidatedId(value) {
+            const collectionId = String(value || '');
+            return COLLECT_DATA_ID_PATTERN.test(collectionId) ? collectionId : null;
+        }
+
+        function collectDataReadStoredId() {
+            try {
+                const stored = localStorage.getItem(COLLECT_DATA_ACTIVE_ID_STORAGE_KEY);
+                const collectionId = collectDataValidatedId(stored);
+                if (stored && !collectionId) {
+                    localStorage.removeItem(COLLECT_DATA_ACTIVE_ID_STORAGE_KEY);
+                }
+                return collectionId;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function collectDataPersistId(collectionId) {
+            const validated = collectDataValidatedId(collectionId);
+            if (!validated) return false;
+            try {
+                localStorage.setItem(COLLECT_DATA_ACTIVE_ID_STORAGE_KEY, validated);
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function collectDataClearPersistedId(expectedId) {
+            const validated = collectDataValidatedId(expectedId);
+            if (!validated) return;
+            try {
+                const stored = localStorage.getItem(COLLECT_DATA_ACTIVE_ID_STORAGE_KEY);
+                if (stored !== validated) return;
+                localStorage.removeItem(COLLECT_DATA_ACTIVE_ID_STORAGE_KEY);
+            } catch (_) {
+                // localStorage may be unavailable in private or restricted contexts.
+            }
+        }
 
         function openCollectDataView() {
             document.body.classList.remove(
@@ -55,6 +100,7 @@
             collectDataTab.classList.add('active');
             collectDataTab.setAttribute('aria-pressed', 'true');
             setActiveNav(operationsNavLink);
+            void collectDataRestoreStoredCollection({ force: true });
         }
 
         function collectDataRestoreWorkflowView() {
@@ -125,11 +171,17 @@
             collectDataElements.collapseToggle.hidden = true;
             collectDataElements.status.hidden = true;
             collectDataElements.summary.hidden = true;
+            collectDataElements.collectionId.hidden = true;
+            collectDataElements.collectionId.textContent = '';
+            collectDataElements.qualityNote.hidden = true;
+            collectDataElements.qualityNote.textContent = '';
+            delete collectDataElements.qualityNote.dataset.state;
         }
 
         function collectDataInvalidateResult() {
             if (collectDataBusy) return;
             collectDataRevision += 1;
+            collectDataClearPersistedId(collectDataActiveId);
             collectDataActiveId = null;
             collectDataPollFailures = 0;
             window.clearTimeout(collectDataPollTimer);
@@ -164,6 +216,36 @@
                 return (numeric / 1_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' MWh';
             }
             return numeric.toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' kWh';
+        }
+
+        function collectDataQualitySummaryText(quality) {
+            if (!quality || typeof quality !== 'object') {
+                return 'Source check unavailable. Energy totals include finite measured values only; gaps are not counted as zero.';
+            }
+            const summary = quality.summary && typeof quality.summary === 'object'
+                ? quality.summary
+                : {};
+            const issueCountValue = Number(quality.issue_count);
+            const issueCount = Number.isInteger(issueCountValue) && issueCountValue >= 0
+                ? issueCountValue
+                : 0;
+            const completenessValue = Number(summary.usable_value_completeness_percent);
+            const coverageValue = Number(summary.timestamp_coverage_percent);
+            const sourceFlagValue = Number(summary.non_good_quality_count);
+            const parts = [quality.status === 'clean' && issueCount === 0
+                ? 'Source check clean.'
+                : 'Source check found ' + issueCount.toLocaleString() + ' screened issue' + (issueCount === 1 ? '.' : 's.')];
+            if (Number.isFinite(completenessValue)) {
+                parts.push('Usable completeness ' + completenessValue.toLocaleString(undefined, { maximumFractionDigits: 1 }) + '%.');
+            }
+            if (Number.isFinite(coverageValue)) {
+                parts.push('Timestamp coverage ' + coverageValue.toLocaleString(undefined, { maximumFractionDigits: 1 }) + '%.');
+            }
+            if (Number.isInteger(sourceFlagValue) && sourceFlagValue > 0) {
+                parts.push(sourceFlagValue.toLocaleString() + ' non-good Bazefield flag' + (sourceFlagValue === 1 ? '.' : 's.'));
+            }
+            parts.push('Energy totals include finite measured values only; gaps are not counted as zero.');
+            return parts.join(' ');
         }
 
         function collectDataRenderPlots(record, result) {
@@ -208,6 +290,9 @@
 
         function collectDataRender(record) {
             collectDataElements.status.hidden = false;
+            const safeId = collectDataValidatedId(record?.collection_id);
+            collectDataElements.collectionId.hidden = !safeId;
+            collectDataElements.collectionId.textContent = safeId ? 'Collection ID: ' + safeId : '';
             collectDataElements.stateLabel.textContent = collectDataStateText(record?.state);
             collectDataElements.stage.textContent = String(record?.stage || 'Checking collection status');
             collectDataSetProgress(record?.progress);
@@ -221,11 +306,12 @@
                 collectDataElements.seriesCount.textContent = Number((result.series || []).length).toLocaleString();
                 collectDataElements.solarEdgeEnergy.textContent = collectDataFormatEnergy(measuredEnergy.solaredge_measured_power);
                 collectDataElements.solectriaEnergy.textContent = collectDataFormatEnergy(measuredEnergy.solectria_measured_power);
+                const quality = result.quality && typeof result.quality === 'object' ? result.quality : null;
+                collectDataElements.qualityNote.textContent = collectDataQualitySummaryText(quality);
+                collectDataElements.qualityNote.dataset.state = quality?.status === 'clean' ? 'clean' : 'attention';
+                collectDataElements.qualityNote.hidden = false;
                 collectDataRenderPlots(record, result);
                 collectDataElements.collapseToggle.hidden = false;
-                const safeId = /^collect_[a-f0-9]{24}$/.test(String(record.collection_id || ''))
-                    ? record.collection_id
-                    : null;
                 if (safeId) {
                     const encodedId = encodeURIComponent(safeId);
                     collectDataElements.csvDownload.href = '/api/data-collections/' + encodedId + '/download';
@@ -243,7 +329,10 @@
                 }
             }
             if (record?.state === 'failed') {
-                collectDataSetError(record?.error?.message || 'The data collection failed.', true);
+                collectDataSetError(
+                    record?.error?.message || 'The data collection failed.',
+                    document.body.classList.contains('dashboard-mode-collect-data')
+                );
             }
         }
 
@@ -264,6 +353,43 @@
             return fallback;
         }
 
+        function collectDataApplyRequest(request) {
+            if (!request || typeof request !== 'object') return;
+            const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+            const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+            if (datePattern.test(String(request.from_date || ''))) {
+                collectDataElements.fromDate.value = String(request.from_date);
+            }
+            if (datePattern.test(String(request.to_date || ''))) {
+                collectDataElements.toDate.value = String(request.to_date);
+            }
+            if (timePattern.test(String(request.from_time || ''))) {
+                collectDataElements.fromTime.value = String(request.from_time);
+            }
+            if (timePattern.test(String(request.to_time || ''))) {
+                collectDataElements.toTime.value = String(request.to_time);
+            }
+            const intervalValue = Number(request.interval_value);
+            if (Number.isInteger(intervalValue) && intervalValue >= 1) {
+                collectDataElements.intervalValue.value = String(intervalValue);
+            }
+            const intervalUnit = String(request.interval_unit || '');
+            if (['minutes', 'hours', 'days'].includes(intervalUnit)) {
+                collectDataElements.intervalUnit.value = intervalUnit;
+            }
+            const allowedGroups = new Set(['solaredge', 'solectria', 'weather']);
+            const selectedGroups = new Set(
+                (Array.isArray(request.data_groups) ? request.data_groups : [])
+                    .map((group) => String(group))
+                    .filter((group) => allowedGroups.has(group))
+            );
+            if (selectedGroups.size) {
+                collectDataElements.form.querySelectorAll('input[name="collectDataGroup"]').forEach((input) => {
+                    input.checked = selectedGroups.has(input.value);
+                });
+            }
+        }
+
         function collectDataSchedulePoll(collectionId, revision, delay = 750) {
             window.clearTimeout(collectDataPollTimer);
             collectDataPollTimer = window.setTimeout(
@@ -282,10 +408,28 @@
                 );
                 const payload = await collectDataReadPayload(response);
                 if (!response.ok) {
+                    if (response.status === 404) {
+                        collectDataClearPersistedId(collectionId);
+                        if (revision !== collectDataRevision || collectionId !== collectDataActiveId) return;
+                        collectDataActiveId = null;
+                        collectDataPollFailures = 0;
+                        collectDataSetBusy(false);
+                        collectDataClearResult();
+                        collectDataSetError(
+                            'The saved data collection has expired or is no longer available. Start a new collection.',
+                            document.body.classList.contains('dashboard-mode-collect-data')
+                        );
+                        return;
+                    }
                     throw new Error(collectDataErrorDetail(payload, 'Collection status is unavailable.'));
                 }
                 if (revision !== collectDataRevision) return;
+                const payloadId = collectDataValidatedId(payload.collection_id);
+                if (payloadId !== collectionId) {
+                    throw new Error('The collection service returned an invalid identifier.');
+                }
                 collectDataPollFailures = 0;
+                collectDataApplyRequest(payload.request);
                 collectDataRender(payload);
                 if (payload.state === 'queued' || payload.state === 'collecting') {
                     collectDataSchedulePoll(collectionId, revision, 900);
@@ -301,8 +445,34 @@
                     return;
                 }
                 collectDataSetBusy(false);
-                collectDataSetError(error?.message || 'Collection status is unavailable.', true);
+                collectDataSetError(
+                    error?.message || 'Collection status is unavailable.',
+                    document.body.classList.contains('dashboard-mode-collect-data')
+                );
             }
+        }
+
+        async function collectDataRestoreStoredCollection({ force = false } = {}) {
+            const collectionId = collectDataReadStoredId();
+            if (!collectionId) return false;
+            if (collectionId === collectDataActiveId && collectDataBusy) return true;
+            if (!force && collectionId === collectDataActiveId && !collectDataElements.status.hidden) return true;
+            collectDataRevision += 1;
+            const revision = collectDataRevision;
+            collectDataActiveId = collectionId;
+            collectDataPollFailures = 0;
+            window.clearTimeout(collectDataPollTimer);
+            collectDataClearError();
+            collectDataClearResult();
+            collectDataElements.status.hidden = false;
+            collectDataElements.stateLabel.textContent = 'Checking';
+            collectDataElements.collectionId.hidden = false;
+            collectDataElements.collectionId.textContent = 'Collection ID: ' + collectionId;
+            collectDataElements.stage.textContent = 'Restoring saved collection';
+            collectDataSetProgress(0);
+            collectDataSetBusy(true);
+            await collectDataPoll(collectionId, revision);
+            return true;
         }
 
         function collectDataReadRequest() {
@@ -367,6 +537,7 @@
             }
             collectDataRevision += 1;
             const revision = collectDataRevision;
+            collectDataClearPersistedId(collectDataActiveId);
             collectDataActiveId = null;
             collectDataPollFailures = 0;
             window.clearTimeout(collectDataPollTimer);
@@ -391,11 +562,13 @@
                     throw new Error(collectDataErrorDetail(payload, 'The collection request was rejected.'));
                 }
                 if (revision !== collectDataRevision) return;
-                const collectionId = String(payload.collection_id || '');
-                if (!/^collect_[a-f0-9]{24}$/.test(collectionId)) {
+                const collectionId = collectDataValidatedId(payload.collection_id);
+                if (!collectionId) {
                     throw new Error('The collection service returned an invalid identifier.');
                 }
                 collectDataActiveId = collectionId;
+                collectDataPersistId(collectionId);
+                collectDataApplyRequest(payload.request);
                 collectDataRender(payload);
                 collectDataSchedulePoll(collectionId, revision, 250);
             } catch (error) {
@@ -407,7 +580,7 @@
 
         function collectDataApplyDefaults() {
             const today = dateIsoInTimeZone();
-            collectDataElements.fromDate.value = '2025-12-12';
+            collectDataElements.fromDate.value = bazefieldDefaultStartDate();
             collectDataElements.toDate.value = today;
             collectDataElements.fromDate.max = today;
             collectDataElements.toDate.max = today;
@@ -436,3 +609,4 @@
         collectDataElements.form.addEventListener('input', collectDataInvalidateResult);
         collectDataElements.form.addEventListener('change', collectDataInvalidateResult);
         collectDataApplyDefaults();
+        void collectDataRestoreStoredCollection();

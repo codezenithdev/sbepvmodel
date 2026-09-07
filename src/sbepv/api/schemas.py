@@ -25,6 +25,7 @@ from pydantic import (
 )
 
 from sbepv import model
+from sbepv import technoeconomic as technoeconomic_kernel
 from sbepv.agent.tool_schemas import MAX_PARAMETER_SWEEP_VALUES
 
 
@@ -240,11 +241,15 @@ TECHNOECONOMIC_PAIRED_COMMERCIAL_REALIZATION_COLUMN_OVERHEAD = 23
 # V6 retains only realization-level totals in the public table.  Annual and
 # component traces are exported for the three Upgrade-NPV representatives, so
 # they do not scale the realization-cell budget by project life.
-TECHNOECONOMIC_LIFECYCLE_REALIZATION_COLUMN_OVERHEAD = 64
+TECHNOECONOMIC_LIFECYCLE_REALIZATION_COLUMN_OVERHEAD = (
+    technoeconomic_kernel.LIFECYCLE_REALIZATION_COLUMN_OVERHEAD
+)
 TECHNOECONOMIC_MAX_REALIZATION_EXPORT_CELLS = 8_000_000
 # Forward stepwise rank regression repeatedly fits expanding predictor sets.  The
 # deterministic n*p^2 gate is a conservative lower-bound proxy for that work.
-TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS = 25_000_000
+TECHNOECONOMIC_MAX_SENSITIVITY_WORK_UNITS = (
+    technoeconomic_kernel.LIFECYCLE_SENSITIVITY_WORK_LIMIT
+)
 
 
 class FixedDistributionRequest(StrictTechnoeconomicRequest):

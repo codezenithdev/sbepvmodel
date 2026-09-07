@@ -12,6 +12,17 @@ Two consumers assemble the same sources directly:
 After editing a partial, run the Python tests and `npm run build`. The former checks
 the source and Render contracts; the latter validates the Vite/Cloudflare contract.
 
+The bounded real-browser smoke test uses Playwright with mocked same-origin APIs:
+
+```bash
+npm run test:browser:smoke
+```
+
+On Windows it uses the installed Chrome channel. On other fresh machines, install
+the managed Chromium binary once with `npx playwright install chromium`; set
+`PLAYWRIGHT_BROWSER_CHANNEL` to an installed Playwright channel when appropriate.
+Screenshots from failures are written below `output/playwright/` and stay untracked.
+
 ## Layout
 
 | Path | Contents |

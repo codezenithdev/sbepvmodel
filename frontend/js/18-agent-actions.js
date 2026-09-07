@@ -339,7 +339,7 @@
                     annualLatestResult = null;
                     annualRunState = null;
                     clearAnnualSeasonalFallbackDisplay();
-                    void refreshTechnoeconomicSources();
+                    void refreshTechnoeconomicSources({invalidate: true});
                     clearAnnualImages();
                     renderAnnualQuality([]);
                     setAnnualExcelLink(null);

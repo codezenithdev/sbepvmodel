@@ -1,5 +1,6 @@
 .env
 __pycache__/
+.pytest_cache/
 *.py[cod]
 outputs/
 # Runtime output artifacts stay local, but the Sites download proxy is source.
@@ -7,6 +8,7 @@ outputs/
 !app/outputs/**
 *.log
 .venv/
+.claude/settings.local.json
 
 analysis/
 
@@ -35,4 +37,7 @@ dist/
 *.tgz
 .gstack/
 
-design-qa-assets/      
+design-qa-assets/
+
+# Playwright smoke-test artifacts
+output/playwright/

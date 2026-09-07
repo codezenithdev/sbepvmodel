@@ -14,6 +14,11 @@ def fixed(input_id, value):
 
 
 EVIDENCE = {"status": "evidenced", "source": "hand-calculated-test"}
+PROVISIONAL_EVIDENCE = {
+    "status": "provisional",
+    "accepted": True,
+    "source": "accepted-hand-calculated-test",
+}
 
 
 def capacity(system):
@@ -810,6 +815,111 @@ class LifecycleV6ContractTests(unittest.TestCase):
         ):
             tea.validate_request(replace(request(), paired_lifecycle=lifecycle))
 
+    def test_warning_enumerates_every_separately_owned_provisional_input(self):
+        electricity = request()
+        electricity_lifecycle = replace(
+            electricity.paired_lifecycle,
+            electricity_value_evidence=PROVISIONAL_EVIDENCE,
+        )
+
+        availability = request()
+        availability_lifecycle = availability.paired_lifecycle
+        availability_systems = tuple(
+            replace(
+                system,
+                source_availability_by_year=(
+                    tea.LifecycleSourceAvailabilitySpec(
+                        year=2021,
+                        availability=1.0,
+                        evidence=(
+                            PROVISIONAL_EVIDENCE
+                            if system.technology == "solectria"
+                            else EVIDENCE
+                        ),
+                    ),
+                ),
+            )
+            for system in availability_lifecycle.systems
+        )
+        availability_lifecycle = replace(
+            availability_lifecycle,
+            source_energy_basis="net",
+            systems=availability_systems,
+        )
+
+        warranty = request()
+        warranty_lifecycle = warranty.paired_lifecycle
+        warranty_so, warranty_se = warranty_lifecycle.systems
+        warranty_component = replace(
+            warranty_so.components[0],
+            warranty=tea.LifecycleWarrantySpec(
+                age_limit_years=1,
+                fraction=0.5,
+                covered_cost_categories=("hardware",),
+                coverage_ids=("coverage.solectria.warranty",),
+                evidence=PROVISIONAL_EVIDENCE,
+            ),
+        )
+        warranty_lifecycle = replace(
+            warranty_lifecycle,
+            systems=(
+                replace(warranty_so, components=(warranty_component,)),
+                warranty_se,
+            ),
+        )
+
+        preventive = request()
+        preventive_lifecycle = preventive.paired_lifecycle
+        preventive_so, preventive_se = preventive_lifecycle.systems
+        preventive_component = replace(
+            preventive_so.components[0],
+            preventive_replacements=(
+                tea.LifecyclePreventiveReplacementSpec(
+                    year=1,
+                    quantity=1,
+                    coverage_ids=("coverage.solectria.preventive.1",),
+                    evidence=PROVISIONAL_EVIDENCE,
+                ),
+            ),
+        )
+        preventive_lifecycle = replace(
+            preventive_lifecycle,
+            systems=(
+                replace(preventive_so, components=(preventive_component,)),
+                preventive_se,
+            ),
+        )
+
+        cases = (
+            (electricity, electricity_lifecycle, "electricity-value"),
+            (
+                availability,
+                availability_lifecycle,
+                "source-availability:solectria:2021",
+            ),
+            (
+                warranty,
+                warranty_lifecycle,
+                "warranty:solectria:inverter",
+            ),
+            (
+                preventive,
+                preventive_lifecycle,
+                "preventive:solectria:inverter:1",
+            ),
+        )
+        for base, lifecycle, expected_owner in cases:
+            with self.subTest(owner=expected_owner):
+                result = tea.run_technoeconomic(
+                    replace(base, paired_lifecycle=lifecycle)
+                )
+                warning = next(
+                    item
+                    for item in result.summaries["warnings"]
+                    if item["code"] == "accepted_provisional_inputs"
+                )
+                self.assertEqual((expected_owner,), warning["inputs"])
+
     def test_cost_coverage_id_overlap_is_rejected(self):
         base = request()
         lifecycle = base.paired_lifecycle
@@ -835,25 +945,39 @@ class LifecycleV6ContractTests(unittest.TestCase):
             tea.validate_request(overlapping)
 
     def test_admission_estimator_reports_a_request_specific_limit(self):
-        estimate = tea.estimate_lifecycle_memory(1_000, 30, 4)
+        estimate = tea.estimate_lifecycle_memory(1_000, 30, 4, 0)
         self.assertEqual(
             estimate["estimated_peak_bytes"],
             tea.LIFECYCLE_MEMORY_BASE_BYTES
             + 2 * estimate["planned_ndarray_bytes"],
         )
-        safe = tea.lifecycle_safe_realization_max(30, 4)
+        safe = tea.lifecycle_safe_realization_max(30, 4, 0)
         self.assertGreater(safe["safe_max_realizations"], 0)
         self.assertLessEqual(safe["safe_max_realizations"], tea.MAX_REALIZATIONS)
         self.assertLess(safe["safe_max_realizations"], 100_000)
 
-        component_heavy = tea.lifecycle_safe_realization_max(30, 40)
+        component_heavy = tea.lifecycle_safe_realization_max(30, 40, 0)
         self.assertLess(
             component_heavy["safe_max_realizations"],
             safe["safe_max_realizations"],
         )
 
+        common_heavy = tea.lifecycle_safe_realization_max(30, 4, 40)
+        self.assertLess(
+            common_heavy["safe_max_realizations"],
+            safe["safe_max_realizations"],
+        )
+        common_estimate = tea.estimate_lifecycle_memory(1_000, 30, 4, 3)
+        expected_common_bytes = 8 * 1_000 * 3 * (4 + 6 * 30)
+        self.assertEqual(
+            expected_common_bytes,
+            common_estimate["planned_ndarray_bytes"]
+            - estimate["planned_ndarray_bytes"],
+        )
+
         export_limited = tea.lifecycle_safe_realization_max(
             1,
+            0,
             0,
             realization_export_columns=100,
         )
@@ -884,6 +1008,7 @@ class LifecycleV6ContractTests(unittest.TestCase):
         rows = report["rows"]
         self.assertTrue(all(row["estimated_peak_within_limit"] for row in rows))
         self.assertTrue(all(row["export_cells_within_limit"] for row in rows))
+        self.assertTrue(all(row["sensitivity_work_within_limit"] for row in rows))
         self.assertTrue(
             all(row["next_realization_exceeds_limiting_dimension"] for row in rows)
         )
@@ -895,6 +1020,8 @@ class LifecycleV6ContractTests(unittest.TestCase):
             row["component_count"]: row
             for row in rows
             if row["project_life_years"] == 30
+            and row["common_cause_event_count"] == 0
+            and row["sensitivity_predictor_count"] == 0
         }
         self.assertEqual([0, 2, 4, 8, 16, 40], sorted(thirty_year))
         safe_counts = [
@@ -908,12 +1035,14 @@ class LifecycleV6ContractTests(unittest.TestCase):
                 for row in rows
                 if row["project_life_years"] == 20
                 and row["component_count"] == 4
+                and row["common_cause_event_count"] == 0
             ),
             next(
                 row["safe_max_realizations"]
                 for row in rows
                 if row["project_life_years"] == 40
                 and row["component_count"] == 4
+                and row["common_cause_event_count"] == 0
             ),
         )
         export_limited_row = next(
@@ -926,6 +1055,53 @@ class LifecycleV6ContractTests(unittest.TestCase):
             "realization_export_cells",
             export_limited_row["limiting_dimension"],
         )
+        common_rows = sorted(
+            (
+                row
+                for row in rows
+                if row["project_life_years"] == 30
+                and row["component_count"] == 4
+                and row["sensitivity_predictor_count"] == 0
+            ),
+            key=lambda row: row["common_cause_event_count"],
+        )
+        self.assertEqual(
+            sorted(
+                (row["safe_max_realizations"] for row in common_rows),
+                reverse=True,
+            ),
+            [row["safe_max_realizations"] for row in common_rows],
+        )
+        sensitivity_limited_row = next(
+            row
+            for row in rows
+            if row["sensitivity_predictor_count"] == 64
+        )
+        self.assertEqual(
+            "sensitivity_work_budget",
+            sensitivity_limited_row["limiting_dimension"],
+        )
+
+    def test_admission_benchmark_handles_public_and_zero_safe_limits(self):
+        from tools import benchmark_tea_v6_admission as benchmark
+
+        report = benchmark.admission_benchmark_report(
+            (
+                (1, 0, 0, 0, 1),
+                (1, 0, 0, 5_001, 1),
+            )
+        )
+        public_limited, zero_safe = report["rows"]
+        self.assertEqual(
+            "public_realization_ceiling",
+            public_limited["limiting_dimension"],
+        )
+        self.assertEqual(tea.MAX_REALIZATIONS, public_limited["safe_max_realizations"])
+        self.assertTrue(public_limited["next_realization_exceeds_limiting_dimension"])
+        self.assertEqual(0, zero_safe["safe_max_realizations"])
+        self.assertEqual("sensitivity_work_budget", zero_safe["limiting_dimension"])
+        self.assertEqual(0, zero_safe["planned_ndarray_bytes_at_safe_max"])
+        self.assertTrue(zero_safe["next_realization_exceeds_limiting_dimension"])
 
     def test_v6_checks_cancellation_inside_cohort_years(self):
         calls = 0

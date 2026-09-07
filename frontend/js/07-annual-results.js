@@ -689,7 +689,7 @@
         });
 
         function applyAnnualResult(result, cacheBust = true) {
-            void refreshTechnoeconomicSources();
+            void refreshTechnoeconomicSources({invalidate: true});
             renderAnnualResultCalibration(result);
             renderAnnualYearResults(result);
             if (!result || !result.stats) return;

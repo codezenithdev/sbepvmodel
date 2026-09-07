@@ -47,6 +47,9 @@ class TechnoeconomicFrontendTests(unittest.TestCase):
         cls.annual_run_script = (
             PROJECT_ROOT / "frontend" / "js" / "10-annual-run.js"
         ).read_text(encoding="utf-8")
+        cls.annual_results_script = (
+            PROJECT_ROOT / "frontend" / "js" / "07-annual-results.js"
+        ).read_text(encoding="utf-8")
         cls.agent_actions = (
             PROJECT_ROOT / "frontend" / "js" / "18-agent-actions.js"
         ).read_text(encoding="utf-8")
@@ -268,6 +271,14 @@ function commercialDraft(transferEnabled = true) {
         self.assertLess(
             self.annual_run_script.index("initializeTechnoeconomicWorkspace();"),
             self.annual_run_script.index("technoeconomicTab.addEventListener"),
+        )
+        self.assertIn(
+            "refreshTechnoeconomicSources({invalidate: true})",
+            self.annual_results_script,
+        )
+        self.assertIn(
+            "refreshTechnoeconomicSources({invalidate: true})",
+            self.agent_actions,
         )
 
     def test_guided_solartac_controls_separate_system_financials_and_hide_internal_editor(
@@ -608,6 +619,11 @@ function commercialDraft(transferEnabled = true) {
             "<figcaption>",
         ):
             self.assertIn(marker, self.markup)
+        self.assertIn(
+            'id="technoeconomicStandaloneSourceStatus" role="status" '
+            'aria-live="polite" aria-atomic="true"',
+            self.markup,
+        )
 
         for marker in (
             'id="technoeconomicStandaloneResults"',
@@ -2830,9 +2846,16 @@ technoeconomicRenderSelectedSource = () => technoeconomicSetSourceState(
 technoeconomicRenderStandaloneDraft = () => {};
 technoeconomicJob = null;
 let resolveSources;
-technoeconomicFetchJson = () => new Promise((resolve) => { resolveSources = resolve; });
+let sourceFetches = 0;
+technoeconomicFetchJson = () => new Promise((resolve) => {
+  sourceFetches += 1;
+  resolveSources = resolve;
+});
 
-const pending = refreshTechnoeconomicSources();
+const pending = refreshTechnoeconomicSources({selectedId: 'annual-eligible-old'});
+const coalesced = refreshTechnoeconomicSources({selectedId: 'annual-eligible'});
+assert.equal(coalesced, pending);
+assert.equal(sourceFetches, 1);
 for (const control of [guidedRefresh, lifecycleRefresh]) {
   assert.equal(control.disabled, false);
   assert.equal(control.textContent, 'Retry source check');
@@ -2844,12 +2867,13 @@ assert.equal(
 );
 assert.equal(lifecycleStatus.textContent, 'Checking Annual Simulation sources');
 resolveSources({sources: [
+  {source_annual_job_id: 'annual-eligible-old', eligible: true, eligible_years: [2024]},
   {source_annual_job_id: 'annual-eligible', eligible: true, eligible_years: [2025]},
   {source_annual_job_id: 'annual-obsolete', eligible: false},
 ]});
-await pending;
+await Promise.all([pending, coalesced]);
 assert.deepEqual(lifecycleSelect.options.map((option) => option.value), [
-  '', 'annual-eligible',
+  '', 'annual-eligible-old', 'annual-eligible',
 ]);
 assert.equal(lifecycleSelect.value, 'annual-eligible');
 for (const control of [guidedRefresh, lifecycleRefresh]) {
@@ -2863,6 +2887,8 @@ console.log(JSON.stringify({
   options: lifecycleSelect.options.map((option) => option.textContent),
   refreshLabel: lifecycleRefresh.textContent,
   status: lifecycleStatus.textContent,
+  sourceFetches,
+  selected: lifecycleSelect.value,
 }));
 })().catch((error) => {
   console.error(error);
@@ -2872,7 +2898,75 @@ console.log(JSON.stringify({
         )
         self.assertEqual("Refresh sources", payload["refreshLabel"])
         self.assertEqual("Calibrated annual energy is ready", payload["status"])
-        self.assertEqual(2, len(payload["options"]))
+        self.assertEqual(1, payload["sourceFetches"])
+        self.assertEqual("annual-eligible", payload["selected"])
+        self.assertEqual(3, len(payload["options"]))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_source_invalidation_queues_exactly_one_trailing_refresh(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+(async () => {
+const option = {value: '', textContent: 'Select a source'};
+const select = {
+  value: 'annual-existing', options: [option], attributes: {},
+  setAttribute(name, value) { this.attributes[name] = String(value); },
+};
+const button = {
+  disabled: false, textContent: 'Refresh sources', attributes: {},
+  setAttribute(name, value) { this.attributes[name] = String(value); },
+};
+technoeconomicElements = {
+  sourceSelect: select, standaloneSourceSelect: select,
+  refreshSourcesButton: button, standaloneRefreshSourcesButton: null,
+  sourceStatusPanel: {dataset: {}}, standaloneSourceStatusPanel: null,
+  sourceStatus: {textContent: ''}, sourceDetail: {textContent: ''},
+  standaloneSourceStatus: null, standaloneSourceHelp: null,
+};
+technoeconomicCloseStaleAdvancedPreview = () => {};
+const renderedSelections = [];
+technoeconomicRenderSourceOptions = (selectedId) => renderedSelections.push(selectedId);
+const resolvers = [];
+let sourceFetches = 0;
+technoeconomicFetchJson = () => new Promise((resolve) => {
+  sourceFetches += 1;
+  resolvers.push(resolve);
+});
+
+const active = refreshTechnoeconomicSources();
+const invalidated = refreshTechnoeconomicSources({invalidate: true});
+const duplicateInvalidation = refreshTechnoeconomicSources({invalidate: true});
+const queuedRetry = refreshTechnoeconomicSources({retry: true});
+assert.equal(invalidated, active);
+assert.equal(duplicateInvalidation, active);
+assert.equal(queuedRetry, active);
+assert.equal(sourceFetches, 1);
+assert.equal(button.textContent, 'Retry queued');
+
+resolvers[0]({sources: [{source_annual_job_id: 'annual-before', eligible: true}]});
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(sourceFetches, 2);
+assert.equal(button.attributes['aria-busy'], 'true');
+resolvers[1]({sources: [{source_annual_job_id: 'annual-after', eligible: true}]});
+await active;
+assert.equal(sourceFetches, 2);
+assert.equal(renderedSelections.length, 2);
+assert.equal(button.textContent, 'Refresh sources');
+assert.equal(button.attributes['aria-busy'], 'false');
+console.log(JSON.stringify({
+  sourceFetches, renders: renderedSelections.length,
+  finalLabel: button.textContent,
+}));
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+"""
+        )
+        self.assertEqual(2, payload["sourceFetches"])
+        self.assertEqual(2, payload["renders"])
+        self.assertEqual("Refresh sources", payload["finalLabel"])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_selected_source_renders_only_energy_capacity_and_actual_operating_limit(

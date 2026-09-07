@@ -450,6 +450,7 @@
         const MAX_RECENT_AGENT_RUNS = 10;
         const ANNUAL_FIRST_YEAR = 2011;
         const ANNUAL_FIRST_DATE = '2011-02-11';
+        const BAZEFIELD_SITE_FIRST_DATE = '2025-12-12';
         const ANNUAL_KNOWN_PARTIAL_YEAR_NOTES = Object.freeze({
             2022: 'known source gaps',
             2023: 'known source gaps',

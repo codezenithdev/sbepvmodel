@@ -124,6 +124,10 @@ class InvalidStateTransition(AgentStoreError):
     """Raised when a proposal or job cannot move to the requested state."""
 
 
+class JobCompletionCancelled(InvalidStateTransition):
+    """Raised when cancellation atomically wins a model-job finalization race."""
+
+
 class StoreConflict(AgentStoreError):
     """Raised when a transaction conflicts with existing durable state."""
 
@@ -6373,6 +6377,10 @@ class AgentStore:
             ).fetchone()
             if row is None:
                 raise RecordNotFound(f"unknown job: {job_id}")
+            if state == "done" and bool(row["cancel_requested"]):
+                raise JobCompletionCancelled(
+                    "cannot complete a model job after cancellation was requested"
+                )
             retained_source = connection.execute(
                 "SELECT 1 FROM technoeconomic_jobs "
                 "WHERE source_annual_job_id = ? LIMIT 1",
@@ -13616,6 +13624,7 @@ __all__ = [
     "DECISION_TURN_STATES",
     "EvidenceLimitExceeded",
     "InvalidStateTransition",
+    "JobCompletionCancelled",
     "JOB_STATES",
     "LeaseOwnershipLost",
     "MODES",

@@ -3183,17 +3183,30 @@ def _validate_lifecycle_admission(
     lifecycle: technoeconomic_kernel.PairedLifecycleSpec,
 ) -> None:
     component_count = sum(len(system.components) for system in lifecycle.systems)
+    common_cause_event_count = len(lifecycle.common_cause_events)
+    sensitivity_predictor_count = (
+        technoeconomic_kernel.lifecycle_sensitivity_predictor_count(
+            _kernel_distribution(
+                "finance.discount-rate",
+                request.finance.real_discount_rate.distribution,
+            ),
+            lifecycle,
+        )
+    )
     export_columns = _lifecycle_export_column_count(lifecycle)
     safe = technoeconomic_kernel.lifecycle_safe_realization_max(
         request.finance.project_life_years,
         component_count,
+        common_cause_event_count,
         realization_export_columns=export_columns,
+        sensitivity_predictor_count=sensitivity_predictor_count,
     )
     if request.n > int(safe["safe_max_realizations"]):
         estimate = technoeconomic_kernel.estimate_lifecycle_memory(
             request.n,
             request.finance.project_life_years,
             component_count,
+            common_cause_event_count,
         )
         raise technoeconomic_kernel.TechnoeconomicValidationError(
             f"Requested {request.n} realizations exceeds the v6 safe maximum "
@@ -3201,7 +3214,12 @@ def _validate_lifecycle_admission(
             f"{safe['limiting_dimension']}; estimated_peak_bytes="
             f"{estimate['estimated_peak_bytes']}; "
             f"memory_limit_bytes={estimate['memory_limit_bytes']}; "
-            f"realization_export_columns={export_columns}."
+            f"realization_export_columns={export_columns}; "
+            f"sensitivity_predictor_count={sensitivity_predictor_count}; "
+            f"sensitivity_work_units="
+            f"{request.n * sensitivity_predictor_count**2}; "
+            f"sensitivity_work_limit="
+            f"{technoeconomic_kernel.LIFECYCLE_SENSITIVITY_WORK_LIMIT}."
         )
 
 
@@ -4266,16 +4284,26 @@ def _paired_lifecycle_receipt(
     component_count = sum(
         len(system.components) for system in kernel_lifecycle.systems
     )
+    common_cause_event_count = len(kernel_lifecycle.common_cause_events)
+    sensitivity_predictor_count = (
+        technoeconomic_kernel.lifecycle_sensitivity_predictor_count(
+            kernel_request.discount_rate,
+            kernel_lifecycle,
+        )
+    )
     realization_export_columns = _lifecycle_export_column_count(kernel_lifecycle)
     memory_estimate = technoeconomic_kernel.estimate_lifecycle_memory(
         request.n,
         request.finance.project_life_years,
         component_count,
+        common_cause_event_count,
     )
     safe_maximum = technoeconomic_kernel.lifecycle_safe_realization_max(
         request.finance.project_life_years,
         component_count,
+        common_cause_event_count,
         realization_export_columns=realization_export_columns,
+        sensitivity_predictor_count=sensitivity_predictor_count,
     )
     systems: dict[str, Any] = {}
     submitted_systems = {

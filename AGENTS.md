@@ -7,6 +7,15 @@ layout is stale.
 Human-facing setup lives in [README.md](README.md); dashboard build details in
 [frontend/README.md](frontend/README.md).
 
+## Approval boundary
+
+Do not design, implement, refactor, or change the behaviour of Autonomy or the
+Decision Agent unless the user explicitly confirms that Cliff Ho approved that
+work. A broad request to improve the application does not grant that approval.
+Read-only impact checks and existing regression tests are allowed when needed to
+verify that work elsewhere has not broken those areas; if a proposed non-Autonomy
+change requires changing them, stop and ask for the approval confirmation.
+
 ## What this is
 
 A physics-based PV performance model for the SBE Innovation Center site (SolarEdge
@@ -41,7 +50,7 @@ uv venv --python 3.13 && uv pip install -r requirements.txt
 ```
 
 ```bash
-python -m unittest discover -v          # 966 tests; run from the repo root
+python -m unittest discover -v          # 1,117 tests; run from the repo root
 ```
 
 The suite writes into a repo-root `analysis/` directory that it does not create;
@@ -251,5 +260,5 @@ Pre-existing, deliberately not fixed because each changes behaviour:
   `analysis/` directory that it does not create and that `.gitignore` excludes, so
   `test_analysis_directory_supports_the_temporary_csv_workflow` errors with
   `FileNotFoundError` on any fresh checkout. `mkdir analysis` clears it; with the
-  directory present the suite is 966 tests green. Unrelated to Python version — it
+  directory present the suite is 1,117 tests green. Unrelated to Python version — it
   reproduces identically on 3.11 and 3.13.

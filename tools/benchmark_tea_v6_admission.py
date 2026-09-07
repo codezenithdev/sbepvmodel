@@ -39,51 +39,79 @@ from sbepv import technoeconomic
 
 DEPLOYED_SERVICE_MEMORY_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_SCENARIOS = (
-    # project life, total component classes across both systems, export columns
-    (30, 0, 64),
-    (30, 2, 96),
-    (30, 4, 128),
-    (30, 8, 192),
-    (30, 16, 256),
-    (30, 40, 512),
-    (20, 4, 128),
-    (40, 4, 128),
-    (1, 0, 100),
+    # project life, components, common causes, nonfixed predictors, export columns
+    (30, 0, 0, 0, 64),
+    (30, 2, 0, 0, 96),
+    (30, 4, 0, 0, 128),
+    (30, 8, 0, 0, 192),
+    (30, 16, 0, 0, 256),
+    (30, 40, 0, 0, 512),
+    (20, 4, 0, 0, 128),
+    (40, 4, 0, 0, 128),
+    (1, 0, 0, 0, 100),
+    (30, 4, 1, 0, 132),
+    (30, 4, 8, 0, 160),
+    (30, 4, 40, 0, 288),
+    (30, 4, 0, 64, 128),
 )
 
 
 def admission_benchmark_report(
-    scenarios: Iterable[tuple[int, int, int]] = DEFAULT_SCENARIOS,
+    scenarios: Iterable[tuple[int, int, int, int, int]] = DEFAULT_SCENARIOS,
 ) -> dict[str, object]:
     """Return a JSON-serializable, deterministic analytical benchmark."""
 
     rows: list[dict[str, object]] = []
-    for project_life_years, component_count, export_columns in scenarios:
+    for (
+        project_life_years,
+        component_count,
+        common_cause_event_count,
+        sensitivity_predictor_count,
+        export_columns,
+    ) in scenarios:
         safe = technoeconomic.lifecycle_safe_realization_max(
             project_life_years,
             component_count,
+            common_cause_event_count,
             realization_export_columns=export_columns,
+            sensitivity_predictor_count=sensitivity_predictor_count,
         )
         safe_n = int(safe["safe_max_realizations"])
-        estimate = technoeconomic.estimate_lifecycle_memory(
-            safe_n,
-            project_life_years,
-            component_count,
+        estimate = (
+            technoeconomic.estimate_lifecycle_memory(
+                safe_n,
+                project_life_years,
+                component_count,
+                common_cause_event_count,
+            )
+            if safe_n > 0
+            else {
+                "planned_ndarray_bytes": 0,
+                "estimated_peak_bytes": technoeconomic.LIFECYCLE_MEMORY_BASE_BYTES,
+                "memory_limit_bytes": technoeconomic.LIFECYCLE_MEMORY_LIMIT_BYTES,
+            }
         )
         next_n = safe_n + 1
-        next_estimate = technoeconomic.estimate_lifecycle_memory(
-            next_n,
-            project_life_years,
-            component_count,
+        next_estimate = (
+            technoeconomic.estimate_lifecycle_memory(
+                next_n,
+                project_life_years,
+                component_count,
+                common_cause_event_count,
+            )
+            if next_n <= technoeconomic.MAX_REALIZATIONS
+            else None
         )
         public_ceiling_estimate = technoeconomic.estimate_lifecycle_memory(
             technoeconomic.MAX_REALIZATIONS,
             project_life_years,
             component_count,
+            common_cause_event_count,
         )
         next_violations = {
             "estimated_peak_memory": (
-                next_estimate["estimated_peak_bytes"]
+                next_estimate is not None
+                and next_estimate["estimated_peak_bytes"]
                 > technoeconomic.LIFECYCLE_MEMORY_LIMIT_BYTES
             ),
             "realization_export_cells": (
@@ -93,11 +121,17 @@ def admission_benchmark_report(
             "public_realization_ceiling": (
                 next_n > technoeconomic.MAX_REALIZATIONS
             ),
+            "sensitivity_work_budget": (
+                next_n * sensitivity_predictor_count**2
+                > technoeconomic.LIFECYCLE_SENSITIVITY_WORK_LIMIT
+            ),
         }
         rows.append(
             {
                 "project_life_years": project_life_years,
                 "component_count": component_count,
+                "common_cause_event_count": common_cause_event_count,
+                "sensitivity_predictor_count": sensitivity_predictor_count,
                 "realization_export_columns": export_columns,
                 **safe,
                 "planned_ndarray_bytes_at_safe_max": estimate[
@@ -118,6 +152,9 @@ def admission_benchmark_report(
                     <= technoeconomic.LIFECYCLE_MEMORY_LIMIT_BYTES
                     and technoeconomic.MAX_REALIZATIONS * export_columns
                     <= technoeconomic.LIFECYCLE_EXPORT_CELL_LIMIT
+                    and technoeconomic.MAX_REALIZATIONS
+                    * sensitivity_predictor_count**2
+                    <= technoeconomic.LIFECYCLE_SENSITIVITY_WORK_LIMIT
                 ),
                 "estimated_peak_within_limit": (
                     estimate["estimated_peak_bytes"]
@@ -127,13 +164,17 @@ def admission_benchmark_report(
                     safe_n * export_columns
                     <= technoeconomic.LIFECYCLE_EXPORT_CELL_LIMIT
                 ),
+                "sensitivity_work_within_limit": (
+                    safe_n * sensitivity_predictor_count**2
+                    <= technoeconomic.LIFECYCLE_SENSITIVITY_WORK_LIMIT
+                ),
                 "next_realization_exceeds_limiting_dimension": next_violations[
                     str(safe["limiting_dimension"])
                 ],
             }
         )
     return {
-        "schema_version": "tea-v6-admission-benchmark-v1",
+        "schema_version": "tea-v6-admission-benchmark-v2",
         "measurement_kind": "analytical_estimator_only",
         "measured_rss_bytes": None,
         "measurement_note": (
@@ -150,6 +191,9 @@ def admission_benchmark_report(
         "realization_export_cell_limit": (
             technoeconomic.LIFECYCLE_EXPORT_CELL_LIMIT
         ),
+        "sensitivity_work_limit": (
+            technoeconomic.LIFECYCLE_SENSITIVITY_WORK_LIMIT
+        ),
         "public_realization_ceiling": technoeconomic.MAX_REALIZATIONS,
         "rows": rows,
     }
@@ -163,14 +207,15 @@ def _markdown(report: dict[str, object]) -> str:
         "",
         str(report["measurement_note"]),
         "",
-        "| Life (yr) | Components | Export columns | Safe n | Limiter | "
+        "| Life (yr) | Components | Common causes | Predictors | Export columns | Safe n | Limiter | "
         "Estimated peak at safe n (bytes) | Export cells at safe n |",
-        "| ---: | ---: | ---: | ---: | --- | ---: | ---: |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |",
     ]
     for row in rows:
         assert isinstance(row, dict)
         lines.append(
             "| {project_life_years} | {component_count} | "
+            "{common_cause_event_count} | {sensitivity_predictor_count} | "
             "{realization_export_columns} | {safe_max_realizations} | "
             "{limiting_dimension} | {estimated_peak_bytes_at_safe_max} | "
             "{realization_export_cells_at_safe_max} |".format(**row)

@@ -12,7 +12,8 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern outputs --ignore-pattern build --ignore-pattern .wrangler",
     "typecheck": "tsc --noEmit --incremental false",
     "test": "python -m unittest discover -v",
-    "test:browser": "python -m unittest -v tests.test_agent_frontend"
+    "test:browser": "python -m unittest -v tests.test_agent_frontend && playwright test --config=playwright.config.mjs",
+    "test:browser:smoke": "playwright test --config=playwright.config.mjs"
   },
   "dependencies": {
     "next": "16.3.3",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.54.2",
+    "@playwright/test": "1.63.0",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",

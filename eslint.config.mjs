@@ -35,6 +35,9 @@ export default defineConfig([
     ".next/**",
     "dist/**",
     "node_modules/**",
+    ".pytest_cache/",
+    ".venv/",
+    "output/",
     "next-env.d.ts",
   ]),
 ]);

@@ -299,6 +299,10 @@ class AgentStoreTests(unittest.TestCase):
         self.assertEqual("running", requested["state"])
         self.assertTrue(requested["cancel_requested"])
         self.assertTrue(self.store.is_cancel_requested(running["id"]))
+        with self.assertRaisesRegex(
+            InvalidStateTransition, "after cancellation was requested"
+        ):
+            self.store.update_job(running["id"], state="done")
         finished = self.store.update_job(running["id"], state="cancelled")
         self.assertEqual("cancelled", finished["state"])
 

@@ -441,6 +441,70 @@ def _v6_lifecycle_request_payload(*, n: int = 8) -> dict:
     return payload
 
 
+def _make_v6_predictors_uncertain(payload: dict, count: int) -> None:
+    lifecycle = payload["paired_commercial"]["lifecycle"]
+    documented = [
+        payload["finance"]["real_discount_rate"],
+        lifecycle["electricity_value"],
+        lifecycle["electricity_value_real_growth"],
+    ]
+    for system in lifecycle["systems"]:
+        documented.extend(
+            system[field_name]
+            for field_name in (
+                "degradation",
+                "base_availability",
+                "base_om_cost_per_w_year",
+                "base_om_real_growth",
+                "decommissioning_cost",
+                "salvage_value",
+            )
+        )
+        documented.extend(
+            line["cost_per_w"] for line in system["initial_cost_lines"]
+        )
+        for line in system["scheduled_costs"]:
+            documented.extend((line["cost"], line["real_cost_growth"]))
+        for component in system["components"]:
+            documented.extend(
+                component[field_name]
+                for field_name in (
+                    "weibull_beta",
+                    "weibull_eta_years",
+                    "repair_hours",
+                    "logistics_hours",
+                    "emergency_unit_cost",
+                    "restock_unit_cost",
+                    "labor_cost",
+                    "mobilization_cost",
+                    "real_cost_growth",
+                )
+            )
+    for event in lifecycle["common_cause_events"]:
+        documented.extend(
+            event[field_name]
+            for field_name in (
+                "annual_probability",
+                "downtime_hours",
+                "cost_per_event",
+                "real_cost_growth",
+            )
+        )
+    if count > len(documented):
+        raise AssertionError("The V6 fixture has too few candidate predictors.")
+    for item in documented[:count]:
+        value = item["distribution"]["value"]
+        delta = max(abs(value) * 0.01, 0.001)
+        high = value + delta
+        if item["unit"] == "dimensionless_fraction":
+            high = min(1.0, high)
+        item["distribution"] = {
+            "family": "uniform",
+            "low": value,
+            "high": high,
+        }
+
+
 def _commercial_request_payload(*, include_transfer: bool) -> dict:
     payload = _site_request_payload()
     payload["basis"] = "commercial_representative"
@@ -1200,6 +1264,55 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         self.assertIn("safe maximum", response.text)
         self.assertIn("estimated_peak_memory", response.text)
         self.assertEqual([], self.store.list_technoeconomic_jobs())
+
+    def test_v6_sensitivity_budget_boundary_and_admission_receipts_match(self) -> None:
+        predictor_count = 39
+        sensitivity_limit = (
+            tea_api.technoeconomic_kernel.LIFECYCLE_SENSITIVITY_WORK_LIMIT
+        )
+        safe_n = sensitivity_limit // predictor_count**2
+
+        at_boundary = _v6_lifecycle_request_payload(n=safe_n)
+        _make_v6_predictors_uncertain(at_boundary, predictor_count)
+        parsed_boundary = TechnoeconomicSubmissionRequest.model_validate(at_boundary)
+        self.assertEqual(safe_n, parsed_boundary.n)
+
+        over_boundary = _v6_lifecycle_request_payload(n=safe_n + 1)
+        _make_v6_predictors_uncertain(over_boundary, predictor_count)
+        parsed_over_boundary = TechnoeconomicSubmissionRequest.model_validate(
+            over_boundary
+        )
+        self.assertEqual(safe_n + 1, parsed_over_boundary.n)
+        response = self._create_via_api(over_boundary)
+        self.assertEqual(422, response.status_code, response.text)
+        self.assertIn(f"safe maximum {safe_n}", response.text)
+        self.assertIn("sensitivity_work_budget", response.text)
+        self.assertIn(
+            f"sensitivity_work_limit={sensitivity_limit}",
+            response.text,
+        )
+
+        accepted = _v6_lifecycle_request_payload(n=20)
+        _make_v6_predictors_uncertain(accepted, predictor_count)
+        parsed = TechnoeconomicSubmissionRequest.model_validate(accepted)
+        kernel_request = tea_api.build_technoeconomic_kernel_request(
+            parsed,
+            self.snapshot,
+        )
+        provenance = tea_api.build_technoeconomic_submission_provenance(
+            parsed,
+            self.envelope,
+            kernel_request,
+        )
+        receipt = provenance["paired_lifecycle_receipt"]["memory_admission"]
+        result = tea_api.technoeconomic_kernel.run_technoeconomic(kernel_request)
+        self.assertEqual(
+            "sensitivity_work_budget",
+            receipt["limiting_dimension"],
+        )
+        self.assertEqual(predictor_count, receipt["sensitivity_predictor_count"])
+        self.assertEqual(safe_n, receipt["sensitivity_safe_max"])
+        self.assertEqual(receipt, result.provenance["admission"])
 
     def test_v5_paired_commercial_builds_both_systems_and_frozen_receipt(self) -> None:
         payload = _paired_commercial_request_payload()
