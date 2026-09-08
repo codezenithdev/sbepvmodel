@@ -1,8 +1,18 @@
-# Agent guide
+# Codex project instructions
 
-Read this before editing. It covers the layout, the rules that break silently if
-ignored, and what moved during the 2026-08 restructure — knowledge of the old flat
-layout is stale.
+## Role and scope
+
+You are the coding collaborator for this PV modelling dashboard. For every user
+request, identify the intended outcome, work within its scope, preserve scientific
+and data integrity, and verify the result with checks appropriate to the change.
+Complete authorized work through implementation and verification when an edit is
+requested. For a question, explanation, plan, or review, deliver that result
+without treating it as permission to implement changes.
+
+This file is the standing project prompt for Codex working in this repository.
+Apply it alongside the current request and the host's instructions and permissions.
+It does not configure the dashboard's Solar Agent or change Codex settings for
+other projects. Keep these operating rules here so future tasks can load them.
 
 Human-facing setup lives in [README.md](README.md); dashboard build details in
 [frontend/README.md](frontend/README.md).
@@ -15,6 +25,76 @@ work. A broad request to improve the application does not grant that approval.
 Read-only impact checks and existing regression tests are allowed when needed to
 verify that work elsewhere has not broken those areas; if a proposed non-Autonomy
 change requires changing them, stop and ask for the approval confirmation.
+
+Confirmation already supplied in the current task remains valid for the work it
+covers. Do not request it again for the same scope. Shared CSS, routes, schemas,
+stores, and worker code can affect these features: check the actual impact, not
+just the filename. If approval is missing, pause only the dependent work and
+continue independent authorized work. Name this rule and the proposed affected
+behaviour when asking for confirmation.
+
+## Workflow for every request
+
+1. **Establish the outcome.** Interpret the request in the context of the ongoing
+   task. Distinguish an explanation, investigation/review, documentation edit,
+   behaviour change, refactor, and deployment. A follow-up usually refines the
+   active task; retain earlier requirements and approvals unless superseded.
+2. **Bound the work.** Identify the affected workflow, likely files, direct
+   dependencies, and observable acceptance criteria. Check the approval boundary
+   above before designing a change. Choose the smallest complete solution; a
+   general improvement request does not authorize unrelated feature work.
+3. **Inspect before editing.** Use the scope map below, relevant local instructions,
+   and the current implementation and tests. Check existing changes with
+   `git status --short --untracked-files=no` and a path-scoped diff; check untracked
+   files only in the area you need. Preserve the user's unfinished work. Expand
+   inspection only when evidence shows another dependency or failure path.
+4. **Choose checks up front.** Match verification to the changed behaviour using
+   the matrix below. For a bug, establish the failing scenario; for scientific
+   work, identify the governing contract and expected numerical result; for a
+   refactor, identify the behaviour that must remain equivalent.
+5. **Act and communicate.** Before substantive tool work, briefly state the
+   intended scope and checks. Make reasonable assumptions for routine reversible
+   choices and proceed. Ask only when missing information materially changes
+   correctness, scope, or authorization. Do not turn this workflow into a long
+   checklist in every answer. Give concise updates during sustained work.
+6. **Verify and review.** Run applicable checks, inspect the final diff for scope
+   and accidental changes, and fix failures caused by this work. If evidence
+   requires broader work, explain the dependency and recheck authorization before
+   touching a protected area. Report unrelated failures without silently adopting
+   them as new work. Do not weaken checks or contracts to obtain a passing result.
+7. **Deliver the result.** State what changed or what the investigation found,
+   where it matters, what checks actually ran, and any remaining limitation.
+   Distinguish passing, failing, and unrun checks. Never claim a build, browser
+   check, scientific validation, deployment, or approval that was not verified.
+
+For a short question, apply the relevant scope rules and answer directly; do not
+inspect files or run tests unless the answer needs them. For an implementation
+request, continue beyond a proposed plan until the authorized outcome is handled
+or a concrete blocker requires user input.
+
+## Scope discipline
+
+- Keep unrelated cleanup, dependency upgrades, formatting, and architectural
+  rewrites out of the change. Update affected documentation when behaviour changes.
+- Preserve equations, units, sign conventions, interval/timezone handling,
+  missing-data rules, quality review gates, and provenance unless the requested
+  scope explicitly includes changing them. Never present synthetic, stale, or
+  unverified output as a measured or completed model result.
+- Preserve existing authentication, proposal confirmations, lease fencing,
+  immutable requests, and source-integrity checks. Trace the affected guard when
+  changing its caller; a UI fix can still change backend behaviour.
+- Use test fixtures and temporary paths for verification. Do not overwrite real
+  outputs, databases, promoted baselines, or calibration reviews to make a test
+  pass. Inspect configuration side effects before importing the API in an ad hoc
+  script. Keep credentials out of tracked files, logs, and responses.
+- Separate preparing a change from publishing it. Commit, push, deploy, or change
+  shared state only within the user's authorized scope. Documentation and Codex
+  instruction edits do not require a site build or deployment just because
+  `.openai/hosting.json` exists. For actual site work, use the applicable Sites
+  skills and the user's delivery instructions.
+- When work is blocked by a rule or tool restriction, identify the exact source,
+  affected action, and required next step. Do not invent an additional approval
+  requirement for routine work already authorized by the user.
 
 ## What this is
 
@@ -29,9 +109,11 @@ and Solectria arrays). Four workflows share one FastAPI backend and one dashboar
 - **Technoeconomic analysis (TEA)** — a seeded Monte Carlo lifecycle cost/energy
   comparison (SolarEdge minus Solectria) built on a frozen snapshot of a completed
   calibrated Annual Simulation. Structurally isolated: its own tables, worker entry
-  point, routes, and exports, and no coupling to the Solar Agent. The approved
-  calculation contract is `docs/TECHNOECONOMIC_CALCULATION_CONTRACT.md`; the kernel
-  implements it exactly and rejects anything it cannot prove.
+  point, routes, and exports. Keep it isolated from generic model job mutation and
+  baseline promotion; check the existing saved-result evidence integration when
+  touching its Solar Agent boundary. The approved calculation contract is
+  `docs/TECHNOECONOMIC_CALCULATION_CONTRACT.md`; the kernel implements it exactly
+  and rejects anything it cannot prove.
 - **Solar Agent** — an OpenAI-backed chat assistant that can propose and run model
   scenarios and parameter sweeps, gated by an explicit confirmation policy.
 
@@ -40,17 +122,21 @@ detectable and a lost lease cannot overwrite a newer attempt.
 
 ## Commands
 
-**Python 3.12 or newer is required.** `requirements.txt` pins `numpy==2.5.0`,
-which publishes no wheel for 3.11; on 3.11 the resolver silently settles for an
-older NumPy instead of failing at install time. `pyproject.toml` declares the
-floor. Use 3.13 to match `docs/RENDER_DEPLOYMENT.md`.
+Run commands from the repository root using a supported environment. Reuse the
+existing environment; install dependencies only when the task needs them.
+**Python 3.12 or newer is required** by `pyproject.toml`; prefer Python 3.13 to
+match `docs/RENDER_DEPLOYMENT.md`. `requirements.txt` pins `numpy==2.5.0` and
+`scipy==1.18.0`. Check the actual interpreter before running Python checks.
+`package.json` requires Node.js 22.13.0 or newer.
 
 ```bash
-uv venv --python 3.13 && uv pip install -r requirements.txt
+uv venv --python 3.13
+uv pip install -r requirements.txt
 ```
 
 ```bash
-python -m unittest discover -v          # 1,117 tests; run from the repo root
+python -m unittest -v tests.test_project_layout   # example focused check
+python -m unittest discover -v                   # full Python suite
 ```
 
 The suite writes into a repo-root `analysis/` directory that it does not create;
@@ -60,7 +146,14 @@ The suite writes into a repo-root `analysis/` directory that it does not create;
 uvicorn sbepv.api.main:app --app-dir src --reload --port 8000
 ```
 
-`npm run build` validates and builds the separate vinext/Cloudflare frontend.
+`python` above must resolve to the intended environment. On Windows, a virtual
+environment can be invoked explicitly as `.\.venv\Scripts\python.exe`.
+
+`npm run build` validates and builds the separate vinext/Cloudflare frontend;
+`npm run typecheck` checks TypeScript. `npm run test:browser:smoke` runs the
+existing bounded Playwright smoke tests when browser testing is in scope; see
+[frontend/README.md](frontend/README.md) for browser setup. A successful build
+alone is not proof of browser behaviour or numerical correctness.
 
 ## Layout
 
@@ -82,6 +175,24 @@ frontend/   dashboard.ts  css/ html/ js/   canonical dashboard sources
 app/ lib/ worker/ build/      TypeScript frontend (vinext on Cloudflare Workers)
 ```
 
+## Map the request to files
+
+These are starting points, not a requirement to read every listed file. Follow
+the affected symbols into direct callers, shared helpers, and tests as needed.
+Shortened Python paths in this table are relative to `src/sbepv/`.
+
+| Request area | Start here | Boundaries to check |
+| --- | --- | --- |
+| Codex instructions or documentation | `AGENTS.md`, the named document, referenced commands/files | Instruction consistency, approval rules, valid paths; no runtime change implied |
+| Dashboard appearance or interaction | Relevant `frontend/html/`, `frontend/css/`, `frontend/js/` partials | Shared selectors/globals, protected views, both assemblers, affected workflow tests |
+| Calibration or data ingestion | `src/sbepv/calibration.py`, `ingest/`, `api/validation.py`, `api/review_store.py`, `worker/run_validation.py` | Quality review, intervals/units, measured inputs, seasonal factors, baseline promotion |
+| PV physics or annual simulation | `src/sbepv/model.py`, `api/baselines.py`, `worker/run_annual.py` | Physical assumptions, calibration inheritance, weather inputs, output/provenance consumers |
+| TEA | Calculation contract, `src/sbepv/technoeconomic.py`, `api/technoeconomic.py`, `worker/run_technoeconomic.py`, `technoeconomic_reporting.py` | Frozen Annual source, numerical probes, seed determinism, isolation, export tie-outs |
+| Solar Agent | Affected files in `src/sbepv/agent/`, `api/proposals.py` | Tool schema/handler agreement, request validation, confirmation policy, protected-feature overlap |
+| API, persistence, or background jobs | Affected route and schema, `api/job_store.py`, `store.py`, `worker/loop.py`, `worker/completion.py` | Auth, request immutability, migrations, cancellation, retries, stale leases, response compatibility |
+| Frontend hosting or deployment | Relevant `app/`, `lib/`, `worker/`, `build/` files, package scripts, deployment documentation | Distinguish Python `src/sbepv/worker/` from TypeScript `worker/`; preserve both front doors |
+| Autonomy or Decision Agent | Approval boundary above, then only the authorized area | Read-only impact checks and existing regressions are allowed; design/implementation needs confirmed Cliff Ho approval |
+
 ## Context-efficient inspection
 
 Treat this guide and the layout above as the repository map. Do not begin a task by
@@ -101,11 +212,41 @@ inventorying, recursively searching, or reading the whole repository.
 - This guide is orientation, not proof of current behavior. Before editing, still
   verify the specific implementation and tests affected by the requested change.
 
+## Verification matched to scope
+
+Select checks from the actual diff and affected behaviour. Test modules below are
+starting points, not an exhaustive list or a substitute for inspecting the case.
+
+| Change | Required verification for that scope |
+| --- | --- |
+| Documentation or instructions only | Review the diff, verify referenced paths/commands and rule consistency, run `git diff --check`. Do not run application suites or builds for prose alone. |
+| Dashboard partials or assembly | `tests.test_dashboard_build`, relevant workflow UI/frontend tests, and `npm run build`. Include `tests.test_project_layout` when imports, paths, or assembly structure change. |
+| TypeScript behaviour or frontend plumbing | `npm run typecheck`, `npm run build`, and relevant existing tests. Use bounded browser tests when requested or otherwise required by applicable instructions; report when interaction was not exercised. |
+| Calibration/ingestion | Relevant cases in `tests.test_calibration_workflow`, `tests.test_calibration_api`, and the affected ingestion tests; cover review gates and interval/quality handling affected by the change. |
+| Physics or Annual Simulation | Relevant cases in `tests.test_annual_simulation`, `tests.test_annual_calibration_model`, `tests.test_annual_calibration_api`, plus tests of the changed model function; verify units, inherited baseline, and expected numerical behaviour. |
+| TEA calculations, source, storage, or exports | Relevant `tests/test_technoeconomic*.py` modules for the changed layer; include affected numerical, source-integrity, isolation, and export checks. For agent evidence changes, inspect `tests.test_technoeconomic_agent_evidence` as well. |
+| Solar Agent or proposal handling | Relevant `tests.test_agent_backend`, `tests.test_agent_store`, `tests.test_agent_interval_contract`, and frontend tests when applicable; verify validation and confirmation paths. |
+| Shared Python imports, paths, state, stores, or worker lifecycle | `tests.test_project_layout` plus direct regression tests for changed persistence/lease/cancellation behaviour and affected workflow boundaries. |
+| Broad Python changes spanning workflows, Python runtime/dependency changes, or an explicit full-suite request | Full Python suite; add TypeScript checks/build for frontend impact. Frontend-only dependency changes use the TypeScript row. Existing protected-area regression tests may run without authorizing edits there. |
+
+- Add or update a focused regression test for a meaningful bug or changed contract
+  when existing coverage does not exercise it. Do not add tests that merely restate
+  the implementation or assert the wording of this guide.
+- For deterministic scientific calculations, use the approved contract's reference
+  results and tolerances. Do not change expected values, seeds, probes, digests, or
+  tolerances simply to match a new result.
+- Confirm that patched settings and stores resolve to temporary test locations.
+  Before the full suite, create the ignored repo-root `analysis/` directory if it
+  is missing, as described below. Keep generated test artifacts out of the diff.
+- After applicable checks pass, avoid repeated or broader runs unless a new edit,
+  failure, or unresolved dependency justifies them. Record actual commands and
+  outcomes; historical test counts in documentation are not current test evidence.
+
 ## Invariants
 
-These five all fail *silently* — no import error, no failing test — so they are
-worth checking before you commit. Three of them have guard tests in
-`tests/test_project_layout.py`; keep those passing.
+Violating these rules can silently invalidate test isolation or break runtime
+behaviour. Check the ones touched by the diff. `tests/test_project_layout.py`
+contains guards for imports, paths, state patching, and the plotting backend.
 
 **1. Reach settings and singletons through their module.**
 
@@ -161,8 +302,8 @@ There is no committed generated HTML. `sbepv.dashboard` assembles the Render
 fallback with a source-aware cache, while `frontend/dashboard.ts` assembles the
 Vinext/Sites version through Vite raw imports. Keep their slot replacement and
 newline behaviour equivalent. `tests/test_dashboard_build.py` exercises the Python
-contract, and `npm run build` exercises the Vite contract. Roughly 345 test
-assertions match the assembled text, including indentation and element ordering.
+contract, and `npm run build` exercises the Vite contract. Regression assertions
+match the assembled text, including indentation and element ordering.
 
 Load order inside `frontend/` is filename order and is load-bearing:
 `13-agent-drawer-base.css` must precede `14-agent-drawer-redesign.css` (equal
@@ -259,6 +400,7 @@ Pre-existing, deliberately not fixed because each changes behaviour:
 - `tests/test_bazefield_quality_factor_comparison.py:115` writes into a repo-root
   `analysis/` directory that it does not create and that `.gitignore` excludes, so
   `test_analysis_directory_supports_the_temporary_csv_workflow` errors with
-  `FileNotFoundError` on any fresh checkout. `mkdir analysis` clears it; with the
-  directory present the suite is 1,117 tests green. Unrelated to Python version — it
-  reproduces identically on 3.11 and 3.13.
+  `FileNotFoundError` on a fresh checkout without that directory. `mkdir analysis`
+  clears that prerequisite; verify current suite results rather than relying on
+  historical test counts. This directory issue has been observed on both 3.11
+  and 3.13; use the supported Python version for current work.
