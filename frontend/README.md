@@ -105,7 +105,9 @@ tab; the image link becomes available only after the verified plot loads.
 ## Supported TEA calculation
 
 The dashboard uses the v5 paired commercial LCOE calculation. Its interpretation
-text and percentile table appear below the full-width CDF chart. Autonomy, the
+text and percentile table appear below the full-width CDF chart. The results card
+omits technical job IDs, contract versions, and snapshot hashes; provenance remains
+in the underlying job records and exports. Autonomy, the
 Decision Agent, and TEA v6 calculation, views, and exports have been removed.
 Historical database rows and private artifacts are preserved, but retired jobs
 cannot be viewed, exported, retried, or used as Solar Agent evidence.

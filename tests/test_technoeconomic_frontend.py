@@ -793,7 +793,6 @@ function commercialDraft(transferEnabled = true) {
             'no currency conversion is applied',
             'id="technoeconomicStandaloneCsvLink"',
             'id="technoeconomicStandaloneXlsxLink"',
-            'id="technoeconomicStandaloneProvenance"',
         ):
             self.assertIn(marker, standalone)
 
@@ -1299,7 +1298,6 @@ console.log(JSON.stringify({at100, at75, fallback}));
             "technoeconomicRenderStandaloneScenario(job, result)",
             "safe('csv_bundle')",
             "safe('xlsx_workbook')",
-            "standaloneProvenance",
         ):
             self.assertIn(marker, renderer)
         self.assertNotIn("canvas", renderer.lower())
@@ -1322,7 +1320,6 @@ console.log(JSON.stringify({at100, at75, fallback}));
         for marker in (
             "standaloneCsvLink: document.getElementById('technoeconomicStandaloneCsvLink')",
             "standaloneXlsxLink: document.getElementById('technoeconomicStandaloneXlsxLink')",
-            "standaloneProvenance: document.getElementById('technoeconomicStandaloneProvenance')",
         ):
             self.assertIn(marker, self.bindings)
 
@@ -1350,7 +1347,6 @@ technoeconomicElements = {
   standaloneInterpretation: interpretation,
   standalonePercentileBody: body,
   standaloneRunContext: {textContent: ''},
-  standaloneProvenance: null,
   standaloneCdfPlot: null,
   standaloneCdfFallback: null,
   standaloneCdfLink: null,

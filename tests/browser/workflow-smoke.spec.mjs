@@ -548,6 +548,7 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   const chartAction = page.locator('a#technoeconomicStandaloneCdfLink');
   await expect(chart).toHaveAttribute('data-chart-openable', '');
   await expect(chartLink.locator('img')).toHaveCount(1);
+  await page.locator('.tea-standalone-cdf-card').screenshot({path: test.info().outputPath('tea-v5-completed-results.png')});
   for (const link of [chartLink, chartAction]) {
     await expect(link).toHaveAttribute('href', new RegExp(`${plotPath}$`));
     await expect(link).toHaveAttribute('target', '_blank');

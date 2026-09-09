@@ -2474,21 +2474,6 @@
                     } years`;
             }
             technoeconomicRenderStandaloneScenario(job, result);
-            const provenance = technoeconomicElements.standaloneProvenance;
-            if (provenance) {
-                provenance.replaceChildren();
-                for (const [label, value] of [
-                    ['Annual source', job.source_annual_job_id
-                        || request.source_annual_job_id],
-                    ['TEA job', job.job_id],
-                    ['Contract', result.calculation_contract_version],
-                    ['Source snapshot SHA-256', result.source_snapshot_sha256],
-                ]) {
-                    if (value !== null && value !== undefined && String(value).trim()) {
-                        technoeconomicStandaloneAppendDefinition(provenance, label, String(value));
-                    }
-                }
-            }
             const source = technoeconomicSources.find(
                 (item) => item?.source_annual_job_id === job.source_annual_job_id
             ) || technoeconomicStandaloneSelectedSource();
@@ -2616,21 +2601,6 @@
                     } years`;
             }
             technoeconomicRenderStandaloneScenario(job, result);
-            const provenance = technoeconomicElements.standaloneProvenance;
-            if (provenance) {
-                provenance.replaceChildren();
-                for (const [label, value] of [
-                    ['Annual source', job.source_annual_job_id
-                        || request.source_annual_job_id],
-                    ['TEA job', job.job_id],
-                    ['Contract', result.calculation_contract_version],
-                    ['Source snapshot SHA-256', result.source_snapshot_sha256],
-                ]) {
-                    if (value !== null && value !== undefined && String(value).trim()) {
-                        technoeconomicStandaloneAppendDefinition(provenance, label, String(value));
-                    }
-                }
-            }
             const source = technoeconomicSources.find(
                 (item) => item?.source_annual_job_id === job.source_annual_job_id
             ) || technoeconomicStandaloneSelectedSource();
@@ -2683,7 +2653,6 @@
             technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, null);
             technoeconomicSetDownload(technoeconomicElements.standaloneCsvLink, null);
             technoeconomicSetDownload(technoeconomicElements.standaloneXlsxLink, null);
-            technoeconomicElements.standaloneProvenance?.replaceChildren();
             if (technoeconomicElements.standaloneSubmitButton) {
                 technoeconomicElements.standaloneSubmitButton.textContent = 'Calculate LCOE';
             }
