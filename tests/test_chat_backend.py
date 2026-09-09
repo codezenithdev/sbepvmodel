@@ -220,6 +220,10 @@ class TechnoeconomicChatContextTests(unittest.TestCase):
     TEA_JOB_ID = "tea_00000000000000000000000000000001"
 
     def setUp(self):
+        # This class supplies supported durable jobs through get-job fixtures.
+        supported = patch.object(state.AGENT_STORE, "ensure_technoeconomic_job_supported", return_value=None)
+        supported.start()
+        self.addCleanup(supported.stop)
         os.environ["OPENAI_API_KEY"] = "test-placeholder"
         state.JOBS.clear()
         self.calls = []

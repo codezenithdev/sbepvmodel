@@ -1,10 +1,9 @@
 """Execute one lease-fenced probabilistic technoeconomic job.
 
 The calculation consumes only the immutable TEA request and Annual source
-snapshot carried by the claimed record. Scenario-linked attempts additionally
-reverify their immutable accepted-evidence bindings before calculation; evidence
-never changes kernel inputs. The runner never resolves the live Annual job and
-never places TEA state in the legacy in-memory model cache.
+snapshot carried by the claimed record. Retired jobs fail before calculation or
+export. The runner never resolves the live Annual job and never places TEA state
+in the legacy in-memory model cache.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ from sbepv.api.artifacts import (
     _delete_technoeconomic_attempt_artifacts,
     _technoeconomic_attempt_directory,
 )
-from sbepv.store import AgentStoreError, LeaseOwnershipLost
+from sbepv.store import AgentStoreError, LeaseOwnershipLost, RetiredWorkflow
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,6 @@ APPLIED_CAPACITY_ROUTINE_RESULT_SCHEMA_VERSION = 2
 COMMERCIAL_SCALING_ROUTINE_RESULT_SCHEMA_VERSION = 3
 STANDALONE_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION = 4
 PAIRED_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION = 5
-LIFECYCLE_ROUTINE_RESULT_SCHEMA_VERSION = 6
 RESULT_PROVENANCE_SCHEMA_VERSION = 1
 SEALED_CALCULATION_FILENAME = "calculation_payload_v1.npz"
 _REQUIRED_EXPORT_ARTIFACT_IDS = frozenset(
@@ -751,16 +749,11 @@ def _routine_result(
         request.calculation_contract_version
         == kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION
     )
-    lifecycle_contract = (
-        request.calculation_contract_version
-        == kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION
-    )
     applied_capacity_contract = request.calculation_contract_version in {
         kernel.CALCULATION_CONTRACT_VERSION,
         kernel.COMMERCIAL_SCALING_CALCULATION_CONTRACT_VERSION,
         kernel.STANDALONE_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
         kernel.PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION,
-        kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION,
     }
     if request.basis == "solartac_site":
         transfer_status = "not_applicable"
@@ -778,9 +771,7 @@ def _routine_result(
         commercial_reference = None
     result = {
         "schema_version": (
-            LIFECYCLE_ROUTINE_RESULT_SCHEMA_VERSION
-            if lifecycle_contract
-            else PAIRED_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION
+            PAIRED_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION
             if paired_commercial_contract
             else STANDALONE_COMMERCIAL_ROUTINE_RESULT_SCHEMA_VERSION
             if standalone_commercial_contract
@@ -1021,80 +1012,6 @@ def _routine_result(
             "percentiles": _json_safe(delta_percentiles),
             "cdf": _headline_cdf_display(delta_headline),
         }
-    if lifecycle_contract:
-        lifecycle = request.paired_lifecycle
-        if lifecycle is None:
-            raise ValueError("The version-6 result is missing its lifecycle inputs")
-        result_version = calculation.provenance.get("result_version")
-        if result_version != kernel.LIFECYCLE_RESULT_VERSION:
-            raise ValueError("The version-6 calculation has an invalid result identity")
-        required_summary_keys = {
-            "headline_decision",
-            "probability_counts",
-            "upgrade_npv",
-            "delta_lcoe",
-            "lcoo",
-            "annual_lifecycle",
-            "reliability_summary",
-            "representative_event_traces",
-            "cost_coverage_audit",
-            "warnings",
-            "formula_registry",
-        }
-        missing = sorted(required_summary_keys - set(calculation.summaries))
-        if missing:
-            raise ValueError(
-                f"The version-6 calculation is missing summaries: {missing!r}"
-            )
-        headline = calculation.summaries["headline_decision"]
-        probabilities = calculation.summaries["probability_counts"]
-        if not isinstance(headline, Mapping) or not isinstance(probabilities, Mapping):
-            raise ValueError("The version-6 decision summaries are invalid")
-        reason_codes = list(headline.get("reason_codes") or ())
-        lcoo_summary = calculation.summaries["lcoo"]
-        if isinstance(lcoo_summary, Mapping) and lcoo_summary.get("status") != "available":
-            reason = lcoo_summary.get("reason")
-            if isinstance(reason, str) and reason and reason not in reason_codes:
-                reason_codes.append(reason)
-        result["result_version"] = kernel.LIFECYCLE_RESULT_VERSION
-        result["paired_lifecycle"] = {
-            "target_capacity_w": lifecycle.target_capacity_w,
-            "target_rating_basis": lifecycle.target_rating_basis,
-            "source_energy_basis": lifecycle.source_energy_basis,
-            "reliability_mode": lifecycle.reliability_mode,
-            "constant_dollar_cost_year": request.constant_dollar_cost_year,
-            "headline_metric_id": "upgrade_npv",
-            "headline_decision": _json_safe(headline),
-            "probability_counts": _json_safe(probabilities),
-            "upgrade_npv": _compact_cdf_points(
-                calculation.summaries["upgrade_npv"]
-            ),
-            "delta_lcoe": _compact_cdf_points(
-                calculation.summaries["delta_lcoe"]
-            ),
-            "lcoo": _compact_cdf_points(lcoo_summary),
-            "reason_codes": _json_safe(reason_codes),
-            "annual_lifecycle": _json_safe(
-                calculation.summaries["annual_lifecycle"]
-            ),
-            "reliability_summary": _json_safe(
-                calculation.summaries["reliability_summary"]
-            ),
-            "representative_event_traces": _json_safe(
-                calculation.summaries["representative_event_traces"]
-            ),
-            "cost_coverage_audit": _json_safe(
-                calculation.summaries["cost_coverage_audit"]
-            ),
-            "warnings": _json_safe(calculation.summaries["warnings"]),
-            "formula_registry": _json_safe(
-                calculation.provenance.get("formula_registry") or {}
-            ),
-            "formula_catalog_endpoint": "/api/technoeconomic/formulas/v6",
-            "admission": _json_safe(
-                calculation.provenance.get("admission") or {}
-            ),
-        }
     return result
 
 
@@ -1163,48 +1080,6 @@ def _verify_frozen_inputs(
     return request_sha256, verified_artifact
 
 
-def _verify_decision_scenario_evidence(
-    job_id: str,
-    request_payload: Mapping[str, Any],
-) -> None:
-    """Reverify a linked scenario's immutable evidence before kernel execution."""
-
-    context = state.AGENT_STORE.get_decision_scenario_job_context(job_id)
-    if context is None:
-        return
-    scenario_record = context.get("scenario")
-    if not isinstance(scenario_record, Mapping):
-        raise ValueError("The decision scenario execution binding is invalid")
-    request_sha256 = technoeconomic_api.canonical_json_sha256(request_payload)
-    if not secrets.compare_digest(
-        request_sha256,
-        str(scenario_record.get("request_sha256") or ""),
-    ):
-        raise ValueError("The TEA request no longer matches its confirmed scenario")
-
-    # Function-local imports keep the standalone TEA worker independent unless
-    # this exact job carries an immutable decision-scenario link.
-    from sbepv.autonomy import evidence as autonomy_evidence
-    from sbepv.autonomy import scenarios as autonomy_scenarios
-
-    case_id = str(scenario_record.get("case_id") or "")
-    verification = autonomy_scenarios.verify_accepted_evidence_references(
-        case_id=case_id,
-        request_payload=request_payload,
-        evidence_references=scenario_record.get("evidence_receipt_refs") or [],
-        receipt_loader=state.AGENT_STORE.get_decision_evidence_receipt,
-        evidence_snapshot_loader=lambda verified_case_id, asset_id: (
-            autonomy_evidence.verified_evidence_snapshot(
-                state.AGENT_STORE,
-                verified_case_id,
-                asset_id,
-            )
-        ),
-    )
-    if not verification.get("valid"):
-        raise ValueError(
-            "The confirmed decision scenario evidence failed immutable preflight"
-        )
 
 
 def _check_cancelled(job_id: str, *, worker_id: str, lease_token: str) -> None:
@@ -1311,6 +1186,7 @@ def _handle_failure(
             state="error",
             stage="Failed",
             error=(
+                str(exc) if isinstance(exc, RetiredWorkflow) else
                 "The technoeconomic analysis failed. Review server logs and retry."
             ),
         )
@@ -1354,7 +1230,7 @@ def _run_technoeconomic_job(
 
     try:
         set_progress(3, "Verifying frozen technoeconomic inputs")
-        _verify_decision_scenario_evidence(job_id, request_payload)
+        state.AGENT_STORE.ensure_technoeconomic_job_supported(job_id)
         request_sha256, verified_source_artifact = _verify_frozen_inputs(
             request_payload=request_payload,
             source_snapshot=source_snapshot,
@@ -1506,22 +1382,6 @@ def _run_technoeconomic_job(
             },
             "kernel": kernel_provenance,
         }
-        if (
-            request.calculation_contract_version
-            == kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION
-        ):
-            result_provenance.update(
-                {
-                    "result_version": kernel.LIFECYCLE_RESULT_VERSION,
-                    "calculation_contract_version": (
-                        kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION
-                    ),
-                    "sampling_version": kernel.LIFECYCLE_SAMPLING_VERSION,
-                    "formula_registry": _json_safe(
-                        kernel_provenance.get("formula_registry") or {}
-                    ),
-                }
-            )
         set_progress(99, "Finalizing technoeconomic results")
         _verify_export_manifest(
             job_id,

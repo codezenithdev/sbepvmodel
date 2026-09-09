@@ -208,8 +208,7 @@
         }
 
         .annual-only,
-        .technoeconomic-only,
-        .autonomy-only {
+        .technoeconomic-only {
             display: none;
         }
 
@@ -225,18 +224,7 @@
             display: block;
         }
 
-        body.dashboard-mode-autonomy .autonomy-only {
-            display: block;
-        }
-
         body.dashboard-mode-annual .validation-only,
-        body.dashboard-mode-technoeconomic .validation-only,
-        body.dashboard-mode-autonomy .validation-only {
+        body.dashboard-mode-technoeconomic .validation-only {
             display: none;
         }
-
-        body.dashboard-mode-autonomy #chatToggle,
-        body.dashboard-mode-autonomy #chatSidebar {
-            display: none !important;
-        }
-

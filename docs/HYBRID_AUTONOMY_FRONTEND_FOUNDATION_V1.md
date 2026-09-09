@@ -1,5 +1,7 @@
 # Hybrid Autonomy Frontend Foundation Contract
 
+> Retired on 2026-09-09. Historical design reference only; Autonomy and the Decision Agent have been removed from the application.
+
 Status: **approved implementation contract**
 
 Version: **1.0**

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from sbepv.api import config, state
 from sbepv.api import main as app
+from sbepv.store import RecordNotFound
 from sbepv.api.artifacts import (
     TECHNOECONOMIC_PUBLIC_ARTIFACT_CONTRACT,
     _canonical_manifest_sha256,
@@ -62,6 +63,11 @@ class _FixtureStore:
 
     def get_technoeconomic_job(self, job_id: str):
         return self.job if self.job is not None and job_id == self.job["id"] else None
+
+    def ensure_technoeconomic_job_supported(self, job_id: str) -> None:
+        # These fixtures represent supported pre-v6 results without an archive.
+        if self.get_technoeconomic_job(job_id) is None:
+            raise RecordNotFound(f"unknown technoeconomic job: {job_id}")
 
     def delete_technoeconomic_job(self, job_id: str, *, before_delete=None) -> None:
         if self.job is None or job_id != self.job["id"]:

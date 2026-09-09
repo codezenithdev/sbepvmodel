@@ -330,179 +330,8 @@ def _paired_commercial_request_payload(
     return payload
 
 
-def _v6_lifecycle_request_payload(*, n: int = 8) -> dict:
-    """Return a compact fully evidenced public V6 lifecycle request fixture."""
-
-    payload = _paired_commercial_request_payload(n=n)
-    payload["calculation_contract_version"] = "tea-calculation-v6"
-    payload.pop("shared_degradation")
-    for system in payload["paired_commercial"]["systems"]:
-        system["cost_lines"] = []
-
-    def documented(value: float, unit: str) -> dict:
-        return {
-            "unit": unit,
-            "distribution": {"family": "fixed", "value": value},
-            "evidence": _evidence(),
-        }
-
-    lifecycle_systems = []
-    for technology in ("solectria", "solaredge"):
-        prefix = f"lifecycle.{technology}"
-        lifecycle_systems.append(
-            {
-                "technology": technology,
-                "degradation": documented(0.005, "real_fraction_per_year"),
-                "base_availability": documented(0.995, "dimensionless_fraction"),
-                "base_om_cost_per_w_year": documented(
-                    0.02,
-                    "constant_usd_per_target_w_year",
-                ),
-                "base_om_real_growth": documented(0.0, "real_fraction_per_year"),
-                "initial_cost_lines": [
-                    {
-                        "input_id": f"{prefix}.initial-capex",
-                        "label": f"{technology.title()} initial installed cost",
-                        "cost_per_w": documented(
-                            0.80,
-                            "constant_usd_per_target_w",
-                        ),
-                        "coverage_ids": [f"{prefix}.initial-scope"],
-                        "evidence": _evidence(),
-                    }
-                ],
-                "scheduled_costs": [],
-                "components": [
-                    {
-                        "component_id": "generic-inverter",
-                        "category": "inverter",
-                        "count": 10,
-                        "capacity_impact": 0.1,
-                        "weibull_beta": documented(2.0, "dimensionless"),
-                        "weibull_eta_years": documented(20.0, "years"),
-                        "repair_hours": documented(8.0, "hours"),
-                        "logistics_hours": documented(24.0, "hours"),
-                        "emergency_unit_cost": documented(50_000.0, "constant_usd"),
-                        "restock_unit_cost": documented(40_000.0, "constant_usd"),
-                        "labor_cost": documented(2_000.0, "constant_usd"),
-                        "mobilization_cost": documented(5_000.0, "constant_usd"),
-                        "real_cost_growth": documented(0.0, "real_fraction_per_year"),
-                        "batch_size": 2,
-                        "initial_spares": 1,
-                        "spare_target": 1,
-                        "warranty": {
-                            "age_limit_years": 10,
-                            "fraction": 1.0,
-                            "covered_cost_categories": ["hardware"],
-                            "coverage_ids": [f"{prefix}.component-warranty"],
-                            "evidence": _evidence(),
-                        },
-                        "preventive_replacements": [],
-                        "coverage_ids": [f"{prefix}.component-corrective"],
-                        "evidence": _evidence(),
-                    }
-                ],
-                "decommissioning_cost": documented(100_000.0, "constant_usd"),
-                "salvage_value": documented(100_000.0, "constant_usd"),
-                "source_availability_by_year": [],
-                "base_om_coverage_ids": [f"{prefix}.base-om"],
-                "evidence": _evidence(),
-            }
-        )
-    payload["paired_commercial"]["lifecycle"] = {
-        "weather_path_method": (
-            "paired-yearwise-balanced-across-realizations-"
-            "independent-across-project-years-v1"
-        ),
-        "source_energy_basis": "gross",
-        "reliability_mode": "event",
-        "electricity_value": documented(0.07, "constant_usd_per_kwh_ac"),
-        "electricity_value_real_growth": documented(
-            0.0,
-            "real_fraction_per_year",
-        ),
-        "systems": lifecycle_systems,
-        "common_cause_events": [
-            {
-                "event_id": "shared-grid-outage",
-                "annual_probability": documented(0.02, "dimensionless_fraction"),
-                "downtime_hours": documented(24.0, "hours"),
-                "capacity_impact": 1.0,
-                "cost_per_event": documented(10_000.0, "constant_usd"),
-                "real_cost_growth": documented(0.0, "real_fraction_per_year"),
-                "affected_systems": ["solectria", "solaredge"],
-                "coverage_ids": ["lifecycle.shared.grid-outage"],
-                "evidence": _evidence(),
-            }
-        ],
-        "decision_probability_threshold": 0.75,
-        "decision_npv_tolerance_usd_per_target_w": 0.01,
-    }
-    return payload
 
 
-def _make_v6_predictors_uncertain(payload: dict, count: int) -> None:
-    lifecycle = payload["paired_commercial"]["lifecycle"]
-    documented = [
-        payload["finance"]["real_discount_rate"],
-        lifecycle["electricity_value"],
-        lifecycle["electricity_value_real_growth"],
-    ]
-    for system in lifecycle["systems"]:
-        documented.extend(
-            system[field_name]
-            for field_name in (
-                "degradation",
-                "base_availability",
-                "base_om_cost_per_w_year",
-                "base_om_real_growth",
-                "decommissioning_cost",
-                "salvage_value",
-            )
-        )
-        documented.extend(
-            line["cost_per_w"] for line in system["initial_cost_lines"]
-        )
-        for line in system["scheduled_costs"]:
-            documented.extend((line["cost"], line["real_cost_growth"]))
-        for component in system["components"]:
-            documented.extend(
-                component[field_name]
-                for field_name in (
-                    "weibull_beta",
-                    "weibull_eta_years",
-                    "repair_hours",
-                    "logistics_hours",
-                    "emergency_unit_cost",
-                    "restock_unit_cost",
-                    "labor_cost",
-                    "mobilization_cost",
-                    "real_cost_growth",
-                )
-            )
-    for event in lifecycle["common_cause_events"]:
-        documented.extend(
-            event[field_name]
-            for field_name in (
-                "annual_probability",
-                "downtime_hours",
-                "cost_per_event",
-                "real_cost_growth",
-            )
-        )
-    if count > len(documented):
-        raise AssertionError("The V6 fixture has too few candidate predictors.")
-    for item in documented[:count]:
-        value = item["distribution"]["value"]
-        delta = max(abs(value) * 0.01, 0.001)
-        high = value + delta
-        if item["unit"] == "dimensionless_fraction":
-            high = min(1.0, high)
-        item["distribution"] = {
-            "family": "uniform",
-            "low": value,
-            "high": high,
-        }
 
 
 def _commercial_request_payload(*, include_transfer: bool) -> dict:
@@ -1095,224 +924,12 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
         )
         state._WORKER_WAKE.set.assert_called_once_with()
 
-    def test_v6_lifecycle_requires_explicit_matching_version(self) -> None:
-        v5 = _paired_commercial_request_payload()
-        parsed_v5 = TechnoeconomicSubmissionRequest.model_validate(v5)
-        canonical_v5 = tea_api.canonical_submission_request_payload(parsed_v5)
-        self.assertNotIn("calculation_contract_version", canonical_v5)
-        self.assertNotIn("lifecycle", canonical_v5["paired_commercial"])
 
-        lifecycle_without_version = _v6_lifecycle_request_payload()
-        lifecycle_without_version.pop("calculation_contract_version")
-        with self.assertRaisesRegex(ValidationError, "requires explicit"):
-            TechnoeconomicSubmissionRequest.model_validate(lifecycle_without_version)
 
-        v6_without_lifecycle = _paired_commercial_request_payload()
-        v6_without_lifecycle["calculation_contract_version"] = "tea-calculation-v6"
-        with self.assertRaisesRegex(ValidationError, "requires paired_commercial.lifecycle"):
-            TechnoeconomicSubmissionRequest.model_validate(v6_without_lifecycle)
 
-        mismatched_v5 = _paired_commercial_request_payload()
-        mismatched_v5["calculation_contract_version"] = "tea-calculation-v4"
-        with self.assertRaisesRegex(ValidationError, "does not match"):
-            TechnoeconomicSubmissionRequest.model_validate(mismatched_v5)
 
-    def test_v6_lifecycle_maps_to_isolated_kernel_contract_and_receipt(self) -> None:
-        payload = _v6_lifecycle_request_payload()
-        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
-        request = tea_api.build_technoeconomic_kernel_request(parsed, self.snapshot)
 
-        self.assertEqual(
-            tea_api.technoeconomic_kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION,
-            request.calculation_contract_version,
-        )
-        self.assertEqual(
-            tea_api.technoeconomic_kernel.LIFECYCLE_SAMPLING_VERSION,
-            request.sampling_version,
-        )
-        self.assertIsNone(request.shared_degradation)
-        self.assertIsNone(request.paired_commercial)
-        self.assertIsNotNone(request.paired_lifecycle)
-        lifecycle = request.paired_lifecycle
-        self.assertEqual(100_000_000.0, lifecycle.target_capacity_w)
-        self.assertEqual(
-            ["solectria", "solaredge"],
-            [system.technology for system in lifecycle.systems],
-        )
-        self.assertEqual(0.01, lifecycle.npv_absolute_tolerance_usd_per_w)
-        self.assertEqual(
-            "lifecycle.solectria.component.generic-inverter.weibull-beta",
-            lifecycle.systems[0].components[0].weibull_beta.input_id,
-        )
 
-        provenance = tea_api.build_technoeconomic_submission_provenance(
-            parsed,
-            self.envelope,
-            request,
-        )
-        self.assertEqual(6, provenance["schema_version"])
-        self.assertEqual("technoeconomic-submission-v6", provenance["request_schema"])
-        receipt = provenance["paired_lifecycle_receipt"]
-        self.assertEqual("paired_lifecycle", receipt["shape_discriminator"])
-        self.assertEqual("event", receipt["reliability_mode"])
-        self.assertEqual(
-            tea_api.technoeconomic_kernel.formula_registry_hash(),
-            receipt["formula_registry_sha256"],
-        )
-        self.assertEqual(
-            tea_api.canonical_json_sha256(
-                tea_api.canonical_submission_request_payload(parsed)
-            ),
-            provenance["request_sha256"],
-        )
-
-        response = self._create_via_api(payload)
-        self.assertEqual(202, response.status_code, response.text)
-        stored = self.store.get_technoeconomic_job(response.json()["job"]["job_id"])
-        self.assertEqual(
-            "tea-calculation-v6",
-            stored["request"]["calculation_contract_version"],
-        )
-        self.assertIn("lifecycle", stored["request"]["paired_commercial"])
-        self.assertEqual(
-            "tea-lhs-v2",
-            stored["submission_provenance"]["sampling_version"],
-        )
-
-    def test_v6_formula_catalog_route_uses_kernel_registry(self) -> None:
-        response = self.client.get("/api/technoeconomic/formulas/v6")
-        self.assertEqual(200, response.status_code, response.text)
-        body = response.json()
-        self.assertEqual("tea-calculation-v6", body["calculation_contract_version"])
-        self.assertEqual("tea-formulas-v6", body["formula_registry_version"])
-        self.assertEqual(len(body["formulas"]), body["formula_registry_count"])
-        self.assertEqual(
-            tea_api.technoeconomic_kernel.formula_registry_hash(),
-            body["formula_registry_sha256"],
-        )
-
-    def test_v6_create_feature_flag_blocks_only_new_v6_submissions(self) -> None:
-        with patch.object(config, "TECHNOECONOMIC_V6_SUBMISSIONS_ENABLED", False):
-            blocked = self._create_via_api(_v6_lifecycle_request_payload())
-            formula_catalog = self.client.get("/api/technoeconomic/formulas/v6")
-
-        self.assertEqual(503, blocked.status_code, blocked.text)
-        self.assertIn("temporarily disabled", blocked.json()["detail"])
-        self.assertEqual([], self.store.list_technoeconomic_jobs())
-        state._WORKER_WAKE.set.assert_not_called()
-        self.assertEqual(200, formula_catalog.status_code, formula_catalog.text)
-
-        with patch.object(config, "TECHNOECONOMIC_V6_SUBMISSIONS_ENABLED", False):
-            v5_response = self._create_via_api(_paired_commercial_request_payload())
-        self.assertEqual(202, v5_response.status_code, v5_response.text)
-        self.assertNotIn(
-            "calculation_contract_version",
-            v5_response.json()["job"]["request"],
-        )
-
-    def test_v6_create_feature_flag_preserves_existing_job_status_and_retry(self) -> None:
-        created = self._create_via_api(_v6_lifecycle_request_payload())
-        self.assertEqual(202, created.status_code, created.text)
-        job_id = created.json()["job"]["job_id"]
-        cancelled = self.client.post(f"/api/technoeconomic/jobs/{job_id}/cancel")
-        self.assertEqual(200, cancelled.status_code, cancelled.text)
-        self.assertEqual("cancelled", cancelled.json()["job"]["state"])
-        state._WORKER_WAKE.set.reset_mock()
-
-        with (
-            patch.object(config, "TECHNOECONOMIC_V6_SUBMISSIONS_ENABLED", False),
-            patch.object(
-                app,
-                "_technoeconomic_export_response",
-                return_value=app.JSONResponse({"verified": True}),
-            ) as export_response,
-        ):
-            status = self.client.get(f"/api/technoeconomic/jobs/{job_id}")
-            download = self.client.get(
-                f"/api/technoeconomic/jobs/{job_id}/exports/xlsx"
-            )
-            retried = self.client.post(f"/api/technoeconomic/jobs/{job_id}/retry")
-
-        self.assertEqual(200, status.status_code, status.text)
-        self.assertEqual("tea-calculation-v6", status.json()["request"][
-            "calculation_contract_version"
-        ])
-        self.assertEqual(200, download.status_code, download.text)
-        export_response.assert_called_once_with(job_id, "xlsx")
-        self.assertEqual(202, retried.status_code, retried.text)
-        self.assertEqual(job_id, retried.json()["job"]["retry_of_job_id"])
-        state._WORKER_WAKE.set.assert_called_once_with()
-
-    def test_v6_admission_returns_safe_maximum_and_limiting_dimension(self) -> None:
-        cases = (
-            (30, "estimated_peak_memory"),
-            (1, "realization_export_cells"),
-        )
-        for project_life, limiter in cases:
-            with self.subTest(project_life=project_life):
-                payload = _v6_lifecycle_request_payload(n=100_000)
-                payload["finance"]["project_life_years"] = project_life
-                parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
-                with self.assertRaisesRegex(
-                    tea_api.technoeconomic_kernel.TechnoeconomicValidationError,
-                    rf"safe maximum .* limited by {limiter}",
-                ):
-                    tea_api.build_technoeconomic_kernel_request(parsed, self.snapshot)
-
-        response = self._create_via_api(_v6_lifecycle_request_payload(n=100_000))
-        self.assertEqual(422, response.status_code, response.text)
-        self.assertIn("safe maximum", response.text)
-        self.assertIn("estimated_peak_memory", response.text)
-        self.assertEqual([], self.store.list_technoeconomic_jobs())
-
-    def test_v6_sensitivity_budget_boundary_and_admission_receipts_match(self) -> None:
-        predictor_count = 39
-        sensitivity_limit = (
-            tea_api.technoeconomic_kernel.LIFECYCLE_SENSITIVITY_WORK_LIMIT
-        )
-        safe_n = sensitivity_limit // predictor_count**2
-
-        at_boundary = _v6_lifecycle_request_payload(n=safe_n)
-        _make_v6_predictors_uncertain(at_boundary, predictor_count)
-        parsed_boundary = TechnoeconomicSubmissionRequest.model_validate(at_boundary)
-        self.assertEqual(safe_n, parsed_boundary.n)
-
-        over_boundary = _v6_lifecycle_request_payload(n=safe_n + 1)
-        _make_v6_predictors_uncertain(over_boundary, predictor_count)
-        parsed_over_boundary = TechnoeconomicSubmissionRequest.model_validate(
-            over_boundary
-        )
-        self.assertEqual(safe_n + 1, parsed_over_boundary.n)
-        response = self._create_via_api(over_boundary)
-        self.assertEqual(422, response.status_code, response.text)
-        self.assertIn(f"safe maximum {safe_n}", response.text)
-        self.assertIn("sensitivity_work_budget", response.text)
-        self.assertIn(
-            f"sensitivity_work_limit={sensitivity_limit}",
-            response.text,
-        )
-
-        accepted = _v6_lifecycle_request_payload(n=20)
-        _make_v6_predictors_uncertain(accepted, predictor_count)
-        parsed = TechnoeconomicSubmissionRequest.model_validate(accepted)
-        kernel_request = tea_api.build_technoeconomic_kernel_request(
-            parsed,
-            self.snapshot,
-        )
-        provenance = tea_api.build_technoeconomic_submission_provenance(
-            parsed,
-            self.envelope,
-            kernel_request,
-        )
-        receipt = provenance["paired_lifecycle_receipt"]["memory_admission"]
-        result = tea_api.technoeconomic_kernel.run_technoeconomic(kernel_request)
-        self.assertEqual(
-            "sensitivity_work_budget",
-            receipt["limiting_dimension"],
-        )
-        self.assertEqual(predictor_count, receipt["sensitivity_predictor_count"])
-        self.assertEqual(safe_n, receipt["sensitivity_safe_max"])
-        self.assertEqual(receipt, result.provenance["admission"])
 
     def test_v5_paired_commercial_builds_both_systems_and_frozen_receipt(self) -> None:
         payload = _paired_commercial_request_payload()
@@ -2511,6 +2128,30 @@ class TechnoeconomicApiPhase3Tests(unittest.TestCase):
             200,
             self.client.delete(f"/api/technoeconomic/jobs/{job_id}").status_code,
         )
+
+
+    def test_retirement_rejects_v6_and_preserves_explicit_v5_hashes(self):
+        implicit = _paired_commercial_request_payload()
+        parsed = TechnoeconomicSubmissionRequest.model_validate(implicit)
+        canonical = tea_api.canonical_submission_request_payload(parsed)
+        self.assertNotIn("calculation_contract_version", canonical)
+        explicit = {**implicit, "calculation_contract_version": "tea-calculation-v5"}
+        parsed_explicit = TechnoeconomicSubmissionRequest.model_validate(explicit)
+        explicit_canonical = tea_api.canonical_submission_request_payload(parsed_explicit)
+        self.assertEqual({**canonical, "calculation_contract_version": "tea-calculation-v5"}, explicit_canonical)
+        implicit_kernel = tea_api.build_technoeconomic_kernel_request(canonical, self.snapshot)
+        explicit_kernel = tea_api.build_technoeconomic_kernel_request(explicit_canonical, self.snapshot)
+        self.assertEqual(implicit_kernel, explicit_kernel)
+        provenance = tea_api.build_technoeconomic_submission_provenance(explicit_canonical, self.envelope, explicit_kernel)
+        self.assertEqual(tea_api.canonical_json_sha256(explicit_canonical), provenance["request_sha256"])
+        for version in ("tea-calculation-v6", "tea-calculation-v4"):
+            with self.subTest(version=version), self.assertRaises(ValidationError):
+                TechnoeconomicSubmissionRequest.model_validate({**implicit, "calculation_contract_version": version})
+
+    def test_removed_autonomy_and_v6_formula_routes_are_absent(self):
+        paths = set(app.app.openapi()["paths"])
+        self.assertFalse(any(path.startswith("/api/autonomy") for path in paths))
+        self.assertNotIn("/api/technoeconomic/formulas/v6", paths)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,10 @@ class TechnoeconomicAgentEvidenceTests(unittest.TestCase):
     OTHER_JOB_ID = "tea_agent_evidence_other"
 
     def setUp(self):
+        # This class supplies supported durable jobs through get-job fixtures.
+        supported = patch.object(state.AGENT_STORE, "ensure_technoeconomic_job_supported", return_value=None)
+        supported.start()
+        self.addCleanup(supported.stop)
         os.environ["OPENAI_API_KEY"] = "test-placeholder"
         self.request = {
             "source_annual_job_id": "annual-source",
@@ -455,6 +459,17 @@ class TechnoeconomicAgentEvidenceTests(unittest.TestCase):
         self.assertIn(self.JOB_ID, response["reply"])
         self.assertIsNone(response["action"])
         self.assertIn("Never calculate P50 LCOE", api_calls[0]["instructions"])
+
+
+    def test_retired_job_is_unavailable_to_the_solar_agent(self):
+        from sbepv.store import RetiredWorkflow
+        with patch.object(state.AGENT_STORE, "ensure_technoeconomic_job_supported",
+                          side_effect=RetiredWorkflow("TEA v6 has been retired")):
+            self.assertIsNone(chat._technoeconomic_chat_context(self.visible_config()))
+            evidence = technoeconomic_evidence.get_technoeconomic_evidence(
+                self.visible_config(), {"section": "formulas"},
+            )
+        self.assertEqual("unavailable", evidence["status"])
 
 
 if __name__ == "__main__":

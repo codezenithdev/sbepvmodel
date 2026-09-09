@@ -160,6 +160,7 @@ def _technoeconomic_chat_context(
     if not job_id:
         return None
     try:
+        state.AGENT_STORE.ensure_technoeconomic_job_supported(job_id)
         job = state.AGENT_STORE.get_technoeconomic_job(job_id)
     except (AgentStoreError, ValueError):
         logger.warning("The visible technoeconomic job could not be read", exc_info=True)

@@ -88,12 +88,11 @@
                 'dashboard-mode-validation',
                 'dashboard-mode-annual',
                 'dashboard-mode-technoeconomic',
-                'dashboard-mode-autonomy'
             );
             document.body.classList.add('dashboard-mode-collect-data');
             dashboardTitle.textContent = 'Collect Bazefield Data';
             dashboardSubtitle.textContent = 'Retrieve measured SolarEdge and Solectria power, review the charts, and download CSV or XLSX without starting a model workflow.';
-            [validationTab, annualTab, technoeconomicTab, autonomyTab].forEach((tab) => {
+            [validationTab, annualTab, technoeconomicTab].forEach((tab) => {
                 tab.classList.remove('active');
                 tab.setAttribute('aria-pressed', 'false');
             });

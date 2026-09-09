@@ -169,6 +169,7 @@ def _verified_job(
             reason="no_visible_technoeconomic_job",
         )
     try:
+        state.AGENT_STORE.ensure_technoeconomic_job_supported(job_id)
         job = state.AGENT_STORE.get_technoeconomic_job(job_id)
     except (AgentStoreError, ValueError):
         return None, _unavailable(

@@ -1,5 +1,7 @@
 # Autonomy Conservative Recommendation Contract
 
+> Retired on 2026-09-09. Historical design reference only; Autonomy and the Decision Agent have been removed from the application.
+
 ## Product contract metadata
 
 - Status: **Approved**

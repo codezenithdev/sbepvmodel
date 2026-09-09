@@ -1,5 +1,7 @@
 # Product contract metadata
 
+> Retired on 2026-09-09. Historical design reference only; Autonomy and the Decision Agent have been removed from the application.
+
 - Status: Approved
 - Contract version: 1.0
 - Approved direction date: 2026-08-20

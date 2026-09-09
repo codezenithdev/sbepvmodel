@@ -19,6 +19,12 @@ Human-facing setup lives in [README.md](README.md); dashboard build details in
 
 ## Approval boundary
 
+Autonomy, the Decision Agent, and TEA v6 were removed on 2026-09-09 at the
+user's request with confirmed Cliff Ho approval. TEA v5 remains supported.
+Historical private artifacts and database references are retained; their
+compatibility guards must not be removed or treated as active feature code.
+The approval rule below applies to any proposed reintroduction.
+
 Do not design, implement, refactor, or change the behaviour of Autonomy or the
 Decision Agent unless the user explicitly confirms that Cliff Ho approved that
 work. A broad request to improve the application does not grant that approval.

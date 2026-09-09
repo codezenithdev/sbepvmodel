@@ -69,7 +69,6 @@ class CollectDataFrontendTests(unittest.TestCase):
             "validationTab",
             "annualTab",
             "technoeconomicTab",
-            "autonomyTab",
         ):
             self.assertEqual(self.assembled.count(f'id="{workflow_tab}"'), 1)
 
@@ -248,7 +247,6 @@ assert.equal(attention.includes('<img'), false);
             "dashboard-mode-validation",
             "dashboard-mode-annual",
             "dashboard-mode-technoeconomic",
-            "dashboard-mode-autonomy",
         ):
             self.assertIn(f"'{mode_class}'", self.script)
         self.assertIn("querySelectorAll('input, select')", self.script)

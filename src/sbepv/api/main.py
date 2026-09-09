@@ -40,7 +40,6 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from sbepv import dashboard, model, reporting
 from sbepv import technoeconomic as technoeconomic_kernel
-from sbepv.api import autonomy as autonomy_api
 from sbepv.api import collect_data as collect_data_api
 from sbepv.api import config, job_store, plots, review_store, state
 from sbepv.api import technoeconomic as technoeconomic_api
@@ -223,12 +222,6 @@ async def _app_lifespan(_app: FastAPI):
         logger.exception(
             "Standalone data collection recovery failed; other workflows will continue"
         )
-    state.AGENT_STORE.mark_stale_claimed_decision_turns_failed(
-        before=datetime.now(timezone.utc)
-        - timedelta(seconds=config.DECISION_AGENT_TURN_STALE_SECONDS),
-        error_code="agent_interrupted",
-        error_detail="The Decision Agent process stopped before the response completed.",
-    )
     worker_loop._mark_stale_running_work_interrupted(
         before=datetime.now(timezone.utc)
         - timedelta(seconds=config.JOB_STALE_SECONDS)
@@ -239,7 +232,6 @@ async def _app_lifespan(_app: FastAPI):
         yield
     finally:
         state._APP_STARTED = False
-        await autonomy_api.shutdown_decision_agent_tasks()
         worker_loop._stop_model_worker()
 
 
@@ -257,9 +249,8 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "X-Autonomy-Human-Action"],
+    allow_headers=["Content-Type"],
 )
-app.include_router(autonomy_api.router)
 app.include_router(collect_data_api.router)
 app.mount(
     "/outputs",
@@ -1072,20 +1063,6 @@ def create_technoeconomic_job(
     """Verify, freeze, validate, and enqueue one probabilistic TEA job."""
 
     if (
-        req.calculation_contract_version
-        == technoeconomic_kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION
-        and not config.TECHNOECONOMIC_V6_SUBMISSIONS_ENABLED
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "New tea-calculation-v6 submissions are temporarily disabled; "
-                "existing results, downloads, cancellations, and retries remain "
-                "available."
-            ),
-        )
-
-    if (
         req.basis == "solartac_site"
         and req.capacity_normalization
         != ANNUAL_APPLIED_CAPACITY_NORMALIZATION
@@ -1098,7 +1075,15 @@ def create_technoeconomic_job(
             ),
         )
 
-    request_payload = technoeconomic_api.canonical_submission_request_payload(req)
+    request_payload = req.model_dump(mode="json", exclude_none=False)
+    if req.capacity_normalization is None:
+        request_payload.pop("capacity_normalization", None)
+    if req.commercial_scaling is None:
+        request_payload.pop("commercial_scaling", None)
+    if getattr(req, "standalone_commercial", None) is None:
+        request_payload.pop("standalone_commercial", None)
+    if getattr(req, "paired_commercial", None) is None:
+        request_payload.pop("paired_commercial", None)
     try:
         with state._ORCHESTRATION_LOCK:
             if state.AGENT_STORE.get_job(req.source_annual_job_id) is None:
@@ -1161,26 +1146,18 @@ def create_technoeconomic_job(
     )
 
 
-@app.get("/api/technoeconomic/formulas/v6")
-def technoeconomic_v6_formula_catalog() -> JSONResponse:
-    """Expose the kernel-owned V6 formula registry without duplicating text."""
-
-    formulas = technoeconomic_kernel.formula_registry()
-    return JSONResponse(
-        {
-            "calculation_contract_version": (
-                technoeconomic_kernel.LIFECYCLE_CALCULATION_CONTRACT_VERSION
-            ),
-            "formula_registry_version": technoeconomic_kernel.FORMULA_REGISTRY_VERSION,
-            "formula_registry_count": len(formulas),
-            "formula_registry_sha256": technoeconomic_kernel.formula_registry_hash(),
-            "formulas": formulas,
-        }
-    )
+def _require_supported_technoeconomic_job(job_id: str) -> None:
+    try:
+        state.AGENT_STORE.ensure_technoeconomic_job_supported(job_id)
+    except RecordNotFound as exc:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic job id") from exc
+    except InvalidStateTransition as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
 
 
 @app.get("/api/technoeconomic/jobs/{job_id}")
 def technoeconomic_status(job_id: str) -> JSONResponse:
+    _require_supported_technoeconomic_job(job_id)
     job = state.AGENT_STORE.get_technoeconomic_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
@@ -1188,6 +1165,7 @@ def technoeconomic_status(job_id: str) -> JSONResponse:
 
 
 def _technoeconomic_export_response(job_id: str, export_format: str) -> FileResponse:
+    _require_supported_technoeconomic_job(job_id)
     job = state.AGENT_STORE.get_technoeconomic_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
@@ -1254,6 +1232,7 @@ def download_technoeconomic_plot(job_id: str, artifact_id: str) -> FileResponse:
         "convergence_plot",
     }:
         raise HTTPException(status_code=404, detail="Unknown technoeconomic artifact")
+    _require_supported_technoeconomic_job(job_id)
     job = state.AGENT_STORE.get_technoeconomic_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
@@ -1296,6 +1275,7 @@ def download_technoeconomic_plot(job_id: str, artifact_id: str) -> FileResponse:
 
 @app.post("/api/technoeconomic/jobs/{job_id}/cancel")
 def cancel_technoeconomic_job(job_id: str) -> JSONResponse:
+    _require_supported_technoeconomic_job(job_id)
     try:
         job = state.AGENT_STORE.cancel_technoeconomic_job(job_id)
     except RecordNotFound as exc:

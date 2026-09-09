@@ -270,9 +270,11 @@ class TechnoeconomicRenderProxyTests(unittest.TestCase):
             self.skipTest("Node.js is unavailable")
 
         cases = [
+            (["autonomy", "cases"], False),
+            (["autonomy", "cases", "case_saved", "reports"], False),
             (["technoeconomic", "sources"], True),
             (["technoeconomic", "jobs"], True),
-            (["technoeconomic", "formulas", "v6"], True),
+            (["technoeconomic", "formulas", "v6"], False),
             (["technoeconomic", "jobs", "tea_abc123"], True),
             (["technoeconomic", "jobs", "tea_abc123", "cancel"], True),
             (["technoeconomic", "jobs", "tea_abc123", "retry"], True),

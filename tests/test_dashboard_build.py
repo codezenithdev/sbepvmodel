@@ -33,11 +33,8 @@ class DashboardBuildTests(unittest.TestCase):
         assembler = (PROJECT_ROOT / "frontend" / "dashboard.ts").read_text(
             encoding="utf-8"
         )
-        assembled = dashboard.assemble_dashboard_html(PROJECT_ROOT)
-
         self.assertIn("document.replace(slot, () => content)", assembler)
         self.assertNotIn("document.replace(slot, content)", assembler)
-        self.assertIn("'[A-Za-z0-9_-]+$'", assembled)
 
     def test_every_source_group_uses_lexical_filename_order(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,70 +124,20 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertEqual(len(redesign), 1, names)
         self.assertLess(names.index(base[0]), names.index(redesign[0]))
 
-    def test_autonomy_sources_assemble_exactly_once_and_preserve_existing_tabs(self):
-        """Each added mode preserves the others and every canonical partial has one copy."""
 
+    def test_retired_features_are_absent_and_remaining_tabs_assemble_once(self):
         assembled = dashboard.assemble_dashboard_html(PROJECT_ROOT)
-        frontend = PROJECT_ROOT / "frontend"
-        autonomy_sources = sorted(
-            path
-            for directory, pattern in (
-                (frontend / "css", "*autonomy*.css"),
-                (frontend / "html", "*autonomy*.html"),
-                (frontend / "js", "*autonomy*.js"),
-            )
-            for path in directory.glob(pattern)
-        )
-
-        self.assertGreaterEqual(len(autonomy_sources), 3)
-        for path in autonomy_sources:
-            source = (
-                path.read_text(encoding="utf-8")
-                .replace("\r\n", "\n")
-                .replace("\r", "\n")
-                .removesuffix("\n")
-            )
-            with self.subTest(source=path.relative_to(PROJECT_ROOT)):
-                self.assertTrue(source.strip())
-                self.assertEqual(assembled.count(source), 1)
-
-        tab_ids = (
-            "collectDataTab",
-            "validationTab",
-            "annualTab",
-            "technoeconomicTab",
-            "autonomyTab",
-        )
+        tabs = ("collectDataTab", "validationTab", "annualTab", "technoeconomicTab")
         positions = []
-        for tab_id in tab_ids:
+        for tab_id in tabs:
             marker = f'id="{tab_id}"'
             self.assertEqual(assembled.count(marker), 1)
             positions.append(assembled.index(marker))
         self.assertEqual(positions, sorted(positions))
-
-        for label in (
-            "Data Collection",
-            "Model Calibration",
-            "Annual Simulation",
-            "Technoeconomic Analysis",
-            "Autonomy",
-        ):
-            self.assertIn(label, assembled)
-        self.assertEqual(assembled.count('id="autonomyPanel"'), 1)
-
-        script_names = sorted(
-            path.name for path in (frontend / "js").glob("*.js")
-        )
-        autonomy_scripts = [name for name in script_names if "autonomy" in name]
-        self.assertEqual(len(autonomy_scripts), 1, script_names)
-        self.assertLess(
-            script_names.index("01-progress-and-mode.js"),
-            script_names.index(autonomy_scripts[0]),
-        )
-        self.assertLess(
-            script_names.index(autonomy_scripts[0]),
-            script_names.index("08-dashboard-state.js"),
-        )
+        for retired in ("autonomyTab", "autonomyPanel", "autonomyOpenWorkspace",
+                        "technoeconomicV6DecisionPanel", "tea-calculation-v6"):
+            self.assertNotIn(retired, assembled)
+        self.assertIn("tea-calculation-v5", assembled)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,6 @@
         body.dashboard-mode-collect-data .validation-only,
         body.dashboard-mode-collect-data .annual-only,
         body.dashboard-mode-collect-data .technoeconomic-only,
-        body.dashboard-mode-collect-data .autonomy-only,
         body.dashboard-mode-collect-data #chatToggle,
         body.dashboard-mode-collect-data #chatSidebar {
             display: none !important;

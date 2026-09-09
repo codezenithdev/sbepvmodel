@@ -33,61 +33,38 @@
             document.body.classList.remove('dashboard-mode-collect-data');
             collectDataTab.classList.remove('active');
             collectDataTab.setAttribute('aria-pressed', 'false');
-            activeView = ['annual', 'technoeconomic', 'autonomy'].includes(mode) ? mode : 'validation';
+            activeView = ['annual', 'technoeconomic'].includes(mode) ? mode : 'validation';
             activeMode = activeView === 'validation' ? 'validation' : 'annual';
             const annual = activeView === 'annual';
             const technoeconomic = activeView === 'technoeconomic';
-            const autonomy = activeView === 'autonomy';
             const validation = activeView === 'validation';
-            dashboardTitle.textContent = autonomy
-                ? 'Hybrid Autonomy Workspace'
-                : technoeconomic
+            dashboardTitle.textContent = technoeconomic
                 ? 'Probabilistic Technoeconomic Analysis'
                 : annual
                     ? 'SolarEdge & Solectria Annual Simulation'
                     : 'SolarEdge & Solectria Performance Analysis';
-            dashboardSubtitle.textContent = autonomy
-                ? 'Investigate evidence, compare controlled scenarios, and turn validated analysis into a supervised decision.'
-                : technoeconomic
+            dashboardSubtitle.textContent = technoeconomic
                 ? 'Compare commercial Solectria and SolarEdge LCOE distributions.'
                 : annual
                     ? 'Carry the reviewed calibration into a long-range forecast of energy and performance.'
                     : 'Compare measured power, irradiance, physics-model predictions, and export-ready run artifacts for the SBE Innovation Site.';
             document.body.classList.toggle('dashboard-mode-annual', annual);
             document.body.classList.toggle('dashboard-mode-technoeconomic', technoeconomic);
-            document.body.classList.toggle('dashboard-mode-autonomy', autonomy);
             document.body.classList.toggle('dashboard-mode-validation', validation);
-            [chatToggle, chatSidebar].forEach((agentSurface) => {
-                if (!agentSurface) return;
-                if (autonomy) {
-                    agentSurface.setAttribute('aria-hidden', 'true');
-                    agentSurface.setAttribute('inert', '');
-                } else {
-                    agentSurface.removeAttribute('aria-hidden');
-                    agentSurface.removeAttribute('inert');
-                }
-            });
             validationTab.classList.toggle('active', validation);
             annualTab.classList.toggle('active', annual);
             technoeconomicTab.classList.toggle('active', technoeconomic);
-            autonomyTab.classList.toggle('active', autonomy);
             validationTab.setAttribute('aria-pressed', String(validation));
             annualTab.setAttribute('aria-pressed', String(annual));
             technoeconomicTab.setAttribute('aria-pressed', String(technoeconomic));
-            autonomyTab.setAttribute('aria-pressed', String(autonomy));
-            operationsNavLink.href = autonomy
-                ? '#autonomyCaseHeader'
-                : technoeconomic
+            operationsNavLink.href = technoeconomic
                 ? '#technoeconomicInputs'
                 : (annual ? '#annualControls' : '#analysisControls');
-            pvModelNavLink.href = autonomy
-                ? '#autonomyDecisionBrief'
-                : technoeconomic
+            pvModelNavLink.href = technoeconomic
                 ? '#technoeconomicStandaloneResults'
                 : (annual ? '#annualChartGrid' : '#chartGrid');
             setActiveNav(operationsNavLink);
             if (technoeconomic) renderTechnoeconomicAnalysis();
-            if (autonomy) autonomyOpenWorkspace();
             updateAgentContext();
             if (isInitialChatState()) renderChatWelcome();
             else renderChatFollowups();

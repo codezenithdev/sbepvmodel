@@ -17,7 +17,6 @@ from sbepv import model
 from sbepv.api import config, state
 from sbepv.api import technoeconomic as tea_api
 from sbepv.api.schemas import TechnoeconomicSubmissionRequest
-from sbepv.autonomy import scenarios as autonomy_scenarios
 from sbepv.store import AgentStore
 from sbepv.worker import loop as worker_loop
 from sbepv.worker import run_technoeconomic
@@ -27,7 +26,6 @@ from tests.test_technoeconomic_api import (
     _paired_commercial_request_payload,
     _site_request_payload,
     _standalone_commercial_request_payload,
-    _v6_lifecycle_request_payload,
 )
 
 
@@ -131,60 +129,6 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         state._WORKER_WAKE.clear()
         shutil.rmtree(self.test_root, ignore_errors=True)
 
-    def test_linked_scenario_evidence_preflight_uses_existing_worker_path(self) -> None:
-        scenario_record = {
-            "case_id": "dcase_worker_evidence",
-            "request_sha256": tea_api.canonical_json_sha256(self.request_payload),
-            "evidence_receipt_refs": [
-                {
-                    "request_path": "/cost_lines/0/distribution/value",
-                    "evidence_receipt_id": "evr_worker_evidence",
-                }
-            ],
-        }
-        with (
-            patch.object(
-                self.store,
-                "get_decision_scenario_job_context",
-                return_value={"link": {}, "scenario": scenario_record},
-            ),
-            patch.object(
-                autonomy_scenarios,
-                "verify_accepted_evidence_references",
-                return_value={"valid": True, "field_errors": [], "receipts": []},
-            ) as verify_evidence,
-        ):
-            run_technoeconomic._verify_decision_scenario_evidence(
-                self.job_id,
-                self.request_payload,
-            )
-        verify_evidence.assert_called_once()
-        self.assertEqual(
-            "dcase_worker_evidence",
-            verify_evidence.call_args.kwargs["case_id"],
-        )
-
-        with (
-            patch.object(
-                self.store,
-                "get_decision_scenario_job_context",
-                return_value={"link": {}, "scenario": scenario_record},
-            ),
-            patch.object(
-                autonomy_scenarios,
-                "verify_accepted_evidence_references",
-                return_value={
-                    "valid": False,
-                    "field_errors": [{"code": "evidence_content_digest_mismatch"}],
-                    "receipts": [],
-                },
-            ),
-        ):
-            with self.assertRaisesRegex(ValueError, "evidence failed immutable preflight"):
-                run_technoeconomic._verify_decision_scenario_evidence(
-                    self.job_id,
-                    self.request_payload,
-                )
 
     def _completed_annual_source(self) -> None:
         self.store.create_job(
@@ -669,133 +613,7 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         self.assertEqual(point_count - 1, capped["values"][-1])
         self.assertEqual(capped, run_technoeconomic._headline_cdf_display(full_summary))
 
-    def test_v6_routine_result_exposes_upgrade_decision_and_reason_codes(self) -> None:
-        snapshot = deepcopy(self.snapshot)
-        snapshot["source_annual_job"] = {
-            "request": {
-                "curtailment_enabled": True,
-                "curtailment_limit_kw": 125.0,
-            }
-        }
-        payload = _v6_lifecycle_request_payload(n=16)
-        payload["source_annual_job_id"] = self.source_id
-        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
-        request_payload = tea_api.canonical_submission_request_payload(parsed)
-        request = tea_api.build_technoeconomic_kernel_request(
-            request_payload,
-            snapshot,
-        )
-        provenance = tea_api.build_technoeconomic_submission_provenance(
-            request_payload,
-            {
-                "source_snapshot": snapshot,
-                "source_snapshot_sha256": tea_api.canonical_json_sha256(snapshot),
-            },
-            request,
-        )
-        calculation = run_technoeconomic.kernel.run_technoeconomic(request)
-        artifact = {
-            "schema_version": 1,
-            "artifact_kind": "sealed_technoeconomic_calculation",
-            "media_type": "application/x-npz",
-            "sha256": "a" * 64,
-            "byte_count": 1,
-            "row_count": 16,
-            "column_count": len(calculation.realization_table),
-            "pickle_allowed": False,
-            "public": False,
-        }
 
-        result = run_technoeconomic._routine_result(
-            request,
-            calculation,
-            artifact,
-            provenance,
-        )
-
-        self.assertEqual(6, result["schema_version"])
-        self.assertEqual("tea-result-v6", result["result_version"])
-        lifecycle = result["paired_lifecycle"]
-        self.assertEqual("upgrade_npv", lifecycle["headline_metric_id"])
-        self.assertIn(lifecycle["headline_decision"]["status"], {"available", "suppressed"})
-        self.assertEqual(
-            {"upgrade_npv", "delta_lcoe"},
-            set(lifecycle["probability_counts"]),
-        )
-        self.assertEqual(
-            "/api/technoeconomic/formulas/v6",
-            lifecycle["formula_catalog_endpoint"],
-        )
-        self.assertEqual("tea-formulas-v6", lifecycle["formula_registry"]["version"])
-        self.assertEqual(3, len(lifecycle["representative_event_traces"]["selection"]))
-
-    def test_v6_retry_runs_through_sealed_exports_and_fenced_completion(self) -> None:
-        self.store.cancel_technoeconomic_job(self.job_id)
-        snapshot = deepcopy(self.snapshot)
-        snapshot["source_annual_job"] = {
-            "request": {
-                "curtailment_enabled": True,
-                "curtailment_limit_kw": 125.0,
-            }
-        }
-        snapshot_sha256 = tea_api.canonical_json_sha256(snapshot)
-        payload = _v6_lifecycle_request_payload(n=16)
-        payload["source_annual_job_id"] = self.source_id
-        parsed = TechnoeconomicSubmissionRequest.model_validate(payload)
-        request_payload = tea_api.canonical_submission_request_payload(parsed)
-        kernel_request = tea_api.build_technoeconomic_kernel_request(
-            request_payload,
-            snapshot,
-        )
-        provenance = tea_api.build_technoeconomic_submission_provenance(
-            request_payload,
-            {
-                "source_snapshot": snapshot,
-                "source_snapshot_sha256": snapshot_sha256,
-            },
-            kernel_request,
-        )
-        artifact = self.source_artifact
-        original_id = "tea_worker_v6_original"
-        self.store.create_technoeconomic_job(
-            job_id=original_id,
-            request=request_payload,
-            source_annual_job_id=self.source_id,
-            source_artifact_storage_key=artifact["storage_key"],
-            source_artifact_sha256=artifact["sha256"],
-            source_artifact_bytes=artifact["byte_count"],
-            source_snapshot=snapshot,
-            submission_provenance=provenance,
-            atomic_source_check=lambda _connection: snapshot_sha256,
-        )
-        self.store.cancel_technoeconomic_job(original_id)
-        retried = self.store.retry_technoeconomic_job(
-            original_id,
-            new_job_id="tea_worker_v6_retry",
-        )
-        self.assertEqual(original_id, retried["retry_of_job_id"])
-
-        record = self._claim()
-        self._run(record)
-
-        completed = self.store.get_technoeconomic_job(record["id"])
-        self.assertEqual("done", completed["state"])
-        self.assertEqual(request_payload, completed["request"])
-        self.assertEqual(provenance, completed["submission_provenance"])
-        self.assertEqual(6, completed["result"]["schema_version"])
-        self.assertEqual("tea-result-v6", completed["result"]["result_version"])
-        self.assertEqual(
-            "technoeconomic-exports-manifest-v6",
-            completed["result"]["exports"]["schema_version"],
-        )
-        self.assertEqual(
-            "tea-result-v6",
-            completed["result_provenance"]["result_version"],
-        )
-        self.assertEqual(
-            "tea-formulas-v6",
-            completed["result_provenance"]["formula_registry"]["version"],
-        )
 
     def test_v2_retry_replays_frozen_request_through_complete_worker(self) -> None:
         self.store.cancel_technoeconomic_job(self.job_id)
@@ -1768,6 +1586,41 @@ class TechnoeconomicWorkerPhase3Tests(unittest.TestCase):
         fake_store.mark_stale_running_technoeconomic_jobs_interrupted.assert_called_once_with(
             before=before
         )
+
+
+    def test_retired_v6_job_never_calculates_exports_or_retries(self):
+        from fastapi import HTTPException
+        from sbepv.api import main as api_main
+        from sbepv.store import InvalidStateTransition
+
+        self.store.cancel_technoeconomic_job(self.job_id)
+        self.request_payload = {**self.request_payload, "calculation_contract_version": "tea-calculation-v6"}
+        retired = self._create_tea("tea_retired_worker")
+        record = self._claim()
+        with patch.object(run_technoeconomic.kernel, "run_technoeconomic") as calculate:
+            self._run(record)
+        calculate.assert_not_called()
+        completed = self.store.get_technoeconomic_job(retired["id"])
+        self.assertEqual("error", completed["state"])
+        self.assertIsNone(completed["result"])
+        self.assertEqual(retired["request"], completed["request"])
+        with self.assertRaises(InvalidStateTransition):
+            self.store.retry_technoeconomic_job(retired["id"])
+        for reader in (api_main.technoeconomic_status, api_main.download_technoeconomic_csv, api_main.download_technoeconomic_xlsx):
+            with self.subTest(reader=reader.__name__), self.assertRaises(HTTPException) as caught:
+                reader(retired["id"])
+            self.assertEqual(410, caught.exception.status_code)
+
+    def test_archived_autonomy_job_never_uses_manual_calculation(self):
+        import sqlite3
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute("CREATE TABLE decision_scenario_jobs (tea_job_id TEXT PRIMARY KEY)")
+            connection.execute("INSERT INTO decision_scenario_jobs VALUES (?)", (self.job_id,))
+        record = self._claim()
+        with patch.object(run_technoeconomic.kernel, "run_technoeconomic") as calculate:
+            self._run(record)
+        calculate.assert_not_called()
+        self.assertEqual("error", self.store.get_technoeconomic_job(self.job_id)["state"])
 
 
 if __name__ == "__main__":

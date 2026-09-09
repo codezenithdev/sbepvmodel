@@ -859,5 +859,41 @@ class TechnoeconomicStoreTests(unittest.TestCase):
         self.store.delete_technoeconomic_job(original["id"])
 
 
+    def test_retirement_preserves_archives_without_creating_feature_tables(self):
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            self.assertEqual([], connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'decision_%'"
+            ).fetchall())
+            connection.execute("CREATE TABLE decision_cases (case_id TEXT, source_annual_job_id TEXT)")
+            connection.execute("INSERT INTO decision_cases VALUES (?, ?)", ("archived-case", self.source["id"]))
+            connection.commit()
+        reopened = AgentStore(self.db_path)
+        with self.assertRaisesRegex(InvalidStateTransition, "archived Autonomy"):
+            reopened.delete_job(self.source["id"])
+        with self.assertRaisesRegex(InvalidStateTransition, "source payload is retained"):
+            reopened.update_job(self.source["id"], result={"changed": True})
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            self.assertEqual([("archived-case", self.source["id"])], connection.execute(
+                "SELECT * FROM decision_cases"
+            ).fetchall())
+        self.assertEqual(self.source, reopened.get_job(self.source["id"]))
+
+    def test_retirement_blocks_v6_and_archived_autonomy_retries(self):
+        retired = self._create_tea(job_id="tea_retired_v6", request={"calculation_contract_version": "tea-calculation-v6"})
+        self.store.cancel_technoeconomic_job(retired["id"])
+        with self.assertRaisesRegex(InvalidStateTransition, "v6 has been retired"):
+            self.store.retry_technoeconomic_job(retired["id"])
+        linked = self._create_tea(job_id="tea_archived_link")
+        self.store.cancel_technoeconomic_job(linked["id"])
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute("CREATE TABLE decision_scenario_jobs (tea_job_id TEXT PRIMARY KEY)")
+            connection.execute("INSERT INTO decision_scenario_jobs VALUES (?)", (linked["id"],))
+            connection.commit()
+        with self.assertRaisesRegex(InvalidStateTransition, "Autonomy jobs have been retired"):
+            self.store.retry_technoeconomic_job(linked["id"])
+        with self.assertRaisesRegex(InvalidStateTransition, "retained by archived"):
+            self.store.delete_technoeconomic_job(linked["id"])
+
+
 if __name__ == "__main__":
     unittest.main()

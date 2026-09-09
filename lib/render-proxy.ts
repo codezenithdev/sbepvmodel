@@ -3,9 +3,7 @@ const DEFAULT_RENDER_ORIGIN = "https://sbepvmodel.onrender.com";
 const REQUEST_HEADERS = [
   "accept",
   "content-type",
-  "last-event-id",
   "range",
-  "x-autonomy-human-action",
 ] as const;
 const RESPONSE_HEADERS = [
   "accept-ranges",
@@ -45,226 +43,42 @@ function safePath(path: string[]): string {
   return path.map((segment) => encodeURIComponent(segment)).join("/");
 }
 
-function isHumanAuthorityMutation(path: string[], method: string): boolean {
-  if (method !== "POST" || path[0] !== "autonomy") return false;
-  return (
-    (
-      path.length === 6 &&
-      path[1] === "cases" &&
-      path[3] === "decision-briefs" &&
-      path[5] === "signoffs"
-    ) ||
-    (
-      path.length === 4 &&
-      path[1] === "cases" &&
-      path[3] === "reports"
-    ) ||
-    (path.length === 2 && path[1] === "shadow-reviews")
-  );
-}
-
 export function isAllowedApiPath(path: string[]): boolean {
+  const isSafeId = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
+  const isCollectionId = (value: string) => /^collect_[a-f0-9]{24}$/.test(value);
   if (path.length === 1) {
-    return [
-      "session",
-      "current-calibration",
-      "run",
-      "annual-run",
-      "chat",
-      "calibration-reviews",
-      "data-collections",
-      "saved-results",
+    return ["session", "current-calibration", "run", "annual-run", "chat",
+      "calibration-reviews", "data-collections", "saved-results",
     ].includes(path[0]);
   }
-
-  const isSafeId = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
-  const isCaseId = (value: string) => /^case_[a-zA-Z0-9_-]+$/.test(value);
-  const isEvidenceId = (value: string) => /^evi_[a-zA-Z0-9_-]+$/.test(value);
-  const isCollectionId = (value: string) => /^collect_[a-f0-9]{24}$/.test(value);
-  const isScenarioId = (value: string) => /^dsc_[a-zA-Z0-9]+$/.test(value);
-  const isTeaJobId = (value: string) => /^tea_[a-zA-Z0-9_-]+$/.test(value);
-  const isTurnId = (value: string) => /^(?:turn_|dturn_)[a-zA-Z0-9_-]+$/.test(value);
-  const isComparisonBundleId = (value: string) => /^dcmp_[a-zA-Z0-9]+$/.test(value);
-  const isDecisionBriefRevisionId = (value: string) => /^dbr_[a-zA-Z0-9]+$/.test(value);
-  const isDecisionReportId = (value: string) => /^drpt_[a-zA-Z0-9]+$/.test(value);
   if (path.length === 2) {
-    return (
-      (path[0] === "status" && isSafeId(path[1])) ||
+    return (path[0] === "status" && isSafeId(path[1])) ||
       (path[0] === "data-collections" && isCollectionId(path[1])) ||
       (path[0] === "agent" && path[1] === "state") ||
       (path[0] === "saved-results" && isSafeId(path[1])) ||
-      (
-        path[0] === "technoeconomic" &&
-        ["sources", "jobs"].includes(path[1])
-      ) ||
-      (
-        path[0] === "autonomy" &&
-        ["cases", "sources", "release-readiness", "shadow-reviews"].includes(path[1])
-      )
-    );
+      (path[0] === "technoeconomic" && ["sources", "jobs"].includes(path[1]));
   }
-
   if (path.length === 3) {
-    return (
-      (
-        path[0] === "jobs" &&
-        isSafeId(path[1]) &&
-        ["cancel", "delete", "promote", "retry"].includes(path[2])
-      ) ||
-      (
-        path[0] === "calibration-reviews" &&
-        isSafeId(path[1]) &&
-        ["run", "rows"].includes(path[2])
-      ) ||
-      (
-        path[0] === "data-collections" &&
-        isCollectionId(path[1]) &&
-        ["download", "download-xlsx"].includes(path[2])
-      ) ||
-      (
-        path[0] === "technoeconomic" &&
-        path[1] === "jobs" &&
-        isSafeId(path[2])
-      ) ||
-      (
-        path[0] === "technoeconomic" &&
-        path[1] === "formulas" &&
-        path[2] === "v6"
-      ) ||
-      (
-        path[0] === "autonomy" &&
-        path[1] === "cases" &&
-        isCaseId(path[2])
-      )
-    );
+    return (path[0] === "jobs" && isSafeId(path[1]) &&
+      ["cancel", "delete", "promote", "retry"].includes(path[2])) ||
+      (path[0] === "calibration-reviews" && isSafeId(path[1]) && ["run", "rows"].includes(path[2])) ||
+      (path[0] === "data-collections" && isCollectionId(path[1]) && ["download", "download-xlsx"].includes(path[2])) ||
+      (path[0] === "technoeconomic" && path[1] === "jobs" && isSafeId(path[2]));
   }
-
   if (path.length === 4) {
-    return (
-      (
-        path[0] === "data-collections" &&
-        isCollectionId(path[1]) &&
-        path[2] === "plots" &&
-        ["measured-ac-power", "cumulative-energy"].includes(path[3])
-      ) ||
-      (
-        path[0] === "agent" &&
-        isSafeId(path[2]) &&
-        (
-          (
-            path[1] === "proposals" &&
-            ["confirm", "edit", "dismiss"].includes(path[3])
-          ) ||
-          (path[1] === "sweeps" && path[3] === "confirm")
-        )
-      ) ||
-      (
-        path[0] === "technoeconomic" &&
-        path[1] === "jobs" &&
-        isSafeId(path[2]) &&
-        ["cancel", "retry"].includes(path[3])
-      ) ||
-      (
-        path[0] === "autonomy" &&
-        path[1] === "cases" &&
-        isCaseId(path[2]) &&
-        [
-          "events",
-          "messages",
-          "evidence",
-          "scenarios",
-          "execution",
-          "comparison-bundles",
-          "decision-briefs",
-          "reports",
-        ].includes(path[3])
-      )
-    );
+    return (path[0] === "data-collections" && isCollectionId(path[1]) && path[2] === "plots" &&
+      ["measured-ac-power", "cumulative-energy"].includes(path[3])) ||
+      (path[0] === "agent" && isSafeId(path[2]) &&
+        ((path[1] === "proposals" && ["confirm", "edit", "dismiss"].includes(path[3])) ||
+        (path[1] === "sweeps" && path[3] === "confirm"))) ||
+      (path[0] === "technoeconomic" && path[1] === "jobs" && isSafeId(path[2]) &&
+        ["cancel", "retry"].includes(path[3]));
   }
-
   if (path.length === 5) {
-    return (
-      path[0] === "technoeconomic" &&
-      path[1] === "jobs" &&
-      isSafeId(path[2]) &&
-      (
-        (
-          path[3] === "exports" &&
-          ["csv", "xlsx"].includes(path[4])
-        ) ||
-        (
-          path[3] === "artifacts" &&
-          [
-            "cdf_plot",
-            "sensitivity_plot",
-            "convergence_plot",
-          ].includes(path[4])
-        )
-      )
-    ) || (
-      path[0] === "autonomy" &&
-      path[1] === "cases" &&
-      isCaseId(path[2]) &&
-      (
-        (path[3] === "readiness" && path[4] === "evaluate") ||
-        (path[3] === "message-stream" && isTurnId(path[4])) ||
-        (path[3] === "evidence" && isEvidenceId(path[4])) ||
-        (path[3] === "scenarios" && ["compare", "confirm"].includes(path[4])) ||
-        (path[3] === "comparison-bundles" && isComparisonBundleId(path[4])) ||
-        (path[3] === "decision-briefs" && isDecisionBriefRevisionId(path[4])) ||
-        (path[3] === "reports" && isDecisionReportId(path[4]))
-      )
-    );
+    return path[0] === "technoeconomic" && path[1] === "jobs" && isSafeId(path[2]) &&
+      ((path[3] === "exports" && ["csv", "xlsx"].includes(path[4])) ||
+       (path[3] === "artifacts" && ["cdf_plot", "sensitivity_plot", "convergence_plot"].includes(path[4])));
   }
-
-  if (path.length === 6) {
-    return (
-      path[0] === "autonomy" &&
-      path[1] === "cases" &&
-      isCaseId(path[2]) &&
-      (
-        (
-          path[3] === "evidence" &&
-          isEvidenceId(path[4]) &&
-          path[5] === "download"
-        ) ||
-        (
-          path[3] === "scenarios" &&
-          isScenarioId(path[4]) &&
-          ["revisions", "validate", "expire"].includes(path[5])
-        ) ||
-        (
-          path[3] === "execution" &&
-          isTeaJobId(path[4]) &&
-          ["cancel", "retry"].includes(path[5])
-        ) ||
-        (
-          path[3] === "decision-briefs" &&
-          isDecisionBriefRevisionId(path[4]) &&
-          path[5] === "signoffs"
-        ) ||
-        (
-          path[3] === "reports" &&
-          isDecisionReportId(path[4]) &&
-          ["verify", "download"].includes(path[5])
-        )
-      )
-    );
-  }
-
-  if (path.length === 8) {
-    return (
-      path[0] === "autonomy" &&
-      path[1] === "cases" &&
-      isCaseId(path[2]) &&
-      path[3] === "evidence" &&
-      isEvidenceId(path[4]) &&
-      path[5] === "candidates" &&
-      isSafeId(path[6]) &&
-      path[7] === "review"
-    );
-  }
-
   return false;
 }
 
@@ -283,12 +97,6 @@ export async function proxyRenderRequest(
     return jsonError("Unknown dashboard endpoint.", 404);
   }
   const method = request.method.toUpperCase();
-  if (prefix === "api" && isHumanAuthorityMutation(path || [], method)) {
-    return jsonError(
-      "Human-authority actions require the directly authenticated backend dashboard; proxy service credentials cannot authorize them.",
-      403,
-    );
-  }
   const incomingUrl = new URL(request.url);
   const targetUrl = new URL(
     `/${prefix}/${safePath(path || [])}${incomingUrl.search}`,
