@@ -448,9 +448,11 @@ class IamDashboardMarkupTests(unittest.TestCase):
             "solectriaInverterEfficiency",
             "annualSolectriaInverterEfficiency",
         ):
+            # Both systems default to no inverter derate. The XGI 1500-250
+            # datasheet CEC efficiency stays in the physics manifest only.
             self.assertRegex(
                 self.html,
-                rf'<input[^>]*id="{element_id}"[^>]*value="0\.985"',
+                rf'<input[^>]*id="{element_id}"[^>]*value="1\.0"',
             )
         self.assertGreaterEqual(
             self.html.count("Single-MPPT string mismatch model"),

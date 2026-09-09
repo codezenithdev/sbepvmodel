@@ -143,18 +143,19 @@ VALIDATION_WIND_MAX_MS = 50.0
 VALIDATION_TEMPERATURE_MIN_C = -40.0
 VALIDATION_TEMPERATURE_MAX_C = 60.0
 
-# Solectria XGI 1500-250 nameplate constraints. The CEC efficiency is used as
-# the documented constant-efficiency approximation until a validated part-load
-# curve is available for this site.
+# Solectria XGI 1500-250 nameplate constraints. The CEC efficiency below is the
+# datasheet figure reported by the physics manifest. It is not the applied
+# default: SOL_EFF governs what a run uses when the form supplies no value.
 SOLECTRIA_INVERTER_MODEL = "Solectria XGI 1500-250"
 SOLECTRIA_INVERTER_MPPT_MIN_V = 860.0
 SOLECTRIA_INVERTER_MPPT_MAX_V = 1_250.0
 SOLECTRIA_INVERTER_AC_RATING_W = 250_000.0
 SOLECTRIA_INVERTER_CEC_EFFICIENCY = 0.985
 
-# AC conversion efficiencies (predicted DC * eff). 1.0 = no derate.
+# AC conversion efficiencies (predicted DC * eff). 1.0 = no derate. Both systems
+# default to no derate; enter a measured efficiency on the form to apply one.
 SE_EFF = 1.0
-SOL_EFF = SOLECTRIA_INVERTER_CEC_EFFICIENCY
+SOL_EFF = 1.0
 DEFAULT_CURTAILMENT_LIMIT_KW = 125.0
 
 # Incidence-angle modifier. Physical is the canonical default; INCLUDE_IAM is
@@ -2532,14 +2533,139 @@ def annual_energy_by_year(
     return rows, cdf
 
 
+# Above this many distinct weather years the month-by-month chart becomes one
+# bar per month per year, which is unreadable. Seasons are summarised instead.
+SEASONAL_PLOT_MIN_YEARS = 4
+SEASON_ORDER = ("Winter", "Spring", "Summer", "Fall")
+SEASON_BY_MONTH = {
+    12: "Winter", 1: "Winter", 2: "Winter",
+    3: "Spring", 4: "Spring", 5: "Spring",
+    6: "Summer", 7: "Summer", 8: "Summer",
+    9: "Fall", 10: "Fall", 11: "Fall",
+}
+
+
+def seasonal_energy_table(
+    df: pd.DataFrame,
+    *,
+    calibrated: bool = False,
+) -> pd.DataFrame:
+    """Return per-season energy statistics across the selected weather years.
+
+    Each season is summed within a calendar year first, so December groups with
+    the January and February of the same calendar year, then the mean and the
+    observed min/max across years describe the weather-year spread.
+    """
+
+    monthly = monthly_energy_table(df, calibrated=calibrated)
+    energy_label = "calibrated" if calibrated else "predicted"
+    se_column = f"SolarEdge_{energy_label}_kWh"
+    sol_column = f"Solectria_{energy_label}_kWh"
+    frame = monthly.copy()
+    starts = pd.DatetimeIndex(frame["month_start"])
+    frame["year"] = starts.year
+    frame["season"] = [SEASON_BY_MONTH[month] for month in starts.month]
+    per_year = frame.groupby(["season", "year"], as_index=False)[
+        [se_column, sol_column]
+    ].sum()
+    rows: list[dict[str, object]] = []
+    for season in SEASON_ORDER:
+        block = per_year[per_year["season"] == season]
+        if block.empty:
+            continue
+        row: dict[str, object] = {"season": season, "years": int(len(block))}
+        for column in (se_column, sol_column):
+            values = block[column].to_numpy(dtype=float)
+            row[f"{column}_mean"] = float(values.mean())
+            row[f"{column}_min"] = float(values.min())
+            row[f"{column}_max"] = float(values.max())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _plot_seasonal_energy(
+    df: pd.DataFrame,
+    out_prefix: str,
+    *,
+    calibrated: bool,
+    year_count: int,
+) -> None:
+    """Save the season-level energy chart used for multi-year annual runs."""
+
+    seasonal = seasonal_energy_table(df, calibrated=calibrated)
+    energy_label = "calibrated" if calibrated else "predicted"
+    se_column = f"SolarEdge_{energy_label}_kWh"
+    sol_column = f"Solectria_{energy_label}_kWh"
+    x = np.arange(len(seasonal))
+    width = 0.38
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    def _spread(column: str) -> np.ndarray:
+        mean = seasonal[f"{column}_mean"].to_numpy(dtype=float)
+        low = mean - seasonal[f"{column}_min"].to_numpy(dtype=float)
+        high = seasonal[f"{column}_max"].to_numpy(dtype=float) - mean
+        return np.vstack([low, high])
+
+    for offset, column, color, label in (
+        (-width / 2, se_column, "red", "SolarEdge"),
+        (width / 2, sol_column, "blue", "Solectria"),
+    ):
+        ax.bar(
+            x + offset,
+            seasonal[f"{column}_mean"].to_numpy(dtype=float),
+            width=width,
+            color=color,
+            label=f"{label} mean (kWh)",
+        )
+        ax.errorbar(
+            x + offset,
+            seasonal[f"{column}_mean"].to_numpy(dtype=float),
+            yerr=_spread(column),
+            fmt="none",
+            ecolor="black",
+            elinewidth=1.2,
+            capsize=5,
+        )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [f"{row.season}\n({row.years} yr)" for row in seasonal.itertuples()]
+    )
+    ax.set_xlabel("Season")
+    ax.set_ylabel(
+        "Calibration-Adjusted Energy (kWh)"
+        if calibrated
+        else "Predicted Energy (kWh)"
+    )
+    ax.set_title(
+        f"Seasonal {'Calibration-Adjusted' if calibrated else 'Predicted'} Energy "
+        f"- {year_count} weather years (bar = mean, whisker = observed min to max)"
+    )
+    ax.grid(True, axis="y", alpha=0.25)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(f"{out_prefix}_monthly_energy.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_monthly_energy(
     df: pd.DataFrame,
     out_prefix: str,
     *,
     calibrated: bool = False,
 ) -> None:
-    """Save the annual-result monthly energy comparison chart."""
+    """Save the annual-result monthly energy comparison chart.
+
+    Runs spanning more than three weather years render one bar per season
+    instead, because a bar per month per year is unreadable at that width.
+    """
     monthly = monthly_energy_table(df, calibrated=calibrated)
+    year_count = int(pd.DatetimeIndex(monthly["month_start"]).year.nunique())
+    if year_count >= SEASONAL_PLOT_MIN_YEARS:
+        _plot_seasonal_energy(
+            df, out_prefix, calibrated=calibrated, year_count=year_count
+        )
+        return
     x = np.arange(len(monthly))
     width = 0.38
     fig, ax = plt.subplots(figsize=(14, 6))

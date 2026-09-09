@@ -1726,7 +1726,7 @@ console.log(JSON.stringify(calls));
         self.assertIn("Lifecycle energy difference · P50", self.script)
         self.assertIn("Joint cost-and-energy advantage", self.script)
         self.assertIn("Decision confidence", self.script)
-        self.assertIn("discounted lifecycle cost / discounted lifecycle AC energy", self.markup)
+        self.assertIn("annualized lifecycle cost / annualized lifecycle AC energy", self.markup)
         self.assertIn("SolarEdge lifecycle cost − Solectria lifecycle cost", self.markup)
         audit_close = self.markup.index("</details>", audit_index)
         self.assertGreater(export_index, audit_close)

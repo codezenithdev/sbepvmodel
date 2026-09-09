@@ -394,6 +394,17 @@
             display: none;
         }
 
+        .annual-year-results-heading {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .annual-year-results-content[hidden] {
+            display: none;
+        }
+
         .annual-year-results-heading h3 {
             color: var(--text);
             font-size: 16px;
@@ -695,6 +706,7 @@
         .annual-distribution-axis-label,
         .annual-distribution-year-label,
         .annual-distribution-value-label,
+        .annual-cdf-point-label,
         .annual-distribution-reference-label {
             fill: var(--muted);
             font-size: 10px;
@@ -702,7 +714,8 @@
         }
 
         .annual-distribution-year-label,
-        .annual-distribution-value-label {
+        .annual-distribution-value-label,
+        .annual-cdf-point-label {
             fill: var(--muted-strong);
             font-weight: 720;
         }
@@ -775,6 +788,88 @@
             line-height: 1.4;
         }
 
+        .annual-distribution-extra-charts {
+            display: grid;
+            gap: 16px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .annual-distribution-subchart {
+            display: grid;
+            gap: 7px;
+            min-width: 0;
+        }
+
+        .annual-distribution-subchart-title {
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 830;
+        }
+
+        .annual-cdf-chart {
+            /* Scale to the pane instead of overflowing it. The ranked plot keeps
+               its 620px floor; these charts must never hide a year label. */
+            min-width: 0;
+        }
+
+        .annual-distribution-equation-line {
+            display: block;
+        }
+
+        .annual-distribution-equation-line + .annual-distribution-equation-line {
+            margin-top: 4px;
+            color: var(--muted);
+        }
+
+        .annual-distribution-equation {
+            padding: 9px 11px;
+            border-left: 3px solid var(--accent-strong);
+            border-radius: 0 7px 7px 0;
+            background: var(--surface-muted);
+            color: var(--text);
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .annual-distribution-fit-curve {
+            fill: none;
+            stroke-width: 2.6;
+            stroke-linecap: round;
+        }
+
+        .annual-distribution-empirical-step {
+            fill: none;
+            stroke-width: 2;
+            stroke-dasharray: 5 4;
+            opacity: 0.72;
+        }
+
+        .annual-cdf-leader {
+            stroke: #c9d5d0;
+            stroke-width: 1;
+        }
+
+        .annual-distribution-reference.fit50 {
+            stroke: #0f766e;
+            stroke-dasharray: 6 4;
+        }
+
+        .annual-distribution-reference.fit90 {
+            stroke: #7c3aed;
+            stroke-dasharray: 2 4;
+        }
+
+        .annual-distribution-reference-label.fit50 {
+            fill: #0f766e;
+        }
+
+        .annual-distribution-reference-label.fit90 {
+            fill: #7c3aed;
+        }
+
         @media (max-width: 1180px) {
             .annual-year-results-grid {
                 grid-template-columns: 1fr;
@@ -788,6 +883,11 @@
         @media (max-width: 560px) {
             .annual-year-results {
                 padding: 13px;
+            }
+
+            .annual-distribution-extra-charts {
+                gap: 12px;
+                padding-top: 10px;
             }
 
             .annual-distribution-card {

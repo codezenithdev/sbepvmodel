@@ -268,6 +268,31 @@ console.log(JSON.stringify({{
             "function renderAnnualExceedanceChart(points, summary, series)",
             "const ANNUAL_DISTRIBUTION_MIN_PERCENTILE_YEARS = 5",
             "const ANNUAL_DISTRIBUTION_MIN_EXCEEDANCE_YEARS = 10",
+            'id="annualDistributionCdfChart"',
+            'id="annualDistributionCdfChartWrap"',
+            'id="annualDistributionCdfNote"',
+            'id="annualDistributionFitChart"',
+            'id="annualDistributionFitChartWrap"',
+            'id="annualDistributionFitEquation"',
+            'id="annualDistributionFitNote"',
+            'aria-labelledby="annualDistributionCdfTitle annualDistributionCdfDescription"',
+            'aria-labelledby="annualDistributionFitTitle annualDistributionFitDescription"',
+            "const ANNUAL_CDF_MIN_YEARS = 2",
+            "const ANNUAL_FIT_MIN_YEARS = 3",
+            "const ANNUAL_FIT_P90_Z = 1.2816",
+            "function annualCumulativePoints(points)",
+            "function annualCumulativeStepPath(cumulativePoints, domain, x, y)",
+            "function annualErf(value)",
+            "function annualNormalCdf(z)",
+            "function annualNormalFit(points)",
+            "function annualFitEquationText(fit)",
+            "function annualCdfLabelLayout(entries, minimumGap)",
+            "function renderAnnualCumulativeCdfChart(points, series)",
+            "function renderAnnualFittedCdfChart(points, fit, series)",
+            "function clearAnnualDistributionChart(chart = annualYearResultElements.distributionChart)",
+            "' (' + point.years.join(', ') + ')'",
+            "'P(x) = Phi((x - '",
+            "'Cumulative probability P(X <= x)'",
             "annualEnergyQuantile(values, 0.10)",
             "row.complete && row.cdfEligible && Number.isFinite(row[seriesKey])",
             "sourceCoveragePct: annualRowNumber(row, ['source_coverage_pct'])",
@@ -289,6 +314,22 @@ console.log(JSON.stringify({{
             "applyAnnualInputPlots",
         ):
             self.assertNotIn(removed, self.html)
+
+        cdf_renderer = self.html.split(
+            "function renderAnnualCumulativeCdfChart(points, series)", 1
+        )[1].split("\n        function ", 1)[0]
+        fit_renderer = self.html.split(
+            "function renderAnnualFittedCdfChart(points, fit, series)", 1
+        )[1].split("\n        function ", 1)[0]
+        for renderer in (cdf_renderer, fit_renderer):
+            # The fitted curve must never overwrite the empirical PERCENTILE.INC tiles.
+            self.assertNotIn("distributionP50Value", renderer)
+            self.assertNotIn("distributionP90Value", renderer)
+            self.assertNotIn("renderAnnualDistributionKpis", renderer)
+            # The 10-year exceedance gate does not apply to the CDF charts.
+            self.assertNotIn("ANNUAL_DISTRIBUTION_MIN_EXCEEDANCE_YEARS", renderer)
+        self.assertIn("Fitted P50", fit_renderer)
+        self.assertIn("Fitted P90", fit_renderer)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_known_midc_gap_years_are_prelabelled_partial_in_node(self) -> None:
@@ -357,6 +398,20 @@ const ties = annualDistributionPoints([
 const equalDomain = annualDistributionDomain([500, 500]);
 const exceedancePoints = annualExceedancePoints(annualDistributionPoints(rows, 'combined'));
 const exceedancePath = annualExceedanceStepPath(exceedancePoints, [0, 1100], (value) => value, (probability) => probability);
+const cumulativePoints = annualCumulativePoints(annualDistributionPoints(rows, 'combined'));
+const cumulativePath = annualCumulativeStepPath(cumulativePoints, [0, 1100], (value) => value, (probability) => probability);
+const tiedCumulative = annualCumulativePoints(annualDistributionPoints([
+    {{year: 2020, complete: true, cdfEligible: true, combined: 500}},
+    {{year: 2019, complete: true, cdfEligible: true, combined: 500}},
+    {{year: 2018, complete: true, cdfEligible: true, combined: 700}},
+], 'combined'));
+const fit = annualNormalFit([
+    {{year: 2019, value: 900}}, {{year: 2020, value: 1000}}, {{year: 2021, value: 1100}},
+]);
+const flatFit = annualNormalFit([
+    {{year: 2019, value: 500}}, {{year: 2020, value: 500}}, {{year: 2021, value: 500}},
+]);
+const shortFit = annualNormalFit([{{year: 2019, value: 900}}, {{year: 2020, value: 1100}}]);
 console.log(JSON.stringify({{
     p90: annualEnergyQuantile(values, 0.10),
     p50: annualEnergyQuantile(values, 0.50),
@@ -368,6 +423,27 @@ console.log(JSON.stringify({{
     narrowDomainTickDigits: annualDistributionTickDigits([499980, 500020]),
     exceedancePathStarts: exceedancePath.startsWith('M 0 1 H 100 V 0.9 H 200 V 0.8'),
     exceedancePathEnds: exceedancePath.endsWith('H 1000 V 0 H 1100'),
+    cumulativePathStarts: cumulativePath.startsWith('M 0 0 H 100 V 0.1 H 200 V 0.2'),
+    cumulativePathEnds: cumulativePath.endsWith('H 1000 V 1 H 1100'),
+    tiedCumulative: tiedCumulative.map((point) => ({{
+        value: point.value,
+        years: point.years,
+        probability: Number(point.probability.toFixed(6)),
+    }})),
+    fit: {{
+        mu: fit.mu,
+        sigma: fit.sigma,
+        sampleCount: fit.sampleCount,
+        p50: fit.p50,
+        p90: Number(fit.p90.toFixed(4)),
+        r2: Number(fit.r2.toFixed(6)),
+        usable: fit.usable,
+    }},
+    fitEquation: annualFitEquationText(fit),
+    flatFitUsable: flatFit.usable,
+    shortFitUsable: shortFit.usable,
+    normalCdf: [-1, 0, 1, -1.2816].map((z) => Number(annualNormalCdf(z).toFixed(6))),
+    labelLayout: annualCdfLabelLayout([{{y: 100}}, {{y: 106}}, {{y: 140}}], 14).map((item) => item.labelY),
 }}));
 """
         completed = subprocess.run(
@@ -415,6 +491,41 @@ console.log(JSON.stringify({{
         self.assertGreaterEqual(payload["narrowDomainTickDigits"], 2)
         self.assertTrue(payload["exceedancePathStarts"])
         self.assertTrue(payload["exceedancePathEnds"])
+        self.assertTrue(payload["cumulativePathStarts"])
+        self.assertTrue(payload["cumulativePathEnds"])
+
+        # Equal observations share P(X <= x) at the highest rank, matching
+        # annual_energy_cdf.cumulative_probability in src/sbepv/model.py.
+        self.assertEqual(
+            payload["tiedCumulative"],
+            [
+                {"value": 500, "years": [2019, 2020], "probability": 0.666667},
+                {"value": 700, "years": [2018], "probability": 1.0},
+            ],
+        )
+
+        # Moment fit of [900, 1000, 1100]: mu = 1000, sample sigma = 100 exactly.
+        self.assertEqual(payload["fit"]["mu"], 1000)
+        self.assertEqual(payload["fit"]["sigma"], 100)
+        self.assertEqual(payload["fit"]["sampleCount"], 3)
+        self.assertEqual(payload["fit"]["p50"], 1000)
+        self.assertEqual(payload["fit"]["p90"], 871.84)
+        self.assertTrue(payload["fit"]["usable"])
+        # R2 uses midpoint (Hazen) plotting positions, not the rank / n the step
+        # chart plots; rank / n would score this near-perfect sample at 0.624.
+        self.assertAlmostEqual(payload["fit"]["r2"], 0.999422, places=5)
+
+        # Abramowitz and Stegun 7.1.26 is accurate to about 1.5e-7.
+        self.assertEqual(payload["normalCdf"], [0.158655, 0.5, 0.841345, 0.099992])
+
+        self.assertFalse(payload["flatFitUsable"])  # sigma == 0
+        self.assertFalse(payload["shortFitUsable"])  # N < ANNUAL_FIT_MIN_YEARS
+
+        self.assertTrue(payload["fitEquation"].startswith("P(x) = Phi((x - "))
+        self.assertIn("x in MWh; R2 = 0.999 (n = 3)", payload["fitEquation"])
+
+        # Only the crowded label is nudged; the others keep their exact position.
+        self.assertEqual(payload["labelLayout"], [100, 114, 140])
 
     def test_validation_dates_reset_after_cached_form_restore(self) -> None:
         for marker in (
@@ -614,9 +725,11 @@ console.log(JSON.stringify({{
         normalization = self.html.split("function annualRowNumber(row, names)", 1)[
             1
         ].split("\n        function formatAnnualEnergy", 1)[0]
+        # Ends at the distribution constants, the first declaration after
+        # annualCoverageCopy. Widening this pulls in the whole chart layer.
         coverage = self.html.split("function formatAnnualResultDate(value)", 1)[
             1
-        ].split("\n        function clearAnnualYearResults", 1)[0]
+        ].split("\n        const ANNUAL_DISTRIBUTION_MIN_PERCENTILE_YEARS", 1)[0]
         script = f"""
 function annualRowNumber(row, names){normalization}
 function formatAnnualResultDate(value){coverage}

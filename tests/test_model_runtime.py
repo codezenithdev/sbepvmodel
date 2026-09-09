@@ -151,7 +151,7 @@ class ProductionSolectriaModuleTests(unittest.TestCase):
         )
         self.assertIn("common inverter voltage", manifest["mppt_assumption"])
 
-    def test_api_request_defaults_use_xgi_cec_efficiency(self) -> None:
+    def test_api_request_defaults_apply_no_solectria_inverter_derate(self) -> None:
         from sbepv.api.schemas import AnnualRunRequest, RunRequest
 
         validation = RunRequest(
@@ -163,14 +163,14 @@ class ProductionSolectriaModuleTests(unittest.TestCase):
             to_date="2026-12-31",
         )
 
-        self.assertEqual(
-            validation.solectria_inverter_efficiency,
-            model.SOLECTRIA_INVERTER_CEC_EFFICIENCY,
-        )
-        self.assertEqual(
-            annual.solectria_inverter_efficiency,
-            model.SOLECTRIA_INVERTER_CEC_EFFICIENCY,
-        )
+        # The applied default is no derate for both systems. It is deliberately
+        # decoupled from the XGI 1500-250 datasheet CEC efficiency, which the
+        # physics manifest still reports.
+        self.assertEqual(model.SOL_EFF, 1.0)
+        self.assertEqual(validation.solectria_inverter_efficiency, model.SOL_EFF)
+        self.assertEqual(annual.solectria_inverter_efficiency, model.SOL_EFF)
+        self.assertEqual(validation.solaredge_inverter_efficiency, model.SE_EFF)
+        self.assertEqual(annual.solaredge_inverter_efficiency, model.SE_EFF)
 
     def test_calibration_fingerprint_covers_both_arrays_and_shared_physics(
         self,

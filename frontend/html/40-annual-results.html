@@ -72,7 +72,13 @@
                             <h3 id="annualYearResultsHeading">Energy by MIDC year</h3>
                             <p id="annualYearResultsSummary">Year-level predictions appear after a multi-year run.</p>
                         </div>
+                        <button class="calibration-review-toggle" id="annualYearResultsToggle" type="button"
+                            aria-expanded="true" aria-controls="annualYearResultsContent"
+                            aria-label="Collapse energy by MIDC year" title="Collapse energy by MIDC year">
+                            <span class="calibration-review-chevron" aria-hidden="true">&uarr;</span>
+                        </button>
                     </div>
+                    <div class="annual-year-results-content" id="annualYearResultsContent">
                     <div class="annual-year-results-grid">
                         <div class="annual-year-table-wrap" role="region" aria-label="Annual energy predictions by MIDC year" tabindex="0">
                             <table class="annual-year-table">
@@ -141,7 +147,31 @@
                             </div>
                             <p class="annual-distribution-fallback" id="annualDistributionFallback" role="status">Run at least one complete calendar year to compare annual energy.</p>
                             <p class="annual-distribution-view-note" id="annualDistributionViewNote" aria-live="polite">Exceedance view requires at least 10 complete years.</p>
+                            <div class="annual-distribution-extra-charts">
+                                <section class="annual-distribution-subchart" aria-labelledby="annualDistributionCdfHeading">
+                                    <h4 class="annual-distribution-subchart-title" id="annualDistributionCdfHeading">Cumulative distribution by weather year</h4>
+                                    <div class="annual-distribution-chart-wrap" id="annualDistributionCdfChartWrap" role="region" aria-label="Scrollable cumulative distribution chart" tabindex="0" hidden>
+                                        <svg class="annual-distribution-chart" id="annualDistributionCdfChart" viewBox="0 0 720 360" preserveAspectRatio="xMinYMin meet" role="img" aria-labelledby="annualDistributionCdfTitle annualDistributionCdfDescription" hidden>
+                                            <title id="annualDistributionCdfTitle">Empirical cumulative distribution of annual predicted energy</title>
+                                            <desc id="annualDistributionCdfDescription">No cumulative distribution is available.</desc>
+                                        </svg>
+                                    </div>
+                                    <p class="annual-distribution-view-note" id="annualDistributionCdfNote" aria-live="polite">Run at least 2 complete calendar years to draw the cumulative distribution.</p>
+                                </section>
+                                <section class="annual-distribution-subchart" aria-labelledby="annualDistributionFitHeading">
+                                    <h4 class="annual-distribution-subchart-title" id="annualDistributionFitHeading">Fitted continuous distribution</h4>
+                                    <div class="annual-distribution-chart-wrap" id="annualDistributionFitChartWrap" role="region" aria-label="Scrollable fitted distribution chart" tabindex="0" hidden>
+                                        <svg class="annual-distribution-chart" id="annualDistributionFitChart" viewBox="0 0 720 360" preserveAspectRatio="xMinYMin meet" role="img" aria-labelledby="annualDistributionFitTitle annualDistributionFitDescription" hidden>
+                                            <title id="annualDistributionFitTitle">Normal cumulative distribution fitted to annual predicted energy</title>
+                                            <desc id="annualDistributionFitDescription">No fitted distribution is available.</desc>
+                                        </svg>
+                                    </div>
+                                    <p class="annual-distribution-equation" id="annualDistributionFitEquation">A continuous fit needs at least 3 complete years with more than one distinct annual energy value.</p>
+                                    <p class="annual-distribution-view-note" id="annualDistributionFitNote" aria-live="polite">Run at least 3 complete calendar years to fit a continuous distribution.</p>
+                                </section>
+                            </div>
                         </figure>
+                    </div>
                     </div>
                 </section>
 
