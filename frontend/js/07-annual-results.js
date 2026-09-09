@@ -161,10 +161,7 @@
         const ANNUAL_DISTRIBUTION_MIN_PERCENTILE_YEARS = 5;
         const ANNUAL_DISTRIBUTION_MIN_EXCEEDANCE_YEARS = 10;
         const ANNUAL_CDF_MIN_YEARS = 2;
-        const ANNUAL_FIT_MIN_YEARS = 3;
-        const ANNUAL_FIT_P90_Z = 1.2816;
         const ANNUAL_CDF_LABEL_MIN_GAP = 14;
-        const ANNUAL_CDF_MAX_LABELLED_POINTS = 12;
         const ANNUAL_DISTRIBUTION_SERIES = Object.freeze({
             combined: { label: 'Combined', color: '#b45309' },
             solarEdge: { label: 'SolarEdge', color: '#0f766e' },
@@ -277,126 +274,95 @@
         }
 
         function annualCumulativePoints(points) {
-            const total = points.length;
+            const ordered = points.filter((point) => Number.isFinite(point.value))
+                .slice().sort((left, right) => left.value - right.value || left.year - right.year);
+            const total = ordered.length;
             const result = [];
-            points.forEach((point, index) => {
+            ordered.forEach((point, index) => {
                 const last = result[result.length - 1];
                 if (last && last.value === point.value) {
                     last.years.push(point.year);
+                    last.lastRank = index + 1;
                 } else {
-                    result.push({ value: point.value, years: [point.year] });
+                    result.push({
+                        value: point.value,
+                        years: [point.year],
+                        firstRank: index + 1,
+                        lastRank: index + 1,
+                    });
                 }
-                // Equal observations share P(X <= x) at the highest rank, matching
-                // annual_energy_cdf.cumulative_probability in src/sbepv/model.py.
-                result[result.length - 1].probability = (index + 1) / total;
+            });
+            result.forEach((point) => {
+                // Midpoint plotting positions, with average ranks for exact ties.
+                // These chart positions are distinct from the exported i/n ECDF.
+                point.midpointRank = (point.firstRank + point.lastRank - 1) / 2;
+                point.probability = point.midpointRank / total;
             });
             return result;
         }
 
-        function annualCumulativeStepPath(cumulativePoints, domain, x, y) {
-            if (!cumulativePoints.length) return '';
-            let path = 'M ' + x(domain[0]) + ' ' + y(0);
-            cumulativePoints.forEach((point) => {
-                path += ' H ' + x(point.value) + ' V ' + y(point.probability);
-            });
-            return path + ' H ' + x(domain[1]);
-        }
-
-        function annualErf(value) {
-            // Abramowitz and Stegun 7.1.26; maximum absolute error 1.5e-7.
-            const sign = value < 0 ? -1 : 1;
-            const x = Math.abs(value);
-            const t = 1 / (1 + 0.3275911 * x);
-            const series = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t -
-                0.284496736) * t + 0.254829592) * t;
-            return sign * (1 - series * Math.exp(-x * x));
-        }
-
-        function annualNormalCdf(z) {
-            if (!Number.isFinite(z)) return z > 0 ? 1 : 0;
-            return 0.5 * (1 + annualErf(z / Math.SQRT2));
-        }
-
-        function annualNormalFit(points) {
-            const values = points.map((point) => point.value).filter(Number.isFinite);
-            const sampleCount = values.length;
-            const base = {
-                sampleCount,
-                mu: null,
-                sigma: null,
-                r2: null,
-                p50: null,
-                p90: null,
-                usable: false,
-            };
-            if (sampleCount < ANNUAL_FIT_MIN_YEARS) return base;
-            const mu = values.reduce((total, value) => total + value, 0) / sampleCount;
-            const variance = values.reduce(
-                (total, value) => total + ((value - mu) * (value - mu)),
-                0
-            ) / (sampleCount - 1);
-            const sigma = Math.sqrt(variance);
-            if (!Number.isFinite(sigma) || sigma <= 0) return { ...base, mu, sigma: 0 };
-            const ordered = values.slice().sort((left, right) => left - right);
-            // Midpoint (Hazen) plotting positions are the probability-plot convention for
-            // goodness of fit. The plotted step uses rank / n, per the backend CDF, which
-            // pins the largest observation at 1.0 and no continuous curve ever reaches it.
-            const observed = ordered.map((_value, index) => (index + 0.5) / sampleCount);
-            const fitted = ordered.map((value) => annualNormalCdf((value - mu) / sigma));
-            const mean = observed.reduce((total, value) => total + value, 0) / sampleCount;
-            const totalSquares = observed.reduce(
-                (total, value) => total + ((value - mean) * (value - mean)),
-                0
-            );
-            const residualSquares = observed.reduce(
-                (total, value, index) => total + ((value - fitted[index]) * (value - fitted[index])),
-                0
-            );
-            const r2 = totalSquares > 0 ? 1 - (residualSquares / totalSquares) : null;
-            if (!Number.isFinite(r2)) return { ...base, mu, sigma };
+        function annualLinearInterpolation(points) {
+            const knots = annualCumulativePoints(points);
+            const sampleCount = knots.reduce((total, point) => total + point.years.length, 0);
+            const segments = knots.slice(1).map((upper, index) => ({ lower: knots[index], upper }));
             return {
                 sampleCount,
-                mu,
-                sigma,
-                r2,
-                p50: mu,
-                p90: mu - (ANNUAL_FIT_P90_Z * sigma),
-                usable: true,
+                knots,
+                segments,
+                usable: sampleCount >= ANNUAL_CDF_MIN_YEARS && segments.length > 0,
             };
         }
 
-        function annualFitDomain(points, fit) {
-            const dataDomain = annualDistributionDomain(points.map((point) => point.value));
-            return [
-                Math.max(0, Math.min(dataDomain[0], fit.mu - (2.5 * fit.sigma))),
-                Math.max(dataDomain[1], fit.mu + (2.5 * fit.sigma)),
-            ];
+        function annualInterpolationProbability(interpolation, value) {
+            if (!interpolation?.usable || !Number.isFinite(value)) return null;
+            const { knots, segments } = interpolation;
+            // The displayed interpolation defines no tails beyond the observed range.
+            if (value < knots[0].value || value > knots[knots.length - 1].value) return null;
+            const segment = segments.find(({ upper }) => value <= upper.value);
+            const { lower, upper } = segment;
+            const fraction = (value - lower.value) / (upper.value - lower.value);
+            return lower.probability + fraction * (upper.probability - lower.probability);
         }
 
-        function annualFitCurvePath(fit, domain, x, y, samples = 120) {
-            const commands = [];
-            for (let index = 0; index <= samples; index += 1) {
-                const value = domain[0] + ((domain[1] - domain[0]) * index / samples);
-                commands.push((index ? 'L ' : 'M ') + x(value) + ' ' +
-                    y(annualNormalCdf((value - fit.mu) / fit.sigma)));
-            }
-            return commands.join(' ');
+        function annualInterpolationCurvePath(interpolation, x, y) {
+            if (!interpolation?.usable) return '';
+            return interpolation.knots.map((point, index) =>
+                (index ? 'L ' : 'M ') + x(point.value) + ' ' + y(point.probability)
+            ).join(' ');
         }
 
-        function annualFitEquationText(fit) {
-            if (!fit || !fit.usable) {
-                return 'A continuous fit needs at least ' + ANNUAL_FIT_MIN_YEARS +
+        function annualInterpolationEquationText(interpolation) {
+            if (!interpolation?.usable) {
+                return 'Linear interpolation needs at least ' + ANNUAL_CDF_MIN_YEARS +
                     ' complete years with more than one distinct annual energy value.';
             }
-            return 'P(x) = Phi((x - ' + formatAnnualDistributionTick(fit.mu, 1) +
-                ') / ' + formatAnnualDistributionTick(fit.sigma, 2) +
-                '), x in MWh; R2 = ' + fit.r2.toFixed(3) + ' (n = ' + fit.sampleCount + ')';
+            return 'F(x) = p_i + (p_(i+1) - p_i) * (x - E_i) / (E_(i+1) - E_i), ' +
+                'E_i <= x <= E_(i+1); p_i = (rank_i - 0.5) / n; n = ' +
+                interpolation.sampleCount + '. Energies in MWh; percentile = 100 * F(x).';
         }
 
-        function annualFitExcelText(fit) {
-            if (!fit || !fit.usable) return '';
-            return 'Spreadsheet form: =NORM.DIST(x, ' + (fit.mu / 1000).toFixed(2) +
-                ', ' + (fit.sigma / 1000).toFixed(2) + ', TRUE) with x in MWh.';
+        function annualInterpolationSegmentText(segment, sampleCount) {
+            const { lower, upper } = segment;
+            const lowerEnergy = (lower.value / 1000).toFixed(2);
+            const upperEnergy = (upper.value / 1000).toFixed(2);
+            const rankTerms = lower.midpointRank.toFixed(2) + '/' + sampleCount + ' + (' +
+                (upper.midpointRank - lower.midpointRank).toFixed(2) + '/' + sampleCount + ')';
+            // Formatting must not collapse a distinct interval into division by zero.
+            if (lowerEnergy === upperEnergy) {
+                return 'F(x) = ' + rankTerms + ' * (x - E_i) / (E_(i+1) - E_i)';
+            }
+            return 'F(x) ≈ ' + rankTerms + ' * (x - ' + lowerEnergy + ') / (' +
+                upperEnergy + ' - ' + lowerEnergy + ')';
+        }
+
+        function annualInterpolationIntervalText(segment) {
+            const lowerEnergy = (segment.lower.value / 1000).toFixed(2);
+            const upperEnergy = (segment.upper.value / 1000).toFixed(2);
+            if (lowerEnergy === upperEnergy) {
+                return 'E_i <= x <= E_(i+1); both bounds round to ' + lowerEnergy +
+                    '. Use the distinct full-precision energies in the equation.';
+            }
+            return lowerEnergy + ' <= x <= ' + upperEnergy;
         }
 
         function annualCdfLabelLayout(entries, minimumGap) {
@@ -701,7 +667,7 @@
                 class: 'annual-distribution-axis-title',
                 'text-anchor': 'middle',
                 transform: 'rotate(-90 18 ' + (margin.top + plotHeight / 2) + ')',
-            }, 'Cumulative probability P(X <= x)', target);
+            }, 'Cumulative percentile (%)', target);
         }
 
         function annualCdfPointReadout(point) {
@@ -718,7 +684,7 @@
             entries.forEach((entry) => {
                 const point = entry.point;
                 const readout = annualCdfPointReadout(point);
-                const percent = Math.round(point.probability * 100);
+                const percent = (point.probability * 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
                 const pointGroup = appendAnnualDistributionSvgElement('g', {
                     class: 'annual-distribution-point',
                     tabindex: 0,
@@ -758,11 +724,11 @@
             });
         }
 
-        function renderAnnualCumulativeCdfChart(points, series) {
-            const chart = annualYearResultElements.distributionCdfChart;
+        function renderAnnualInterpolatedCdfChart(points, interpolation, series) {
+            const chart = annualYearResultElements.distributionFitChart;
             chart.classList.add('annual-cdf-chart');
             const width = 720;
-            const height = 360;
+            const height = Math.max(360, interpolation.knots.length * 22 + 86);
             const margin = { top: 28, right: 40, bottom: 58, left: 82 };
             const plotWidth = width - margin.left - margin.right;
             const plotHeight = height - margin.top - margin.bottom;
@@ -781,145 +747,93 @@
                 target: chart,
             });
             appendAnnualCdfYAxis({ margin, plotWidth, plotHeight, y, target: chart });
-            const cumulativePoints = annualCumulativePoints(points);
             appendAnnualDistributionSvgElement('path', {
-                d: annualCumulativeStepPath(cumulativePoints, domain, x, y),
-                fill: 'none',
-                stroke: series.color,
-                'stroke-width': 3,
-                'stroke-linejoin': 'round',
-                class: 'annual-distribution-step',
-            }, '', chart);
-            appendAnnualCdfPoints(cumulativePoints, {
-                x,
-                y,
-                margin,
-                series,
-                target: chart,
-                labelled: cumulativePoints.length <= ANNUAL_CDF_MAX_LABELLED_POINTS,
-            });
-        }
-
-        function renderAnnualFittedCdfChart(points, fit, series) {
-            const chart = annualYearResultElements.distributionFitChart;
-            chart.classList.add('annual-cdf-chart');
-            const width = 720;
-            const height = 360;
-            const margin = { top: 28, right: 40, bottom: 58, left: 82 };
-            const plotWidth = width - margin.left - margin.right;
-            const plotHeight = height - margin.top - margin.bottom;
-            const plotBottom = margin.top + plotHeight;
-            const domain = annualFitDomain(points, fit);
-            const x = (value) => margin.left + ((value - domain[0]) / (domain[1] - domain[0])) * plotWidth;
-            const y = (probability) => margin.top + (1 - probability) * plotHeight;
-            chart.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
-            appendAnnualDistributionXAxis({
-                domain,
-                x,
-                plotTop: margin.top,
-                plotBottom,
-                width,
-                height,
-                target: chart,
-            });
-            appendAnnualCdfYAxis({ margin, plotWidth, plotHeight, y, target: chart });
-            const cumulativePoints = annualCumulativePoints(points);
-            appendAnnualDistributionSvgElement('path', {
-                d: annualCumulativeStepPath(cumulativePoints, domain, x, y),
-                fill: 'none',
-                stroke: series.color,
-                class: 'annual-distribution-empirical-step',
-            }, '', chart);
-            appendAnnualDistributionSvgElement('path', {
-                d: annualFitCurvePath(fit, domain, x, y),
+                d: annualInterpolationCurvePath(interpolation, x, y),
                 stroke: series.color,
                 class: 'annual-distribution-fit-curve',
             }, '', chart);
-            appendAnnualDistributionReference(fit.p90, 'Fitted P90', x, margin.top, plotBottom, 'fit90', 15, chart);
-            appendAnnualDistributionReference(fit.p50, 'Fitted P50', x, margin.top, plotBottom, 'fit50', 32, chart);
-            // Point labels stay on the empirical chart; here the curve, the equation and the
-            // fitted references already occupy the plot. Hover and focus still read each year.
-            appendAnnualCdfPoints(cumulativePoints, {
+            appendAnnualCdfPoints(interpolation.knots, {
                 x,
                 y,
                 margin,
                 series,
                 target: chart,
-                labelled: false,
+                labelled: true,
             });
         }
 
-        function setAnnualCdfChartState(points, series) {
+        function setAnnualInterpolationChartState(points, interpolation, series) {
             const elements = annualYearResultElements;
-            const sampleCount = Array.isArray(points) ? points.length : 0;
-            const usable = sampleCount >= ANNUAL_CDF_MIN_YEARS;
-            elements.distributionCdfChartWrap.hidden = !usable;
-            elements.distributionCdfChart.toggleAttribute('hidden', !usable);
-            elements.distributionCdfTitle.textContent = series.label +
-                ' cumulative distribution of annual predicted energy';
-            if (!usable) {
-                elements.distributionCdfNote.textContent = 'The cumulative distribution needs at least ' +
-                    ANNUAL_CDF_MIN_YEARS + ' complete, source-verified weather years (N = ' + sampleCount + ').';
-                elements.distributionCdfDescription.textContent = 'No cumulative distribution is available for ' +
-                    series.label + '.';
-                return;
-            }
-            renderAnnualCumulativeCdfChart(points, series);
-            const cumulativePoints = annualCumulativePoints(points);
-            const readout = cumulativePoints
-                .map((point) => annualCdfPointReadout(point) + ' at ' + Math.round(point.probability * 100) + '%')
-                .join('; ');
-            elements.distributionCdfNote.textContent = 'Each point plots the share of the ' + sampleCount +
-                ' complete weather years at or below that annual energy. Years with equal energy share one point.';
-            elements.distributionCdfDescription.textContent = 'Empirical cumulative distribution for ' +
-                series.label + ' predicted energy across ' + sampleCount +
-                ' complete MIDC weather years: ' + readout + '.';
-        }
-
-        function setAnnualFitChartState(points, fit, series) {
-            const elements = annualYearResultElements;
-            const sampleCount = Array.isArray(points) ? points.length : 0;
-            const usable = Boolean(fit && fit.usable);
+            const sampleCount = interpolation.sampleCount;
+            const usable = interpolation.usable;
             elements.distributionFitChartWrap.hidden = !usable;
             elements.distributionFitChart.toggleAttribute('hidden', !usable);
             elements.distributionFitTitle.textContent = series.label +
-                ' normal distribution fitted to annual predicted energy';
+                ' interpolated annual-energy CDF';
             elements.distributionFitEquation.replaceChildren();
-            [annualFitEquationText(fit), annualFitExcelText(fit)]
-                .filter((line) => line)
-                .forEach((line) => {
-                    const row = document.createElement('span');
-                    row.className = 'annual-distribution-equation-line';
-                    row.textContent = line;
-                    elements.distributionFitEquation.appendChild(row);
-                });
+            const equation = document.createElement('span');
+            equation.className = 'annual-distribution-equation-line';
+            equation.textContent = annualInterpolationEquationText(interpolation);
+            elements.distributionFitEquation.appendChild(equation);
             if (!usable) {
-                elements.distributionFitNote.textContent = fit && fit.sigma === 0
-                    ? 'Every complete weather year returned the same annual energy, so no continuous curve can be fitted.'
-                    : 'A continuous fit needs at least ' + ANNUAL_FIT_MIN_YEARS +
+                elements.distributionFitNote.textContent = sampleCount >= ANNUAL_CDF_MIN_YEARS
+                    ? 'Every complete weather year returned the same annual energy. There is no energy interval to interpolate.'
+                    : 'Linear interpolation needs at least ' + ANNUAL_CDF_MIN_YEARS +
                         ' complete, source-verified weather years (N = ' + sampleCount + ').';
-                elements.distributionFitDescription.textContent = 'No fitted distribution is available for ' +
+                elements.distributionFitDescription.textContent = 'No interpolated distribution is available for ' +
                     series.label + '.';
                 return;
             }
-            renderAnnualFittedCdfChart(points, fit, series);
-            elements.distributionFitNote.textContent = 'Fitted P50 and P90 come from the normal curve and are ' +
-                'separate from the PERCENTILE.INC tiles above. R2 compares the curve with midpoint plotting ' +
-                'positions (i - 0.5) / n, the standard probability-plot convention; the step points use rank / n.';
+
+            const details = document.createElement('details');
+            details.className = 'annual-distribution-equation-details';
+            const summary = document.createElement('summary');
+            summary.textContent = 'Show ' + interpolation.segments.length + ' interval equation' +
+                (interpolation.segments.length === 1 ? '' : 's');
+            details.appendChild(summary);
+            const tableWrap = document.createElement('div');
+            tableWrap.className = 'annual-distribution-segments-wrap';
+            tableWrap.setAttribute('role', 'region');
+            tableWrap.setAttribute('aria-label', 'Annual-energy interpolation equations');
+            tableWrap.tabIndex = 0;
+            const table = document.createElement('table');
+            table.className = 'annual-distribution-segments';
+            const caption = table.createCaption();
+            caption.textContent = 'Linear interpolation equations by energy interval';
+            const header = table.createTHead().insertRow();
+            ['Energy interval (MWh)', 'F(x)'].forEach((label) => {
+                const cell = document.createElement('th');
+                cell.scope = 'col';
+                cell.textContent = label;
+                header.appendChild(cell);
+            });
+            const body = table.createTBody();
+            interpolation.segments.forEach((segment) => {
+                const row = body.insertRow();
+                row.insertCell().textContent = annualInterpolationIntervalText(segment);
+                row.insertCell().textContent = annualInterpolationSegmentText(segment, sampleCount);
+            });
+            tableWrap.appendChild(table);
+            details.appendChild(tableWrap);
+            elements.distributionFitEquation.appendChild(details);
+            renderAnnualInterpolatedCdfChart(points, interpolation, series);
+            elements.distributionFitNote.textContent = 'Straight-line interpolation between sorted annual energies; ' +
+                'continuous only within the observed range, with no extrapolated tails. Equal energies use ' +
+                'average ranks. Displayed energies are rounded to two decimals; interpolation uses full-precision ' +
+                'results and updates with the selected system and years. ' +
+                'The weather-year P50 and P90 tiles above retain their empirical percentile calculation.';
             elements.distributionFitDescription.textContent =
-                'Normal cumulative distribution fitted by moments to ' + sampleCount +
-                ' complete weather years. Mean ' + formatAnnualDistributionMwh(fit.mu) +
-                ', standard deviation ' + formatAnnualDistributionMwh(fit.sigma, 2) +
-                ', R2 ' + fit.r2.toFixed(3) + '. Fitted P50 ' + formatAnnualDistributionMwh(fit.p50) +
-                '; fitted P90 ' + formatAnnualDistributionMwh(fit.p90) +
-                '. These fitted values are separate from the empirical PERCENTILE.INC tiles.';
+                'Piecewise-linear interpolation across ' + sampleCount + ' complete weather years and ' +
+                interpolation.segments.length + ' energy intervals. Midpoint-ranked points: ' +
+                interpolation.knots.map((point) => annualCdfPointReadout(point) + ' at ' +
+                    (point.probability * 100).toFixed(2) + '%').join('; ') +
+                '. The curve ends at the smallest and largest observed energies; tails are unspecified.';
         }
 
         function renderAnnualEnergyDistribution(rows = annualDistributionRows) {
             annualDistributionRows = Array.isArray(rows) ? rows : [];
             const elements = annualYearResultElements;
             clearAnnualDistributionChart();
-            clearAnnualDistributionChart(elements.distributionCdfChart);
             clearAnnualDistributionChart(elements.distributionFitChart);
             let points = annualDistributionPoints(annualDistributionRows, annualDistributionSeriesKey);
             if (!points.length) {
@@ -945,8 +859,7 @@
                     series.label + ' energy result. Partial years remain available in the table.';
                 elements.distributionTitle.textContent = series.label + ' annual predicted energy across weather years';
                 elements.distributionDescription.textContent = 'No complete-year ' + series.label + ' energy observations are available.';
-                setAnnualCdfChartState([], series);
-                setAnnualFitChartState([], null, series);
+                setAnnualInterpolationChartState([], annualLinearInterpolation([]), series);
                 return;
             }
             elements.distributionFallback.hidden = true;
@@ -961,10 +874,9 @@
             } else {
                 renderAnnualRankedEnergyChart(points, summary, series);
             }
-            // The two CDF charts below are view-independent and are not gated by
+            // The interpolated CDF is view-independent and is not gated by
             // ANNUAL_DISTRIBUTION_MIN_EXCEEDANCE_YEARS.
-            setAnnualCdfChartState(points, series);
-            setAnnualFitChartState(points, annualNormalFit(points), series);
+            setAnnualInterpolationChartState(points, annualLinearInterpolation(points), series);
             const includedYears = points.map((point) => point.year).join(', ');
             const includedYearSet = new Set(points.map((point) => point.year));
             const excludedYears = annualDistributionRows
@@ -998,19 +910,13 @@
             annualYearResultElements.distributionFallback.textContent = 'Run at least one complete calendar year to compare annual energy.';
             annualYearResultElements.distributionDescription.textContent = 'No complete-year energy observations are available.';
             clearAnnualDistributionChart();
-            clearAnnualDistributionChart(annualYearResultElements.distributionCdfChart);
             clearAnnualDistributionChart(annualYearResultElements.distributionFitChart);
-            annualYearResultElements.distributionCdfChart.toggleAttribute('hidden', true);
-            annualYearResultElements.distributionCdfChartWrap.hidden = true;
             annualYearResultElements.distributionFitChart.toggleAttribute('hidden', true);
             annualYearResultElements.distributionFitChartWrap.hidden = true;
-            annualYearResultElements.distributionCdfNote.textContent = 'Run at least ' + ANNUAL_CDF_MIN_YEARS +
-                ' complete calendar years to draw the cumulative distribution.';
-            annualYearResultElements.distributionFitNote.textContent = 'Run at least ' + ANNUAL_FIT_MIN_YEARS +
-                ' complete calendar years to fit a continuous distribution.';
-            annualYearResultElements.distributionFitEquation.textContent = annualFitEquationText(null);
-            annualYearResultElements.distributionCdfDescription.textContent = 'No cumulative distribution is available.';
-            annualYearResultElements.distributionFitDescription.textContent = 'No fitted distribution is available.';
+            annualYearResultElements.distributionFitNote.textContent = 'Run at least ' + ANNUAL_CDF_MIN_YEARS +
+                ' complete calendar years with distinct energies to interpolate the distribution.';
+            annualYearResultElements.distributionFitEquation.textContent = annualInterpolationEquationText(null);
+            annualYearResultElements.distributionFitDescription.textContent = 'No interpolated distribution is available.';
             renderAnnualDistributionKpis(annualDistributionSummary([]));
             setAnnualDistributionViewControls(annualDistributionSummary([]));
         }

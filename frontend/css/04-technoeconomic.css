@@ -2305,7 +2305,7 @@
         .tea-standalone-result-body {
             display: grid;
             min-width: 0;
-            grid-template-columns: minmax(0, 1.8fr) minmax(220px, 0.82fr);
+            grid-template-columns: minmax(0, 1fr);
             border-top: 1px solid var(--border);
         }
 
@@ -2316,7 +2316,7 @@
             gap: 8px;
             margin: 0;
             padding: 18px;
-            border-right: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
         }
 
         .tea-standalone-cdf-figure img {
@@ -2342,7 +2342,7 @@
             min-width: 0;
             align-content: start;
             gap: 16px;
-            padding: 18px 14px;
+            padding: 18px;
         }
 
         .tea-standalone-interpretation h4,
@@ -2363,12 +2363,17 @@
         }
 
         .tea-standalone-percentile-table {
-            min-width: 0;
+            min-width: 320px;
+            table-layout: fixed;
         }
 
         .tea-standalone-percentile-table th,
         .tea-standalone-percentile-table td {
             padding: 8px 9px;
+        }
+
+        .tea-standalone-percentile-table th {
+            overflow-wrap: normal;
         }
 
         .tea-standalone-percentile-table tr[data-percentile="p50"] {
@@ -3370,7 +3375,6 @@
 
             .tea-bridge-steps,
             .tea-scenario-rail,
-            .tea-standalone-result-body,
             .tea-standalone-field-grid,
             .tea-standalone-distribution-grid,
             .tea-paired-system-cost-grid,
@@ -3398,11 +3402,6 @@
 
             .tea-bridge-footer p:first-child {
                 max-width: none;
-            }
-
-            .tea-standalone-cdf-figure {
-                border-right: 0;
-                border-bottom: 1px solid var(--border);
             }
 
             .tea-submit-panel > .tea-action-row {

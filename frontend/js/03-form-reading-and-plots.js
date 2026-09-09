@@ -239,6 +239,137 @@
             box.style.background = '';
         }
 
+        function chartCanOpen(chart) {
+            if (chart.hasAttribute('hidden') || chart.style.display === 'none') return false;
+            if (chart.tagName.toLowerCase() === 'img') {
+                return Boolean(chart.getAttribute('src') && chart.complete && chart.naturalWidth > 0);
+            }
+            return Boolean(chart.querySelector('path, circle'));
+        }
+
+        function chartSnapshotUrl(chart) {
+            const snapshot = chart.cloneNode(true);
+            const styleProperties = [
+                'fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-dasharray',
+                'stroke-linecap', 'stroke-linejoin', 'opacity', 'font-family', 'font-size',
+                'font-weight', 'text-anchor', 'dominant-baseline', 'paint-order',
+            ];
+            const originals = [chart, ...chart.querySelectorAll('*')];
+            const copies = [snapshot, ...snapshot.querySelectorAll('*')];
+            originals.forEach((element, index) => {
+                const computed = getComputedStyle(element);
+                styleProperties.forEach((property) => {
+                    copies[index].style.setProperty(property, computed.getPropertyValue(property));
+                });
+                copies[index].removeAttribute('tabindex');
+            });
+            snapshot.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+            snapshot.setAttribute('role', 'img');
+            snapshot.removeAttribute('aria-description');
+            snapshot.removeAttribute('data-chart-openable');
+            const title = chart.querySelector('title')?.textContent || 'Chart';
+            const preview = document.implementation.createHTMLDocument(title);
+            preview.documentElement.lang = 'en';
+            const charset = preview.createElement('meta');
+            charset.setAttribute('charset', 'utf-8');
+            preview.head.prepend(charset);
+            const viewport = preview.createElement('meta');
+            viewport.name = 'viewport';
+            viewport.content = 'width=device-width, initial-scale=1';
+            preview.head.appendChild(viewport);
+            const style = preview.createElement('style');
+            style.textContent = 'body{margin:24px;color:#163c3b;background:white;font:15px Arial,sans-serif}' +
+                'main{max-width:1440px;margin:auto}h1{font-size:22px}svg{display:block;width:100%;height:auto;min-width:700px}' +
+                '.chart-view{overflow:auto}table{width:100%;border-collapse:collapse;margin-top:12px}' +
+                'th,td{padding:10px;border-bottom:1px solid #d6e2df;text-align:left;overflow-wrap:anywhere}' +
+                'caption{text-align:left}summary{margin-top:16px;cursor:pointer}' +
+                '.annual-distribution-equation{margin-top:20px;line-height:1.6}' +
+                '.annual-distribution-segments-wrap{overflow:auto}p{line-height:1.5}';
+            preview.head.appendChild(style);
+            const main = preview.createElement('main');
+            const heading = preview.createElement('h1');
+            heading.textContent = title;
+            const chartView = preview.createElement('div');
+            chartView.className = 'chart-view';
+            chartView.appendChild(snapshot);
+            main.append(heading, chartView);
+            const subchart = chart.closest('.annual-distribution-subchart');
+            const equation = subchart?.querySelector('.annual-distribution-equation');
+            if (equation) {
+                const equationCopy = equation.cloneNode(true);
+                equationCopy.querySelectorAll('details').forEach((details) => { details.open = true; });
+                main.appendChild(equationCopy);
+            }
+            const note = subchart?.querySelector('.annual-distribution-view-note');
+            if (note) main.appendChild(note.cloneNode(true));
+            preview.body.appendChild(main);
+            return URL.createObjectURL(new Blob(['<!DOCTYPE html>\n' + preview.documentElement.outerHTML], {
+                type: 'text/html;charset=utf-8',
+            }));
+        }
+
+        function openChartInNewTab(chart) {
+            if (!chartCanOpen(chart)) return;
+            if (chart.tagName.toLowerCase() === 'img') {
+                const source = new URL(chart.currentSrc || chart.src, window.location.href);
+                if (['http:', 'https:', 'blob:'].includes(source.protocol)) {
+                    window.open(source.href, '_blank', 'noopener,noreferrer');
+                }
+                return;
+            }
+            const url = chartSnapshotUrl(chart);
+            window.open(url, '_blank', 'noopener,noreferrer');
+            // Allow the new tab to load before reclaiming this temporary snapshot URL.
+            setTimeout(() => URL.revokeObjectURL(url), 300000);
+        }
+
+        function initializeChartOpening() {
+            const selector = 'img.chart-image, svg.annual-distribution-chart, ' +
+                '.tea-standalone-cdf-figure img, .tea-figure-card img, ' +
+                '#collectDataAcPowerPlot, #collectDataEnergyPlot';
+            document.querySelectorAll(selector).forEach((chart) => {
+                const link = chart.closest('a.chart-open-link');
+                const update = () => {
+                    const ready = chartCanOpen(chart);
+                    chart.toggleAttribute('data-chart-openable', ready);
+                    if (link) {
+                        link.hidden = !ready;
+                        link.toggleAttribute('data-chart-openable', ready);
+                        if (ready) link.href = chart.currentSrc || chart.src;
+                        else link.removeAttribute('href');
+                        return;
+                    }
+                    chart.setAttribute('tabindex', ready ? '0' : '-1');
+                    chart.setAttribute('role', ready ? 'link' : 'img');
+                    chart.setAttribute('aria-description', 'Open chart in a new tab');
+                };
+                if (link) {
+                    // Let native links handle clicks, Enter, middle-click, and browser menus.
+                    link.addEventListener('keydown', (event) => {
+                        if (event.key !== ' ' || !chartCanOpen(chart)) return;
+                        event.preventDefault();
+                        link.click();
+                    });
+                } else {
+                    chart.addEventListener('click', () => openChartInNewTab(chart));
+                    chart.addEventListener('keydown', (event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        openChartInNewTab(chart);
+                    });
+                }
+                chart.addEventListener('load', update);
+                chart.addEventListener('error', update);
+                new MutationObserver(update).observe(chart, {
+                    attributes: true, attributeFilter: ['src', 'hidden', 'style'],
+                    childList: true, subtree: chart.tagName.toLowerCase() === 'svg',
+                });
+                update();
+            });
+        }
+
+        initializeChartOpening();
+
         function clearUncalibratedPlots() {
             clearImage('uncalibratedEnergyImg', 'uncalibratedEnergyIcon', 'uncalibratedEnergyChartBox');
             clearImage('uncalibratedAcImg', 'uncalibratedAcIcon', 'uncalibratedAcChartBox');

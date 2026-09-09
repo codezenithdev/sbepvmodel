@@ -118,14 +118,16 @@
                                         <p id="technoeconomicStandaloneResultStatus" role="status" aria-live="polite">Complete the assumptions, then calculate. Results are modeled, not a validated forecast.</p>
                                     </div>
                                     <nav class="tea-standalone-result-actions" aria-label="Result exports">
-                                        <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneCdfLink" href="#" hidden>Chart</a>
+                                        <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneCdfLink" href="#" target="_blank" rel="noopener noreferrer" hidden>Chart</a>
                                         <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneCsvLink" href="#" hidden>CSV bundle</a>
                                         <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneXlsxLink" href="#" hidden>Workbook</a>
                                     </nav>
                                 </header>
                                 <div class="tea-standalone-result-body">
                                     <figure class="tea-standalone-cdf-figure">
-                                        <img id="technoeconomicStandaloneCdfPlot" alt="Empirical cumulative distributions of modeled commercial Solectria and SolarEdge lifecycle LCOE" hidden>
+                                        <a class="chart-open-link" id="technoeconomicStandaloneCdfPlotLink" target="_blank" rel="noopener noreferrer" aria-label="Open LCOE chart in a new tab" hidden>
+                                            <img id="technoeconomicStandaloneCdfPlot" alt="Empirical cumulative distributions of modeled commercial Solectria and SolarEdge lifecycle LCOE" hidden>
+                                        </a>
                                         <p class="tea-figure-fallback" id="technoeconomicStandaloneCdfFallback" role="status">The verified CDF chart will appear after a completed calculation.</p>
                                         <figcaption>The curve shows the probability that modeled LCOE is at or below each real-USD value.</figcaption>
                                     </figure>

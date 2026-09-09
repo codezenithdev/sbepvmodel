@@ -8,6 +8,23 @@ const FRONTEND_ROOT = join(PROJECT_ROOT, 'frontend');
 const COLLECTION_ID = 'collect_0123456789abcdef01234567';
 const SOURCE_ID = 'annual-browser-smoke';
 
+function annualEnergyFixture(energies) {
+  return {
+    annual_energy_by_year: energies.map(([year, value]) => ({
+      year,
+      complete_calendar_year: true,
+      source_complete: true,
+      cdf_eligible: true,
+      period_start: `${year}-01-01`,
+      period_end: `${year}-12-31`,
+      combined_predicted_kwh: value,
+      se_predicted_kwh: value / 2,
+      sol_predicted_kwh: 260000,
+      row_count: 8760,
+    })),
+  };
+}
+
 function normalizedSource(path, trimFinalNewline = false) {
   const source = readFileSync(path, 'utf8').replace(/\r\n?/g, '\n');
   return trimFinalNewline ? source.replace(/\n$/, '') : source;
@@ -308,4 +325,262 @@ test('collection recovery and TEA source retry remain operable in a browser', as
   );
   await expect(page.locator('#collectDataError')).toBeVisible();
   await expect(page.locator('#collectDataSubmit')).toBeEnabled();
+});
+
+test('annual CDF interpolation follows selected series and additional complete years', async ({page}) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.addInitScript(browserMocks);
+  const html = assembledDashboard();
+  await page.route('http://dashboard.test/**', async (route) => {
+    const isDocument = new URL(route.request().url()).pathname === '/';
+    await route.fulfill({
+      status: isDocument ? 200 : 404,
+      contentType: isDocument ? 'text/html' : 'application/json',
+      body: isDocument ? html : '{}',
+    });
+  });
+  await page.goto('http://dashboard.test/');
+  await page.locator('#annualTab').click();
+  const fixture = annualEnergyFixture([
+    [2025, 525800], [2017, 527400], [2021, 527500],
+    [2019, 543900], [2020, 564200], [2024, 570800],
+  ]);
+  fixture.annual_energy_by_year.push({
+    ...fixture.annual_energy_by_year[0],
+    year: 2022,
+    source_complete: false,
+    cdf_eligible: false,
+    combined_predicted_kwh: 1,
+  });
+  await page.evaluate((result) => renderAnnualYearResults(result), fixture);
+
+  const interpolation = page.locator('#annualDistributionFitChart');
+  const equation = page.locator('#annualDistributionFitEquation');
+  await expect(page.locator('#annualDistributionCdfChart')).toHaveCount(0);
+  await expect(page.locator('#annualDistributionCdfChartWrap')).toHaveCount(0);
+  await expect(page.locator('#annualDistributionChart')).toBeVisible();
+  await expect(interpolation).toBeVisible();
+  await expect(interpolation.locator('.annual-distribution-point')).toHaveCount(6);
+  await expect(interpolation.locator('.annual-cdf-point-label')).toHaveCount(6);
+  await expect(interpolation.locator('.annual-cdf-point-label').filter({hasText: '525.8 MWh (2025)'}))
+    .toHaveCount(1);
+  await expect(interpolation.locator('.annual-cdf-point-label').filter({hasText: '(2022)'}))
+    .toHaveCount(0);
+  await expect(interpolation.locator('.annual-distribution-axis-label').filter({hasText: /^0%$/}))
+    .toHaveCount(1);
+  await expect(interpolation.locator('.annual-distribution-axis-label').filter({hasText: /^100%$/}))
+    .toHaveCount(1);
+  await expect(equation).toContainText('n = 6');
+  await expect(equation).not.toContainText('R2');
+  await expect(equation).not.toContainText('NORM.DIST');
+  await expect(page.locator('#annualDistributionP50Value')).toHaveText('535.7 MWh');
+  await equation.locator('summary').click();
+  await expect(equation.locator('table')).toBeVisible();
+  await expect(equation.locator('tbody tr')).toHaveCount(5);
+  await expect(equation.locator('tbody tr').first()).toContainText('525.80 <= x <= 527.40');
+  await expect(equation.locator('tbody tr').first()).toContainText('F(x) ≈ 0.50/6');
+  const combinedEquation = await equation.textContent();
+  await page.locator('.annual-distribution-subchart').last().screenshot({
+    path: test.info().outputPath('annual-six-year-interpolation.png'),
+  });
+
+  // Check the actual drawn path begins/ends at observed point coordinates.
+  // Axis padding must not become an extrapolated probability tail.
+  const geometry = await interpolation.evaluate((chart) => {
+    const coordinates = chart.querySelector('path').getAttribute('d')
+      .match(/[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?/gi).map(Number);
+    const points = Array.from(chart.querySelectorAll('circle')).map((point) => [
+      Number(point.getAttribute('cx')), Number(point.getAttribute('cy')),
+    ]).sort((a, b) => a[0] - b[0]);
+    return {start: coordinates.slice(0, 2), end: coordinates.slice(-2), points};
+  });
+  expect(geometry.start).toEqual(geometry.points[0]);
+  expect(geometry.end).toEqual(geometry.points.at(-1));
+
+  // Open the current SVG with its own styling, year labels, and equation.
+  const newChartPage = page.context().waitForEvent('page');
+  await interpolation.click({position: {x: 100, y: 100}});
+  const chartPage = await newChartPage;
+  await expect(chartPage.locator('h1')).toHaveText('Combined interpolated annual-energy CDF');
+  await expect(chartPage.locator('svg .annual-cdf-point-label')).toHaveCount(6);
+  await expect(chartPage.locator('tbody tr')).toHaveCount(5);
+  await expect(chartPage.locator('tbody tr').first()).toContainText('525.80 <= x <= 527.40');
+  expect(await chartPage.evaluate(() => window.opener)).toBeNull();
+  expect(page.url()).toBe('http://dashboard.test/');
+  await chartPage.screenshot({path: test.info().outputPath('annual-chart-new-tab.png'), fullPage: true});
+  await chartPage.close();
+
+  await page.locator('#annualDistributionSeries').selectOption('solarEdge');
+  await expect(page.locator('#annualDistributionFitTitle')).toContainText('SolarEdge');
+  await expect(equation).toContainText('n = 6');
+  await expect(equation.locator('tbody tr')).toHaveCount(5);
+  expect(await equation.textContent()).not.toEqual(combinedEquation);
+  await expect(equation).toContainText('262.9');
+  await expect(equation).not.toContainText('525.8');
+  await expect(interpolation.locator('.annual-cdf-point-label').filter({hasText: '262.9 MWh (2025)'}))
+    .toHaveCount(1);
+
+  // All-equal observations have a midpoint rank but no invertible energy interval.
+  await page.locator('#annualDistributionSeries').selectOption('solectria');
+  await expect(interpolation).toBeHidden();
+  await expect(page.locator('#annualDistributionFitNote')).toContainText(
+    'Every complete weather year returned the same annual energy.',
+  );
+  await expect(interpolation.locator('.annual-distribution-point')).toHaveCount(0);
+  await expect(equation.locator('tbody tr')).toHaveCount(0);
+  await expect(equation).not.toContainText('525.8');
+
+  const twelve = annualEnergyFixture(Array.from({length: 12}, (_, index) => [
+    2010 + index, 300000 + (index * index + index) * 1000,
+  ]));
+  await page.evaluate((result) => renderAnnualYearResults(result), twelve);
+  await expect(page.locator('#annualDistributionSeries')).toHaveValue('combined');
+  await expect(interpolation).toBeVisible();
+  await expect(interpolation.locator('.annual-cdf-point-label')).toHaveCount(12);
+  await expect(equation).toContainText('n = 12');
+  await expect(equation.locator('tbody tr')).toHaveCount(11);
+  await expect(equation).not.toContainText('525.8');
+  const keyboardChartPage = page.context().waitForEvent('page');
+  await interpolation.focus();
+  await interpolation.press('Enter');
+  const twelveChartPage = await keyboardChartPage;
+  await expect(twelveChartPage.locator('svg .annual-cdf-point-label')).toHaveCount(12);
+  await expect(twelveChartPage.locator('tbody tr')).toHaveCount(11);
+  await twelveChartPage.close();
+  await page.setViewportSize({width: 390, height: 844});
+  await equation.locator('summary').click();
+  await expect(equation.locator('table')).toBeVisible();
+  const mobileBounds = await page.locator('.annual-distribution-subchart').last().evaluate((section) => {
+    const right = section.getBoundingClientRect().right;
+    return {
+      sectionRight: right,
+      chartRight: section.querySelector('svg').getBoundingClientRect().right,
+      equationRight: section.querySelector('.annual-distribution-equation').getBoundingClientRect().right,
+    };
+  });
+  expect(mobileBounds.chartRight).toBeLessThanOrEqual(mobileBounds.sectionRight + 1);
+  expect(mobileBounds.equationRight).toBeLessThanOrEqual(mobileBounds.sectionRight + 1);
+  await page.locator('.annual-distribution-subchart').last().screenshot({
+    path: test.info().outputPath('annual-twelve-year-interpolation-mobile.png'),
+  });
+
+  await page.evaluate(() => clearAnnualYearResults());
+  await expect(interpolation).toBeHidden();
+  await expect(equation.locator('tbody tr')).toHaveCount(0);
+  expect(pageErrors).toEqual([]);
+});
+
+test('TEA v5 interpretation stays below the chart and loaded image charts open in new tabs', async ({page}) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.addInitScript(browserMocks);
+  const html = assembledDashboard();
+  const plotPath = '/api/technoeconomic/jobs/tea_browser_fixture/artifacts/cdf_plot';
+  const plotUrl = `http://dashboard.test${plotPath}`;
+  const validationUrl = 'http://dashboard.test/outputs/browser-validation.png';
+  // Only local mock responses: no calculation or saved model result is changed.
+  await page.context().route('http://dashboard.test/**', async (route) => {
+    const url = route.request().url();
+    if (url === plotUrl || url === validationUrl) {
+      await route.fulfill({status: 200, contentType: 'image/png', body: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64',
+      )});
+    } else {
+      await route.fulfill({status: 200, contentType: 'text/html', body: html});
+    }
+  });
+  await page.goto('http://dashboard.test/');
+  await expect(page.locator('#technoeconomicStandaloneSourceStatus'))
+    .toHaveText('Calibrated annual energy is ready');
+  await page.locator('#technoeconomicTab').click();
+  const figure = page.locator('.tea-standalone-cdf-figure');
+  const interpretation = page.locator('.tea-standalone-interpretation');
+  const figureBounds = await figure.boundingBox();
+  const interpretationBounds = await interpretation.boundingBox();
+  expect(interpretationBounds.y).toBeGreaterThanOrEqual(figureBounds.y + figureBounds.height - 1);
+  expect(interpretationBounds.width).toBeGreaterThanOrEqual(figureBounds.width - 1);
+  for (const name of ['Solectria', 'SolarEdge']) {
+    const header = page.locator('#technoeconomicLcoePercentileTable th').filter({hasText: name});
+    expect((await header.boundingBox()).width).toBeGreaterThan(90);
+  }
+  // Empty placeholders are never advertised as links.
+  await expect(page.locator('#technoeconomicStandaloneCdfPlot')).not.toHaveAttribute('data-chart-openable');
+  await page.locator('.tea-standalone-cdf-card').screenshot({path: test.info().outputPath('tea-v5-interpretation-below.png')});
+  // Exercise completed-job adoption, contract dispatch, and verified artifact URL
+  // selection together, including the separate Chart action in the result header.
+  await page.evaluate(({sourceId, plotPath}) => technoeconomicAdoptJob({
+    job_id: 'tea_browser_fixture', workflow: 'technoeconomic', state: 'done',
+    progress: 100, stage: 'Completed browser fixture', source_annual_job_id: sourceId,
+    request: {
+      calculation_contract_version: 'tea-calculation-v5', n: 1000,
+      source_annual_job_id: sourceId,
+      finance: {
+        constant_dollar_cost_year: 2022, project_life_years: 30,
+        real_discount_rate: {distribution: {family: 'fixed', value: 0.04}},
+      },
+      paired_commercial: {
+        target_capacity: 100, target_capacity_unit: 'mw',
+        target_rating_basis: 'ac_operating_limit',
+      },
+    },
+    result: {
+      calculation_contract_version: 'tea-calculation-v5', realization_count: 1000,
+      source_snapshot_sha256: 'f'.repeat(64),
+      paired_commercial: {
+        target_capacity_w: 100000000, target_rating_basis: 'ac_operating_limit',
+        systems: {
+          solectria: {percentiles: {p10: 0.04, p50: 0.05, p90: 0.06}},
+          solaredge: {percentiles: {p10: 0.045, p50: 0.055, p90: 0.065}},
+        },
+        lcoe_delta_se_minus_sol: {percentiles: {p10: 0.004, p50: 0.005, p90: 0.006}},
+      },
+    },
+    artifacts: {exports: {artifacts: {cdf_plot: {url: plotPath}}}},
+  }), {sourceId: SOURCE_ID, plotPath});
+  await expect(page.locator('#technoeconomicStandaloneResults')).toHaveAttribute('data-state', 'done');
+  await expect(page.locator('#technoeconomicLcoePercentileBody tr')).toHaveCount(3);
+  await expect(page.locator('#technoeconomicStandaloneInterpretation'))
+    .toContainText('Solectria 50 USD/MWh');
+  const chart = page.locator('#technoeconomicStandaloneCdfPlot');
+  const chartLink = page.locator('a#technoeconomicStandaloneCdfPlotLink');
+  const chartAction = page.locator('a#technoeconomicStandaloneCdfLink');
+  await expect(chart).toHaveAttribute('data-chart-openable', '');
+  await expect(chartLink.locator('img')).toHaveCount(1);
+  for (const link of [chartLink, chartAction]) {
+    await expect(link).toHaveAttribute('href', new RegExp(`${plotPath}$`));
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', /noopener/);
+    await expect(link).toHaveAttribute('rel', /noreferrer/);
+  }
+  for (const target of [chart, chartAction]) {
+    const openedPage = page.context().waitForEvent('page');
+    await target.click();
+    const imagePage = await openedPage;
+    await expect(imagePage).toHaveURL(plotUrl);
+    expect(await imagePage.evaluate(() => window.opener)).toBeNull();
+    await expect(page).toHaveURL('http://dashboard.test/');
+    await expect(page.locator('#technoeconomicStandaloneResults')).toHaveAttribute('data-state', 'done');
+    await imagePage.close();
+  }
+  await page.evaluate(() => invalidateTechnoeconomicWorkspace());
+  await expect(chart).not.toHaveAttribute('data-chart-openable');
+  for (const link of [chartLink, chartAction]) {
+    await expect(link).toBeHidden();
+    await expect(link).not.toHaveAttribute('href');
+  }
+
+  // Regular validation images share the click/keyboard behavior.
+  await page.locator('#validationTab').click();
+  await page.evaluate((url) => showImage('acImg', 'acIcon', 'acChartBox', url, false), validationUrl);
+  const validationChart = page.locator('#acImg');
+  await expect(validationChart).toHaveAttribute('data-chart-openable', '');
+  const validationOpened = page.context().waitForEvent('page');
+  await validationChart.focus();
+  await validationChart.press('Enter');
+  const validationPage = await validationOpened;
+  await expect(validationPage).toHaveURL(validationUrl);
+  await validationPage.close();
+  expect(pageErrors).toEqual([]);
 });

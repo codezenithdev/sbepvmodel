@@ -268,31 +268,23 @@ console.log(JSON.stringify({{
             "function renderAnnualExceedanceChart(points, summary, series)",
             "const ANNUAL_DISTRIBUTION_MIN_PERCENTILE_YEARS = 5",
             "const ANNUAL_DISTRIBUTION_MIN_EXCEEDANCE_YEARS = 10",
-            'id="annualDistributionCdfChart"',
-            'id="annualDistributionCdfChartWrap"',
-            'id="annualDistributionCdfNote"',
             'id="annualDistributionFitChart"',
             'id="annualDistributionFitChartWrap"',
             'id="annualDistributionFitEquation"',
             'id="annualDistributionFitNote"',
-            'aria-labelledby="annualDistributionCdfTitle annualDistributionCdfDescription"',
             'aria-labelledby="annualDistributionFitTitle annualDistributionFitDescription"',
             "const ANNUAL_CDF_MIN_YEARS = 2",
-            "const ANNUAL_FIT_MIN_YEARS = 3",
-            "const ANNUAL_FIT_P90_Z = 1.2816",
             "function annualCumulativePoints(points)",
-            "function annualCumulativeStepPath(cumulativePoints, domain, x, y)",
-            "function annualErf(value)",
-            "function annualNormalCdf(z)",
-            "function annualNormalFit(points)",
-            "function annualFitEquationText(fit)",
+            "function annualLinearInterpolation(points)",
+            "function annualInterpolationProbability(interpolation, value)",
+            "function annualInterpolationCurvePath(interpolation, x, y)",
+            "function annualInterpolationEquationText(interpolation)",
+            "function annualInterpolationSegmentText(segment, sampleCount)",
             "function annualCdfLabelLayout(entries, minimumGap)",
-            "function renderAnnualCumulativeCdfChart(points, series)",
-            "function renderAnnualFittedCdfChart(points, fit, series)",
+            "function renderAnnualInterpolatedCdfChart(points, interpolation, series)",
             "function clearAnnualDistributionChart(chart = annualYearResultElements.distributionChart)",
             "' (' + point.years.join(', ') + ')'",
-            "'P(x) = Phi((x - '",
-            "'Cumulative probability P(X <= x)'",
+            "Linear interpolation equations by energy interval",
             "annualEnergyQuantile(values, 0.10)",
             "row.complete && row.cdfEligible && Number.isFinite(row[seriesKey])",
             "sourceCoveragePct: annualRowNumber(row, ['source_coverage_pct'])",
@@ -300,36 +292,41 @@ console.log(JSON.stringify({{
             "label: 'Partial source'",
             "'% source coverage'",
             "tabindex: 0",
-            "Empirical steps and points are shown without smoothing.",
         ):
             self.assertIn(marker, self.html)
 
         for removed in (
             'id="annualCdfChart"',
+            'id="annualDistributionCdfChart"',
+            'id="annualDistributionCdfChartWrap"',
+            'id="annualDistributionCdfNote"',
+            'aria-labelledby="annualDistributionCdfTitle annualDistributionCdfDescription"',
+            "function renderAnnualCumulativeCdfChart(points, series)",
+            "function setAnnualCdfChartState(points, series)",
             "function renderAnnualEnergyCdf(rows)",
             "SolarEdge (solid)",
             "Solectria (dashed)",
             "combined (dotted)",
             "annualIrradiance",
             "applyAnnualInputPlots",
+            "function annualNormalFit(points)",
+            "function annualNormalCdf(z)",
+            "NORM.DIST",
+            "Fitted P50",
+            "Fitted P90",
         ):
             self.assertNotIn(removed, self.html)
 
-        cdf_renderer = self.html.split(
-            "function renderAnnualCumulativeCdfChart(points, series)", 1
+        interpolation_renderer = self.html.split(
+            "function renderAnnualInterpolatedCdfChart(points, interpolation, series)", 1
         )[1].split("\n        function ", 1)[0]
-        fit_renderer = self.html.split(
-            "function renderAnnualFittedCdfChart(points, fit, series)", 1
-        )[1].split("\n        function ", 1)[0]
-        for renderer in (cdf_renderer, fit_renderer):
-            # The fitted curve must never overwrite the empirical PERCENTILE.INC tiles.
-            self.assertNotIn("distributionP50Value", renderer)
-            self.assertNotIn("distributionP90Value", renderer)
-            self.assertNotIn("renderAnnualDistributionKpis", renderer)
-            # The 10-year exceedance gate does not apply to the CDF charts.
-            self.assertNotIn("ANNUAL_DISTRIBUTION_MIN_EXCEEDANCE_YEARS", renderer)
-        self.assertIn("Fitted P50", fit_renderer)
-        self.assertIn("Fitted P90", fit_renderer)
+        # Interpolation must never overwrite the empirical PERCENTILE.INC tiles.
+        self.assertNotIn("distributionP50Value", interpolation_renderer)
+        self.assertNotIn("distributionP90Value", interpolation_renderer)
+        self.assertNotIn("renderAnnualDistributionKpis", interpolation_renderer)
+        # The 10-year exceedance gate does not apply to the interpolated CDF.
+        self.assertNotIn("ANNUAL_DISTRIBUTION_MIN_EXCEEDANCE_YEARS", interpolation_renderer)
+        self.assertNotIn("R2", interpolation_renderer)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_known_midc_gap_years_are_prelabelled_partial_in_node(self) -> None:
@@ -399,19 +396,11 @@ const equalDomain = annualDistributionDomain([500, 500]);
 const exceedancePoints = annualExceedancePoints(annualDistributionPoints(rows, 'combined'));
 const exceedancePath = annualExceedanceStepPath(exceedancePoints, [0, 1100], (value) => value, (probability) => probability);
 const cumulativePoints = annualCumulativePoints(annualDistributionPoints(rows, 'combined'));
-const cumulativePath = annualCumulativeStepPath(cumulativePoints, [0, 1100], (value) => value, (probability) => probability);
 const tiedCumulative = annualCumulativePoints(annualDistributionPoints([
     {{year: 2020, complete: true, cdfEligible: true, combined: 500}},
     {{year: 2019, complete: true, cdfEligible: true, combined: 500}},
     {{year: 2018, complete: true, cdfEligible: true, combined: 700}},
 ], 'combined'));
-const fit = annualNormalFit([
-    {{year: 2019, value: 900}}, {{year: 2020, value: 1000}}, {{year: 2021, value: 1100}},
-]);
-const flatFit = annualNormalFit([
-    {{year: 2019, value: 500}}, {{year: 2020, value: 500}}, {{year: 2021, value: 500}},
-]);
-const shortFit = annualNormalFit([{{year: 2019, value: 900}}, {{year: 2020, value: 1100}}]);
 console.log(JSON.stringify({{
     p90: annualEnergyQuantile(values, 0.10),
     p50: annualEnergyQuantile(values, 0.50),
@@ -423,26 +412,12 @@ console.log(JSON.stringify({{
     narrowDomainTickDigits: annualDistributionTickDigits([499980, 500020]),
     exceedancePathStarts: exceedancePath.startsWith('M 0 1 H 100 V 0.9 H 200 V 0.8'),
     exceedancePathEnds: exceedancePath.endsWith('H 1000 V 0 H 1100'),
-    cumulativePathStarts: cumulativePath.startsWith('M 0 0 H 100 V 0.1 H 200 V 0.2'),
-    cumulativePathEnds: cumulativePath.endsWith('H 1000 V 1 H 1100'),
+    cumulativeProbabilities: cumulativePoints.map((point) => point.probability),
     tiedCumulative: tiedCumulative.map((point) => ({{
         value: point.value,
         years: point.years,
         probability: Number(point.probability.toFixed(6)),
     }})),
-    fit: {{
-        mu: fit.mu,
-        sigma: fit.sigma,
-        sampleCount: fit.sampleCount,
-        p50: fit.p50,
-        p90: Number(fit.p90.toFixed(4)),
-        r2: Number(fit.r2.toFixed(6)),
-        usable: fit.usable,
-    }},
-    fitEquation: annualFitEquationText(fit),
-    flatFitUsable: flatFit.usable,
-    shortFitUsable: shortFit.usable,
-    normalCdf: [-1, 0, 1, -1.2816].map((z) => Number(annualNormalCdf(z).toFixed(6))),
     labelLayout: annualCdfLabelLayout([{{y: 100}}, {{y: 106}}, {{y: 140}}], 14).map((item) => item.labelY),
 }}));
 """
@@ -491,41 +466,171 @@ console.log(JSON.stringify({{
         self.assertGreaterEqual(payload["narrowDomainTickDigits"], 2)
         self.assertTrue(payload["exceedancePathStarts"])
         self.assertTrue(payload["exceedancePathEnds"])
-        self.assertTrue(payload["cumulativePathStarts"])
-        self.assertTrue(payload["cumulativePathEnds"])
+        self.assertEqual(payload["cumulativeProbabilities"], [(i + 0.5) / 10 for i in range(10)])
 
-        # Equal observations share P(X <= x) at the highest rank, matching
-        # annual_energy_cdf.cumulative_probability in src/sbepv/model.py.
+        # Displayed probabilities use the average midpoint rank for exact ties.
+        # This is intentionally distinct from the unchanged backend ECDF i / n.
         self.assertEqual(
             payload["tiedCumulative"],
             [
-                {"value": 500, "years": [2019, 2020], "probability": 0.666667},
-                {"value": 700, "years": [2018], "probability": 1.0},
+                {"value": 500, "years": [2019, 2020], "probability": 0.333333},
+                {"value": 700, "years": [2018], "probability": 0.833333},
             ],
         )
 
-        # Moment fit of [900, 1000, 1100]: mu = 1000, sample sigma = 100 exactly.
-        self.assertEqual(payload["fit"]["mu"], 1000)
-        self.assertEqual(payload["fit"]["sigma"], 100)
-        self.assertEqual(payload["fit"]["sampleCount"], 3)
-        self.assertEqual(payload["fit"]["p50"], 1000)
-        self.assertEqual(payload["fit"]["p90"], 871.84)
-        self.assertTrue(payload["fit"]["usable"])
-        # R2 uses midpoint (Hazen) plotting positions, not the rank / n the step
-        # chart plots; rank / n would score this near-perfect sample at 0.624.
-        self.assertAlmostEqual(payload["fit"]["r2"], 0.999422, places=5)
-
-        # Abramowitz and Stegun 7.1.26 is accurate to about 1.5e-7.
-        self.assertEqual(payload["normalCdf"], [0.158655, 0.5, 0.841345, 0.099992])
-
-        self.assertFalse(payload["flatFitUsable"])  # sigma == 0
-        self.assertFalse(payload["shortFitUsable"])  # N < ANNUAL_FIT_MIN_YEARS
-
-        self.assertTrue(payload["fitEquation"].startswith("P(x) = Phi((x - "))
-        self.assertIn("x in MWh; R2 = 0.999 (n = 3)", payload["fitEquation"])
-
         # Only the crowded label is nudged; the others keep their exact position.
         self.assertEqual(payload["labelLayout"], [100, 114, 140])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_annual_interpolation_scales_with_years_and_uses_full_precision_in_node(self) -> None:
+        helpers = "const ANNUAL_DISTRIBUTION_MIN_PERCENTILE_YEARS" + self.html.split(
+            "const ANNUAL_DISTRIBUTION_MIN_PERCENTILE_YEARS", 1
+        )[1].split("\n        function clearAnnualDistributionChart", 1)[0]
+        script = f"""
+{helpers}
+const imagePoints = [
+    [2025, 525800], [2017, 527400], [2021, 527500],
+    [2019, 543900], [2020, 564200], [2024, 570800],
+].map(([year, value]) => ({{year, value}}));
+const six = annualLinearInterpolation(imagePoints.slice().reverse());
+const twelvePoints = Array.from({{length: 12}}, (_, index) => ({{
+    year: 2010 + index,
+    value: 300000 + (index * index + index) * 1000,
+}}));
+const twelve = annualLinearInterpolation(twelvePoints);
+const tied = annualLinearInterpolation([
+    {{year: 2022, value: 700000}}, {{year: 2020, value: 500000}},
+    {{year: 2019, value: 500000}}, {{year: 2021, value: 600000}},
+]);
+const preciseValues = [525800.0123456789, 525800.0987654321];
+const precise = annualLinearInterpolation(preciseValues.map((value, index) => ({{
+    year: 2024 + index, value,
+}})));
+const filtered = annualLinearInterpolation([
+    ...imagePoints, {{year: 2022, value: NaN}}, {{year: 2023, value: Infinity}},
+]);
+const degenerate = [[], [imagePoints[0]], [
+    {{year: 2019, value: 500000}}, {{year: 2020, value: 500000}},
+]].map(annualLinearInterpolation);
+const evaluateKnots = (interpolation) => interpolation.knots.map((point) =>
+    annualInterpolationProbability(interpolation, point.value));
+console.log(JSON.stringify({{
+    six: {{
+        sampleCount: six.sampleCount,
+        segments: six.segments.length,
+        usable: six.usable,
+        years: six.knots.map((point) => point.years),
+        probabilities: evaluateKnots(six),
+        medianProbability: annualInterpolationProbability(six, 535700),
+        equation: annualInterpolationEquationText(six),
+        firstInterval: annualInterpolationIntervalText(six.segments[0]),
+        firstSegment: annualInterpolationSegmentText(six.segments[0], six.sampleCount),
+        path: annualInterpolationCurvePath(six, (x) => x, (y) => y),
+    }},
+    twelve: {{
+        sampleCount: twelve.sampleCount,
+        segments: twelve.segments.length,
+        probabilities: evaluateKnots(twelve),
+        intervalMidpoints: twelvePoints.slice(1).map((point, index) =>
+            annualInterpolationProbability(twelve, (point.value + twelvePoints[index].value) / 2)),
+        equation: annualInterpolationEquationText(twelve),
+        lastInterval: annualInterpolationIntervalText(twelve.segments[10]),
+        lastSegment: annualInterpolationSegmentText(twelve.segments[10], twelve.sampleCount),
+    }},
+    tied: {{
+        segments: tied.segments.length,
+        values: tied.knots.map((point) => point.value),
+        years: tied.knots.map((point) => point.years),
+        probabilities: evaluateKnots(tied),
+        halfway: annualInterpolationProbability(tied, 550000),
+    }},
+    precise: {{
+        usable: precise.usable,
+        values: precise.knots.map((point) => point.value),
+        equation: annualInterpolationSegmentText(precise.segments[0], precise.sampleCount),
+        interval: annualInterpolationIntervalText(precise.segments[0]),
+        probability: annualInterpolationProbability(precise, (preciseValues[0] + preciseValues[1]) / 2),
+    }},
+    outside: [525799, 570801, NaN, Infinity].map((value) =>
+        annualInterpolationProbability(six, value)),
+    filteredCount: filtered.sampleCount,
+    degenerate: degenerate.map((interpolation) => ({{
+        usable: interpolation.usable,
+        segments: interpolation.segments.length,
+        probability: annualInterpolationProbability(interpolation, 500000),
+        path: annualInterpolationCurvePath(interpolation, (x) => x, (y) => y),
+    }})),
+}}));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        payload = json.loads(completed.stdout)
+        six = payload["six"]
+        self.assertTrue(six["usable"])
+        self.assertEqual(six["sampleCount"], 6)
+        self.assertEqual(six["segments"], 5)
+        self.assertEqual(six["years"], [[2025], [2017], [2021], [2019], [2020], [2024]])
+        self.assertEqual(six["probabilities"], [(i + 0.5) / 6 for i in range(6)])
+        self.assertAlmostEqual(six["medianProbability"], 0.5, places=12)
+        self.assertIn("n = 6", six["equation"])
+        self.assertIn("MWh", six["equation"])
+        self.assertEqual(six["firstInterval"], "525.80 <= x <= 527.40")
+        self.assertEqual(
+            six["firstSegment"],
+            "F(x) ≈ 0.50/6 + (1.00/6) * (x - 525.80) / (527.40 - 525.80)",
+        )
+        # The path must terminate at the two observed knots, never at padded
+        # chart edges or at assumed zero/one tail probabilities.
+        vertices = six["path"].replace("M", "").replace("L", "").split()
+        self.assertEqual(len(vertices), 12)
+        self.assertEqual(float(vertices[0]), 525800)
+        self.assertAlmostEqual(float(vertices[1]), 1 / 12)
+        self.assertEqual(float(vertices[-2]), 570800)
+        self.assertAlmostEqual(float(vertices[-1]), 11 / 12)
+
+        twelve = payload["twelve"]
+        self.assertEqual(twelve["sampleCount"], 12)
+        self.assertEqual(twelve["segments"], 11)
+        self.assertIn("n = 12", twelve["equation"])
+        self.assertNotEqual(six["equation"], twelve["equation"])
+        self.assertEqual(twelve["lastInterval"], "410.00 <= x <= 432.00")
+        self.assertEqual(
+            twelve["lastSegment"],
+            "F(x) ≈ 10.50/12 + (1.00/12) * (x - 410.00) / (432.00 - 410.00)",
+        )
+        self.assertEqual(twelve["probabilities"], [(i + 0.5) / 12 for i in range(12)])
+        for index, probability in enumerate(twelve["intervalMidpoints"]):
+            self.assertAlmostEqual(probability, (index + 1) / 12, places=12)
+
+        self.assertEqual(payload["tied"]["segments"], 2)
+        self.assertEqual(payload["tied"]["values"], [500000, 600000, 700000])
+        self.assertEqual(payload["tied"]["years"], [[2019, 2020], [2021], [2022]])
+        self.assertEqual(payload["tied"]["probabilities"], [0.25, 0.625, 0.875])
+        self.assertAlmostEqual(payload["tied"]["halfway"], 0.4375)
+        precise = payload["precise"]
+        self.assertTrue(precise["usable"])
+        self.assertEqual(precise["values"], [525800.0123456789, 525800.0987654321])
+        # Distinct source energies can have identical two-decimal displays. Keep
+        # their exact interpolation and avoid publishing a zero denominator.
+        self.assertEqual(
+            precise["equation"],
+            "F(x) = 0.50/2 + (1.00/2) * (x - E_i) / (E_(i+1) - E_i)",
+        )
+        self.assertIn("both bounds round to 525.80", precise["interval"])
+        self.assertIn("distinct full-precision energies", precise["interval"])
+        self.assertAlmostEqual(precise["probability"], 0.5, places=8)
+        self.assertEqual(payload["outside"], [None, None, None, None])
+        self.assertEqual(payload["filteredCount"], 6)
+        for case in payload["degenerate"]:
+            self.assertFalse(case["usable"])
+            self.assertEqual(case["segments"], 0)
+            self.assertIsNone(case["probability"])
+            self.assertEqual(case["path"], "")
 
     def test_validation_dates_reset_after_cached_form_restore(self) -> None:
         for marker in (

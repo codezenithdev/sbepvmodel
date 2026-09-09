@@ -59,9 +59,53 @@ The markup files are ordered pieces of one document, not independently well-form
 fragments. `.app-shell` and `#annualPanel`, for example, span multiple files. Only
 the assembled result is valid HTML.
 
+## Annual-energy CDF chart
+
+The annual results CDF chart uses the selected eligible, complete, source-verified
+weather years. Energies are sorted in increasing order and assigned midpoint
+probabilities `p_i = (i - 0.5) / n`, where ranks start at 1 and `n` is the selected
+sample count. Equal energies share the average midpoint probability of their
+ranks, with every associated year retained in the point label.
+
+The chart labels each point with its energy and year, and connects adjacent distinct
+energies using linear interpolation:
+
+```text
+F(x) = p_i + (x - E_i) * (p_(i+1) - p_i) / (E_(i+1) - E_i)
+E_i <= x <= E_(i+1); x and E are in MWh; plotted percentile = 100 * F(x)
+```
+
+For distinct observations, each probability difference is `1 / n`. For tied
+observations, the formula uses the probabilities after grouping equal energies.
+Interpolation requires at least two eligible years and two distinct energy values.
+It uses the underlying full-precision annual results and generates the equation
+and interval coefficients again when the selected results or array change. Six
+distinct values produce five segments; twelve produce eleven. The expandable
+equation table displays energy bounds and equation values to two decimal places;
+the underlying interpolation retains full precision. Numeric equations are marked
+as approximate. If two distinct bounds round to the same hundredth, that interval
+uses symbolic endpoints to avoid displaying division by zero.
+
+The CDF chart uses a 0–100% y-axis. The interpolated curve is defined only within
+the observed energy range; no tails are extrapolated. Agreement at the input points
+is inherent to interpolation, so the chart does not report a fit R-squared value.
+This presentation does not change the backend's exported empirical CDF (`i / n`),
+the existing type-7 P50/P90 summary quantiles, or any TEA calculations.
+
+## Opening charts
+
+Click a loaded chart, or focus it and press Enter or Space, to open it in a new
+browser tab. Image charts use their existing image URL, preserving the artifact
+access checks. Annual SVG charts open a snapshot with their styles, year labels,
+and, for the interpolated CDF, its current equation table. Empty or unavailable
+charts do not open a tab. The original dashboard stays open.
+The TEA v5 chart image and its **Chart** action are native links targeting a new
+tab; the image link becomes available only after the verified plot loads.
+
 ## Supported TEA calculation
 
-The dashboard uses the v5 paired commercial LCOE calculation. Autonomy, the
+The dashboard uses the v5 paired commercial LCOE calculation. Its interpretation
+text and percentile table appear below the full-width CDF chart. Autonomy, the
 Decision Agent, and TEA v6 calculation, views, and exports have been removed.
 Historical database rows and private artifacts are preserved, but retired jobs
 cannot be viewed, exported, retried, or used as Solar Agent evidence.

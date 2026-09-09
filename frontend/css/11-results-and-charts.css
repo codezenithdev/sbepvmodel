@@ -823,6 +823,7 @@
         }
 
         .annual-distribution-equation {
+            min-width: 0;
             padding: 9px 11px;
             border-left: 3px solid var(--accent-strong);
             border-radius: 0 7px 7px 0;
@@ -834,40 +835,83 @@
             overflow-wrap: anywhere;
         }
 
+        .annual-distribution-equation-details {
+            margin-top: 9px;
+        }
+
+        .annual-distribution-equation-details summary {
+            padding: 4px 0;
+            border-radius: 3px;
+            color: var(--text);
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .annual-distribution-equation-details summary:focus-visible {
+            outline: 2px solid var(--accent-strong);
+            outline-offset: 3px;
+        }
+
+        .annual-distribution-segments-wrap {
+            min-width: 0;
+            max-width: 100%;
+            margin-top: 7px;
+            overflow-x: auto;
+        }
+
+        .annual-distribution-segments {
+            width: 100%;
+            min-width: 380px;
+            border-collapse: collapse;
+            color: var(--text);
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+            text-align: left;
+        }
+
+        .annual-distribution-segments caption {
+            padding-bottom: 7px;
+            color: var(--muted);
+            text-align: left;
+        }
+
+        .annual-distribution-segments th,
+        .annual-distribution-segments td {
+            padding: 7px 9px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+            overflow-wrap: anywhere;
+        }
+
+        .annual-distribution-segments thead th {
+            background: var(--surface);
+            font-weight: 700;
+        }
+
+        .annual-distribution-segments code {
+            font-size: inherit;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
+        [data-chart-openable] {
+            cursor: zoom-in;
+        }
+
+        [data-chart-openable]:focus-visible {
+            outline: 3px solid var(--accent-strong);
+            outline-offset: 3px;
+        }
+
         .annual-distribution-fit-curve {
             fill: none;
             stroke-width: 2.6;
             stroke-linecap: round;
         }
 
-        .annual-distribution-empirical-step {
-            fill: none;
-            stroke-width: 2;
-            stroke-dasharray: 5 4;
-            opacity: 0.72;
-        }
-
         .annual-cdf-leader {
             stroke: #c9d5d0;
             stroke-width: 1;
-        }
-
-        .annual-distribution-reference.fit50 {
-            stroke: #0f766e;
-            stroke-dasharray: 6 4;
-        }
-
-        .annual-distribution-reference.fit90 {
-            stroke: #7c3aed;
-            stroke-dasharray: 2 4;
-        }
-
-        .annual-distribution-reference-label.fit50 {
-            fill: #0f766e;
-        }
-
-        .annual-distribution-reference-label.fit90 {
-            fill: #7c3aed;
         }
 
         @media (max-width: 1180px) {
