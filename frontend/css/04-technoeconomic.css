@@ -2394,34 +2394,6 @@
             border-top: 1px solid var(--border);
         }
 
-        .tea-standalone-provenance {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 6px 16px;
-            margin: 0;
-            padding: 12px 18px;
-            border-top: 1px solid var(--border);
-        }
-
-        .tea-standalone-provenance > div {
-            min-width: 0;
-        }
-
-        .tea-standalone-provenance dt {
-            color: var(--muted-strong);
-            font-size: 10px;
-            font-weight: 760;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-        }
-
-        .tea-standalone-provenance dd {
-            margin: 2px 0 0;
-            color: var(--text);
-            font-size: 11px;
-            overflow-wrap: anywhere;
-        }
-
         .tea-standalone-disclaimer {
             padding-bottom: 16px;
             font-style: italic;
@@ -3377,8 +3349,7 @@
             .tea-scenario-rail,
             .tea-standalone-field-grid,
             .tea-standalone-distribution-grid,
-            .tea-paired-system-cost-grid,
-            .tea-standalone-provenance {
+            .tea-paired-system-cost-grid {
                 grid-template-columns: 1fr;
             }
 

@@ -257,7 +257,6 @@
             standaloneInterpretation: document.getElementById('technoeconomicStandaloneInterpretation'),
             standalonePercentileBody: document.getElementById('technoeconomicLcoePercentileBody'),
             standaloneRunContext: document.getElementById('technoeconomicStandaloneRunContext'),
-            standaloneProvenance: document.getElementById('technoeconomicStandaloneProvenance'),
             standaloneScenarioSummary: document.getElementById('technoeconomicScenarioSummary'),
             standaloneSolectriaCostSummary: document.getElementById('technoeconomicStandaloneSolectriaCostSummary'),
             standaloneSolarEdgeCostSummary: document.getElementById('technoeconomicStandaloneSolarEdgeCostSummary'),
