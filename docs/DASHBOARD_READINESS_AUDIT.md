@@ -6,6 +6,8 @@ Date: **2026-09-10**
 
 Scope: **Can the dashboard be presented to end users, and what should change first**
 
+Revision: **2026-09-10b — adds §4.0, a measured 2 GB capacity failure at 12 years**
+
 Branch: `claude/dashboard-readiness-review-ipmxwm`
 
 This document records an independent readiness review of the SB Energy PV
@@ -27,20 +29,28 @@ engineering underneath is disciplined: the full suite passes, lint and typecheck
 are silent, there are no TODO markers or debug logging anywhere in the tracked
 source, and the failure paths that matter for data integrity behave correctly.
 
-Two things stand between the current state and an unattended end-user rollout:
+Three things stand between the current state and an unattended end-user rollout:
 
-1. A user can queue a job that runs for hours, on a single shared worker thread,
+1. **A 12-year annual selection exceeds the 2 GB instance and OOM-kills the
+   whole service** — measured, not projected (§4.0). Every 12-year selection the
+   API currently accepts is over the limit. This is the one item that can take
+   the dashboard down for all users.
+2. A user can queue a job that runs for hours, on a single shared worker thread,
    with no duration estimate and no queue position (§4.1).
-2. Authentication is fail-open — an unset environment variable silently serves
+3. Authentication is fail-open — an unset environment variable silently serves
    the dashboard, and the credentials it holds, to anyone (§4.2).
 
 Recommended posture by audience:
 
 | Audience | Ready? | Condition |
 | --- | --- | --- |
-| Demo to a small group, operator driving | **Yes, today** | Set the Basic-auth pair; keep interval selections at 1 hour |
-| Named analysts, self-serve, supervised | **After §4.1, §4.2, §5.1, §5.2** | About one working day of change |
-| Unattended multi-user rollout | **After §6 is decided** | The shared-workspace model needs a product decision, not a patch |
+| Demo to a small group, operator driving | **Yes, today** | Set the Basic-auth pair; keep to hourly interval and **8 years or fewer** |
+| Named analysts, self-serve, supervised | **After §4.0, §4.2, §5.1, §5.2** | §4.0's admission guard is the gating item |
+| Unattended multi-user rollout | **After §4.0's chunking fix and §6 is decided** | The shared-workspace model needs a product decision, not a patch |
+
+**Hard operating limit until §4.0 is fixed: 8 years, hourly interval.** That
+lands at roughly 74–77% of the 2 GB instance. Ten years is ~92% and should be
+treated as unsafe; twelve years is over the limit.
 
 ---
 
@@ -110,6 +120,171 @@ impression of the codebase.
 ---
 
 ## 4. Blockers
+
+### 4.0 A 12-year annual selection exceeds 2 GB and will OOM-kill the service
+
+**Severity: critical. This is the highest-priority item in this document and it
+supersedes §4.1 in ordering.**
+
+Added 2026-09-10 after a targeted capacity test. Unlike the rest of this audit,
+this section reports a failure that is reproducible on the current deployment
+target (Render, 2 GB / 1 CPU), not a usability gap.
+
+#### What was measured
+
+Peak process RSS of the real annual model path, one clean subprocess per size,
+reading `VmHWM` so NumPy buffers are counted (`tracemalloc` undercounts them):
+
+| Years (hourly) | Rows | Peak RSS | % of 2,048 MB |
+| --- | --- | --- | --- |
+| 1 | 8,760 | 348.7 MB | 17% |
+| 2 | 17,520 | 516.4 MB | 25% |
+| 4 | 35,040 | 851.0 MB | 42% |
+| 8 | 70,080 | 1,518.8 MB | 74% |
+| **12** | **105,120** | **2,183.4 MB** | **107% — over the limit** |
+
+Least-squares fit across that 12× range:
+
+```
+peak_RSS_MB = 182.9 + 19.50 KB per row
+R² = 0.999998        max residual = 1.5 MB
+```
+
+The relationship is linear to within 1.5 MB at every measured point, so the
+figures below are interpolation, not speculation.
+
+Adding the measured API-process baseline (234 MB resident after serving the
+dashboard once, against a ~180 MB import baseline, so ~54 MB of app overhead):
+
+```
+service peak ≈ 237 MB + 19.50 KB/row
+12 years hourly → 237 + 2,002 = 2,239 MB   vs a 2,048 MB limit
+```
+
+Derived ceilings on a 2 GB instance:
+
+| Threshold | Max rows | Max years hourly |
+| --- | --- | --- |
+| 2,048 MB hard limit | ~95,300 | **10.9** |
+| 1,638 MB (80% safety line) | ~73,700 | **8.4** |
+
+This matches the reported experience exactly: 8 years works because it lands at
+74–77% of the limit, and 12 years does not.
+
+#### Why the row-count gate does not protect against this
+
+`ANNUAL_RUN_MAX_ROWS = 1_048_575` (`src/sbepv/api/config.py:122`) exists so the
+series stays exportable to Excel. It is not a memory budget, and it is roughly
+eleven times too permissive to act as one. Crossing the gate against measured
+memory, for a 12-year selection:
+
+| 12 years @ interval | Rows | Row gate | Projected peak |
+| --- | --- | --- | --- |
+| 1 min | 6,311,520 | rejected | — |
+| 5 min | 1,262,304 | rejected | — |
+| **8 min** | **788,940** | **ACCEPTED** | **~15.3 GB** |
+| 10 min | 631,152 | ACCEPTED | ~12.3 GB |
+| 15 min | 420,768 | ACCEPTED | ~8.3 GB |
+| 30 min | 210,384 | ACCEPTED | ~4.2 GB |
+| 60 min | 105,192 | ACCEPTED | ~2.2 GB |
+
+**Every 12-year selection the API currently accepts exceeds 2 GB**, including
+the coarsest one. The finest accepted interval (8 minutes, a whole-minute
+divisor of 1440) projects to roughly 15 GB.
+
+There is no chunking and no memory guard anywhere on this path — confirmed by
+search across `model.py`, `worker/run_annual.py` and `api/validation.py`.
+
+#### Why year count multiplies memory directly
+
+`src/sbepv/worker/run_annual.py:318` concatenates every selected period into a
+single frame (`interval_data = pd.concat(interval_frames, ignore_index=True)`),
+and line 406 calls `model.run_model` **once** with the combined series. The
+per-period loop above it downloads MIDC data; it does not partition the model
+run.
+
+The memory itself is in `run_modelchain_for_axis_tilts`
+(`src/sbepv/model.py:1426`), which builds a pvlib `PVSystem` holding **73
+arrays** — one per unique as-built tilt — and calls `mc.run_model(weather)` on
+all of them at once. pvlib then materializes, for all 73 arrays simultaneously,
+the POA irradiance components, tracking angles, AOI, cell temperature, and the
+full single-diode DC result frame. That is the 19.50 KB/row.
+
+The stage is confirmed to be the pipeline peak: full `predict_ac_power` at
+17,520 rows peaked at **517.1 MB**, against **516.4 MB** for the ModelChain
+stage alone — a 0.7 MB difference. The Solectria loop, energy integration and
+output frame add essentially nothing, so the scaling law above describes the
+whole run.
+
+#### Blast radius: this takes down the service, not just the job
+
+The model worker is a **thread inside the API process**, started at
+`src/sbepv/api/main.py:229`. The running server was confirmed to be a single
+process with 9 threads.
+
+An out-of-memory kill therefore terminates the whole dashboard: every user's
+session, not only the run that caused it. Render restarts the service, the
+expired lease is swept and the job is marked `interrupted`, so **stored data and
+promoted baselines stay intact** — the integrity design holds. Availability does
+not. A single analyst ticking twelve year checkboxes takes the dashboard down
+for everyone, and nothing in the UI warns them.
+
+#### The fix, verified
+
+Chunking the ModelChain along the time axis is **numerically exact**, not an
+approximation. Every stage on this path is memoryless across time: SAPM cell
+temperature is steady-state (`TEMPERATURE_MODEL_PARAMETERS = {"a": -3.47,
+"b": -0.0594, "deltaT": 0}`, `src/sbepv/model.py:252`), and solar position,
+tracking with backtracking, IAM and the single-diode solution are all
+per-instant.
+
+This was tested rather than assumed. Running 35,040 rows whole, versus in
+8,760-row blocks, and comparing every output array:
+
+```
+arrays compared        : 219  (73 tilts × 3 outputs)
+NaN patterns identical : True
+max abs difference     : 0.000000e+00
+BIT-IDENTICAL          : True
+```
+
+Measured effect on the 12-year case, in a clean process:
+
+| 12 years hourly (105,120 rows) | Peak RSS |
+| --- | --- |
+| Current (single ModelChain call) | 2,183.4 MB |
+| Chunked into one-year blocks | **728.8 MB** |
+
+A **67% reduction**, comfortably inside 2 GB, and it lifts the ceiling well past
+12 years rather than merely clearing it.
+
+#### Recommended remediation
+
+**Immediate, before any rollout — an admission guard.** Reject a selection whose
+projected peak exceeds a configured budget, in `_validate_annual_row_count`
+(`src/sbepv/api/validation.py:230`), which already computes `expected_rows`. Add
+a second check against a `PV_DASHBOARD_MEMORY_BUDGET_MB` setting using the
+measured 19.50 KB/row, defaulting to about 70% of instance memory. The 422 it
+raises should name the number of years or the interval that would fit, so the
+message is actionable. This is a few hours of work and converts a service-wide
+outage into a clear rejection at submit time.
+
+**Durable fix — chunk the ModelChain.** Partition inside
+`run_modelchain_for_axis_tilts` (or at its call site,
+`src/sbepv/model.py:1988`), accumulate per-tilt arrays, and concatenate. The
+equivalence proof above means this can be regression-tested against current
+output for bit-identity rather than a tolerance. Once it lands, raise the
+admission guard's budget rather than removing it.
+
+**Do not simply cap the year selector at 8.** It hides the problem at the
+current instance size, silently becomes wrong if the plan changes, and still
+leaves the 8-minute-interval path projecting to ~15 GB.
+
+**Note on the estimate's provenance.** 19.50 KB/row was measured on a 4-CPU
+container with synthetic clear-sky weather at hourly geometry. Real MIDC data
+with missing-value handling may shift it somewhat. Re-measure on the Render
+instance before setting the production budget, and set the default
+conservatively.
 
 ### 4.1 A multi-hour job can be queued with no warning, on one worker thread
 
@@ -377,17 +552,26 @@ land first.
 
 | # | Change | Section | Rough effort |
 | --- | --- | --- | --- |
+| 0 | **Memory admission guard on annual selections** | §4.0 | **~half day, do first** |
 | 1 | Fail-closed auth behind an explicit production flag | §4.2 | ~1 hour |
 | 2 | `GZipMiddleware` | §5.1 | minutes |
 | 3 | Favicon and `<link rel="icon">` | §5.3 | minutes |
-| 4 | Pre-submit runtime estimate and threshold acknowledgement | §4.1(a) | ~half day |
-| 5 | Queue position in the status payload and the UI | §4.1(b) | ~half day |
-| 6 | Failure classification and correlation id | §5.2 | ~half day |
-| 7 | Resolve `render.yaml` plan drift | §4.3 | ~1 hour, needs dashboard access |
-| 8 | Decide and document the shared-workspace model | §6.1 | product decision |
+| 4 | Chunk the ModelChain by year (bit-identity regression test) | §4.0 | ~1–2 days |
+| 5 | Pre-submit runtime estimate and threshold acknowledgement | §4.1(a) | ~half day |
+| 6 | Queue position in the status payload and the UI | §4.1(b) | ~half day |
+| 7 | Failure classification and correlation id | §5.2 | ~half day |
+| 8 | Resolve `render.yaml` plan drift | §4.3 | ~1 hour, needs dashboard access |
+| 9 | Decide and document the shared-workspace model | §6.1 | product decision |
 
-Items 1–3 are safe to do together. Items 4–6 are the ones that change the
-end-user experience most and deserve their own verification.
+Item 0 gates everything else — until it lands, a single selection can take the
+service down, and no other improvement matters at that moment. Items 1–3 are
+safe to do together. Item 4 is the durable fix that lets the guard's budget be
+raised. Items 5–7 change the end-user experience most and deserve their own
+verification.
+
+Items 0 and 4 share one regression test worth writing first: assert that a
+chunked run reproduces a whole run bit-for-bit, and that a selection projected
+past the budget is rejected at submit rather than at OOM.
 
 ---
 
