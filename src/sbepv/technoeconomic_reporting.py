@@ -1364,6 +1364,22 @@ def _input_rows(
             )
     paired = request.get("paired_commercial")
     if isinstance(paired, Mapping):
+        shared_capex = paired.get("shared_initial_capex")
+        if isinstance(shared_capex, Mapping):
+            for primitive_key, primitive_id, ownership in (
+                ("common_capex_wdc", technoeconomic_kernel.SHARED_CAPEX_INPUT_ID, "shared"),
+                ("optimizer_installation_wdc", technoeconomic_kernel.OPTIMIZER_INSTALLATION_INPUT_ID, "solaredge_only"),
+            ):
+                yield (
+                    primitive_id, "paired_commercial_primitive", primitive_key, ownership,
+                    "initial_capex", "USD_per_Wdc",
+                    *_distribution_columns(shared_capex[primitive_key]),
+                    "USD_per_Wdc", "USD_per_target_Wac", "multiply_by_frozen_DC_AC_ratio",
+                    (request.get("finance") or {}).get("constant_dollar_cost_year"),
+                    *_currency_normalization_columns(None), *_coverage_columns([]), *_coverage_columns([]),
+                    *_evidence_columns(shared_capex.get("evidence")), *_input_contract_columns(request),
+                    *_input_normalization_receipt_columns(None, applied_capacity_contract=applied_capacity_contract),
+                )
         paired_systems = paired.get("systems") or []
         if not isinstance(paired_systems, list):
             raise TechnoeconomicExportError(
@@ -1393,12 +1409,12 @@ def _input_rows(
                     )
                 yield (
                     line.get("input_id"),
-                    "paired_commercial_cost",
+                    "paired_commercial_derived_total" if shared_capex and line.get("cost_category") == "full_initial_capex" else "paired_commercial_cost",
                     line.get("label"),
                     f"{technology}_only",
                     line.get("cost_category"),
                     line.get("unit"),
-                    *_distribution_columns(line.get("distribution") or {}),
+                    *_distribution_columns({**(line.get("distribution") or {}), **({"family": "derived_support_envelope"} if shared_capex and line.get("cost_category") == "full_initial_capex" else {})}),
                     line.get("unit"),
                     line.get("unit"),
                     "direct_target_capacity_scaling",
@@ -4230,6 +4246,21 @@ def _build_checks(
                     np.asarray(calculation.by_name[sample_name], dtype=np.float64)
                     * target_w
                 )
+                shared_capex = receipt.get("shared_initial_capex")
+                if shared_capex and line.get("cost_category") == "full_initial_capex":
+                    common_draw = calculation.by_name[f"SampledInput::{shared_capex['common_input_id']}"]
+                    reconstructed = np.asarray(common_draw, dtype=np.float64) * float(shared_capex["dc_capacity_w"])
+                    if technology == "solaredge":
+                        installation_draw = calculation.by_name[f"SampledInput::{shared_capex['installation_input_id']}"]
+                        reconstructed = reconstructed + np.asarray(installation_draw, dtype=np.float64) * float(shared_capex["dc_capacity_w"])
+                        reconstructed = reconstructed + int(shared_capex["optimizer_count"]) * float(shared_capex["optimizer_unit_price_usd"])
+                    checks.append(_numeric_check(
+                        f"paired_{technology}_shared_capex_reconstruction",
+                        float(np.max(np.abs(total_cost - reconstructed))), 0.0,
+                        tolerance=_binary64_tie_out_tolerance(reconstructed),
+                        notes="Independent DC-dollar reconstruction of shared base and additive optimizer costs for every realization.",
+                    ))
+                    total_cost = reconstructed
                 timing = line.get("timing")
                 if timing == "initial_t0":
                     expected_initial += total_cost

@@ -2231,6 +2231,10 @@
         }
 
         function technoeconomicRenderStandaloneDraft() {
+            if (technoeconomicElements.standaloneCostPreset) {
+                technoeconomicElements.standaloneCostPreset.textContent =
+                    'Cost preset: NREL 2024 ATB.';
+            }
             const source = technoeconomicStandaloneSelectedSource();
             technoeconomicRenderStandaloneBridge(source);
             const root = technoeconomicElements.standaloneScenarioSummary;
@@ -2322,6 +2326,13 @@
             const request = technoeconomicPlainObject(job?.request);
             const standaloneRequest = technoeconomicPlainObject(request.standalone_commercial);
             const pairedRequest = technoeconomicPlainObject(request.paired_commercial);
+            if (technoeconomicElements.standaloneCostPreset) {
+                technoeconomicElements.standaloneCostPreset.textContent =
+                    pairedRequest.shared_initial_capex?.report_context?.preset_id
+                        === 'thursday-2026-09-17-v1'
+                        ? 'Cost preset: Thursday comparison assumptions (proposed 2024 USD; later prices are unadjusted proxies).'
+                        : 'Cost preset: NREL 2024 ATB.';
+            }
             const standaloneResult = technoeconomicPlainObject(result.standalone_commercial);
             const pairedResult = technoeconomicPlainObject(result.paired_commercial);
             const commercialRequest = Object.keys(pairedRequest).length
@@ -2494,9 +2505,6 @@
             );
             technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, cdfUrl);
             technoeconomicSetDownload(
-                technoeconomicElements.standaloneCsvLink, safe('csv_bundle')
-            );
-            technoeconomicSetDownload(
                 technoeconomicElements.standaloneXlsxLink, safe('xlsx_workbook')
             );
             if (technoeconomicElements.standaloneSubmitButton) {
@@ -2505,6 +2513,12 @@
         }
 
         function technoeconomicRenderPairedResult(job, result) {
+            technoeconomicSetDownload(technoeconomicElements.standalonePdfLink,
+                job.state === 'done' && /^[A-Za-z0-9_-]+$/.test(job.job_id)
+                    ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/pdf` : null);
+            technoeconomicSetDownload(technoeconomicElements.standaloneDocxLink,
+                job.state === 'done' && /^[A-Za-z0-9_-]+$/.test(job.job_id)
+                    ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/docx` : null);
             const pairedResult = technoeconomicPlainObject(result.paired_commercial);
             const pairedSystems = technoeconomicPlainObject(pairedResult.systems);
             const summaries = Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(
@@ -2621,9 +2635,6 @@
             );
             technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, cdfUrl);
             technoeconomicSetDownload(
-                technoeconomicElements.standaloneCsvLink, safe('csv_bundle')
-            );
-            technoeconomicSetDownload(
                 technoeconomicElements.standaloneXlsxLink, safe('xlsx_workbook')
             );
             if (technoeconomicElements.standaloneSubmitButton) {
@@ -2651,8 +2662,9 @@
                 'The verified CDF chart will appear after a completed calculation.'
             );
             technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, null);
-            technoeconomicSetDownload(technoeconomicElements.standaloneCsvLink, null);
             technoeconomicSetDownload(technoeconomicElements.standaloneXlsxLink, null);
+            technoeconomicSetDownload(technoeconomicElements.standalonePdfLink, null);
+            technoeconomicSetDownload(technoeconomicElements.standaloneDocxLink, null);
             if (technoeconomicElements.standaloneSubmitButton) {
                 technoeconomicElements.standaloneSubmitButton.textContent = 'Calculate LCOE';
             }
@@ -5708,6 +5720,15 @@
                         'Evidence records', String(serialized.evidenceCount)
                     ),
                 ];
+                if (paired.shared_initial_capex) {
+                    const shared = paired.shared_initial_capex;
+                    costSummaryItems.push(
+                        technoeconomicSummaryItem('Shared base CAPEX', `${technoeconomicStandaloneDistributionDisplay(shared.common_capex_wdc)} USD/Wdc; one draw applied to both systems`),
+                        technoeconomicSummaryItem('DC cost basis', `${shared.dc_capacity_w.toLocaleString('en-US')} Wdc; multiply DC cost intensities by ${shared.dc_capacity_w / targetWatts} for the AC basis`),
+                        technoeconomicSummaryItem('SolarEdge additions', `${shared.optimizer_count.toLocaleString('en-US')} optimizers × $${shared.optimizer_unit_price_usd}; independent installation ${technoeconomicStandaloneDistributionDisplay(shared.optimizer_installation_wdc)} USD/Wdc`),
+                        technoeconomicSummaryItem('Evidence limitations', 'Proposed real 2024 dollars; later prices are unadjusted proxies. No separate major-maintenance charge; coverage unresolved and lifecycle conclusion provisional.'),
+                    );
+                }
                 const systemGrid = technoeconomicNode('div', {
                     className: 'tea-confirm-system-grid',
                 });
@@ -5720,7 +5741,7 @@
                             ? `; years ${line.occurrence_years.join(', ')}` : '';
                         costItems.push(technoeconomicSummaryItem(
                             `Cost line ${index + 1}: ${line.label}`,
-                            `${technoeconomicHumanize(line.timing)}; ${
+                            `${paired.shared_initial_capex && line.cost_category === 'full_initial_capex' ? 'Derived total; displayed range is its support envelope, not an independent draw. ' : ''}${technoeconomicHumanize(line.timing)}; ${
                                 technoeconomicStandaloneCostReview(
                                     line, commercial.target_rating_basis,
                                     payload.finance.constant_dollar_cost_year
@@ -6033,6 +6054,39 @@
             const dialog = technoeconomicElements.confirmDialog;
             if (dialog?.showModal) dialog.showModal();
             else dialog?.setAttribute('open', '');
+        }
+
+        async function technoeconomicReviewThursdayPreset() {
+            const button = document.getElementById('technoeconomicThursdayPreset');
+            const errorElement = technoeconomicElements.standaloneFormErrors || technoeconomicElements.formErrors;
+            if (technoeconomicLifecycleRequestInFlight || technoeconomicSubmissionRequestInFlight
+                || ['queued', 'running'].includes(technoeconomicJob?.state) || button?.disabled) return;
+            const source = technoeconomicStandaloneSelectedSource();
+            if (!source) {
+                technoeconomicOpenAssumptionsDialog(button);
+                technoeconomicRenderErrors(errorElement, [{path: '', message: 'Choose a completed Annual Simulation before reviewing the preset.'}]);
+                return;
+            }
+            const revision = technoeconomicDraftRevision;
+            if (button) button.disabled = true;
+            try {
+                const payload = await technoeconomicFetchJson(`/api/technoeconomic/presets/thursday-2026-09-17-v1?source_annual_job_id=${encodeURIComponent(source.source_annual_job_id)}`);
+                if (revision !== technoeconomicDraftRevision || source.source_annual_job_id !== technoeconomicStandaloneSelectedSource()?.source_annual_job_id) return;
+                const frozenPayload = technoeconomicDeepFreeze(JSON.parse(JSON.stringify(payload)));
+                const sourceSummary = technoeconomicDeepFreeze(technoeconomicConfirmationSource(source));
+                const serialized = {payload: frozenPayload, evidenceCount: 11, provisionalEvidenceCount: 11};
+                technoeconomicPendingSubmission = {...serialized, draftRevision: revision, sourceSummary};
+                technoeconomicCloseAssumptionsDialog({restoreFocus: false});
+                technoeconomicRenderConfirmation(serialized, sourceSummary);
+                const dialog = technoeconomicElements.confirmDialog;
+                if (dialog?.showModal) dialog.showModal();
+                else dialog?.setAttribute('open', '');
+            } catch (error) {
+                technoeconomicOpenAssumptionsDialog(button);
+                technoeconomicRenderErrors(errorElement, [{path: '', message: error.message || 'The preset could not be loaded.'}]);
+            } finally {
+                if (button) button.disabled = false;
+            }
         }
 
         function technoeconomicCloseConfirmation() {
@@ -7089,7 +7143,6 @@
                 safe('convergence_plot'),
                 'Convergence figure is not available in the verified artifact manifest.'
             );
-            technoeconomicSetDownload(technoeconomicElements.csvLink, safe('csv_bundle'));
             technoeconomicSetDownload(technoeconomicElements.xlsxLink, safe('xlsx_workbook'));
         }
 
@@ -7257,7 +7310,6 @@
                 technoeconomicElements.convergencePlotFallback,
                 null, 'Convergence figure is not available.'
             );
-            technoeconomicSetDownload(technoeconomicElements.csvLink, null);
             technoeconomicSetDownload(technoeconomicElements.xlsxLink, null);
         }
 
@@ -7319,6 +7371,7 @@
             const localDraft = technoeconomicLoadLocalDraft();
             applyTechnoeconomicFormState(localDraft || technoeconomicDefaultDraft());
             technoeconomicElements.form.addEventListener('submit', technoeconomicOpenConfirmation);
+            document.getElementById('technoeconomicThursdayPreset')?.addEventListener('click', technoeconomicReviewThursdayPreset);
             technoeconomicElements.form.addEventListener('input', (event) => {
                 technoeconomicClearStandaloneAcceptance(event.target);
                 const commercialAccept = technoeconomicDomElement(

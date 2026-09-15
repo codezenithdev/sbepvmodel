@@ -2111,3 +2111,68 @@ partition.
 
 The authoritative product summary is
 `docs/TECHNOECONOMIC_V5_PRODUCT_REQUIREMENTS.md`.
+
+### 18.5 Optional shared base CAPEX (approved September 15, 2026)
+
+The explicitly selected `shared_base_optimizer_premium_v1` variant retains one
+full initial CAPEX total and one annual O&M line per system. It does not add a
+general component-cost, reliability, or lifecycle-event engine. When omitted,
+canonical requests, random streams, historical results and export schemas remain
+unchanged.
+
+For AC target watts A, DC cost-basis watts D, common draw B in USD/Wdc, independent
+optimizer-installation draw I in USD/Wdc, quantity Q and unit price H:
+
+```text
+SOL initial USD = B * D
+SE initial USD  = B * D + Q * H + I * D
+SOL intensity USD/Wac = B * D/A
+SE intensity USD/Wac  = B * D/A + Q*H/A + I * D/A
+```
+
+Primitive stable IDs are `capex.shared-base-wdc` and
+`capex.optimizer-installation-wdc`. Full CAPEX distributions encode validated
+support envelopes only and are never independently sampled. Sealed columns retain
+both primitives and derived totals; variant-only provenance identifies each role.
+Sensitivity uses the primitives, with common CAPEX affecting both system LCOEs and
+their difference. Export checks reconstruct dollar totals directly from DC draws,
+quantity and unit price for every realization.
+
+The Thursday preset uses 100 MWac / 134 MWdc, 30 years, 10,000 realizations, seed
+20260916, shared U(5%,7%) real discount and triangular (0.3%,0.5%,0.7%) degradation.
+Common CAPEX is U(1.07,1.17) USD/Wdc; SolarEdge adds 103,077 x USD37.75 and
+U(0.004,0.010) USD/Wdc installation. Annual O&M is U(8,13) Solectria and U(12,18)
+SolarEdge USD/kWdc-year, independently sampled. Costs convert using 1.34; energy
+continues to use the frozen source AC capacity. Component allocations are frozen
+explanatory metadata, not additional random inputs. Deterministic midpoint CAPEX
+is USD150,080,000 and USD154,909,156.75, respectively.
+
+The proposed real 2024-dollar basis retains later vendor/market prices as
+unadjusted proxies. No separate major-maintenance charge is added; unresolved O&M
+coverage qualifies lifecycle conclusions. These limitations and allocations are
+frozen in each submitted request, so later preset edits do not rewrite reports.
+
+### 18.6 Full engineering reports
+
+The authenticated `/api/technoeconomic/jobs/{job_id}/exports/pdf` and `/exports/docx` endpoints render
+on demand from frozen calibration/annual lineage and verified sealed TEA arrays.
+It verifies byte identities, provenance, completed-result projection and numerical
+tie-outs, including independent direct year-by-year finance sums. It neither runs
+the model nor modifies completed jobs or the existing five-artifact export manifest.
+Incomplete jobs, missing historical lineage or failed integrity checks return 409.
+Report rendering v2.2 places contents before the comparison summary and uses one presentation model for all values, structure and
+chart images. The completed TEA's original CDF PNG is verified against its owned
+artifact manifest and the exact embedded bytes are re-hashed. It replaces report
+sensitivity. Annual display interpolation uses the dashboard's midpoint ranks,
+averages exact ties and extrapolates no tails. This display does not alter the
+saved ECDF, type-7 percentiles or 5/10-year eligibility rules. Missing values
+remain unavailable. Native Word heading and TOC/page
+fields retain editable navigation; PDF bookmarks and contents resolve to final
+PDF pages. Word computes its own page numbers when fields are refreshed.
+The PDF filename is `LCOE_comparsion.pdf`; generation date, rendering version and
+run identifier remain in its contents. Word filenames retain these identifiers,
+and analysis date remains distinct. Removing the TEA view's CSV button does not
+remove sealed CSV evidence or historical export API support. A new completed run uses its own frozen
+inputs/results; draft changes and later baseline promotions cannot rewrite old
+evidence. All pre-render integrity checks still run. The rendering version does
+not change the v5 kernel's numerical probe digests or numerical export contracts.

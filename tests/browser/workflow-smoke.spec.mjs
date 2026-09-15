@@ -478,11 +478,22 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   const html = assembledDashboard();
   const plotPath = '/api/technoeconomic/jobs/tea_browser_fixture/artifacts/cdf_plot';
   const plotUrl = `http://dashboard.test${plotPath}`;
+  const pdfPath = '/api/technoeconomic/jobs/tea_browser_fixture/exports/pdf';
+  const docxPath = '/api/technoeconomic/jobs/tea_browser_fixture/exports/docx';
   const validationUrl = 'http://dashboard.test/outputs/browser-validation.png';
   // Only local mock responses: no calculation or saved model result is changed.
   await page.context().route('http://dashboard.test/**', async (route) => {
     const url = route.request().url();
-    if (url === plotUrl || url === validationUrl) {
+    if (url === `http://dashboard.test${pdfPath}`) {
+      await route.fulfill({status: 200, contentType: 'application/pdf',
+        headers: {'Content-Disposition': 'attachment; filename="LCOE_comparsion.pdf"'},
+        body: Buffer.from('%PDF-1.4\n% synthetic download fixture\n%%EOF\n')});
+    } else if (url === `http://dashboard.test${docxPath}`) {
+      await route.fulfill({status: 200,
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        headers: {'Content-Disposition': 'attachment; filename="PV_Comparison_fixture_v2.0_tea_browser_fixture.docx"'},
+        body: Buffer.from('PK synthetic Word download fixture')});
+    } else if (url === plotUrl || url === validationUrl) {
       await route.fulfill({status: 200, contentType: 'image/png', body: Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
         'base64',
@@ -507,6 +518,8 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   }
   // Empty placeholders are never advertised as links.
   await expect(page.locator('#technoeconomicStandaloneCdfPlot')).not.toHaveAttribute('data-chart-openable');
+  await expect(page.locator('#technoeconomicStandalonePdfLink')).toBeHidden();
+  await expect(page.locator('#technoeconomicStandaloneDocxLink')).toBeHidden();
   await page.locator('.tea-standalone-cdf-card').screenshot({path: test.info().outputPath('tea-v5-interpretation-below.png')});
   // Exercise completed-job adoption, contract dispatch, and verified artifact URL
   // selection together, including the separate Chart action in the result header.
@@ -523,6 +536,9 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
       paired_commercial: {
         target_capacity: 100, target_capacity_unit: 'mw',
         target_rating_basis: 'ac_operating_limit',
+        shared_initial_capex: {
+          report_context: {preset_id: 'thursday-2026-09-17-v1'},
+        },
       },
     },
     result: {
@@ -540,6 +556,25 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
     artifacts: {exports: {artifacts: {cdf_plot: {url: plotPath}}}},
   }), {sourceId: SOURCE_ID, plotPath});
   await expect(page.locator('#technoeconomicStandaloneResults')).toHaveAttribute('data-state', 'done');
+  await expect(page.locator('#technoeconomicStandaloneCostPreset'))
+    .toContainText('Thursday comparison assumptions (proposed 2024 USD');
+  const pdfLink = page.locator('#technoeconomicStandalonePdfLink');
+  await expect(pdfLink).toBeVisible();
+  await expect(pdfLink).toHaveAttribute('href', pdfPath);
+  const downloadPromise = page.waitForEvent('download');
+  await pdfLink.click();
+  const pdfDownload = await downloadPromise;
+  expect(pdfDownload.suggestedFilename()).toBe('LCOE_comparsion.pdf');
+  await expect(page.getByRole('link', { name: /CSV bundle/i })).toHaveCount(0);
+  expect(await pdfDownload.failure()).toBeNull();
+  const wordLink = page.locator('#technoeconomicStandaloneDocxLink');
+  await expect(wordLink).toBeVisible();
+  await expect(wordLink).toHaveAttribute('href', docxPath);
+  const wordDownloadPromise = page.waitForEvent('download');
+  await wordLink.click();
+  const wordDownload = await wordDownloadPromise;
+  expect(wordDownload.suggestedFilename()).toBe('PV_Comparison_fixture_v2.0_tea_browser_fixture.docx');
+  expect(await wordDownload.failure()).toBeNull();
   await expect(page.locator('#technoeconomicLcoePercentileBody tr')).toHaveCount(3);
   await expect(page.locator('#technoeconomicStandaloneInterpretation'))
     .toContainText('Solectria 50 USD/MWh');
@@ -566,6 +601,10 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
     await imagePage.close();
   }
   await page.evaluate(() => invalidateTechnoeconomicWorkspace());
+  await expect(page.locator('#technoeconomicStandaloneCostPreset'))
+    .toHaveText('Cost preset: NREL 2024 ATB.');
+  await expect(pdfLink).toBeHidden();
+  await expect(wordLink).toBeHidden();
   await expect(chart).not.toHaveAttribute('data-chart-openable');
   for (const link of [chartLink, chartAction]) {
     await expect(link).toBeHidden();

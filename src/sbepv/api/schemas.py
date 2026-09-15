@@ -884,6 +884,37 @@ class PairedCommercialSystemRequest(StrictTechnoeconomicRequest):
         return self
 
 
+class CapexAllocationRequest(StrictTechnoeconomicRequest):
+    label: NonemptyTechnoeconomicText
+    midpoint_wdc: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    low_wdc: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    high_wdc: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    source_note: NonemptyTechnoeconomicText
+
+
+class SharedCapexReportContext(StrictTechnoeconomicRequest):
+    preset_id: Literal["thursday-2026-09-17-v1"]
+    limitations: NonemptyTechnoeconomicText
+    component_allocations: list[CapexAllocationRequest] = Field(max_length=20)
+
+
+class SharedInitialCapexRequest(StrictTechnoeconomicRequest):
+    """Two derived total CAPEX values from one common DC-cost draw.
+
+    The existing full_initial_capex distributions describe support envelopes
+    only in this opt-in variant; they are never independently sampled.
+    """
+
+    method: Literal["shared_base_optimizer_premium_v1"]
+    dc_capacity_w: FinitePositiveFloat
+    common_capex_wdc: TechnoeconomicDistributionRequest
+    optimizer_installation_wdc: TechnoeconomicDistributionRequest
+    optimizer_count: Annotated[int, Field(strict=True, ge=1, le=100_000_000)]
+    optimizer_unit_price_usd: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    evidence: TechnoeconomicEvidenceRequest
+    report_context: SharedCapexReportContext | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 class PairedCommercialRequest(StrictTechnoeconomicRequest):
     """Scale both verified systems to one common commercial target."""
 
@@ -899,6 +930,9 @@ class PairedCommercialRequest(StrictTechnoeconomicRequest):
     systems: list[PairedCommercialSystemRequest] = Field(
         min_length=2,
         max_length=2,
+    )
+    shared_initial_capex: SharedInitialCapexRequest | None = Field(
+        default=None, exclude_if=lambda value: value is None,
     )
 
     @model_validator(mode="after")
@@ -1175,6 +1209,12 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                 )
 
         declared_input_count = len(self.cost_lines) + len(commercial_lines) + 2
+        shared_capex = (
+            self.paired_commercial.shared_initial_capex
+            if self.paired_commercial is not None else None
+        )
+        if shared_capex is not None:
+            declared_input_count += 2  # retain primitive draws and both derived totals
         if self.commercial_transfer is not None:
             declared_input_count += 2
         if self.commercial_scaling is not None:
@@ -1218,7 +1258,13 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
             )
         if self.commercial_scaling is not None:
             distributions.append(self.commercial_scaling.marginal_cost_difference)
-        distributions.extend(line.distribution for line in commercial_lines)
+        distributions.extend(
+            line.distribution for line in commercial_lines
+            if shared_capex is None or line.cost_category != "full_initial_capex"
+        )
+        if shared_capex is not None:
+            distributions.extend((shared_capex.common_capex_wdc,
+                                  shared_capex.optimizer_installation_wdc))
         nonfixed_predictor_count = sum(
             distribution.family != "fixed"
             and not (

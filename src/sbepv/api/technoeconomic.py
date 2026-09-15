@@ -3003,6 +3003,22 @@ def build_technoeconomic_kernel_request(
             if request.paired_commercial.target_capacity_unit == "kw"
             else 1_000_000.0
         )
+        shared_request = request.paired_commercial.shared_initial_capex
+        shared_spec = None
+        if shared_request is not None:
+            shared_spec = technoeconomic_kernel.SharedInitialCapexSpec(
+                method=shared_request.method,
+                dc_capacity_w=shared_request.dc_capacity_w,
+                common_capex_wdc=_kernel_distribution(
+                    technoeconomic_kernel.SHARED_CAPEX_INPUT_ID, shared_request.common_capex_wdc,
+                ),
+                optimizer_installation_wdc=_kernel_distribution(
+                    technoeconomic_kernel.OPTIMIZER_INSTALLATION_INPUT_ID,
+                    shared_request.optimizer_installation_wdc,
+                ),
+                optimizer_count=shared_request.optimizer_count,
+                optimizer_unit_price_usd=shared_request.optimizer_unit_price_usd,
+            )
         paired_commercial = technoeconomic_kernel.PairedCommercialSpec(
             target_capacity_w=(
                 request.paired_commercial.target_capacity * capacity_multiplier
@@ -3033,6 +3049,7 @@ def build_technoeconomic_kernel_request(
                 for system in request.paired_commercial.systems
             ),
             transfer_method=request.paired_commercial.transfer_method,
+            shared_initial_capex=shared_spec,
         )
 
     kernel_request = technoeconomic_kernel.TechnoeconomicRequest(
@@ -3156,6 +3173,9 @@ def _evidence_receipt(
                 request.paired_commercial.evidence,
             )
         )
+        if request.paired_commercial.shared_initial_capex is not None:
+            subjects.append(("paired-commercial:shared-initial-capex",
+                             request.paired_commercial.shared_initial_capex.evidence))
         for system in request.paired_commercial.systems:
             subjects.append(
                 (
@@ -3753,6 +3773,14 @@ def _paired_commercial_receipt(
         "transfer_rationale": paired.transfer_rationale,
         "energy_scaling_evidence_subject": "paired-commercial:energy-scaling",
         "weather_pairing": "same_frozen_weather_year_per_realization",
+        **({"shared_initial_capex": {
+            **paired.shared_initial_capex.model_dump(mode="json", exclude_none=True),
+            "common_input_id": technoeconomic_kernel.SHARED_CAPEX_INPUT_ID,
+            "installation_input_id": technoeconomic_kernel.OPTIMIZER_INSTALLATION_INPUT_ID,
+            "dc_to_ac_cost_ratio": paired.shared_initial_capex.dc_capacity_w / kernel_paired.target_capacity_w,
+            "optimizer_hardware_usd": paired.shared_initial_capex.optimizer_count * paired.shared_initial_capex.optimizer_unit_price_usd,
+            "total_line_semantics": "derived total; distribution records support envelope only",
+        }} if paired.shared_initial_capex is not None else {}),
         "constant_dollar_cost_year": request.finance.constant_dollar_cost_year,
         "cost_stack_completeness": request.cost_stack_completeness,
         "required_cost_categories_per_system": [

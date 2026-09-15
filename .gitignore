@@ -41,3 +41,6 @@ design-qa-assets/
 
 # Playwright smoke-test artifacts
 output/playwright/
+
+tmp/
+output/

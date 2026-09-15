@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
@@ -1164,6 +1164,13 @@ def technoeconomic_status(job_id: str) -> JSONResponse:
     return JSONResponse(_public_technoeconomic_job(job))
 
 
+@app.get("/api/technoeconomic/presets/thursday-2026-09-17-v1")
+def technoeconomic_thursday_preset(source_annual_job_id: str) -> JSONResponse:
+    from sbepv import technoeconomic_presets
+    payload = technoeconomic_presets.thursday_assumptions(source_annual_job_id)
+    return JSONResponse(payload, headers={"Cache-Control": "private, no-store"})
+
+
 def _technoeconomic_export_response(job_id: str, export_format: str) -> FileResponse:
     _require_supported_technoeconomic_job(job_id)
     job = state.AGENT_STORE.get_technoeconomic_job(job_id)
@@ -1217,6 +1224,40 @@ def download_technoeconomic_xlsx(job_id: str) -> FileResponse:
     """Download the verified workbook for one completed TEA."""
 
     return _technoeconomic_export_response(job_id, "xlsx")
+
+
+@app.get("/api/technoeconomic/jobs/{job_id}/exports/pdf")
+def download_technoeconomic_pdf(job_id: str) -> Response:
+    """Render a verified full report without mutating the completed job."""
+    return _technoeconomic_document_response(job_id, "pdf")
+
+
+@app.get("/api/technoeconomic/jobs/{job_id}/exports/docx")
+def download_technoeconomic_docx(job_id: str) -> Response:
+    """Editable Word report from the same verified content as PDF."""
+    return _technoeconomic_document_response(job_id, "docx")
+
+
+def _technoeconomic_document_response(job_id: str, document_format: str) -> Response:
+    from sbepv import technoeconomic_pdf
+    from sbepv import technoeconomic_docx
+    from sbepv import technoeconomic_reporting
+    _require_supported_technoeconomic_job(job_id)
+    job = state.AGENT_STORE.get_technoeconomic_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
+    try:
+        renderer = technoeconomic_docx.build_docx if document_format == "docx" else technoeconomic_pdf.build_pdf
+        payload, filename = renderer(job)
+    except (technoeconomic_pdf.FullReportError, technoeconomic_reporting.TechnoeconomicExportError,
+            ArtifactIntegrityError, KeyError, ValueError) as exc:
+        logger.warning("Full report evidence rejected for TEA %s: %s", job_id, type(exc).__name__)
+        raise HTTPException(status_code=409, detail="The full report requires verified completed results and frozen calibration/annual lineage. Existing saved results are unchanged.") from exc
+    media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if document_format == "docx" else "application/pdf"
+    return Response(content=payload, media_type=media_type, headers={
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+    })
 
 
 @app.get(

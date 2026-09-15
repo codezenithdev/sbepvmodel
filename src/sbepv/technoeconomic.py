@@ -504,6 +504,23 @@ class PairedCommercialSystemSpec:
     cost_lines: tuple[CommercialCostLineSpec, ...]
 
 
+SHARED_CAPEX_METHOD = "shared_base_optimizer_premium_v1"
+SHARED_CAPEX_INPUT_ID = "capex.shared-base-wdc"
+OPTIMIZER_INSTALLATION_INPUT_ID = "capex.optimizer-installation-wdc"
+
+
+@dataclass(frozen=True)
+class SharedInitialCapexSpec:
+    """Primitive DC-cost inputs; full CAPEX columns are derived, not sampled."""
+
+    method: str
+    dc_capacity_w: float
+    common_capex_wdc: DistributionSpec
+    optimizer_installation_wdc: DistributionSpec
+    optimizer_count: int
+    optimizer_unit_price_usd: float
+
+
 @dataclass(frozen=True)
 class PairedCommercialSpec:
     """Paired standalone commercial LCOEs at one common target capacity."""
@@ -514,6 +531,7 @@ class PairedCommercialSpec:
     transfer_method: CommercialScalingTransferMethod = (
         COMMERCIAL_SCALING_TRANSFER_METHOD
     )
+    shared_initial_capex: SharedInitialCapexSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -586,6 +604,8 @@ def canonical_request_payload(request: TechnoeconomicRequest) -> dict[str, Any]:
         payload.pop("constant_dollar_cost_year", None)
     if request.calculation_contract_version != PAIRED_COMMERCIAL_CALCULATION_CONTRACT_VERSION:
         payload.pop("paired_commercial", None)
+    elif request.paired_commercial is not None and request.paired_commercial.shared_initial_capex is None:
+        payload["paired_commercial"].pop("shared_initial_capex", None)
     return payload
 
 
@@ -1564,6 +1584,71 @@ def _validate_standalone_commercial(
     )
 
 
+def paired_primitive_distributions(spec: PairedCommercialSpec) -> tuple[DistributionSpec, ...]:
+    """Return only independently sampled inputs, never derived CAPEX totals."""
+    shared = spec.shared_initial_capex
+    result = tuple(
+        line.distribution for system in spec.systems for line in system.cost_lines
+        if shared is None or line.cost_category != "full_initial_capex"
+    )
+    if shared is not None:
+        result += (shared.common_capex_wdc, shared.optimizer_installation_wdc)
+    return result
+
+
+def _validate_shared_initial_capex(spec: PairedCommercialSpec) -> SharedInitialCapexSpec | None:
+    shared = spec.shared_initial_capex
+    if shared is None:
+        return None
+    if not isinstance(shared, SharedInitialCapexSpec) or shared.method != SHARED_CAPEX_METHOD:
+        raise TechnoeconomicValidationError("Unsupported shared initial CAPEX method.")
+    if spec.target_rating_basis != "ac_operating_limit":
+        raise TechnoeconomicValidationError("Shared DC CAPEX requires an AC operating-limit target.")
+    dc_w = _finite_float(shared.dc_capacity_w, "shared CAPEX DC capacity")
+    price = _finite_float(shared.optimizer_unit_price_usd, "optimizer unit price")
+    if dc_w <= 0 or price < 0 or not _is_int(shared.optimizer_count) or not 1 <= shared.optimizer_count <= 100_000_000:
+        raise TechnoeconomicValidationError("Shared CAPEX capacity, quantity or price is invalid.")
+    common = validate_distribution(shared.common_capex_wdc, "cost")
+    install = validate_distribution(shared.optimizer_installation_wdc, "cost")
+    if common.input_id != SHARED_CAPEX_INPUT_ID or install.input_id != OPTIMIZER_INSTALLATION_INPUT_ID:
+        raise TechnoeconomicValidationError("Shared CAPEX primitive IDs do not match the method.")
+    ratio = dc_w / spec.target_capacity_w
+    hardware = shared.optimizer_count * price / spec.target_capacity_w
+    if ratio <= 0 or not math.isfinite(ratio) or not math.isfinite(hardware):
+        raise TechnoeconomicValidationError("Shared CAPEX conversion exceeds finite support.")
+    common_bounds = distribution_support(common)
+    install_bounds = distribution_support(install)
+    for system in spec.systems:
+        line = next(item for item in system.cost_lines if item.cost_category == "full_initial_capex")
+        expected = tuple(
+            c * ratio + (hardware + i * ratio if system.technology == "solaredge" else 0.0)
+            for c, i in zip(common_bounds, install_bounds)
+        )
+        if not all(math.isfinite(value) for value in expected):
+            raise TechnoeconomicValidationError("Derived CAPEX support is nonfinite.")
+        actual = distribution_support(line.distribution)
+        if line.distribution.family not in {"fixed", "uniform"} or any(
+            not math.isclose(a, b, rel_tol=1e-13, abs_tol=0.0) for a, b in zip(actual, expected)
+        ):
+            raise TechnoeconomicValidationError("Derived CAPEX requires its exact support envelope; the envelope is not sampled.")
+    return replace(shared, dc_capacity_w=dc_w, optimizer_unit_price_usd=price,
+                   common_capex_wdc=common, optimizer_installation_wdc=install,
+                   optimizer_count=int(shared.optimizer_count))
+
+
+def _derive_paired_capex_samples(spec: PairedCommercialSpec, samples: dict[str, np.ndarray]) -> None:
+    shared = spec.shared_initial_capex
+    if shared is None:
+        return
+    ratio = shared.dc_capacity_w / spec.target_capacity_w
+    common = samples[shared.common_capex_wdc.input_id] * ratio
+    premium = samples[shared.optimizer_installation_wdc.input_id] * ratio
+    premium = premium + shared.optimizer_count * shared.optimizer_unit_price_usd / spec.target_capacity_w
+    for system in spec.systems:
+        line = next(item for item in system.cost_lines if item.cost_category == "full_initial_capex")
+        samples[line.input_id] = common if system.technology == "solectria" else common + premium
+
+
 def _validate_paired_commercial(
     spec: PairedCommercialSpec,
     applied_capacities: Sequence[AppliedCapacitySpec],
@@ -1680,6 +1765,10 @@ def _validate_paired_commercial(
         spec,
         target_capacity_w=target_capacity_w,
         systems=(normalized_systems[0], normalized_systems[1]),
+        shared_initial_capex=_validate_shared_initial_capex(replace(
+            spec, target_capacity_w=target_capacity_w,
+            systems=(normalized_systems[0], normalized_systems[1]),
+        )),
     )
 
 
@@ -2558,6 +2647,15 @@ def _validate_support_wide_outputs(
                     maximum_intensity = decimal_value(
                         distribution_support(line.distribution)[1]
                     )
+                    shared = paired_commercial.shared_initial_capex
+                    if shared is not None and line.cost_category == "full_initial_capex":
+                        dc_capacity = decimal_value(shared.dc_capacity_w)
+                        maximum_intensity = decimal_value(distribution_support(shared.common_capex_wdc)[1]) * dc_capacity / target_capacity
+                        if technology == "solaredge":
+                            maximum_intensity += (
+                                decimal_value(distribution_support(shared.optimizer_installation_wdc)[1]) * dc_capacity
+                                + Decimal(shared.optimizer_count) * decimal_value(shared.optimizer_unit_price_usd)
+                            ) / target_capacity
                     target_cost = maximum_intensity * target_capacity
                     if line.timing == "initial_t0":
                         initial_cost_bound += target_cost
@@ -2871,11 +2969,11 @@ def validate_request(request: TechnoeconomicRequest) -> TechnoeconomicRequest:
             life,
             constant_dollar_cost_year,
         )
-        all_distributions.extend(
-            line.distribution
-            for system in paired_commercial.systems
-            for line in system.cost_lines
-        )
+        all_distributions.extend(paired_primitive_distributions(paired_commercial))
+        if paired_commercial.shared_initial_capex is not None:
+            # Derived output IDs still occupy the realization-column namespace.
+            all_distributions.extend(line.distribution for system in paired_commercial.systems
+                                     for line in system.cost_lines if line.cost_category == "full_initial_capex")
     elif request.paired_commercial is not None:
         raise TechnoeconomicValidationError(
             "Only tea-calculation-v5 may define paired_commercial."
@@ -4310,9 +4408,8 @@ def _sensitivity_models(
         for line in request.standalone_commercial.cost_lines:
             all_specs[line.input_id] = line.distribution
     if request.paired_commercial is not None:
-        for system in request.paired_commercial.systems:
-            for line in system.cost_lines:
-                all_specs[line.input_id] = line.distribution
+        for distribution in paired_primitive_distributions(request.paired_commercial):
+            all_specs[distribution.input_id] = distribution
 
     source_sol_id = "energy.source.solectria_specific"
     source_se_id = "energy.source.solaredge_specific"
@@ -4447,6 +4544,13 @@ def _sensitivity_models(
         ):
             commercial_lines = paired_systems[technology].cost_lines
             applicable = {line.input_id for line in commercial_lines} | {source_id}
+            shared = request.paired_commercial.shared_initial_capex
+            if shared is not None:
+                applicable.difference_update(line.input_id for line in commercial_lines
+                                             if line.cost_category == "full_initial_capex")
+                applicable.add(shared.common_capex_wdc.input_id)
+                if technology == "solaredge":
+                    applicable.add(shared.optimizer_installation_wdc.input_id)
             has_initial_or_scheduled = any(
                 line.timing in {"initial_t0", "scheduled_year_end"}
                 and distribution_support(line.distribution)[1] > 0
@@ -4571,12 +4675,10 @@ def run_technoeconomic(
             line.distribution for line in request.standalone_commercial.cost_lines
         )
     if request.paired_commercial is not None:
-        distributions.extend(
-            line.distribution
-            for system in request.paired_commercial.systems
-            for line in system.cost_lines
-        )
+        distributions.extend(paired_primitive_distributions(request.paired_commercial))
     samples = generate_lhs(request.n, request.seed, distributions)
+    if request.paired_commercial is not None:
+        _derive_paired_capex_samples(request.paired_commercial, samples)
     weather_years = allocate_weather_years(
         request.n,
         request.seed,
@@ -5577,6 +5679,15 @@ def run_technoeconomic(
                 "lcoe_and_lcoe_delta": "USD/kWh_AC",
             },
         }
+        if paired_spec.shared_initial_capex is not None:
+            shared = paired_spec.shared_initial_capex
+            provenance["commercial_paired"]["shared_initial_capex"] = {
+                **asdict(shared),
+                "derived_total_input_ids": tuple(line.input_id for system in paired_spec.systems for line in system.cost_lines if line.cost_category == "full_initial_capex"),
+                "dc_to_ac_cost_ratio": shared.dc_capacity_w / paired_spec.target_capacity_w,
+                "total_distribution_semantics": "support envelopes only; never independent draws",
+                "formula": "Solectria=common_Wdc*DC_W; SolarEdge=Solectria+count*unit_price+installation_Wdc*DC_W",
+            }
     if request.standalone_commercial is not None:
         standalone_spec = request.standalone_commercial
         provenance["commercial_standalone"] = {

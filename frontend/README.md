@@ -111,3 +111,40 @@ in the underlying job records and exports. Autonomy, the
 Decision Agent, and TEA v6 calculation, views, and exports have been removed.
 Historical database rows and private artifacts are preserved, but retired jobs
 cannot be viewed, exported, retried, or used as Solar Agent evidence.
+
+### Thursday assumptions and full reports
+
+Choose a completed Annual Simulation and select **Review September 15 assumptions**
+to inspect the versioned 100 MWac / 134 MWdc scenario. Confirming uses the existing
+immutable submission workflow. The preset explicitly shares the common CAPEX draw,
+adds optimizer hardware/installation to SolarEdge, and records provisional cost
+and maintenance limitations. It never silently replaces form defaults.
+
+Completed paired TEAs offer **Download full PDF report** and **Download Word
+report** beside the workbook. The TEA view no longer offers a CSV bundle button;
+sealed CSV artifacts remain available to integrity checks and historical API clients.
+Both formats use one presentation model built from the
+selected TEA's frozen inputs, calibration/annual lineage and verified saved arrays.
+Completing a new run produces a report of that run; editing a draft does not
+rewrite an earlier completed result. Generation is read-only and on demand;
+missing lineage or failed evidence verification prevents the download without
+changing the completed job or sealed numerical exports.
+
+Report v2.2 omits revision history and places the contents immediately after the title/date details,
+before the comparison summary. It combines a concise engineering summary, colored charts, readable cost
+tables, the dashboard's annual-energy interpolation, the completed TEA's original
+lifecycle LCOE chart, convergence and a compact technical record. Sensitivity and
+future-tool discussions are omitted. The reference analysis occupies eight pages;
+longer evidence can flow onto additional pages. The PDF download is named exactly
+`LCOE_comparsion.pdf`. Its generation date, report version, analysis date and run
+ID remain inside the report. Word filenames retain their date/version/run ID.
+The saved TEA chart is verified and embedded unchanged; annual interpolation uses
+midpoint ranks with tie averaging and no extrapolated tails. Existing percentile
+and exceedance eligibility rules remain unchanged.
+PDF contents links/bookmarks are generated with final page numbers. Word uses
+native Title/Heading styles and TOC/page fields: update fields in Word when
+opening or editing the document to refresh its own page numbers. Both formats
+share the exact chart images and reported table values.
+
+Backend dependencies are ReportLab 4.4.9 and python-docx 1.2.0. Word export does
+not require Microsoft Word on the server. Local delivery does not require deployment.

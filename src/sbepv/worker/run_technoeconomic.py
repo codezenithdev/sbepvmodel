@@ -228,6 +228,8 @@ def _sealed_metadata(
         input_id: f"SampledInput::{input_id}"
         for input_id in sorted(result.sampled_inputs)
     }
+    shared = (result.provenance.get("commercial_paired") or {}).get("shared_initial_capex")
+    derived_ids = shared.get("derived_total_input_ids", ()) if shared else ()
     return {
         "schema_version": SEALED_CALCULATION_SCHEMA_VERSION,
         "request_sha256": request_sha256,
@@ -236,6 +238,11 @@ def _sealed_metadata(
         "energy_available": result.energy_available,
         "realization_columns": list(result.realization_table),
         "sampled_input_columns": sampled_columns,
+        **({"input_column_semantics": {
+            "primitive_draw_columns": {key: value for key, value in sampled_columns.items() if key not in derived_ids},
+            "derived_total_columns": {key: sampled_columns[key] for key in derived_ids},
+            "legacy_sampled_input_columns_includes_derived_totals": True,
+        }} if shared else {}),
         "common_cost_audit": _json_safe(result.common_cost_audit),
         "summaries": _json_safe(result.summaries),
         "per_weather_year": _json_safe(result.per_weather_year),

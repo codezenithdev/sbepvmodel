@@ -59,7 +59,8 @@ export function isAllowedApiPath(path: string[]): boolean {
       (path[0] === "technoeconomic" && ["sources", "jobs"].includes(path[1]));
   }
   if (path.length === 3) {
-    return (path[0] === "jobs" && isSafeId(path[1]) &&
+    return (path[0] === "technoeconomic" && path[1] === "presets" && path[2] === "thursday-2026-09-17-v1") ||
+      (path[0] === "jobs" && isSafeId(path[1]) &&
       ["cancel", "delete", "promote", "retry"].includes(path[2])) ||
       (path[0] === "calibration-reviews" && isSafeId(path[1]) && ["run", "rows"].includes(path[2])) ||
       (path[0] === "data-collections" && isCollectionId(path[1]) && ["download", "download-xlsx"].includes(path[2])) ||
@@ -76,7 +77,7 @@ export function isAllowedApiPath(path: string[]): boolean {
   }
   if (path.length === 5) {
     return path[0] === "technoeconomic" && path[1] === "jobs" && isSafeId(path[2]) &&
-      ((path[3] === "exports" && ["csv", "xlsx"].includes(path[4])) ||
+      ((path[3] === "exports" && ["csv", "xlsx", "pdf", "docx"].includes(path[4])) ||
        (path[3] === "artifacts" && ["cdf_plot", "sensitivity_plot", "convergence_plot"].includes(path[4])));
   }
   return false;

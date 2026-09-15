@@ -791,7 +791,6 @@ function commercialDraft(transferEnabled = true) {
             'id="technoeconomicStandaloneCostYear" type="number" value="2022"',
             'readonly',
             'no currency conversion is applied',
-            'id="technoeconomicStandaloneCsvLink"',
             'id="technoeconomicStandaloneXlsxLink"',
         ):
             self.assertIn(marker, standalone)
@@ -801,6 +800,8 @@ function commercialDraft(transferEnabled = true) {
             standalone.index('id="technoeconomicAssumptionsDialog"'),
         )
         self.assertNotIn("125 kW", standalone)
+        self.assertNotIn('id="technoeconomicStandaloneCsvLink"', self.html)
+        self.assertNotIn('id="technoeconomicCsvLink"', self.html)
         self.assertNotIn("125000", standalone)
         self.assertNotIn("139180.8", standalone)
         self.assertNotRegex(standalone.lower(), r"\bcentral\b")
@@ -1296,7 +1297,6 @@ console.log(JSON.stringify({at100, at75, fallback}));
             "'cdf_plot'",
             "technoeconomicSafeArtifactUrl",
             "technoeconomicRenderStandaloneScenario(job, result)",
-            "safe('csv_bundle')",
             "safe('xlsx_workbook')",
         ):
             self.assertIn(marker, renderer)
@@ -1312,13 +1312,11 @@ console.log(JSON.stringify({at100, at75, fallback}));
             "values.solectria[key]",
             "values.solaredge[key]",
             "technoeconomicRenderStandaloneScenario(job, result)",
-            "safe('csv_bundle')",
             "safe('xlsx_workbook')",
         ):
             self.assertIn(marker, paired_renderer)
 
         for marker in (
-            "standaloneCsvLink: document.getElementById('technoeconomicStandaloneCsvLink')",
             "standaloneXlsxLink: document.getElementById('technoeconomicStandaloneXlsxLink')",
         ):
             self.assertIn(marker, self.bindings)
@@ -1884,7 +1882,9 @@ console.log(JSON.stringify(context));
             'isSafeId(path[2])',
             '["cancel", "retry"].includes(path[3])',
             'path[3] === "exports"',
-            '["csv", "xlsx"].includes(path[4])',
+            '["csv", "xlsx", "pdf", "docx"].includes(path[4])',
+            'path[1] === "presets"',
+            'path[2] === "thursday-2026-09-17-v1"',
             'path[3] === "artifacts"',
             '"cdf_plot"',
             '"sensitivity_plot"',
@@ -2911,7 +2911,7 @@ console.log(JSON.stringify({
     def test_confirmation_and_job_lifecycle_are_revision_fenced(self) -> None:
         open_confirmation = self.script.split(
             "function technoeconomicOpenConfirmation", 1
-        )[1].split("function technoeconomicCloseConfirmation", 1)[0]
+        )[1].split("async function technoeconomicReviewThursdayPreset", 1)[0]
         self.assertIn("technoeconomicSerializeStandaloneRequest", open_confirmation)
         self.assertIn("technoeconomicDeepFreeze", open_confirmation)
         self.assertIn("technoeconomicPendingSubmission", open_confirmation)
@@ -3219,7 +3219,6 @@ console.log(JSON.stringify({
             "cdf_plot",
             "sensitivity_plot",
             "convergence_plot",
-            "csv_bundle",
             "xlsx_workbook",
         ):
             self.assertIn(f"safe('{artifact_id}')", artifacts)
