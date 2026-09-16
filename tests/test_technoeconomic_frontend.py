@@ -2000,6 +2000,55 @@ console.log(JSON.stringify({cleared: true, applyingPreserved: acceptance.checked
         )
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_report_download_options_default_on_and_preserve_selection(self) -> None:
+        payload = self.run_node(
+            r"""
+const assert = require('node:assert/strict');
+const link = () => ({hidden: true, removeAttribute(key) { delete this[key]; }});
+technoeconomicElements = {
+  standalonePdfLink: link(), standaloneDocxLink: link(),
+  reportAppendixOption: {hidden: true},
+};
+const job = {
+  job_id: 'verified_tea-123', state: 'done',
+  result: {calculation_contract_version: TECHNOECONOMIC_PAIRED_CONTRACT_VERSION},
+};
+technoeconomicRenderReportDownloads(job);
+assert.equal(technoeconomicElements.standalonePdfLink.href,
+  '/api/technoeconomic/jobs/verified_tea-123/exports/pdf?include_technical_appendix=true');
+assert.equal(technoeconomicElements.standaloneDocxLink.href,
+  '/api/technoeconomic/jobs/verified_tea-123/exports/docx?include_technical_appendix=true');
+technoeconomicElements.includeTechnicalAppendix = {checked: false};
+technoeconomicRenderReportDownloads(job);
+assert.equal(technoeconomicElements.reportAppendixOption.hidden, false);
+for (const link of [technoeconomicElements.standalonePdfLink, technoeconomicElements.standaloneDocxLink]) {
+  assert.equal(link.hidden, false);
+  assert.ok(link.href.endsWith('?include_technical_appendix=false'));
+}
+technoeconomicRenderReportDownloads(null);
+assert.equal(technoeconomicElements.reportAppendixOption.hidden, true);
+assert.equal(technoeconomicElements.includeTechnicalAppendix.checked, false);
+technoeconomicRenderReportDownloads(job);
+assert.ok(technoeconomicElements.standalonePdfLink.href.endsWith('=false'));
+for (const invalid of [
+  {...job, state: 'running'}, {...job, job_id: '../private'},
+  {...job, result: {calculation_contract_version: TECHNOECONOMIC_STANDALONE_CONTRACT_VERSION}},
+]) {
+  technoeconomicRenderReportDownloads(invalid);
+  assert.equal(technoeconomicElements.reportAppendixOption.hidden, true);
+  assert.equal(technoeconomicElements.standalonePdfLink.href, undefined);
+  assert.equal(technoeconomicElements.standaloneDocxLink.href, undefined);
+}
+console.log(JSON.stringify({preserved: !technoeconomicElements.includeTechnicalAppendix.checked}));
+"""
+        )
+        self.assertTrue(payload["preserved"])
+        self.assertRegex(
+            self.markup,
+            r'id="technoeconomicIncludeTechnicalAppendix" type="checkbox" checked',
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_assumptions_tabs_preserve_inputs_acceptance_and_support_keyboard_navigation(self) -> None:
         payload = self.run_node(
             r"""

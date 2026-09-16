@@ -385,25 +385,66 @@ table. Failed charts leave tables usable. Technical IDs/versions/hashes remain
 in records/exports. Curves share an axis, with line styles as well as color;
 equal quantile positions are not paired realizations.
 
-Completed TEAs offer **Download full PDF report**, **Download Word report**, and
-the workbook. The CSV-bundle UI button is removed; sealed CSVs and historical
+Completed TEAs offer **Download PDF report**, **Download Word report**, and
+the workbook. **Include technical appendix** is checked by default and applies
+to both document downloads. Clearing it omits the appendix without editing the
+scenario or revoking reviewed assumptions. Both export endpoints accept
+`include_technical_appendix=true|false`; requests without the option include it.
+The CSV-bundle UI button is removed; sealed CSVs and historical
 API access remain for integrity/compatibility. Read-only, on-demand PDF/DOCX
 generation verifies frozen inputs, calibration/Annual lineage, saved arrays, and
 exports. Missing/tampered evidence blocks download without changing job status.
 Editing drafts never rewrites completed results.
 
-Report v2.2 places contents after title/date details and before the summary. It
-includes cost tables, annual-energy interpolation, the unchanged verified TEA chart,
-convergence, and a compact technical record. Revision-history, sensitivity, and
-future-tool sections are omitted. The reference is eight pages; longer evidence
-can add pages. The intentional PDF filename is **`LCOE_comparsion.pdf`**.
-Generation/analysis dates, version, and run ID remain inside; Word filenames include
-date/version/run ID. New generation timestamps may change file hashes without
-changing numerical evidence.
+Report format v2.4 places contents after the title metadata, excluding the title
+from the contents. Its Executive Summary covers Objectives, Approach, and Results,
+followed by Introduction and Objectives, Data Collection, Modeling and Calibration,
+Annual Simulation, and Technoeconomic Analysis. Measured-period energy is kept
+distinct from full-year predictions, and seasonal calibration coverage qualifies
+their comparison. The summary subtracts the two full-precision system medians;
+this is distinct from the median of paired LCOE differences. Cost tables and the
+individual-system lifecycle LCOE CDFs remain, while the paired-difference CDF is
+omitted. Signed standardized rank-regression tornado charts for both systems are
+in the main TEA section, with sample counts and model R-squared. O&M predictors
+and exclusion notes identify the owning system explicitly. Lifecycle CDFs are
+redrawn from the verified sealed realizations as native vector graphics in PDF
+and PNGs from the same data in Word; the saved chart artifact still passes its integrity
+checks. Calibration factors display four decimal places, while comparisons use
+saved precision. Confirmed identical fitted and applied profiles are summarized
+without a duplicate factor table.
+
+The optional technical appendix uses concise equation tables with short meanings,
+units, saved assumptions, and statistical methods. Detailed physics descriptions
+require a recognized frozen model identity; unavailable historical details remain
+unavailable. References and provenance remain available. P10/P50/P90 stability
+plots use cumulative prefixes of the verified saved realizations in their original
+order; their final points tie out to the headline percentiles. This presentation
+does not change the existing convergence criteria or status. Evidence, availability,
+and all integrity checks are the same with the appendix included or omitted.
+
+An optional seasonal energy diagnostic can inspect currently available calibration
+and Annual workbooks. It must reconcile their contents to frozen Annual totals,
+saved factors and caps, and SHA-verified reviewed measurements. The report labels
+this separately as current workbook evidence with newly calculated SHA-256 values;
+it does not represent those bytes as historically sealed evidence. Missing or
+unreconciled workbooks leave the diagnostic unavailable without replacing saved
+results or launching a new simulation.
+
+The title retains the analysis timestamp and labels the generating dashboard
+version separately from report format v2.4; there is no separate visible report
+date. `PV_DASHBOARD_RELEASE` supplies a release label when configured; otherwise
+`package.json` supplies an explicitly labeled package-declared version.
+`PV_DASHBOARD_BUILD_ID`, then `RENDER_GIT_COMMIT`, supplies the build identifier;
+if neither is available it is shown as not recorded. The generating software
+identity does not establish the dashboard version used for a historical analysis:
+missing historical version metadata remains not recorded. New filenames follow
+`LCOE_Comparison_v2.4_{full|summary}_{run_id}.{pdf|docx}`, with a sanitized run ID.
+Previously downloaded reports and their filenames are preserved.
+Generation metadata may change file hashes without changing numerical evidence.
 
 PDF links/bookmarks use final page numbers. Word uses native Title/Heading styles
 and TOC/page fields; refresh fields after opening/editing for its pagination.
-Both share one presentation model, exact chart images, and values. Dependencies
+Both share one presentation model, chart data, and values. Dependencies
 are ReportLab 4.4.9 and python-docx 1.2.0; the server does not need Microsoft Word.
 
 ## Frontend development

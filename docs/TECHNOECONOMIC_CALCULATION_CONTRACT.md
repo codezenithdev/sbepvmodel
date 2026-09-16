@@ -2160,19 +2160,76 @@ It verifies byte identities, provenance, completed-result projection and numeric
 tie-outs, including independent direct year-by-year finance sums. It neither runs
 the model nor modifies completed jobs or the existing five-artifact export manifest.
 Incomplete jobs, missing historical lineage or failed integrity checks return 409.
-Report rendering v2.2 places contents before the comparison summary and uses one presentation model for all values, structure and
-chart images. The completed TEA's original CDF PNG is verified against its owned
-artifact manifest and the exact embedded bytes are re-hashed. It replaces report
-sensitivity. Annual display interpolation uses the dashboard's midpoint ranks,
-averages exact ties and extrapolates no tails. This display does not alter the
-saved ECDF, type-7 percentiles or 5/10-year eligibility rules. Missing values
-remain unavailable. Native Word heading and TOC/page
-fields retain editable navigation; PDF bookmarks and contents resolve to final
-PDF pages. Word computes its own page numbers when fields are refreshed.
-The PDF filename is `LCOE_comparsion.pdf`; generation date, rendering version and
-run identifier remain in its contents. Word filenames retain these identifiers,
-and analysis date remains distinct. Removing the TEA view's CSV button does not
-remove sealed CSV evidence or historical export API support. A new completed run uses its own frozen
-inputs/results; draft changes and later baseline promotions cannot rewrite old
-evidence. All pre-render integrity checks still run. The rendering version does
-not change the v5 kernel's numerical probe digests or numerical export contracts.
+
+Report format v2.4 uses one presentation model for PDF and Word values, structure,
+and chart data. Contents follow the title metadata and exclude the title itself.
+The Executive Summary contains Objectives, Approach, and Results; the main report
+then follows Introduction and Objectives, Data Collection, Modeling and Calibration,
+Annual Simulation, and Technoeconomic Analysis. Measured calibration-period energy
+and modeled full-year energy are distinguished, with seasonal coverage and evidence
+limitations disclosed. The headline comparison uses the difference between the
+two marginal system medians at full saved precision, handles either ordering and
+ties, and does not relabel the median of paired differences as that quantity.
+Calibration factors display four decimal places without rounding stored values
+or their comparisons. When all four seasons match at saved precision and the
+frozen application explicitly records no substitution, one note confirms equality
+instead of repeating the applied-factor table. Missing or differing evidence is
+shown explicitly.
+
+Individual-system LCOE CDFs remain in the main report; the paired-difference CDF
+is omitted from the presentation only. The lifecycle CDF is regenerated from the
+verified sealed realization population, using native vector graphics in PDF and
+a PNG from the same data in Word. The original saved CDF artifact remains subject to its
+existing byte-identity checks; rendering neither replaces it nor modifies its
+manifest. Saved signed standardized rank-regression coefficients form a tornado
+chart for each system, ordered by absolute magnitude
+and accompanied by sample count and model R-squared. O&M predictor labels and
+exclusion notes explicitly identify Solectria or SolarEdge ownership. These charts
+remain in the main TEA section when the technical appendix is omitted. They describe relative
+influence within the sampled assumptions and do not replace numerical sensitivity
+results. Annual display interpolation uses the dashboard's midpoint ranks,
+averages exact ties and extrapolates no tails. Display choices do not alter the
+saved ECDF, type-7 percentiles or 5/10-year eligibility rules. Missing or unsupported
+diagnostics remain unavailable rather than being inferred.
+
+An optional seasonal diagnostic uses current calibration and Annual workbook
+bytes only when their contents reconcile to frozen annual energy totals, saved
+factors and caps, and SHA-verified reviewed measurements. Newly calculated SHA-256
+identities describe those current artifacts; they do not establish historical byte
+integrity when historical workbook hashes were not recorded. The diagnostic is
+labeled separately from the sealed baseline, and missing or unreconciled evidence
+remains unavailable. Any controlled diagnostic comparison is separately identified
+and does not rewrite the baseline, rerun the model, or update completed jobs.
+
+Both endpoints accept `include_technical_appendix: bool = True`. The dashboard's
+single **Include technical appendix** checkbox defaults to checked for both
+formats, persists across result rerenders, and does not edit scenario inputs or
+invalidate assumption confirmation. The appendix presents versioned model equations
+in concise tables with short explanations and units, saved assumptions, statistical
+methods, references, and provenance. Model-specific descriptions are gated by the
+documented frozen identity; current physics defaults are not assigned to an
+unrecognized historical run.
+P10/P50/P90 convergence displays are calculated from cumulative prefixes of verified
+saved realizations, preserving original sample order; their final points must match
+the headline percentile table. These display calculations do not resample, rerun
+the model, or change existing convergence criteria or the saved convergence status.
+Every integrity check still runs when the appendix is omitted.
+
+The visible title metadata retains the analysis timestamp and separates the report
+format version from the generating dashboard identity; it omits a separate report
+date. The generating release is `PV_DASHBOARD_RELEASE` when set, otherwise the
+`package.json` version explicitly labeled as a package declaration. The build is
+`PV_DASHBOARD_BUILD_ID`, then `RENDER_GIT_COMMIT`, or not recorded. This generation
+identity is distinct from the dashboard version used for a historical analysis;
+missing historical metadata is not inferred from current software.
+
+Native Word heading and TOC/page fields retain editable navigation; PDF bookmarks
+and contents resolve to final PDF pages. Word computes its own page numbers when
+fields are refreshed. New filenames follow
+`LCOE_Comparison_v2.4_{full|summary}_{run_id}.{pdf|docx}`, using a sanitized run ID;
+previously downloaded reports and historical filenames remain unchanged. Removing
+the TEA view's CSV button does not remove sealed CSV evidence or historical export
+API support. A new
+completed run uses its own frozen inputs/results; draft changes and later baseline
+promotions cannot rewrite old evidence. This presentation revision changes neither
+the v5 kernel's numerical probe digests nor its numerical export contracts.

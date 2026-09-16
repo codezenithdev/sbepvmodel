@@ -2869,13 +2869,29 @@
             }
         }
 
+        function technoeconomicRenderReportDownloads(job) {
+            const contractVersion = job?.result?.calculation_contract_version
+                || job?.request?.calculation_contract_version;
+            const available = job?.state === 'done'
+                && contractVersion === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION
+                && /^[A-Za-z0-9_-]+$/.test(job.job_id);
+            // This download preference belongs to the report, never the scenario draft.
+            const includeAppendix = technoeconomicElements.includeTechnicalAppendix?.checked !== false;
+            if (technoeconomicElements.reportAppendixOption) {
+                technoeconomicElements.reportAppendixOption.hidden = !available;
+            }
+            for (const [format, link] of [
+                ['pdf', technoeconomicElements.standalonePdfLink],
+                ['docx', technoeconomicElements.standaloneDocxLink],
+            ]) {
+                technoeconomicSetDownload(link, available
+                    ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/${format}?include_technical_appendix=${includeAppendix}`
+                    : null);
+            }
+        }
+
         function technoeconomicRenderPairedResult(job, result) {
-            technoeconomicSetDownload(technoeconomicElements.standalonePdfLink,
-                job.state === 'done' && /^[A-Za-z0-9_-]+$/.test(job.job_id)
-                    ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/pdf` : null);
-            technoeconomicSetDownload(technoeconomicElements.standaloneDocxLink,
-                job.state === 'done' && /^[A-Za-z0-9_-]+$/.test(job.job_id)
-                    ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/docx` : null);
+            technoeconomicRenderReportDownloads(job);
             const pairedResult = technoeconomicPlainObject(result.paired_commercial);
             const pairedSystems = technoeconomicPlainObject(pairedResult.systems);
             const summaries = Object.fromEntries(TECHNOECONOMIC_PAIRED_SYSTEMS.map(
@@ -3020,8 +3036,7 @@
             );
             technoeconomicSetDownload(technoeconomicElements.standaloneCdfLink, null);
             technoeconomicSetDownload(technoeconomicElements.standaloneXlsxLink, null);
-            technoeconomicSetDownload(technoeconomicElements.standalonePdfLink, null);
-            technoeconomicSetDownload(technoeconomicElements.standaloneDocxLink, null);
+            technoeconomicRenderReportDownloads(null);
             if (technoeconomicElements.standaloneSubmitButton) {
                 technoeconomicElements.standaloneSubmitButton.textContent = 'Calculate LCOE';
             }
@@ -7831,6 +7846,9 @@
             const localDraft = technoeconomicLoadLocalDraft();
             applyTechnoeconomicFormState(localDraft || technoeconomicDefaultDraft());
             technoeconomicElements.form.addEventListener('submit', technoeconomicOpenConfirmation);
+            technoeconomicElements.includeTechnicalAppendix?.addEventListener('change', () => {
+                technoeconomicRenderReportDownloads(technoeconomicJob);
+            });
             document.getElementById('technoeconomicRestoreApprovedBtn')?.addEventListener('click', technoeconomicStandaloneRestoreApproved);
             if (typeof window === 'object') window.addEventListener?.('pagehide', () => {
                 technoeconomicPersistStandaloneDraft();
@@ -7845,6 +7863,7 @@
                 });
             }
             technoeconomicElements.form.addEventListener('input', (event) => {
+                if (event.target === technoeconomicElements.includeTechnicalAppendix) return;
                 technoeconomicClearStandaloneAcceptance(event.target);
                 const commercialAccept = technoeconomicDomElement(
                     'technoeconomicGuidedCommercialAccept'
@@ -7884,6 +7903,7 @@
                 technoeconomicMarkDraftChanged();
             });
             technoeconomicElements.form.addEventListener('change', (event) => {
+                if (event.target === technoeconomicElements.includeTechnicalAppendix) return;
                 technoeconomicClearStandaloneAcceptance(event.target);
                 if (event.target === technoeconomicElements.standaloneSourceSelect) {
                     if (technoeconomicElements.sourceSelect) {

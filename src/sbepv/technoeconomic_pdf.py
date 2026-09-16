@@ -5,17 +5,19 @@ Rendering never runs a model, consults today's baseline, or changes a job/manife
 from __future__ import annotations
 
 from decimal import Decimal, localcontext
-import base64
 import hashlib
-from io import BytesIO
 import math
+import json
+import os
+from pathlib import Path
 import re
 
 import numpy as np
 
 from sbepv import technoeconomic_reporting as reporting
+from sbepv import paths
 from sbepv.technoeconomic_report import REPORT_VERSION
-from sbepv.api import artifacts, technoeconomic as tea_api
+from sbepv.api import artifacts, config, technoeconomic as tea_api
 
 class FullReportError(ValueError):
     """Frozen evidence cannot support a full report."""
@@ -103,30 +105,52 @@ def independent_reference_checks():
     return references
 
 
-def prepare_report(job, *, generated_at=None):
+def generating_dashboard_identity():
+    """Identify the software generating this export, never a historical analysis."""
+    version = os.environ.get("PV_DASHBOARD_RELEASE")
+    source = "deployment release"
+    if not version:
+        source = "package declaration"
+        try:
+            root = paths.discover_project_root(Path(__file__))
+            package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+            version = package.get("version") if package.get("name") == "sbe-pv-operations-dashboard" else None
+        except (OSError, ValueError, paths.ProjectRootNotFoundError):
+            version = None
+    return {"version": version or "Not recorded", "version_source": source,
+            "build": os.environ.get("PV_DASHBOARD_BUILD_ID") or os.environ.get("RENDER_GIT_COMMIT") or "Not recorded"}
+
+
+def prepare_report(job, *, generated_at=None, include_technical_appendix=True):
     from sbepv import technoeconomic_report
-    from PIL import Image
+    from sbepv import technoeconomic_report_diagnostics as diagnostics
+    from sbepv import technoeconomic_report_energy as energy
     calculation, routine, checks = verified_report_evidence(job)
     independent_reference_checks()
     chart_path, chart_record = artifacts._verified_technoeconomic_artifact(job, "cdf_plot")
     chart_bytes = chart_path.read_bytes()
     if len(chart_bytes) != chart_record["byte_count"] or hashlib.sha256(chart_bytes).hexdigest() != chart_record["sha256"]:
         raise FullReportError("The saved LCOE chart changed during report preparation.")
-    with Image.open(BytesIO(chart_bytes)) as chart_image:
-        width, height = chart_image.size
-    saved_chart = {"image": base64.b64encode(chart_bytes).decode("ascii"),
-                   "height": 522 * height / width, "source_sha256": chart_record["sha256"]}
-    return technoeconomic_report.build_report(job, calculation, routine, checks, generated_at=generated_at, lifecycle_chart=saved_chart)
+    # Keep the saved artifact's integrity gate, then redraw from the sealed
+    # numerical population so the PDF has a sharp native vector chart.
+    payload = diagnostics.lifecycle_cdf_payload(
+        calculation.metadata, calculation.by_name, routine, row_count=calculation.row_count)
+    saved_chart = {"image": diagnostics.render_lifecycle_cdf(payload),
+                   "height": payload['height'] * 72, "vector": payload,
+                   "source_sha256": chart_record["sha256"]}
+    return technoeconomic_report.build_report(
+        job, calculation, routine, checks, generated_at=generated_at, lifecycle_chart=saved_chart,
+        include_technical_appendix=include_technical_appendix, dashboard_identity=generating_dashboard_identity(),
+        energy_evidence=energy.build_energy_evidence(job['source_snapshot'], output_root=config.OUTPUT_DIR))
 
 
 def report_filename(report, extension):
-    if extension == "pdf":
-        return "LCOE_comparsion.pdf"
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", report["run_id"])[:100]
-    return f"PV_Comparison_{report['generated_at'][:10]}_v{report['version']}_{safe_id}.{extension}"
+    scope = "full" if report.get('include_technical_appendix', True) else "summary"
+    return f"LCOE_Comparison_v{report['version']}_{scope}_{safe_id}.{extension}"
 
 
-def build_pdf(job, *, generated_at=None):
+def build_pdf(job, *, generated_at=None, include_technical_appendix=True):
     from sbepv import technoeconomic_pdf_layout
-    report = prepare_report(job, generated_at=generated_at)
+    report = prepare_report(job, generated_at=generated_at, include_technical_appendix=include_technical_appendix)
     return technoeconomic_pdf_layout.render_pdf(report), report_filename(report, "pdf")

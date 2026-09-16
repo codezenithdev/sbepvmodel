@@ -2302,6 +2302,21 @@
             padding: 7px 10px;
         }
 
+        .tea-standalone-result-actions .tea-report-appendix-option {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-height: 36px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .tea-report-appendix-option input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+        }
+
         .tea-standalone-result-body {
             display: grid;
             min-width: 0;

@@ -255,6 +255,8 @@
             standaloneXlsxLink: document.getElementById('technoeconomicStandaloneXlsxLink'),
             standalonePdfLink: document.getElementById('technoeconomicStandalonePdfLink'),
             standaloneDocxLink: document.getElementById('technoeconomicStandaloneDocxLink'),
+            reportAppendixOption: document.getElementById('technoeconomicReportAppendixOption'),
+            includeTechnicalAppendix: document.getElementById('technoeconomicIncludeTechnicalAppendix'),
             standaloneInterpretation: document.getElementById('technoeconomicStandaloneInterpretation'),
             standalonePercentileBody: document.getElementById('technoeconomicLcoePercentileBody'),
             standaloneRunContext: document.getElementById('technoeconomicStandaloneRunContext'),

@@ -8,6 +8,7 @@ def render_docx(report):
     from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_TAB_ALIGNMENT
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
+    from docx.opc.constants import RELATIONSHIP_TYPE
     from docx.shared import Inches, Pt, RGBColor
 
     document=Document()
@@ -28,7 +29,7 @@ def render_docx(report):
     document.styles['Normal'].paragraph_format.widow_control=True
     document.styles['Heading 1'].paragraph_format.space_before=Pt(8)
     document.styles['Title'].paragraph_format.space_before=Pt(0)
-    outline=OxmlElement('w:outlineLvl');outline.set(qn('w:val'),'0')
+    outline=OxmlElement('w:outlineLvl');outline.set(qn('w:val'),'9')
     document.styles['Title'].element.get_or_add_pPr().append(outline)
     document.core_properties.title=report['title']
     document.core_properties.author='SBE PV Dashboard'
@@ -44,7 +45,7 @@ def render_docx(report):
         for item in (begin,code,separate,result,end):run._r.append(item)
     footer=section.footer.paragraphs[0]
     footer.paragraph_format.tab_stops.add_tab_stop(Pt(522),WD_TAB_ALIGNMENT.RIGHT)
-    footer.add_run(f"PV comparison  |  Report v{report['version']}\tPage ")
+    footer.add_run(f"PV comparison  |  Report format {report['version']}\tPage ")
     field(footer,'PAGE');footer.add_run(' of ');field(footer,'NUMPAGES')
     for run in footer.runs:run.font.size=Pt(9)
     update=OxmlElement('w:updateFields');update.set(qn('w:val'),'true');document.settings.element.append(update)
@@ -54,8 +55,10 @@ def render_docx(report):
         if kind=='pagebreak':
             p=document.add_paragraph();p.paragraph_format.space_after=Pt(0);p.paragraph_format.space_before=Pt(0)
             p.add_run().add_break(WD_BREAK.PAGE)
+        elif kind=='title':
+            document.add_paragraph(block['text'],style='Title')
         elif kind=='heading':
-            p=document.add_paragraph(block['text'],style='Title' if block['anchor']=='summary' else f"Heading {block['level']}")
+            p=document.add_paragraph(block['text'],style=f"Heading {block['level']}")
             p.paragraph_format.page_break_before=bool(block.get('page'))
             start=OxmlElement('w:bookmarkStart');start.set(qn('w:id'),str(heading_counter));start.set(qn('w:name'),block['anchor'].replace('-','_'))
             end=OxmlElement('w:bookmarkEnd');end.set(qn('w:id'),str(heading_counter))
@@ -65,13 +68,19 @@ def render_docx(report):
             p=document.add_paragraph(block['text'],style='Subtitle' if style=='subtitle' else 'Normal')
             if style in ('small','meta'):
                 for run in p.runs:run.font.size=Pt(10)
+            if style=='lead':p.paragraph_format.keep_with_next=True
             if style in ('finding','toc_title'):
                 for run in p.runs:run.bold=True;run.font.size=Pt(12 if style=='finding' else 17)
                 p.paragraph_format.keep_with_next=style=='toc_title'
         elif kind=='toc':
             # Native fields recalculate against Word's own pagination; never copy PDF page numbers.
             p=document.add_paragraph()
-            field(p,'TOC \\o "1-1" \\t "Title,1" \\h \\z \\u','Open in Word and update the table of contents to display page numbers.')
+            field(p,'TOC \\o "1-1" \\h \\z','Open in Word and update the table of contents to display page numbers.')
+        elif kind=='reference':
+            p=document.add_paragraph()
+            link=OxmlElement('w:hyperlink')
+            link.set(qn('r:id'),document.part.relate_to(block['url'],RELATIONSHIP_TYPE.HYPERLINK,is_external=True))
+            run=OxmlElement('w:r');value=OxmlElement('w:t');value.text=block['text'];run.append(value);link.append(run);p._p.append(link)
         elif kind=='chart':
             p=document.add_paragraph();p.paragraph_format.keep_with_next=True
             run=p.add_run();run.add_picture(BytesIO(base64.b64decode(block['image'])),width=Pt(522),height=Pt(block['height']))
@@ -94,7 +103,8 @@ def render_docx(report):
                     cell.width=Pt(522*widths[i]);cell.text=str(value)
                     props=cell._tc.get_or_add_tcPr()
                     margins=OxmlElement('w:tcMar')
-                    for side,twips in (('top',90),('bottom',90),('left',120),('right',120)):
+                    vertical_padding=60 if block.get('compact') else 90
+                    for side,twips in (('top',vertical_padding),('bottom',vertical_padding),('left',120),('right',120)):
                         item=OxmlElement('w:'+side);item.set(qn('w:w'),str(twips));item.set(qn('w:type'),'dxa');margins.append(item)
                     props.append(margins)
                     if row_index==0:
@@ -111,7 +121,7 @@ def render_docx(report):
     return output.getvalue()
 
 
-def build_docx(job, *, generated_at=None):
+def build_docx(job, *, generated_at=None, include_technical_appendix=True):
     from sbepv import technoeconomic_pdf
-    report=technoeconomic_pdf.prepare_report(job,generated_at=generated_at)
+    report=technoeconomic_pdf.prepare_report(job,generated_at=generated_at,include_technical_appendix=include_technical_appendix)
     return render_docx(report),technoeconomic_pdf.report_filename(report,'docx')

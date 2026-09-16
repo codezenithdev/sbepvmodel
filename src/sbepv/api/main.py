@@ -1237,18 +1237,20 @@ def download_technoeconomic_xlsx(job_id: str) -> FileResponse:
 
 
 @app.get("/api/technoeconomic/jobs/{job_id}/exports/pdf")
-def download_technoeconomic_pdf(job_id: str) -> Response:
+def download_technoeconomic_pdf(job_id: str, include_technical_appendix: bool = True) -> Response:
     """Render a verified full report without mutating the completed job."""
-    return _technoeconomic_document_response(job_id, "pdf")
+    return _technoeconomic_document_response(job_id, "pdf", include_technical_appendix=include_technical_appendix)
 
 
 @app.get("/api/technoeconomic/jobs/{job_id}/exports/docx")
-def download_technoeconomic_docx(job_id: str) -> Response:
+def download_technoeconomic_docx(job_id: str, include_technical_appendix: bool = True) -> Response:
     """Editable Word report from the same verified content as PDF."""
-    return _technoeconomic_document_response(job_id, "docx")
+    return _technoeconomic_document_response(job_id, "docx", include_technical_appendix=include_technical_appendix)
 
 
-def _technoeconomic_document_response(job_id: str, document_format: str) -> Response:
+def _technoeconomic_document_response(
+    job_id: str, document_format: str, *, include_technical_appendix: bool = True,
+) -> Response:
     from sbepv import technoeconomic_pdf
     from sbepv import technoeconomic_docx
     from sbepv import technoeconomic_reporting
@@ -1258,7 +1260,7 @@ def _technoeconomic_document_response(job_id: str, document_format: str) -> Resp
         raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
     try:
         renderer = technoeconomic_docx.build_docx if document_format == "docx" else technoeconomic_pdf.build_pdf
-        payload, filename = renderer(job)
+        payload, filename = renderer(job, include_technical_appendix=include_technical_appendix)
     except (technoeconomic_pdf.FullReportError, technoeconomic_reporting.TechnoeconomicExportError,
             ArtifactIntegrityError, KeyError, ValueError) as exc:
         logger.warning("Full report evidence rejected for TEA %s: %s", job_id, type(exc).__name__)
