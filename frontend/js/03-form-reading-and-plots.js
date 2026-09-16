@@ -214,8 +214,16 @@
             updateAnnualYearSelectionSummary();
         }
 
-        function showImage(imgId, iconId, boxId, url, cacheBust = true) {
+        function showImage(imgId, iconId, boxId, url, cacheBust = true, options = {}) {
             const img = document.getElementById(imgId);
+            // Polling may repeat a completed input artifact while its image is still loading.
+            // Failed loads retry; explicit refresh and completion retain cache-busting.
+            if (
+                options.reuseExisting === true &&
+                img.dataset.sourceUrl === url &&
+                img.getAttribute('src') &&
+                (!img.complete || img.naturalWidth > 0)
+            ) return;
             img.onload = () => {
                 document.getElementById(iconId).style.display = 'none';
                 img.style.display = 'block';
@@ -224,6 +232,7 @@
                 box.style.background = 'white';
             };
             const separator = url.includes('?') ? '&' : '?';
+            img.dataset.sourceUrl = url;
             img.src = cacheBust ? url + separator + 'v=' + Date.now() : url;
         }
 
@@ -624,13 +633,13 @@
             if (window.savedResultsDrawerReady) syncSavedResultsControls();
         }
 
-        function applyInputPlots(inputPlots, cacheBust = true) {
+        function applyInputPlots(inputPlots, cacheBust = true, options = {}) {
             if (!inputPlots) return;
             if (inputPlots.measured_power_png) {
-                showImage('measuredPowerImg', 'measuredPowerIcon', 'measuredPowerChartBox', inputPlots.measured_power_png, cacheBust);
+                showImage('measuredPowerImg', 'measuredPowerIcon', 'measuredPowerChartBox', inputPlots.measured_power_png, cacheBust, options);
             }
             if (inputPlots.irradiance_png) {
-                showImage('irradianceImg', 'irradianceIcon', 'irradianceChartBox', inputPlots.irradiance_png, cacheBust);
+                showImage('irradianceImg', 'irradianceIcon', 'irradianceChartBox', inputPlots.irradiance_png, cacheBust, options);
             }
         }
 

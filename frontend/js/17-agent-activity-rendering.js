@@ -370,15 +370,30 @@
             }
         }
 
+        function dashboardOwnsJobPoll(jobId) {
+            return (jobId === latestJobId && ['queued', 'running'].includes(currentRunState?.state)) ||
+                (jobId === annualLatestJobId && ['queued', 'running'].includes(annualRunState?.state));
+        }
+
+        function invalidateAgentJobPoll(jobId) {
+            const timer = agentJobPollTimers.get(jobId);
+            if (timer) clearTimeout(timer);
+            agentJobPollTimers.delete(jobId);
+            const request = agentJobPollRequests.get(jobId);
+            agentJobPollRequests.delete(jobId);
+            request?.controller.abort();
+        }
+
         function scheduleAgentJobPoll(jobId, delay = 800, failureCount = 0) {
             const current = agentJobSnapshots.get(jobId);
-            if (!jobId || isAgentJobTerminal(current)) return;
+            if (!jobId || !current || isAgentJobTerminal(current) || dashboardOwnsJobPoll(jobId)) return;
             const existing = agentJobPollTimers.get(jobId);
             if (existing) clearTimeout(existing);
             agentJobPollTimers.set(jobId, setTimeout(() => pollAgentJob(jobId, failureCount), delay));
         }
 
         function forgetUnavailableAgentJob(jobId) {
+            invalidateAgentJobPoll(jobId);
             const timer = agentJobPollTimers.get(jobId);
             if (timer) clearTimeout(timer);
             agentJobPollTimers.delete(jobId);
@@ -411,15 +426,26 @@
 
         async function pollAgentJob(jobId, failureCount = 0) {
             agentJobPollTimers.delete(jobId);
+            const previous = agentJobSnapshots.get(jobId);
+            if (!previous || isAgentJobTerminal(previous) || dashboardOwnsJobPoll(jobId) ||
+                agentJobPollRequests.has(jobId)) return;
+            const request = { controller: new AbortController(), snapshot: previous };
+            agentJobPollRequests.set(jobId, request);
+            const isCurrent = () => agentJobPollRequests.get(jobId) === request &&
+                agentJobSnapshots.get(jobId) === request.snapshot;
             try {
-                const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                const response = await fetchWithDashboardTimeout('/api/status/' + encodeURIComponent(jobId), {
+                    cache: 'no-store', signal: request.controller.signal,
+                });
+                if (!isCurrent()) return;
                 if (response.status === 404) {
                     forgetUnavailableAgentJob(jobId);
                     return;
                 }
                 const data = await readAgentResponse(response, 'Scenario status is temporarily unavailable.');
-                const previous = agentJobSnapshots.get(jobId);
+                if (!isCurrent()) return;
                 putAgentJob(data);
+                request.snapshot = agentJobSnapshots.get(jobId);
                 syncTrackedMainRunFromAgentJob(data);
                 if (isAgentParameterSweepJob(data) && agentActivityFilter === 'active') {
                     const sweepId = agentParameterSweepMetadata(data)?.sweep_id;
@@ -438,7 +464,8 @@
                 if (isAgentJobTerminal(data)) await refreshAgentState(false);
                 else scheduleAgentJobPoll(jobId, 800, 0);
             } catch {
-                const current = agentJobSnapshots.get(jobId) || { job_id: jobId };
+                if (!isCurrent()) return;
+                const current = agentJobSnapshots.get(jobId);
                 const nextFailureCount = failureCount + 1;
                 const reconnecting = nextFailureCount <= AGENT_POLL_MAX_FAILURES;
                 putAgentJob({
@@ -447,6 +474,7 @@
                         ? 'Reconnecting to model worker (' + nextFailureCount + '/' + AGENT_POLL_MAX_FAILURES + ')...'
                         : 'Status unavailable after repeated attempts',
                 });
+                request.snapshot = agentJobSnapshots.get(jobId);
                 renderAgentJobUpdate(agentJobSnapshots.get(jobId));
                 if (reconnecting) {
                     scheduleAgentJobPoll(
@@ -454,6 +482,14 @@
                         Math.min(STATUS_POLL_MAX_DELAY_MS, 900 * (2 ** Math.max(0, nextFailureCount - 1))),
                         nextFailureCount
                     );
+                }
+            } finally {
+                if (agentJobPollRequests.get(jobId) === request) {
+                    agentJobPollRequests.delete(jobId);
+                    // A refresh or local action superseded this read while it was in flight.
+                    if (agentJobSnapshots.get(jobId) !== request.snapshot) {
+                        scheduleAgentJobPoll(jobId, 250);
+                    }
                 }
             }
         }
@@ -511,6 +547,7 @@
         }
 
         async function recoverSavedNonterminalActionJobs() {
+            const revision = agentStateRefreshRevision;
             const missingJobIds = savedNonterminalActionJobIds()
                 .filter((jobId) => !agentJobSnapshots.has(jobId));
             await Promise.all(missingJobIds.map(async (jobId) => {
@@ -519,11 +556,14 @@
                         '/api/status/' + encodeURIComponent(jobId),
                         { cache: 'no-store' }
                     );
+                    if (revision !== agentStateRefreshRevision || agentJobSnapshots.has(jobId)) return;
                     if (response.status === 404) {
                         forgetUnavailableAgentJob(jobId);
                         return;
                     }
-                    putAgentJob(await readAgentResponse(response, 'Could not restore this scenario run.'));
+                    const job = await readAgentResponse(response, 'Could not restore this scenario run.');
+                    if (revision !== agentStateRefreshRevision || agentJobSnapshots.has(jobId)) return;
+                    putAgentJob(job);
                 } catch (_) {
                     // Preserve the saved card so a later manual refresh can retry it.
                 }

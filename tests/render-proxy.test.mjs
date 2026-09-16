@@ -3,7 +3,9 @@ import test from "node:test";
 
 import { isAllowedApiPath, proxyRenderRequest } from "../lib/render-proxy.ts";
 
-const allowedAutonomyRoutes = [
+// These routes belonged to the retired feature. Keep the full denial matrix so
+// historical URLs cannot regain access through the shared proxy accidentally.
+const retiredAutonomyRoutes = [
   ["autonomy", "cases"],
   ["autonomy", "sources"],
   ["autonomy", "cases", "case_abc123"],
@@ -82,11 +84,8 @@ const rejectedAutonomyRoutes = [
   ],
 ];
 
-test("allows only the exact Autonomy evidence, execution, decision, sign-off, and report routes", () => {
-  for (const path of allowedAutonomyRoutes) {
-    assert.equal(isAllowedApiPath(path), true, `expected allowed: ${path.join("/")}`);
-  }
-  for (const path of rejectedAutonomyRoutes) {
+test("rejects all retired Autonomy routes, including former valid routes", () => {
+  for (const path of [...retiredAutonomyRoutes, ...rejectedAutonomyRoutes]) {
     assert.equal(isAllowedApiPath(path), false, `expected rejected: ${path.join("/")}`);
   }
 });
@@ -116,7 +115,7 @@ test("allows only exact standalone data collection routes", () => {
   }
 });
 
-test("proxy service credentials cannot authorize human sign-off", async () => {
+test("service credentials and historical human-action headers cannot revive retired routes", async () => {
   const originalFetch = globalThis.fetch;
   const originalUser = process.env.RENDER_BASIC_USER;
   const originalPassword = process.env.RENDER_BASIC_PASSWORD;
@@ -145,9 +144,9 @@ test("proxy service credentials cannot authorize human sign-off", async () => {
       { params: Promise.resolve({ path: ["autonomy", "cases", "case_abc123", "decision-briefs", "dbr_abc123", "signoffs"] }) },
       "api",
     );
-    assert.equal(response.status, 403);
+    assert.equal(response.status, 404);
     assert.equal(upstreamCalled, false);
-    assert.match(await response.text(), /directly authenticated backend/i);
+    assert.match(await response.text(), /unknown dashboard endpoint/i);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalUser === undefined) delete process.env.RENDER_BASIC_USER;

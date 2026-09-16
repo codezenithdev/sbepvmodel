@@ -497,6 +497,10 @@
         }
 
         async function openAgentActivityFromChat(card) {
+            const revision = ++agentActivityOpenRevision;
+            const mutationRevision = agentMutationRevision;
+            const isCurrent = () => revision === agentActivityOpenRevision &&
+                mutationRevision === agentMutationRevision;
             const jobIds = Array.from(new Set(
                 [card.job_id, ...(card.job_ids || [])].filter(Boolean).map(String)
             ));
@@ -505,13 +509,17 @@
                 const unavailableJobIds = new Set();
                 await Promise.all(missingJobIds.map(async (jobId) => {
                     try {
-                        const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
-                        if (response.ok) putAgentJob(await response.json());
-                        else if (response.status === 404) unavailableJobIds.add(jobId);
+                        const response = await fetchWithDashboardTimeout('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                        if (response.ok) {
+                            const job = await response.json();
+                            if (!isCurrent()) return;
+                            if (!agentJobSnapshots.has(jobId)) putAgentJob(job);
+                        } else if (response.status === 404 && isCurrent()) unavailableJobIds.add(jobId);
                     } catch (_) {
                         // The card remains readable even if its durable run cannot be loaded right now.
                     }
                 }));
+                if (!isCurrent()) return;
                 if (jobIds.length && !jobIds.some((jobId) => agentJobSnapshots.has(jobId))) {
                     if (unavailableJobIds.size === jobIds.length) {
                         updateStoredChatActionCardStatus(
@@ -549,16 +557,23 @@
         }
 
         async function explainChatCardJob(jobId) {
+            const mutationRevision = agentMutationRevision;
             let job = agentJobSnapshots.get(jobId);
             if (!job) {
                 try {
-                    const response = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
-                    job = await readAgentResponse(response, 'Could not load this completed run.');
-                    putAgentJob(job);
+                    const response = await fetchWithDashboardTimeout('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                    const restored = await readAgentResponse(response, 'Could not load this completed run.');
+                    if (mutationRevision !== agentMutationRevision) return;
+                    job = agentJobSnapshots.get(jobId) || restored;
+                    if (!agentJobSnapshots.has(jobId)) putAgentJob(job);
                     renderAgentActivity();
                 } catch (error) {
-                    appendSystemNotice(error.message || 'Could not load this completed run.', 'error');
-                    return;
+                    if (mutationRevision !== agentMutationRevision) return;
+                    job = agentJobSnapshots.get(jobId);
+                    if (!job) {
+                        appendSystemNotice(error.message || 'Could not load this completed run.', 'error');
+                        return;
+                    }
                 }
             }
             requestAgentCompletionExplanation(job);

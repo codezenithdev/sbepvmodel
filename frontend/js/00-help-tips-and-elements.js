@@ -488,6 +488,11 @@
             promoted_baselines: { validation: null, annual: null },
         };
         const agentJobPollTimers = new Map();
+        const agentJobPollRequests = new Map();
+        let agentStateRefreshRevision = 0;
+        let agentWorkspaceRevision = 0;
+        let agentMutationRevision = 0;
+        let agentActivityOpenRevision = 0;
         const agentJobStartedAt = new Map();
         const agentJobSnapshots = new Map();
         const agentProposalSnapshots = new Map();

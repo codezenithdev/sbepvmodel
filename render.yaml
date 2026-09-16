@@ -1,6 +1,6 @@
 # Render service definition for the SB Energy dashboard backend.
 #
-# Codifies what docs/RENDER_DEPLOYMENT.md describes in prose so the deployment is
+# Codifies what README.md's deployment section describes so the deployment is
 # reviewable in git. Values marked `sync: false` are set in the Render dashboard
 # and must never be committed.
 #

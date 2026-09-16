@@ -52,7 +52,7 @@ function assembledDashboard() {
   return document;
 }
 
-function browserMocks() {
+function browserMocks(options = {}) {
   const collectionRequest = {
     from_date: '2026-08-01', from_time: '01:15',
     to_date: '2026-08-02', to_time: '22:30',
@@ -106,6 +106,9 @@ function browserMocks() {
       operating_limit: {curtailment_enabled: true, curtailment_limit_kw: 125},
     },
   };
+  const sourceRecords = options.additionalTeaSource
+    ? [sourceRecord, {...sourceRecord, source_annual_job_id: 'annual-browser-compatible'}]
+    : [sourceRecord];
 
   window.__sbepvBrowserSmoke = {
     collectionGets: 0,
@@ -141,7 +144,7 @@ function browserMocks() {
         return new Promise((resolve) => {
           window.__sbepvBrowserSmoke.releaseTeaSource = () => {
             window.__sbepvBrowserSmoke.releaseTeaSource = null;
-            resolve(json({sources: [sourceRecord]}));
+            resolve(json({sources: sourceRecords}));
           };
         });
       }
@@ -153,7 +156,7 @@ function browserMocks() {
           else signal?.addEventListener('abort', abort, {once: true});
         });
       }
-      return json({sources: [sourceRecord]});
+      return json({sources: sourceRecords});
     }
     return json({detail: 'Not mocked by the bounded browser smoke test.'}, 404);
   };
@@ -325,6 +328,234 @@ test('collection recovery and TEA source retry remain operable in a browser', as
   );
   await expect(page.locator('#collectDataError')).toBeVisible();
   await expect(page.locator('#collectDataSubmit')).toBeEnabled();
+});
+
+test('tabbed TEA assumptions preserve Annual source selection, edits, review, and cost basis', async ({page}) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.addInitScript(browserMocks, {additionalTeaSource: true});
+  const html = assembledDashboard();
+  // All page resources and API calls remain local fixtures; no jobs are queued.
+  await page.route('**/*', async (route) => {
+    if (route.request().url() === 'http://dashboard.test/') {
+      await route.fulfill({status: 200, contentType: 'text/html', body: html});
+    } else {
+      await route.fulfill({status: 404, contentType: 'application/json', body: '{}'});
+    }
+  });
+  await page.goto('http://dashboard.test/');
+  await expect(page.locator('#technoeconomicStandaloneSourceStatus'))
+    .toHaveText('Calibrated annual energy is ready');
+  await page.locator('#technoeconomicTab').click();
+  await page.locator('#technoeconomicEditAssumptionsBtn').click();
+  const dialog = page.locator('#technoeconomicAssumptionsDialog');
+  const projectTab = dialog.getByRole('tab', {name: 'Project', exact: true});
+  const costsTab = dialog.getByRole('tab', {name: 'System costs', exact: true});
+  const financeTab = dialog.getByRole('tab', {name: 'Finance', exact: true});
+  const reviewTab = dialog.getByRole('tab', {name: 'Review', exact: true});
+  const next = dialog.getByRole('button', {name: 'Next', exact: true});
+  const back = dialog.getByRole('button', {name: 'Back', exact: true});
+  const reviewAndCalculate = dialog.getByRole('button', {name: 'Review and calculate', exact: true});
+  const reviewSummary = page.locator('#technoeconomicAssumptionsReviewSummary');
+  const source = page.locator('#technoeconomicStandaloneSourceSelect');
+  const year = page.locator('#technoeconomicStandaloneCostYear');
+  const optimizerPrice = page.locator('#technoeconomicSharedOptimizerPrice');
+  const acceptance = page.locator('#technoeconomicStandaloneAccept');
+  const omLow = page.locator('#technoeconomicStandaloneSolectriaCostLines [data-tea-v4-cost-line="Om"] [data-tea-v4-param="low"]');
+  const omHigh = page.locator('#technoeconomicStandaloneSolectriaCostLines [data-tea-v4-cost-line="Om"] [data-tea-v4-param="high"]');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('tab')).toHaveCount(4);
+  await expect(dialog.getByRole('tabpanel', {includeHidden: true})).toHaveCount(4);
+  await expect(dialog.getByRole('tabpanel')).toHaveCount(1);
+  await expect(projectTab).toHaveAttribute('aria-selected', 'true');
+  await expect(projectTab).toHaveAttribute('tabindex', '0');
+  for (const tab of [projectTab, costsTab, financeTab, reviewTab]) {
+    const panelId = await tab.getAttribute('aria-controls');
+    expect(panelId).toBeTruthy();
+    await expect(page.locator(`[id="${panelId}"]`)).toHaveAttribute('role', 'tabpanel');
+    await expect(page.locator(`[id="${panelId}"]`))
+      .toHaveAttribute('aria-labelledby', await tab.getAttribute('id'));
+  }
+  await expect(source).toBeVisible();
+  await expect(year).toBeEditable();
+  await expect(year).toHaveValue('2024');
+  await expect(source).toHaveValue(SOURCE_ID);
+  await expect(back).toBeHidden();
+  await expect(next).toBeVisible();
+  await expect(reviewAndCalculate).toBeHidden();
+  await next.click();
+  await expect(costsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(costsTab).toBeFocused();
+  await expect(back).toBeVisible();
+  await next.click();
+  await expect(financeTab).toHaveAttribute('aria-selected', 'true');
+  await next.click();
+  await expect(reviewTab).toHaveAttribute('aria-selected', 'true');
+  await expect(next).toBeHidden();
+  await expect(reviewAndCalculate).toBeVisible();
+  await expect(page.locator('#technoeconomicConfirmDialog')).not.toBeVisible();
+  await back.click();
+  await expect(financeTab).toHaveAttribute('aria-selected', 'true');
+  await expect(financeTab).toBeFocused();
+  await expect(next).toBeVisible();
+  await expect(reviewAndCalculate).toBeHidden();
+  await back.click();
+  await expect(costsTab).toHaveAttribute('aria-selected', 'true');
+  await back.click();
+  await expect(projectTab).toHaveAttribute('aria-selected', 'true');
+  await expect(back).toBeHidden();
+  await expect(source).toHaveValue(SOURCE_ID);
+  await projectTab.press('ArrowRight');
+  await expect(costsTab).toBeFocused();
+  await expect(costsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(projectTab).toHaveAttribute('aria-selected', 'false');
+  await expect(projectTab).toHaveAttribute('tabindex', '-1');
+  await expect(source).toBeHidden();
+  await costsTab.press('End');
+  await expect(reviewTab).toBeFocused();
+  await expect(reviewTab).toHaveAttribute('aria-selected', 'true');
+  await reviewTab.press('Home');
+  await expect(projectTab).toBeFocused();
+  await projectTab.press('ArrowLeft');
+  await expect(reviewTab).toBeFocused();
+  await reviewTab.press('Home');
+  await expect(projectTab).toHaveAttribute('aria-selected', 'true');
+  await financeTab.click();
+  await expect(page.locator('#technoeconomicStandaloneSeed')).toHaveValue('20260916');
+  await expect(page.locator('#technoeconomicStandaloneDiscountFamily')).toHaveValue('uniform');
+  await expect(page.locator('#technoeconomicStandaloneDegradationFamily')).toHaveValue('triangular');
+  await expect(page.locator('#technoeconomicSharedDcCapacity')).toHaveValue('134');
+  await costsTab.click();
+  await expect(optimizerPrice).toHaveValue('37.75');
+  await expect(omLow).toHaveValue('8');
+  await expect(omHigh).toHaveValue('13');
+  await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('150.08 million');
+  await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('154.909157 million');
+  await expect(page.locator('#technoeconomicStandaloneCostPreset')).toHaveText('Default assumptions');
+  await expect(page.locator('#technoeconomicAssumptionStatus')).toBeHidden();
+  await expect(page.locator('#technoeconomicRestoreApprovedBtn')).toHaveText('Restore defaults');
+  await dialog.screenshot({path: test.info().outputPath('tea-tabbed-costs-desktop.png')});
+
+  await reviewTab.click();
+  await acceptance.check();
+  await back.click();
+  await expect(financeTab).toHaveAttribute('aria-selected', 'true');
+  // Footer navigation follows a directly selected tab and does not clear acceptance.
+  await costsTab.click();
+  await next.click();
+  await expect(financeTab).toHaveAttribute('aria-selected', 'true');
+  await next.click();
+  await expect(reviewTab).toHaveAttribute('aria-selected', 'true');
+  await expect(acceptance).toBeChecked();
+  await projectTab.click();
+  await year.fill('2030');
+  await expect(acceptance).not.toBeChecked();
+  await costsTab.click();
+  await optimizerPrice.fill('40');
+  await omLow.fill('9');
+  await omHigh.fill('14');
+  await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('155.14108 million');
+  await expect(page.locator('#technoeconomicStandaloneCostPreset')).toHaveText('Modified assumptions');
+  await reviewTab.click();
+  await expect(reviewSummary).toContainText('2030');
+  await expect(reviewSummary).toContainText('103,077');
+  await expect(reviewSummary).toContainText('$40');
+  await acceptance.check();
+  await projectTab.click();
+  await source.selectOption('annual-browser-compatible');
+  await expect(acceptance).not.toBeChecked();
+  await expect(year).toHaveValue('2030');
+  await costsTab.click();
+  await expect(optimizerPrice).toHaveValue('40');
+  await expect(omLow).toHaveValue('9');
+  await expect(omHigh).toHaveValue('14');
+  await page.locator('#technoeconomicAssumptionsFooterCloseBtn').click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.locator('#technoeconomicScenarioInputs')).toContainText('USD (real 2030)');
+  // Closing flushes the draft synchronously, so an immediate reload is safe.
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem(
+    'sbepv.technoeconomic.paired-draft.v3',
+  ) || '{}').source_annual_job_id)).toBe('annual-browser-compatible');
+
+  await page.reload();
+  await expect(page.locator('#technoeconomicStandaloneSourceStatus'))
+    .toHaveText('Calibrated annual energy is ready');
+  await page.locator('#technoeconomicTab').click();
+  await page.locator('#technoeconomicEditAssumptionsBtn').click();
+  await expect(projectTab).toHaveAttribute('aria-selected', 'true');
+  await expect(source).toHaveValue('annual-browser-compatible');
+  await expect(year).toHaveValue('2030');
+  await costsTab.click();
+  await expect(optimizerPrice).toHaveValue('40');
+  await expect(omLow).toHaveValue('9');
+  await expect(omHigh).toHaveValue('14');
+  await reviewTab.click();
+  await expect(reviewSummary).toContainText('annual-browser-compatible');
+  await expect(reviewSummary).toContainText('2030');
+  await expect(reviewSummary).toContainText('$40');
+  await expect(acceptance).not.toBeChecked();
+
+  // A hidden invalid cost must reveal its tab when the user reviews the run.
+  await costsTab.click();
+  await optimizerPrice.fill('');
+  await reviewTab.click();
+  await acceptance.check();
+  await page.locator('#technoeconomicAssumptionsReviewBtn').click();
+  await expect(dialog).toBeVisible();
+  await expect(costsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(optimizerPrice).toBeVisible();
+  await expect(page.locator('#technoeconomicStandaloneFormErrors')).toBeVisible();
+  await expect(page.locator('#technoeconomicConfirmDialog')).not.toBeVisible();
+  await optimizerPrice.fill('40');
+  await reviewTab.click();
+  await acceptance.check();
+  await page.locator('#technoeconomicAssumptionsReviewBtn').click();
+  const confirmation = page.locator('#technoeconomicConfirmDialog');
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText('2030');
+  await expect(confirmation).toContainText('103,077 optimizers × $40');
+  await expect(confirmation).toContainText('134,000,000 Wdc');
+  await expect(confirmation).toContainText('one draw applied to both systems');
+  await expect(confirmation).not.toContainText('Proposed real 2024 dollars');
+  await expect(confirmation).toContainText('real 2030 USD/kWac-year');
+  await page.locator('#technoeconomicConfirmCancelBtn').click();
+  await page.locator('#technoeconomicEditAssumptionsBtn').click();
+  await page.locator('#technoeconomicRestoreApprovedBtn').click();
+  await projectTab.click();
+  await expect(source).toHaveValue('annual-browser-compatible');
+  await expect(year).toHaveValue('2024');
+  await costsTab.click();
+  await expect(optimizerPrice).toHaveValue('37.75');
+  await expect(omLow).toHaveValue('8');
+  await expect(omHigh).toHaveValue('13');
+  await expect(acceptance).not.toBeChecked();
+  await expect(page.locator('#technoeconomicStandaloneCostPreset')).toHaveText('Default assumptions');
+  await page.setViewportSize({width: 390, height: 844});
+  await expect(optimizerPrice).toBeVisible();
+  await expect(back).toBeVisible();
+  await expect(next).toBeVisible();
+  await expect(page.locator('#technoeconomicAssumptionsFooterCloseBtn')).toBeHidden();
+  await expect(page.locator('#technoeconomicAssumptionsCloseBtn')).toBeVisible();
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await dialog.screenshot({path: test.info().outputPath('tea-tabbed-costs-mobile.png')});
+  await next.click();
+  await expect(financeTab).toHaveAttribute('aria-selected', 'true');
+  await next.click();
+  await expect(reviewTab).toHaveAttribute('aria-selected', 'true');
+  await expect(back).toBeVisible();
+  await expect(next).toBeHidden();
+  await expect(reviewAndCalculate).toBeVisible();
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await expect(reviewSummary).toBeVisible();
+  await dialog.screenshot({path: test.info().outputPath('tea-tabbed-review-mobile.png')});
+  await projectTab.click();
+  await page.locator('#technoeconomicStandaloneOpenAnnualBtn').click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.locator('#annualTab')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#technoeconomicTab').click();
+  await page.locator('#technoeconomicEditAssumptionsBtn').click();
+  await expect(source).toHaveValue('annual-browser-compatible');
+  expect(pageErrors).toEqual([]);
 });
 
 test('annual CDF interpolation follows selected series and additional complete years', async ({page}) => {
@@ -602,7 +833,7 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   }
   await page.evaluate(() => invalidateTechnoeconomicWorkspace());
   await expect(page.locator('#technoeconomicStandaloneCostPreset'))
-    .toHaveText('Cost preset: NREL 2024 ATB.');
+    .toHaveText('Default assumptions');
   await expect(pdfLink).toBeHidden();
   await expect(wordLink).toBeHidden();
   await expect(chart).not.toHaveAttribute('data-chart-openable');

@@ -14,8 +14,8 @@ Apply it alongside the current request and the host's instructions and permissio
 It does not configure the dashboard's Solar Agent or change Codex settings for
 other projects. Keep these operating rules here so future tasks can load them.
 
-Human-facing setup lives in [README.md](README.md); dashboard build details in
-[frontend/README.md](frontend/README.md).
+Human-facing setup and the consolidated project manual live in [README.md](README.md),
+including [frontend build details](README.md#frontend-development).
 
 ## Approval boundary
 
@@ -131,7 +131,7 @@ detectable and a lost lease cannot overwrite a newer attempt.
 Run commands from the repository root using a supported environment. Reuse the
 existing environment; install dependencies only when the task needs them.
 **Python 3.12 or newer is required** by `pyproject.toml`; prefer Python 3.13 to
-match `docs/RENDER_DEPLOYMENT.md`. `requirements.txt` pins `numpy==2.5.0` and
+match [deployment configuration](README.md#deployment). `requirements.txt` pins `numpy==2.5.0` and
 `scipy==1.18.0`. Check the actual interpreter before running Python checks.
 `package.json` requires Node.js 22.13.0 or newer.
 
@@ -158,7 +158,7 @@ environment can be invoked explicitly as `.\.venv\Scripts\python.exe`.
 `npm run build` validates and builds the separate vinext/Cloudflare frontend;
 `npm run typecheck` checks TypeScript. `npm run test:browser:smoke` runs the
 existing bounded Playwright smoke tests when browser testing is in scope; see
-[frontend/README.md](frontend/README.md) for browser setup. A successful build
+[README.md](README.md#testing) for browser setup. A successful build
 alone is not proof of browser behaviour or numerical correctness.
 
 ## Layout
@@ -389,19 +389,18 @@ from sbepv.store import AgentStore       # was: from agent_store import AgentSto
 from sbepv.api import config, state      # new: patch targets that moved out of app
 ```
 
-`tests/__init__.py` puts `src/` on `sys.path`, so no install step is needed.
+`tests/__init__.py` puts `src/` on `sys.path`, so no install step is needed. It also
+sets a temporary `PV_DASHBOARD_OUTPUT_DIR` before API imports when the caller has
+not set one. An explicit override must point to a safe test location.
 
 ## Known rough edges
 
 Pre-existing, deliberately not fixed because each changes behaviour:
 
-- `ingest.bazefield.run_historian` calls `load_dotenv()` with a CWD-relative default
-  while the API loads the same file by absolute path — a CLI run from elsewhere
-  reports "No API key found" though `.env` exists.
 - Run metadata still records `"script": "sbe_pv_model.py"`; it is provenance data
   compared across runs.
 - `src/run_pipeline.py` has no importers and no test coverage.
-- `docs/RENDER_DEPLOYMENT.md` pins Python 3.13.14; nothing enforces that locally
+- `render.yaml` pins Python 3.13.14; nothing enforces that locally
   beyond the `requires-python = ">=3.12"` floor in `pyproject.toml`.
 - `tests/test_bazefield_quality_factor_comparison.py:115` writes into a repo-root
   `analysis/` directory that it does not create and that `.gitignore` excludes, so

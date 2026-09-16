@@ -22,14 +22,14 @@ Quick start
     # open a new terminal so the variable is visible, then:
 
     # Pull the static STAC1 wide CSV for the configured window:
-    python bazefield_historian.py -o stac1.csv
+    python src/sbepv/ingest/bazefield.py -o stac1.csv
 
     # Discovery still works:
-    python bazefield_historian.py --list-sites
-    python bazefield_historian.py --list-points 1418E76F0E846000
+    python src/sbepv/ingest/bazefield.py --list-sites
+    python src/sbepv/ingest/bazefield.py --list-points 1418E76F0E846000
 
     # Ad hoc override (long format, pass BOTH; still uses the in-code time window):
-    python bazefield_historian.py --object-ids 141A49D30A046000 --points ActivePower
+    python src/sbepv/ingest/bazefield.py --object-ids 141A49D30A046000 --points ActivePower
 
 See README.md for more.
 """
@@ -43,6 +43,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
+
+# Direct script execution has no package search path, including under python -I.
+# Find the same project landmarks as paths.discover_project_root before importing
+# that shared helper; installed/module execution already has its package context.
+if not __package__:
+    for _script_parent in Path(__file__).resolve().parents:
+        if (_script_parent / "pyproject.toml").is_file() and (
+            _script_parent / "src" / "sbepv"
+        ).is_dir():
+            sys.path.insert(0, str(_script_parent / "src"))
+            break
+
+from sbepv import paths
 
 DEFAULT_BASE_URL = "https://bazefield.sbenergy-us.com/Bazefield.Services/api/"
 HTTP_TIMEOUT_SECONDS = 60
@@ -147,11 +161,14 @@ CSV_COLUMNS = [
 ]
 
 
-def load_dotenv(path=".env"):
+def load_dotenv(path=None):
     """Load KEY=VALUE pairs from a .env file into os.environ (without overriding).
 
-    Minimal, dependency-free. Existing environment variables win.
+    Defaults to the source checkout's .env, independent of the launch directory.
+    Explicit file paths remain supported. Existing environment variables win.
     """
+    if path is None:
+        path = paths.discover_project_root(Path(__file__)) / ".env"
     if not os.path.isfile(path):
         return
     with open(path, "r", encoding="utf-8") as fh:
@@ -515,7 +532,7 @@ def run_historian(
 def main(argv=None):
     args = build_parser().parse_args(argv)
 
-    load_dotenv()  # optional: pick up a local .env if present
+    load_dotenv()  # optional: pick up the source checkout's .env if present
     base_url = args.base_url or os.environ.get("BAZEFIELD_BASE_URL") or DEFAULT_BASE_URL
     api_key = args.api_key or os.environ.get("BAZEFIELD_API_KEY")
 

@@ -211,12 +211,13 @@
 
         async function pollAnnualStatus(jobId, pollRevision = annualPollRevision, failureCount = 0) {
             if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
+            invalidateAgentJobPoll(jobId);
             if (annualPollTimer) {
                 clearTimeout(annualPollTimer);
                 annualPollTimer = null;
             }
             try {
-                const res = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                const res = await fetchWithDashboardTimeout('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
                 if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
                 if (!res.ok) {
                     if (res.status === 404) {

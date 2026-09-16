@@ -303,6 +303,16 @@ async def require_dashboard_basic_auth(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def prevent_api_response_caching(request: Request, call_next):
+    """Keep mutable API responses, including auth errors, out of HTTP caches."""
+
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
 @app.get("/")
 def index() -> HTMLResponse:
     return HTMLResponse(

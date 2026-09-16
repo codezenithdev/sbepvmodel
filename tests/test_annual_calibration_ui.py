@@ -19,7 +19,7 @@ class AnnualCalibrationUiTests(unittest.TestCase):
             'id="annualCalibrationWindow"',
             'id="annualModifiedCount"',
             'id="annualRestoreSettingsBtn"',
-            "fetch('/api/current-calibration', { cache: 'no-store' })",
+            "fetchWithDashboardTimeout('/api/current-calibration', { cache: 'no-store' })",
             "body.calibration_baseline_job_id = annualCalibrationBaseline.job_id",
             "function applyAnnualCalibrationSettings(settings)",
             "function renderAnnualSettingDiffs()",

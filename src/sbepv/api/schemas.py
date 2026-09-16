@@ -894,6 +894,9 @@ class CapexAllocationRequest(StrictTechnoeconomicRequest):
 
 class SharedCapexReportContext(StrictTechnoeconomicRequest):
     preset_id: Literal["thursday-2026-09-17-v1"]
+    assumptions_status: Literal["approved_defaults", "modified"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     limitations: NonemptyTechnoeconomicText
     component_allocations: list[CapexAllocationRequest] = Field(max_length=20)
 

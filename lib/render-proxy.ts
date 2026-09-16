@@ -3,6 +3,9 @@ const DEFAULT_RENDER_ORIGIN = "https://sbepvmodel.onrender.com";
 const REQUEST_HEADERS = [
   "accept",
   "content-type",
+  "if-modified-since",
+  "if-none-match",
+  "if-range",
   "range",
 ] as const;
 const RESPONSE_HEADERS = [
@@ -15,6 +18,7 @@ const RESPONSE_HEADERS = [
   "etag",
   "last-modified",
   "retry-after",
+  "vary",
 ] as const;
 
 type RouteContext = {
@@ -22,7 +26,10 @@ type RouteContext = {
 };
 
 function jsonError(detail: string, status: number): Response {
-  return Response.json({ detail }, { status });
+  return Response.json({ detail }, {
+    status,
+    headers: { "Cache-Control": "private, no-store" },
+  });
 }
 
 function basicAuthorization(): string | null {
@@ -116,6 +123,7 @@ export async function proxyRenderRequest(
     headers,
     redirect: "follow",
   };
+  if (prefix === "api") init.cache = "no-store";
   if (method !== "GET" && method !== "HEAD") {
     init.body = await request.arrayBuffer();
   }
@@ -137,6 +145,7 @@ export async function proxyRenderRequest(
     if (value) responseHeaders.set(name, value);
   }
   responseHeaders.set("X-Content-Type-Options", "nosniff");
+  if (prefix === "api") responseHeaders.set("Cache-Control", "private, no-store");
 
   return new Response(method === "HEAD" ? null : upstream.body, {
     status: upstream.status,

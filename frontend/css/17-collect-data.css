@@ -151,8 +151,12 @@
 
         .collect-data-window-grid {
             display: grid;
-            grid-template-columns: repeat(4, minmax(120px, 1fr));
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 10px;
+        }
+
+        .collect-data-form .date-input {
+            min-height: 44px;
         }
 
         .collect-data-time-note {
@@ -265,8 +269,8 @@
         }
 
         .collect-data-collapse-toggle {
-            width: 40px;
-            height: 40px;
+            width: 44px;
+            height: 44px;
             flex: 0 0 auto;
             display: grid;
             place-items: center;
@@ -330,6 +334,7 @@
         }
 
         .collect-data-summary div {
+            min-width: 0;
             padding: 12px;
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -343,6 +348,7 @@
         }
 
         .collect-data-summary dd {
+            overflow-wrap: anywhere;
             margin-top: 4px;
             color: var(--text);
             font-size: 18px;
@@ -438,6 +444,14 @@
         }
 
         @media (max-width: 560px) {
+            .collect-data-form .date-input {
+                font-size: 16px;
+            }
+
+            .collect-data-interval-field .interval-row {
+                grid-template-columns: minmax(60px, 0.6fr) minmax(0, 1fr);
+            }
+
             .collect-data-header,
             .collect-data-actions,
             .collect-data-status-heading {

@@ -289,12 +289,13 @@
 
         async function pollStatus(jobId, pollRevision = validationPollRevision, failureCount = 0) {
             if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
+            invalidateAgentJobPoll(jobId);
             if (pollTimer) {
                 clearTimeout(pollTimer);
                 pollTimer = null;
             }
             try {
-                const res = await fetch('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                const res = await fetchWithDashboardTimeout('/api/status/' + encodeURIComponent(jobId), { cache: 'no-store' });
                 if (pollRevision !== validationPollRevision || jobId !== latestJobId) return;
                 if (!res.ok) {
                     if (res.status === 404) {
@@ -327,7 +328,7 @@
                 renderAgentJobUpdate(data);
                 if (data.input_plots) {
                     latestInputPlots = data.input_plots;
-                    applyInputPlots(data.input_plots);
+                    applyInputPlots(data.input_plots, true, { reuseExisting: true });
                 }
                 saveDashboardState();
 
@@ -401,4 +402,3 @@
                 await refreshAgentState(false);
             }
         }
-

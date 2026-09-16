@@ -15,6 +15,8 @@
         }
 
         function setChatOpen(open, options = {}) {
+            // Collection hides Solar Agent, so a restored drawer must not trap focus.
+            open = !!open && !document.body.classList.contains('dashboard-mode-collect-data');
             const focus = options.focus !== false;
             const persist = options.persist !== false;
             if (open && window.savedResultsDrawerReady === true) {
@@ -74,6 +76,11 @@
             const loadingBubble = appendMessage('assistant', '', { loading: true });
             const chatController = new AbortController();
             activeChatAbortController = chatController;
+            const workspaceRevision = agentWorkspaceRevision;
+            const originConversation = activeChatConversation();
+            const isCurrent = () => activeChatAbortController === chatController &&
+                workspaceRevision === agentWorkspaceRevision &&
+                activeChatConversation() === originConversation;
             let chatRequestTimedOut = false;
             const chatTimeout = window.setTimeout(() => {
                 chatRequestTimedOut = true;
@@ -100,9 +107,12 @@
                 let data = {};
                 try {
                     data = await res.json();
-                } catch (_) {
+                } catch (error) {
+                    if (error?.name === 'AbortError' || chatController.signal.aborted) throw error;
                     // Keep a status-based error below if the body is not JSON.
                 }
+                if (!isCurrent()) return;
+                chatController.signal.throwIfAborted();
                 if (!res.ok) {
                     const detail = data.detail || 'Chat request failed (' + res.status + ')';
                     throw new Error(Array.isArray(detail) ? detail[0].msg : detail);
@@ -135,6 +145,7 @@
                 saveDashboardState();
                 scrollChatToBottom();
             } catch (e) {
+                if (!isCurrent()) return;
                 const msg = e?.name === 'AbortError'
                     ? (chatRequestTimedOut
                         ? 'Solar Agent took too long to respond. The wait was stopped after 60 seconds; you can retry.'
@@ -146,11 +157,13 @@
                 clearTimeout(chatTimeout);
                 if (activeChatAbortController === chatController) {
                     activeChatAbortController = null;
-                }
-                setSending(false);
-                renderChatFollowups();
-                if (!isChatMobile() && (document.activeElement === chatInput || document.activeElement === document.body)) {
-                    chatInput.focus();
+                    setSending(false);
+                    if (workspaceRevision === agentWorkspaceRevision && activeChatConversation() === originConversation) {
+                        renderChatFollowups();
+                        if (!isChatMobile() && (document.activeElement === chatInput || document.activeElement === document.body)) {
+                            chatInput.focus();
+                        }
+                    }
                 }
             }
         }
@@ -253,6 +266,12 @@
 
         async function restoreDashboardState() {
             const saved = readSavedState();
+            // Restore the model context independently from the visible landing view.
+            // Do this before awaiting the server so late hydration cannot undo a tab click.
+            const savedModelView = saved?.activeView || saved?.activeMode;
+            activeView = ['annual', 'technoeconomic'].includes(savedModelView) ? savedModelView : 'validation';
+            activeMode = activeView === 'validation' ? 'validation' : 'annual';
+            openCollectDataView();
             const legacyChatMessages = saved ? saved.chatMessages : null;
             const legacyChatDraft = saved ? saved.chatDraft : '';
             const legacyPersistenceState = ['degraded', 'failed', 'possible_loss'].includes(saved?.chatHistoryPersistenceState)
@@ -290,7 +309,7 @@
 
             if (serverSessionId && saved.serverSessionId !== serverSessionId) {
                 clearSavedState();
-                resetClientState({ preserveTechnoeconomic: true });
+                resetClientState({ preserveTechnoeconomic: true, preserveView: true });
                 await loadCurrentCalibration({ forceSettings: true });
                 await reconnectTechnoeconomicWorkspace();
                 saveDashboardState({ allowDuringHydration: true });
@@ -359,7 +378,6 @@
                 refreshTechnoeconomicSources(),
                 restoreTechnoeconomicActiveJob(),
             ]);
-            switchMode(saved.activeView || saved.activeMode || 'validation', false);
             if (latestInputPlots) {
                 applyInputPlots(latestInputPlots, false);
             }

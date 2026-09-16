@@ -44,12 +44,24 @@
         }
 
         async function postAgentAction(path, body) {
-            const response = await fetch(path, {
+            const workspaceRevision = agentWorkspaceRevision;
+            const response = await fetchWithDashboardTimeout(path, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: body === undefined ? undefined : JSON.stringify(body),
-            });
-            return readAgentResponse(response, 'The scenario action could not be completed.');
+            }, 30000);
+            const data = await readAgentResponse(response, 'The scenario action could not be completed.');
+            if (workspaceRevision !== agentWorkspaceRevision) {
+                throw new Error('The workspace changed while this action completed. Refresh scenario activity to check its status.');
+            }
+            invalidateAgentStateRefresh();
+            return data;
+        }
+
+        function invalidateAgentStateRefresh() {
+            agentStateRefreshRevision += 1;
+            agentMutationRevision += 1;
+            agentRefreshBtn.disabled = false;
         }
 
         function normalizeAgentState(data) {
@@ -496,6 +508,18 @@
         function putAgentProposal(proposal) {
             if (!proposal || !proposal.proposal_id) return;
             agentProposalSnapshots.set(proposal.proposal_id, proposal);
+        }
+
+        function reconcileAgentSnapshots(current, beforeRequest, rows, idKey, put) {
+            const returnedIds = new Set(rows.map((row) => row[idKey]));
+            beforeRequest.forEach((snapshot, id) => {
+                if (!returnedIds.has(id) && current.get(id) === snapshot) current.delete(id);
+            });
+            rows.forEach((row) => {
+                const id = row[idKey];
+                // Local mutations and status reads that finished after this request win.
+                if (current.get(id) === beforeRequest.get(id)) put(row);
+            });
         }
 
         function putAgentJob(job, options = {}) {

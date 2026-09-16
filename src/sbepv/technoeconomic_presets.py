@@ -1,4 +1,7 @@
-"""Explicitly selected, versioned assumptions; never applied as silent defaults."""
+"""Versioned approved assumptions, also visibly prefilled by the TEA editor.
+
+Submission still requires the existing review and confirmation workflow.
+"""
 from copy import deepcopy
 
 PRESET_ID = "thursday-2026-09-17-v1"

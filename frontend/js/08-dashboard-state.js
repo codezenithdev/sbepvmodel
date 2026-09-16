@@ -16,11 +16,20 @@
 
         async function fetchWithDashboardTimeout(resource, options = {}, timeoutMs = 8000) {
             const controller = new AbortController();
+            const abortFromCaller = () => controller.abort(options.signal.reason);
+            if (options.signal?.aborted) abortFromCaller();
+            else options.signal?.addEventListener('abort', abortFromCaller, { once: true });
             const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
             try {
-                return await fetch(resource, { ...options, signal: controller.signal });
+                controller.signal.throwIfAborted();
+                const response = await fetch(resource, { ...options, signal: controller.signal });
+                // Keep the deadline active until the body finishes, not only the headers.
+                await response.clone().arrayBuffer();
+                controller.signal.throwIfAborted();
+                return response;
             } finally {
                 window.clearTimeout(timeout);
+                options.signal?.removeEventListener('abort', abortFromCaller);
             }
         }
 
@@ -40,6 +49,13 @@
         }
 
         function resetClientState(options = {}) {
+            agentWorkspaceRevision += 1;
+            invalidateAgentStateRefresh();
+            const chatController = activeChatAbortController;
+            activeChatAbortController = null;
+            chatController?.abort();
+            setSending(false);
+            Array.from(agentJobPollRequests.keys()).forEach(invalidateAgentJobPoll);
             calibrationWorkflowRevision += 1;
             invalidateValidationStatusPoll();
             invalidateAnnualStatusPoll();
@@ -115,7 +131,7 @@
             renderChatMessages();
             renderChatHistory();
             setChatOpen(false);
-            switchMode('validation', false);
+            if (options.preserveView !== true) switchMode('validation', false);
         }
 
         function saveDashboardState(options = {}) {
@@ -203,4 +219,3 @@
             agentActivitySelection = 'job:' + jobId;
             renderAgentActivity();
         }
-

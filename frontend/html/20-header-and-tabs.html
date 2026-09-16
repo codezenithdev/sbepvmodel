@@ -2,22 +2,21 @@
                 <div class="header-copy">
                     <p class="eyebrow">Renewable Energy Operations</p>
                     <div class="header-title-row">
-                        <h1 class="header-title" id="dashboardTitle">SolarEdge &amp; Solectria Performance Analysis</h1>
+                        <h1 class="header-title" id="dashboardTitle">Collect Bazefield Data</h1>
                         <span class="help-tip-wrap">
                             <button class="help-tip" type="button" aria-label="Dashboard overview help" aria-describedby="dashboardHelpTooltip" aria-expanded="false">?</button>
                             <span class="help-tooltip" id="dashboardHelpTooltip" role="tooltip">Use Data Collection to retrieve and inspect measured source data without starting a model run. Model Calibration reviews source rows and can fit meteorological-season factors. Annual Simulation provides long-range weather forecasts, and Technoeconomic Analysis uses a verified completed run.</span>
                         </span>
                     </div>
                     <p class="header-subtitle" id="dashboardSubtitle">
-                        Compare measured power, irradiance, physics-model predictions, and export-ready run artifacts for the SBE
-                        Innovation Site.
+                        Retrieve measured SolarEdge and Solectria power, review the charts, and download CSV or XLSX without starting a model workflow.
                     </p>
                 </div>
             </section>
 
             <nav class="mode-tabs" aria-label="Dashboard mode">
-                <button class="mode-tab" id="collectDataTab" type="button" aria-pressed="false" aria-controls="collectDataPanel">Data Collection</button>
-                <button class="mode-tab active" id="validationTab" type="button" aria-pressed="true">Model Calibration</button>
+                <button class="mode-tab active" id="collectDataTab" type="button" aria-pressed="true" aria-controls="collectDataPanel">Data Collection</button>
+                <button class="mode-tab" id="validationTab" type="button" aria-pressed="false">Model Calibration</button>
                 <button class="mode-tab" id="annualTab" type="button" aria-pressed="false">Annual Simulation</button>
                 <button class="mode-tab" id="technoeconomicTab" type="button" aria-pressed="false">Technoeconomic Analysis</button>
             </nav>

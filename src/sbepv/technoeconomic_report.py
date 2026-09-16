@@ -229,6 +229,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     scenario = request.get("paired_commercial") or {}
     shared = scenario.get("shared_initial_capex") or {}
     context = shared.get("report_context") or {}
+    assumptions_status = context.get("assumptions_status")
     finance = request.get("finance") or {}
     metadata = calculation.metadata
     blocks = []
@@ -374,6 +375,8 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
             ["Real discount rate",distribution((finance.get('real_discount_rate') or {}).get('distribution'),100)+"% per year"],
             ["Annual degradation",distribution(((request.get('shared_degradation') or {}).get('annual_rate') or {}).get('distribution'),100)+"% per year"],
             ["Dollar basis",f"Proposed real {finance.get('constant_dollar_cost_year','unrecorded')} USD"]]
+    if assumptions_status in {"approved_defaults", "modified"}:
+        inputs.insert(0, ["Recorded assumptions status", "Cliff-approved defaults" if assumptions_status == "approved_defaults" else "Modified assumptions"])
     if shared:
         inputs += [["Common initial CAPEX",distribution(shared.get('common_capex_wdc'),digits=2)+" USD/Wdc"],
                    ["SolarEdge optimizer installation",distribution(shared.get('optimizer_installation_wdc'),digits=3)+" USD/Wdc"],
@@ -388,6 +391,8 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
             timing = "; at year-end in years " + ", ".join(str(year) for year in line.get('occurrence_years', [])) if line.get('timing') == 'scheduled_year_end' else ""
             inputs.append([label+' '+('annual O&M' if line.get('cost_category')=='full_annual_om' else words(line.get('label'))),distribution(line.get('distribution'),1000/ratio if is_om else 1)+" "+units+timing])
     table(["Input","Saved assumption"],inputs,[.37,.63])
+    if assumptions_status == "modified":
+        paragraph("These inputs were modified from the approved defaults. Changing the dollar year does not automatically inflation-adjust input costs. Later vendor or market prices remain unadjusted proxies unless the saved cost evidence explicitly documents an adjustment.","small")
     if shared:
         paragraph("The same common CAPEX draw is used for both systems. SolarEdge adds fixed optimizer hardware and independently sampled installation. Its total is derived from these inputs; the support range is not independently sampled. O&M draws are independent by system.","small")
         allocations=context.get('component_allocations') or []
@@ -397,7 +402,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         base=midpoint(shared['common_capex_wdc']); install=midpoint(shared['optimizer_installation_wdc'])
         if base is not None and install is not None:
             sol=base*shared['dc_capacity_w']; se=sol+shared['optimizer_count']*shared['optimizer_unit_price_usd']+install*shared['dc_capacity_w']
-            paragraph(f"Deterministic midpoint initial investment: Solectria ${sol/1e6:,.3f} million; SolarEdge ${se/1e6:,.3f} million. Component allocations explain the base total and are not additional sampled costs.","small")
+            paragraph(f"Deterministic midpoint initial investment: Solectria ${sol/1e6:,.3f} million; SolarEdge ${se/1e6:,.3f} million." + (" Component allocations explain the base total and are not additional sampled costs." if allocations else ""),"small")
         paragraph(f"DC cost intensities convert to the AC calculation basis using {number(ratio,2)}. This ratio does not multiply energy. Cost coverage follows the recorded cost lines and any scenario qualifications on the opening page.","small")
 
     heading("Lifecycle LCOE comparison", "lifecycle-comparison", page=True)
@@ -434,7 +439,12 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     if shared:
         citation=(shared.get('evidence') or {}).get('citation') or {}
         source_title=citation.get('title') or 'the recorded TEA assumptions'
-        paragraph(f"Cost source: {source_title}. The preserved meeting/email assumptions combine benchmark allocations, vendor estimates and provisional O&M. Evidence consists of metadata and excerpts; vendor quote files are not independently archived.","small")
+        if assumptions_status == "modified":
+            paragraph(f"Assumption origin: {source_title}. The original approval does not apply to the modified scenario. Evidence consists of metadata and excerpts; vendor quote files are not independently archived.","small")
+            if citation.get('excerpt_or_derivation_note'):
+                paragraph("Recorded cost note: " + words(citation['excerpt_or_derivation_note']),"small")
+        else:
+            paragraph(f"Cost source: {source_title}. The preserved meeting/email assumptions combine benchmark allocations, vendor estimates and provisional O&M. Evidence consists of metadata and excerpts; vendor quote files are not independently archived.","small")
     else:
         paragraph("Cost evidence and citations are preserved with the selected request and its numerical exports.","small")
     heading("Technical record", "technical-record",level=2)

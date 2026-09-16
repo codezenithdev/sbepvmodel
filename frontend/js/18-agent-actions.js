@@ -1,4 +1,9 @@
         async function refreshAgentState(showFeedback = false) {
+            const revision = ++agentStateRefreshRevision;
+            const previousJobs = new Map(agentJobSnapshots);
+            const previousProposals = new Map(agentProposalSnapshots);
+            const previousBaselines = { ...agentServerState.promoted_baselines };
+            const previousRecentIds = agentServerState.recent_job_ids;
             agentRefreshBtn.disabled = true;
             try {
                 const response = await fetchWithDashboardTimeout(
@@ -6,11 +11,25 @@
                     { cache: 'no-store' }
                 );
                 const data = await readAgentResponse(response, 'Could not restore scenario activity.');
-                agentServerState = normalizeAgentState(data);
-                agentProposalSnapshots.clear();
-                agentJobSnapshots.clear();
-                agentServerState.proposals.forEach(putAgentProposal);
-                agentServerState.jobs.forEach((job) => putAgentJob(job, { recordTerminal: false }));
+                if (revision !== agentStateRefreshRevision) return;
+                const restored = normalizeAgentState(data);
+                reconcileAgentSnapshots(agentProposalSnapshots, previousProposals, restored.proposals,
+                    'proposal_id', putAgentProposal);
+                reconcileAgentSnapshots(agentJobSnapshots, previousJobs, restored.jobs,
+                    'job_id', (job) => putAgentJob(job, { recordTerminal: false }));
+                for (const mode of ['validation', 'annual']) {
+                    if (agentServerState.promoted_baselines[mode] !== previousBaselines[mode]) {
+                        restored.promoted_baselines[mode] = agentServerState.promoted_baselines[mode];
+                    }
+                }
+                if (agentServerState.recent_job_ids !== previousRecentIds) {
+                    restored.recent_job_ids = [...new Set([
+                        ...agentServerState.recent_job_ids, ...restored.recent_job_ids,
+                    ])].filter((id) => agentJobSnapshots.has(id));
+                }
+                agentServerState = restored;
+                agentServerState.jobs = Array.from(agentJobSnapshots.values());
+                agentServerState.proposals = Array.from(agentProposalSnapshots.values());
                 const missingBaselineIds = Object.values(agentServerState.promoted_baselines)
                     .filter((jobId) => jobId && !agentJobSnapshots.has(jobId));
                 await Promise.all(missingBaselineIds.map(async (jobId) => {
@@ -19,12 +38,19 @@
                             '/api/status/' + encodeURIComponent(jobId),
                             { cache: 'no-store' }
                         );
-                        if (baselineResponse.ok) putAgentJob(await baselineResponse.json(), { recordTerminal: false });
+                        if (baselineResponse.ok) {
+                            const job = await baselineResponse.json();
+                            if (revision === agentStateRefreshRevision && !agentJobSnapshots.has(jobId)) {
+                                putAgentJob(job, { recordTerminal: false });
+                            }
+                        }
                     } catch (_) {
                         // The context badge falls back gracefully if an old baseline is unavailable.
                     }
                 }));
+                if (revision !== agentStateRefreshRevision) return;
                 await recoverSavedNonterminalActionJobs();
+                if (revision !== agentStateRefreshRevision) return;
                 reconcileTerminalAgentCards();
                 reconcileAgentActivityFilterAfterRefresh();
                 renderAgentActivity();
@@ -32,12 +58,14 @@
                     if (!isAgentJobTerminal(job)) scheduleAgentJobPoll(job.job_id, 250);
                 });
                 if (activeView === 'annual') await loadCurrentCalibration();
+                if (revision !== agentStateRefreshRevision) return;
                 if (showFeedback) appendSystemNotice('Scenario runs refreshed.');
             } catch (error) {
+                if (revision !== agentStateRefreshRevision) return;
                 if (showFeedback) appendSystemNotice(error.message || 'Could not refresh scenario runs.', 'error');
                 updateAgentContext();
             } finally {
-                agentRefreshBtn.disabled = false;
+                if (revision === agentStateRefreshRevision) agentRefreshBtn.disabled = false;
             }
         }
 
@@ -306,6 +334,13 @@
                 });
                 updateStoredChatActionCardStatus({ job_id: jobId }, 'cancel requested');
                 renderAgentJobUpdate(agentJobSnapshots.get(jobId));
+                // Cancel responses supersede status reads that began before cancellation.
+                invalidateAgentJobPoll(jobId);
+                if (latestJobId === jobId && ['queued', 'running'].includes(currentRunState?.state)) {
+                    pollStatus(jobId, invalidateValidationStatusPoll());
+                } else if (annualLatestJobId === jobId && ['queued', 'running'].includes(annualRunState?.state)) {
+                    pollAnnualStatus(jobId, invalidateAnnualStatusPoll());
+                }
                 scheduleAgentJobPoll(jobId, 150);
             } catch (error) {
                 appendSystemNotice(error.message || 'Could not cancel this run.', 'error');
@@ -325,6 +360,7 @@
             }
             try {
                 await postAgentAction('/api/jobs/' + encodeURIComponent(jobId) + '/delete');
+                invalidateAgentJobPoll(jobId);
                 const timer = agentJobPollTimers.get(jobId);
                 if (timer) clearTimeout(timer);
                 agentJobPollTimers.delete(jobId);
@@ -400,6 +436,10 @@
             const originConversation = chatConversationForActionCard({ job_id: job.job_id })
                 || activeChatConversation();
             const originConversationId = originConversation?.id || activeChatConversationId;
+            const workspaceRevision = agentWorkspaceRevision;
+            const isCurrent = () => workspaceRevision === agentWorkspaceRevision &&
+                chatConversations.includes(originConversation);
+            if (!isCurrent()) return;
             agentExplainedJobs.add(job.job_id);
             saveDashboardState();
             const loadingBubble = originConversationId === activeChatConversationId
@@ -411,7 +451,7 @@
                 const history = (originConversation?.messages || chatMessages)
                     .slice(-8)
                     .map((item) => ({ role: item.role, content: item.content }));
-                const response = await fetch('/api/chat', {
+                const response = await fetchWithDashboardTimeout('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -422,14 +462,18 @@
                         current_config: job.request || getCanonicalCurrentConfig(job.mode),
                         allow_scenario_actions: false,
                     }),
-                });
+                }, CHAT_REQUEST_TIMEOUT_MS);
                 const data = await readAgentResponse(response, 'The engineering explanation is temporarily unavailable.');
+                if (!isCurrent()) {
+                    agentExplainedJobs.delete(job.job_id);
+                    return;
+                }
                 const reply = data.reply || 'The comparison is complete, but no engineering explanation was returned.';
                 const assistantMessage = assistantMessageFromResponse(reply, data);
                 loadingBubble?.parentElement?.remove();
                 const targetConversation = chatConversations.find(
                     (conversation) => conversation.id === originConversationId
-                ) || activeChatConversation();
+                );
                 if (targetConversation?.id === activeChatConversationId) {
                     chatMessages.push(assistantMessage);
                     chatMessages = trimChatMessages(chatMessages);
@@ -447,6 +491,7 @@
             } catch (error) {
                 loadingBubble?.parentElement?.remove();
                 agentExplainedJobs.delete(job.job_id);
+                if (!isCurrent()) return;
                 saveDashboardState();
                 const errorMessage = error.message || 'The comparison completed, but its explanation could not be generated.';
                 appendSystemNotice(
@@ -455,6 +500,8 @@
                         : 'Could not add an explanation to "' + (originConversation?.title || 'the original conversation') + '": ' + errorMessage,
                     'error'
                 );
+            } finally {
+                loadingBubble?.parentElement?.remove();
             }
         }
 

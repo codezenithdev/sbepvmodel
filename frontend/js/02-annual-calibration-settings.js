@@ -363,7 +363,7 @@
             const loadRevision = ++annualBaselineLoadRevision;
             if (!annualCalibrationBaseline) renderAnnualCalibrationBaseline(null, { state: 'loading' });
             try {
-                const response = await fetch('/api/current-calibration', { cache: 'no-store' });
+                const response = await fetchWithDashboardTimeout('/api/current-calibration', { cache: 'no-store' });
                 if (!response.ok) throw new Error('Current calibration request failed (' + response.status + ')');
                 const baseline = await response.json();
                 if (loadRevision !== annualBaselineLoadRevision) return null;

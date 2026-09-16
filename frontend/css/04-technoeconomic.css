@@ -3706,3 +3706,160 @@
                 color: HighlightText;
             }
         }
+
+        /* Tabbed assumptions editor. The source selector and cost controls remain
+           the existing TEA controls; only their presentation is scoped here. */
+        #technoeconomicAssumptionsDialog {
+            --accent: #404040;
+            --accent-strong: #262626;
+            --accent-soft: #f2f2f2;
+            --surface: #ffffff;
+            --surface-muted: #fafafa;
+            --border: #dedede;
+            --border-strong: #c5c5c5;
+            --text: #262626;
+            --muted: #666666;
+            --muted-strong: #525252;
+            width: min(940px, calc(100vw - 32px));
+            height: min(850px, calc(100dvh - 32px));
+            border-radius: 16px;
+            font-size: 13px;
+            box-shadow: 0 24px 70px rgba(0, 0, 0, 0.18);
+        }
+
+        #technoeconomicAssumptionsDialog [hidden] { display: none !important; }
+        #technoeconomicAssumptionsDialog::backdrop { background: rgba(0, 0, 0, 0.42); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-dialog-shell { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-dialog-header { padding: 20px 24px 16px; border-top: 4px solid var(--accent); border-bottom: 0; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-dialog-header h2 { font-size: 23px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-dialog-header p:last-child { font-size: 12px; }
+
+        #technoeconomicAssumptionsDialog .tea-assumptions-tabs {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 6px;
+            padding: 0 24px;
+            border-bottom: 1px solid var(--border);
+        }
+        #technoeconomicAssumptionsDialog .tea-assumptions-tabs button {
+            min-width: 0;
+            padding: 13px 4px 11px;
+            border: 0;
+            border-bottom: 3px solid transparent;
+            background: transparent;
+            color: var(--muted-strong);
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        #technoeconomicAssumptionsDialog .tea-assumptions-tabs button[aria-selected="true"] { color: var(--accent-strong); border-bottom-color: var(--accent); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: 5px; }
+        #technoeconomicAssumptionsDialog .tea-standalone-assumptions-body { padding: 18px 24px 24px; background: var(--surface-muted); }
+        #technoeconomicAssumptionsDialog .tea-standalone-assumptions-body > .tea-alert { margin: 0 0 16px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-status { display: flex; align-items: center; gap: 7px; margin: 0 0 16px; color: var(--accent-strong); font-size: 12px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-status::before { content: ""; width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-tabpanel { min-width: 0; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-tabpanel:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-section-heading,
+        #technoeconomicAssumptionsDialog .tea-assumptions-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-section-heading h3 { margin: 0; font-size: 17px; line-height: 1.4; color: var(--text); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-card-heading h4 { margin: 0; font-size: 14px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-section-heading p,
+        #technoeconomicAssumptionsDialog .tea-assumptions-card-heading p { margin: 5px 0 0; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-tag { flex: 0 0 auto; padding: 4px 8px; border-radius: 5px; background: var(--accent-soft); color: var(--accent-strong); font-size: 11px; line-height: 1.5; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-card { margin-bottom: 16px; padding: 17px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-shared-card { background: var(--accent-soft); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-shared-card .tea-assumptions-tag { background: var(--surface); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-source-card .tea-assumption-actions { justify-content: flex-start; margin-top: 10px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-source-status { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-source-status strong { overflow-wrap: anywhere; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-field-grid,
+        #technoeconomicAssumptionsDialog .tea-assumptions-paired-costs,
+        #technoeconomicAssumptionsDialog .tea-assumptions-total-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+        #technoeconomicAssumptionsDialog .tea-field { min-width: 0; }
+        #technoeconomicAssumptionsDialog .tea-field > label { font-size: 12px; font-weight: 700; }
+        #technoeconomicAssumptionsDialog input:not([type="checkbox"]):not([type="radio"]),
+        #technoeconomicAssumptionsDialog select,
+        #technoeconomicAssumptionsDialog textarea { min-width: 0; width: 100%; min-height: 41px; border: 1px solid var(--border-strong); border-radius: 7px; background-color: var(--surface); color: var(--text); font-size: 13px; }
+        #technoeconomicAssumptionsDialog input:focus,
+        #technoeconomicAssumptionsDialog select:focus,
+        #technoeconomicAssumptionsDialog textarea:focus { border-color: var(--accent); outline: 3px solid rgba(64, 64, 64, 0.14); outline-offset: 0; }
+        #technoeconomicAssumptionsDialog .tea-button:focus-visible,
+        #technoeconomicAssumptionsDialog .tea-switch-row:focus-within,
+        #technoeconomicAssumptionsDialog .tea-checkbox-row:focus-within { outline: 3px solid rgba(64, 64, 64, 0.24); outline-offset: 2px; }
+        #technoeconomicAssumptionsDialog .tea-button-primary { border-color: var(--accent); background: var(--accent); color: #ffffff; }
+        #technoeconomicAssumptionsDialog .tea-button-secondary { border-color: var(--border-strong); background: var(--surface); color: var(--text); }
+        #technoeconomicAssumptionsDialog .tea-button-quiet { border-color: var(--border); background: var(--surface-muted); color: var(--muted-strong); }
+        #technoeconomicAssumptionsDialog .tea-contract-badge,
+        #technoeconomicAssumptionsDialog .tea-benchmark-preset { border-color: var(--border); }
+        #technoeconomicAssumptionsDialog .tea-field-help { display: block; margin-top: 7px; color: var(--muted-strong); font-size: 11px; line-height: 1.5; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-distribution-row { display: grid; grid-template-columns: minmax(170px, .85fr) minmax(0, 1.15fr); align-items: end; gap: 14px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-distribution-row > .tea-v4-distribution-parameters { margin: 0; }
+        #technoeconomicAssumptionsDialog .tea-v4-distribution-parameters { gap: 10px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-distribution-row > [data-distribution-family="triangular"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-subtotal { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-top: 12px; color: var(--muted-strong); font-size: 12px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-subtotal output { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-installation { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-cost-stack { margin-bottom: 17px; }
+        #technoeconomicAssumptionsDialog .tea-paired-system-cost-card { gap: 8px; padding: 16px; border-top-color: var(--border-strong); background: var(--surface); }
+        #technoeconomicAssumptionsDialog .tea-paired-system-cost-card > h5 { margin: 0 0 3px; font-size: 15px; }
+        #technoeconomicAssumptionsDialog .tea-paired-system-cost-card-sol > h5 { color: var(--text); }
+        #technoeconomicAssumptionsDialog .tea-paired-system-cost-card-se > h5 { color: var(--accent-strong); }
+        #technoeconomicAssumptionsDialog .tea-paired-system-cost-card .tea-v4-cost-line { padding: 0 0 12px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
+        #technoeconomicAssumptionsDialog .tea-v4-cost-line-heading { flex-wrap: wrap; gap: 6px; }
+        #technoeconomicAssumptionsDialog .tea-v4-cost-line-heading h5 { font-size: 12px; }
+        #technoeconomicAssumptionsDialog .tea-v4-cost-line-heading p { font-size: 11px; }
+        #technoeconomicAssumptionsDialog .tea-v4-cost-line-heading .tea-contract-badge { font-size: 10px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-total-grid { margin-top: 17px; gap: 12px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-total { min-width: 0; padding: 15px 17px; border-radius: 10px; background: var(--accent-soft); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-total-se { background: var(--accent-soft); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-total > span { display: block; font-size: 12px; font-weight: 700; color: var(--text); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-total output { display: block; margin: 4px 0; font-size: 25px; line-height: 1.3; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.03em; overflow-wrap: anywhere; color: var(--text); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-total small { font-size: 11px; color: var(--muted-strong); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-review-summary { margin-bottom: 18px; padding: 0 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow-wrap: anywhere; }
+        #technoeconomicAssumptionsDialog .tea-editor-review-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+        #technoeconomicAssumptionsDialog .tea-editor-review-table th,
+        #technoeconomicAssumptionsDialog .tea-editor-review-table td { padding: 12px 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+        #technoeconomicAssumptionsDialog .tea-editor-review-table th { width: 36%; padding-right: 14px; color: var(--muted-strong); font-weight: 600; }
+        #technoeconomicAssumptionsDialog .tea-editor-review-table td { color: var(--text); }
+        #technoeconomicAssumptionsDialog .tea-editor-review-table tr:last-child > * { border-bottom: 0; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-evidence textarea { min-height: 100px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-acceptance { margin-top: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+        #technoeconomicAssumptionsDialog .tea-assumptions-dialog-actions { justify-content: space-between; padding: 14px 24px; gap: 12px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-dialog-actions > .tea-button { font-size: 11px; text-align: left; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-footer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        #technoeconomicAssumptionsDialog .tea-assumptions-footer-actions .tea-button { min-height: 42px; }
+
+        @media (max-width: 650px) {
+            #technoeconomicAssumptionsDialog { width: calc(100vw - 20px); height: calc(100dvh - 20px); max-height: calc(100dvh - 20px); }
+            #technoeconomicAssumptionsDialog .tea-assumptions-dialog-header { padding: 16px; }
+            #technoeconomicAssumptionsDialog .tea-assumptions-tabs { padding: 0 12px; gap: 2px; }
+            #technoeconomicAssumptionsDialog .tea-assumptions-tabs button { padding: 12px 2px; font-size: 12px; }
+            #technoeconomicAssumptionsDialog .tea-standalone-assumptions-body { padding: 16px; }
+            #technoeconomicAssumptionsDialog .tea-assumptions-section-heading,
+            #technoeconomicAssumptionsDialog .tea-assumptions-card-heading { flex-wrap: wrap; gap: 7px; }
+            #technoeconomicAssumptionsDialog .tea-assumptions-paired-costs,
+            #technoeconomicAssumptionsDialog .tea-assumptions-distribution-row { grid-template-columns: minmax(0, 1fr); }
+            #technoeconomicAssumptionsDialog .tea-assumptions-field-grid { gap: 12px; }
+            #technoeconomicAssumptionsDialog .tea-v4-distribution-parameters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            #technoeconomicAssumptionsDialog .tea-assumptions-distribution-row > [data-distribution-family="triangular"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            #technoeconomicAssumptionsDialog .tea-assumptions-total-grid { grid-template-columns: minmax(0, 1fr); }
+            #technoeconomicAssumptionsDialog .tea-editor-review-table th { width: 40%; padding-right: 10px; }
+            #technoeconomicAssumptionsDialog input:not([type="checkbox"]):not([type="radio"]),
+            #technoeconomicAssumptionsDialog select,
+            #technoeconomicAssumptionsDialog textarea { min-height: 44px; font-size: 16px; }
+            #technoeconomicAssumptionsDialog .tea-assumptions-dialog-actions { align-items: stretch; flex-direction: column; padding: 10px 16px 14px; gap: 7px; }
+            #technoeconomicAssumptionsDialog .tea-assumptions-dialog-actions > .tea-button { width: auto; align-self: flex-start; min-height: 36px; }
+            #technoeconomicAssumptionsDialog .tea-assumptions-footer-actions { justify-content: flex-end; }
+            #technoeconomicAssumptionsDialog #technoeconomicAssumptionsFooterCloseBtn { display: none; }
+            #technoeconomicAssumptionsDialog .tea-assumptions-footer-actions .tea-button { width: auto; min-height: 44px; }
+        }
+
+        @media (forced-colors: active) {
+            #technoeconomicAssumptionsDialog .tea-assumptions-card,
+            #technoeconomicAssumptionsDialog .tea-assumptions-total,
+            #technoeconomicAssumptionsDialog .tea-assumptions-review-summary,
+            #technoeconomicAssumptionsDialog .tea-assumptions-acceptance { border: 1px solid CanvasText; }
+            #technoeconomicAssumptionsDialog .tea-assumptions-tabs button[aria-selected="true"] { border-bottom-color: Highlight; }
+            #technoeconomicAssumptionsDialog .tea-button-primary { background: Highlight; color: HighlightText; }
+        }

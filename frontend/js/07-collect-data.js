@@ -90,6 +90,7 @@
                 'dashboard-mode-technoeconomic',
             );
             document.body.classList.add('dashboard-mode-collect-data');
+            setChatOpen(false, { focus: false, persist: false });
             dashboardTitle.textContent = 'Collect Bazefield Data';
             dashboardSubtitle.textContent = 'Retrieve measured SolarEdge and Solectria power, review the charts, and download CSV or XLSX without starting a model workflow.';
             [validationTab, annualTab, technoeconomicTab].forEach((tab) => {
@@ -98,6 +99,7 @@
             });
             collectDataTab.classList.add('active');
             collectDataTab.setAttribute('aria-pressed', 'true');
+            operationsNavLink.href = '#collectDataForm';
             setActiveNav(operationsNavLink);
             void collectDataRestoreStoredCollection({ force: true });
         }
@@ -595,9 +597,7 @@
         }
 
         collectDataTab.addEventListener('click', openCollectDataView);
-        [operationsNavLink, pvModelNavLink].forEach((link) => {
-            link.addEventListener('click', collectDataRestoreWorkflowView, true);
-        });
+        pvModelNavLink.addEventListener('click', collectDataRestoreWorkflowView, true);
         collectDataElements.collapseToggle.addEventListener('click', () => {
             const expanded = collectDataElements.collapseToggle.getAttribute('aria-expanded') === 'true';
             collectDataSetCollapsed(expanded);

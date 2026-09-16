@@ -55,11 +55,15 @@ def kernel_case(n=128):
     return payload, snapshot, request, provenance
 
 
-def completed_fixture(*, missing_lineage=False, project_life=None):
+def completed_fixture(*, missing_lineage=False, project_life=None, transform_payload=None):
     payload, snapshot, request, provenance = kernel_case()
+    if transform_payload is not None:
+        transform_payload(payload)
     if project_life is not None:
         payload['finance']['project_life_years']=project_life
         payload['finance']['project_life_evidence']['citation']['excerpt_or_derivation_note']=f'Synthetic test case: {project_life} years.'
+    if transform_payload is not None or project_life is not None:
+        payload=api.canonical_submission_request_payload(payload)
         request=api.build_technoeconomic_kernel_request(payload,snapshot)
         provenance=api.build_technoeconomic_submission_provenance(payload,{
             'source_snapshot':snapshot,'source_snapshot_sha256':api.canonical_json_sha256(snapshot),
@@ -138,6 +142,20 @@ class SharedCapexTests(unittest.TestCase):
         payload['paired_commercial'].pop('shared_initial_capex')
         serialized=TechnoeconomicSubmissionRequest.model_validate(payload).model_dump(mode='json',exclude_none=False)
         self.assertNotIn('shared_initial_capex',serialized['paired_commercial'])
+
+    def test_optional_assumptions_status_preserves_historical_context_serialization(self):
+        payload,_,_,_=kernel_case()
+        context=payload['paired_commercial']['shared_initial_capex']['report_context']
+        self.assertNotIn('assumptions_status',context)
+        serialized=TechnoeconomicSubmissionRequest.model_validate(payload).model_dump(mode='json',exclude_none=False)
+        self.assertEqual(context,serialized['paired_commercial']['shared_initial_capex']['report_context'])
+        for status in ('approved_defaults','modified'):
+            context['assumptions_status']=status
+            serialized=api.canonical_submission_request_payload(payload)
+            self.assertEqual(status,serialized['paired_commercial']['shared_initial_capex']['report_context']['assumptions_status'])
+        context['assumptions_status']='unrecognized'
+        with self.assertRaises(ValueError):
+            TechnoeconomicSubmissionRequest.model_validate(payload)
 
 
 class FullReportTests(unittest.TestCase):
@@ -280,3 +298,58 @@ class FullReportTests(unittest.TestCase):
             self.assertIn(f'{life} years /',json.dumps([{k:v for k,v in b.items() if k!='image'} for b in report['blocks']]))
             displayed.append(lcoe_table['rows'][0][2])
         self.assertNotEqual(*displayed)
+
+    def test_modified_year_and_shared_costs_reach_saved_results_and_report(self):
+        note='Synthetic revised cost estimate: common CAPEX 1.30-1.40 USD/Wdc; declared real 2030 USD, with no inflation adjustment.'
+        def modified_inputs(payload):
+            payload['finance']['constant_dollar_cost_year']=2030
+            paired=payload['paired_commercial']
+            shared=paired['shared_initial_capex']
+            shared['dc_capacity_w']=140_000_000
+            shared['common_capex_wdc']={'family':'uniform','low':1.3,'high':1.4}
+            shared['optimizer_count']=100_000
+            shared['optimizer_unit_price_usd']=40
+            context=shared['report_context']
+            context['assumptions_status']='modified'
+            context['component_allocations']=[]
+            context['limitations']='Proposed real 2030-dollar basis; later vendor prices are unadjusted proxies. Major-maintenance coverage remains unresolved.'
+            shared['evidence']['citation']['excerpt_or_derivation_note']=note
+            ratio=1.4
+            for system in paired['systems']:
+                is_solaredge=system['technology']=='solaredge'
+                for line in system['cost_lines']:
+                    line['constant_dollar_cost_year']=2030
+                    if line['cost_category']=='full_initial_capex':
+                        line['distribution']={'family':'uniform',
+                            'low':1.3*ratio+(.04+.004*ratio if is_solaredge else 0),
+                            'high':1.4*ratio+(.04+.010*ratio if is_solaredge else 0)}
+                    else:
+                        low,high=(12,18) if is_solaredge else (8,13)
+                        line['distribution']={'family':'uniform','low':low/1000*ratio,'high':high/1000*ratio}
+
+        displayed=[]
+        for scenario,transform in (('original',None),('modified',modified_inputs)):
+            with patch.object(config,'OUTPUT_DIR',self.test_root / scenario):
+                job,calculation=completed_fixture(transform_payload=transform)
+                original=deepcopy(job)
+                report=pdf.prepare_report(job)
+                self.assertEqual(original,job)
+                lcoe_table=next(block for block in report['blocks'] if block['kind']=='table' and block['headers'][0]=='LCOE (USD/MWh)')
+                expected=job['result']['paired_commercial']['systems']['solectria']['percentiles']['p50']*1000
+                self.assertEqual(report_model.number(expected),lcoe_table['rows'][0][2])
+                displayed.append(expected)
+                if scenario=='modified':
+                    report_text=json.dumps([{k:v for k,v in block.items() if k!='image'} for block in report['blocks']])
+                    self.assertIn('Modified assumptions',report_text)
+                    self.assertIn('Proposed real 2030 USD',report_text)
+                    self.assertIn(note,report_text)
+                    self.assertIn('does not automatically inflation-adjust',report_text)
+                    self.assertNotIn('Common CAPEX component allocations',report_text)
+                    self.assertNotIn('Component allocations explain the base total',report_text)
+                    table=calculation.realization_table
+                    common=np.asarray(table['SampledInput::capex.shared-base-wdc'])*140_000_000
+                    install=np.asarray(table['SampledInput::capex.optimizer-installation-wdc'])*140_000_000
+                    np.testing.assert_allclose(table[kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_INITIAL_COST],common,rtol=1e-14)
+                    np.testing.assert_allclose(table[kernel.COMMERCIAL_STANDALONE_FIELD_INITIAL_COST],common+install+4_000_000,rtol=1e-14)
+                    self.assertTrue(technoeconomic_pdf_layout.render_pdf(report).startswith(b'%PDF-'))
+        self.assertGreater(displayed[1],displayed[0])

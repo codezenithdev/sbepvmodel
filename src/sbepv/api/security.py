@@ -58,9 +58,15 @@ def _basic_auth_result(authorization: str | None) -> tuple[bool, str | None]:
     username, separator, password = decoded.partition(":")
     if not separator:
         return False, None
-    valid = secrets.compare_digest(username, expected[0]) and secrets.compare_digest(
-        password, expected[1]
+    # compare_digest rejects non-ASCII str inputs. Compare the same UTF-8 bytes
+    # accepted by the decoder so a Unicode credential cannot crash middleware.
+    username_valid = secrets.compare_digest(
+        username.encode("utf-8"), expected[0].encode("utf-8")
     )
+    password_valid = secrets.compare_digest(
+        password.encode("utf-8"), expected[1].encode("utf-8")
+    )
+    valid = username_valid and password_valid
     return valid, expected[0] if valid else None
 
 

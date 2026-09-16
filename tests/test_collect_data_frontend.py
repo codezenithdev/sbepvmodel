@@ -57,7 +57,7 @@ class CollectDataFrontendTests(unittest.TestCase):
         self.assertIn('role="status"', self.markup)
         self.assertIn('role="alert"', self.markup)
         self.assertIn(
-            'id="collectDataTab" type="button" aria-pressed="false" aria-controls="collectDataPanel">Data Collection</button>',
+            'id="collectDataTab" type="button" aria-pressed="true" aria-controls="collectDataPanel">Data Collection</button>',
             self.assembled,
         )
         self.assertNotIn('id="collectDataNavLink"', self.assembled)
