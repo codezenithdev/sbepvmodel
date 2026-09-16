@@ -396,7 +396,7 @@ generation verifies frozen inputs, calibration/Annual lineage, saved arrays, and
 exports. Missing/tampered evidence blocks download without changing job status.
 Editing drafts never rewrites completed results.
 
-Report format v2.4 places contents after the title metadata, excluding the title
+Report format v2.4.1 places contents after the title metadata, excluding the title
 from the contents. Its Executive Summary covers Objectives, Approach, and Results,
 followed by Introduction and Objectives, Data Collection, Modeling and Calibration,
 Annual Simulation, and Technoeconomic Analysis. Measured-period energy is kept
@@ -431,14 +431,14 @@ unreconciled workbooks leave the diagnostic unavailable without replacing saved
 results or launching a new simulation.
 
 The title retains the analysis timestamp and labels the generating dashboard
-version separately from report format v2.4; there is no separate visible report
+version separately from report format v2.4.1; there is no separate visible report
 date. `PV_DASHBOARD_RELEASE` supplies a release label when configured; otherwise
 `package.json` supplies an explicitly labeled package-declared version.
 `PV_DASHBOARD_BUILD_ID`, then `RENDER_GIT_COMMIT`, supplies the build identifier;
 if neither is available it is shown as not recorded. The generating software
 identity does not establish the dashboard version used for a historical analysis:
 missing historical version metadata remains not recorded. New filenames follow
-`LCOE_Comparison_v2.4_{full|summary}_{run_id}.{pdf|docx}`, with a sanitized run ID.
+`LCOE_Comparison_v2.4.1_{full|summary}_{run_id}.{pdf|docx}`, with a sanitized run ID.
 Previously downloaded reports and their filenames are preserved.
 Generation metadata may change file hashes without changing numerical evidence.
 

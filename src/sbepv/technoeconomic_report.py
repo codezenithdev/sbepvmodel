@@ -19,7 +19,7 @@ from matplotlib.ticker import PercentFormatter, MaxNLocator
 from sbepv import technoeconomic_report_diagnostics as diagnostics
 from sbepv import technoeconomic_report_appendix as appendix
 
-REPORT_VERSION = "2.4"
+REPORT_VERSION = "2.4.1"
 SYSTEMS = (("solectria", "Solectria", "sol"), ("solaredge", "SolarEdge", "se"))
 COLORS = ("#CC921A", "#2E66A3", "#454545")
 
@@ -598,7 +598,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
                 paragraph(f"{payload['label']} percentile stability unavailable: {payload['reason']}.","small")
             if payload.get('status')=='available' and len(payload.get('checkpoints',[]))<2:
                 paragraph("Only one checkpoint was saved; a stability trend cannot be assessed.","small")
-        paragraph("The saved convergence status still uses its original P5/P50/P95 checks. These curves do not replace that assessment or establish a confidence interval.","small")
+        paragraph("The original convergence checks remain unchanged. These plots show sampling stability; they do not define confidence intervals.","small")
 
     heading("References and Evidence", "references",page=True)
     paragraph(f"Verification: {len(checks)} saved-result and export checks passed, together with independent reference cases. Report rendering does not rerun the model or alter the saved analysis.","small")

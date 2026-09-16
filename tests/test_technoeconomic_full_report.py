@@ -182,7 +182,7 @@ class FullReportTests(unittest.TestCase):
         original=deepcopy(job)
         payload,name=pdf.build_pdf(job,generated_at=datetime(2026,9,15,tzinfo=timezone.utc))
         self.assertTrue(payload.startswith(b'%PDF-'))
-        self.assertEqual('LCOE_Comparison_v2.4_full_tea_full_report.pdf',name)
+        self.assertEqual('LCOE_Comparison_v2.4.1_full_tea_full_report.pdf',name)
         self.assertIn(b'/Outlines',payload)
         self.assertIn(b'/Annots',payload)
         self.assertEqual(job,original)
@@ -225,7 +225,7 @@ class FullReportTests(unittest.TestCase):
         document_pdf=technoeconomic_pdf_layout.render_pdf(report)
         self.assertTrue(document_pdf.startswith(b'%PDF-'))
         self.assertEqual(job,original)
-        self.assertEqual('LCOE_Comparison_v2.4_full_tea_full_report.docx',pdf.report_filename(report,'docx'))
+        self.assertEqual('LCOE_Comparison_v2.4.1_full_tea_full_report.docx',pdf.report_filename(report,'docx'))
         original_chart=(config.OUTPUT_DIR/job['artifacts']['exports']['artifacts']['cdf_plot']['storage_key']).read_bytes()
         charts=[block for block in report['blocks'] if block['kind']=='chart']
         lifecycle=next(block for block in charts if block.get('vector'))
@@ -283,7 +283,7 @@ class FullReportTests(unittest.TestCase):
             self.assertIn(anchor,concise_headings)
         headline=lambda report:next(b for b in report['blocks'] if b['kind']=='table' and b['headers'][0]=='LCOE (USD/MWh)')
         self.assertEqual(headline(full),headline(concise))
-        self.assertEqual('LCOE_Comparison_v2.4_summary_tea_full_report.pdf',pdf.report_filename(concise,'pdf'))
+        self.assertEqual('LCOE_Comparison_v2.4.1_summary_tea_full_report.pdf',pdf.report_filename(concise,'pdf'))
         self.assertEqual(next(b['vector'] for b in full['blocks'] if b.get('vector')),
                          next(b['vector'] for b in concise['blocks'] if b.get('vector')))
         for report in (full,concise):

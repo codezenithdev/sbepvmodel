@@ -2161,7 +2161,7 @@ tie-outs, including independent direct year-by-year finance sums. It neither run
 the model nor modifies completed jobs or the existing five-artifact export manifest.
 Incomplete jobs, missing historical lineage or failed integrity checks return 409.
 
-Report format v2.4 uses one presentation model for PDF and Word values, structure,
+Report format v2.4.1 uses one presentation model for PDF and Word values, structure,
 and chart data. Contents follow the title metadata and exclude the title itself.
 The Executive Summary contains Objectives, Approach, and Results; the main report
 then follows Introduction and Objectives, Data Collection, Modeling and Calibration,
@@ -2226,7 +2226,7 @@ missing historical metadata is not inferred from current software.
 Native Word heading and TOC/page fields retain editable navigation; PDF bookmarks
 and contents resolve to final PDF pages. Word computes its own page numbers when
 fields are refreshed. New filenames follow
-`LCOE_Comparison_v2.4_{full|summary}_{run_id}.{pdf|docx}`, using a sanitized run ID;
+`LCOE_Comparison_v2.4.1_{full|summary}_{run_id}.{pdf|docx}`, using a sanitized run ID;
 previously downloaded reports and historical filenames remain unchanged. Removing
 the TEA view's CSV button does not remove sealed CSV evidence or historical export
 API support. A new
