@@ -25,6 +25,51 @@ COMPONENT_ALLOCATIONS = (
     ("Engineering and other costs", .270, .260, .280, "Permits, interconnection, overhead, contingency; excludes construction financing"),
 )
 
+CURRENT_PRESET_ID = "user-cost-basis-2026-v1"
+CURRENT_LIMITATIONS = (
+    "Costs are entered on a user-declared 2026 USD basis. Source benchmark and "
+    "vendor dates do not independently establish this declared basis. O&M coverage "
+    "of major maintenance remains unresolved; no separate major-maintenance charge "
+    "is added. Lifecycle conclusions are provisional. Component allocations are "
+    "explanatory, not independently sampled. Inverter quote assumed per Wdc; "
+    "optimizer design uses 103,077 H1300 units for two 650 W modules each, excluding spares."
+)
+
+
+def current_assumptions(source_annual_job_id: str) -> dict:
+    """Current entered amounts in the user's 2026 basis; preserve the old preset."""
+    payload = thursday_assumptions(source_annual_job_id)
+    payload['finance']['constant_dollar_cost_year'] = 2026
+    for system in payload['paired_commercial']['systems']:
+        for line in system['cost_lines']:
+            line['constant_dollar_cost_year'] = 2026
+    context = payload['paired_commercial']['shared_initial_capex']['report_context']
+    context.update(preset_id=CURRENT_PRESET_ID, assumptions_status='modified',
+                   limitations=CURRENT_LIMITATIONS)
+
+    def update_evidence(value):
+        if isinstance(value, list):
+            for item in value:
+                update_evidence(item)
+        elif isinstance(value, dict):
+            if value.get('evidence_class') == 'engineering_judgment' and 'citation' in value:
+                value['acceptance_rationale'] = (
+                    "Review and confirmation of the entered assumptions, including "
+                    "the user-declared 2026 cost basis and stated limitations."
+                )
+                citation = value['citation']
+                citation['title'] = 'Entered TEA assumptions with user-declared 2026 cost basis'
+                citation['stable_reference'] += '; cost-basis clarification 2026-09-17; preset ' + CURRENT_PRESET_ID
+                citation['excerpt_or_derivation_note'] = (
+                    citation['excerpt_or_derivation_note'].replace(LIMITATIONS, '').strip()
+                    + ' ' + CURRENT_LIMITATIONS
+                )
+            else:
+                for item in value.values():
+                    update_evidence(item)
+    update_evidence(payload)
+    return payload
+
 
 def thursday_assumptions(source_annual_job_id: str) -> dict:
     """Return a strict v5 request; the ordinary submission path verifies its source."""

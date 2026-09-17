@@ -182,7 +182,7 @@
             ac_operating_limit: Object.freeze({capex: '1.56', om: '22'}),
             dc_installed_nameplate: Object.freeze({capex: '1.17', om: '16.58'}),
         });
-        const TECHNOECONOMIC_APPROVED_ASSUMPTION_NOTE = 'Based on Cliff-approved September 15 comparison assumptions; TEA_Assumptions.docx and TEA assumptions for confirmation. The entered values and selected dollar year describe this scenario; later vendor/market prices are unadjusted proxies. Major-maintenance coverage remains unresolved; no separate charge is included.';
+        const TECHNOECONOMIC_APPROVED_ASSUMPTION_NOTE = 'Cost amounts originate from the September 15 comparison assumptions and TEA_Assumptions.docx. The user declares the current amounts to be in 2026 USD; this declaration does not establish the original price year of each vendor or benchmark source. GDP-deflator conversion is recorded separately when applied. Major-maintenance coverage remains unresolved; no separate charge is included.';
         const TECHNOECONOMIC_APPROVED_ALLOCATIONS = [
             ['Modules', .270, .260, .280, 'DOE market update, Q3 2025 proxy'],
             ['Inverters', .060, .060, .060, 'Kleber vendor quote; Wdc assumed'],
@@ -1163,9 +1163,41 @@
         function technoeconomicStandaloneReadParameterValues(container) {
             const values = {};
             container?.querySelectorAll?.('[data-tea-v4-param]').forEach((input) => {
-                values[input.dataset.teaV4Param] = input.value;
+                values[input.dataset.teaV4Param] = technoeconomicReadMoneyInput(input);
             });
             return values;
+        }
+
+        function technoeconomicReadMoneyInput(input) {
+            if (!input) return '';
+            if (input.dataset?.teaMoneyExact !== undefined
+                && input.value === input.dataset.teaMoneyDisplay) return input.dataset.teaMoneyExact;
+            const multiplier = Number(input.dataset?.teaMoneyMultiplier || 1);
+            const number = Number(input.value);
+            return input.value !== '' && Number.isFinite(number) && multiplier !== 1
+                ? String(number / multiplier) : input.value;
+        }
+
+        function technoeconomicSetMoneyInput(input, value, multiplier = 1) {
+            if (!input) return;
+            const canonical = String(value ?? '');
+            const number = Number(canonical);
+            input.dataset.teaMoneyMultiplier = String(multiplier);
+            input.value = canonical !== '' && Number.isFinite(number)
+                ? (number * multiplier).toFixed(2) : canonical;
+            input.dataset.teaMoneyExact = canonical;
+            input.dataset.teaMoneyDisplay = input.value;
+        }
+
+        function technoeconomicMoneyInputEdited(input, finish = false) {
+            if (input?.dataset?.teaMoneyMultiplier === undefined) return;
+            if (finish) {
+                technoeconomicSetMoneyInput(input, technoeconomicReadMoneyInput(input),
+                    Number(input.dataset.teaMoneyMultiplier));
+            } else {
+                delete input.dataset.teaMoneyExact;
+                delete input.dataset.teaMoneyDisplay;
+            }
         }
 
         function technoeconomicStandaloneRenderDistributionParameters(
@@ -1185,6 +1217,12 @@
                     value: previous[key] ?? defaults[key] ?? '',
                 });
                 input.dataset.teaV4Param = key;
+                if (prefix.startsWith('technoeconomicShared')
+                    || prefix.startsWith('technoeconomicStandaloneCost')) {
+                    const multiplier = prefix === 'technoeconomicSharedInstallation'
+                        || /(?:Capex|Replacement)$/.test(prefix) ? 1000 : 1;
+                    technoeconomicSetMoneyInput(input, previous[key] ?? defaults[key] ?? '', multiplier);
+                }
                 const field = technoeconomicNode('div', {className: 'tea-field'});
                 field.append(
                     technoeconomicNode('label', {text: label, htmlFor: id}),
@@ -1306,7 +1344,7 @@
                     key: 'Capex', inputId: `commercial.${systemMeta.key}.atb-capex`,
                     label: 'Initial installed cost', timing: 'initial_t0',
                     unit: 'constant_usd_per_target_w', value: preset.capex,
-                    badge: `real 2022 USD/${suffix}`,
+                    badge: `real 2022 USD/k${suffix}`,
                     description: `Full initial installed cost for ${systemMeta.label}.`,
                 },
                 {
@@ -1374,7 +1412,7 @@
                 key: 'Replacement', inputId: `commercial.${system}.scheduled-replacement`,
                 label: 'Scheduled replacement', timing: 'scheduled_year_end',
                 unit: 'constant_usd_per_target_w', value: '',
-                badge: 'real USD/target W',
+                badge: 'real USD/target kW',
                 description: 'Enter a sourced cost and schedule.',
             });
             const schedule = technoeconomicNode('div', {className: 'tea-field'});
@@ -1478,8 +1516,8 @@
             const suffix = technoeconomicStandaloneRatingSuffix(ratingBasis);
             const unit = annualOm ? `real ${costYear} USD/kW${suffix}-year`
                 : line?.unit === 'constant_usd_per_target_w'
-                    ? `real ${costYear} USD/W${suffix}` : technoeconomicText(line?.unit);
-            const distribution = annualOm
+                    ? `real ${costYear} USD/kW${suffix}` : technoeconomicText(line?.unit);
+            const distribution = annualOm || line?.unit === 'constant_usd_per_target_w'
                 ? technoeconomicStandaloneDistributionDisplay(line.distribution, 1000)
                 : technoeconomicReviewDistribution(line.distribution);
             return `${unit}; ${distribution}`;
@@ -1621,6 +1659,7 @@
                 ),
                 systems,
                 assumption_note: technoeconomicText(source.assumption_note),
+                cost_year_basis: technoeconomicCostYearSanitizeBasis(source.cost_year_basis),
             };
         }
 
@@ -1638,7 +1677,10 @@
         function technoeconomicStandaloneReadSharedCapex() {
             const saved = technoeconomicStandaloneSharedCapexDraft;
             if (!saved) return null;
-            const read = (id, fallback) => technoeconomicDomElement(id)?.value ?? fallback;
+            const read = (id, fallback) => {
+                const input = technoeconomicDomElement(id);
+                return input ? technoeconomicReadMoneyInput(input) : fallback;
+            };
             const distribution = (prefix, fallback) => {
                 const family = technoeconomicDomElement(`${prefix}Family`);
                 const parameters = technoeconomicDomElement(`${prefix}Parameters`);
@@ -1667,7 +1709,10 @@
                 ['technoeconomicSharedOptimizerPrice', 'optimizer_unit_price_usd'],
             ]) {
                 const input = technoeconomicDomElement(id);
-                if (input) input.value = value[key];
+                if (input) {
+                    if (key === 'optimizer_unit_price_usd') technoeconomicSetMoneyInput(input, value[key]);
+                    else input.value = value[key];
+                }
             }
             for (const [prefix, key] of [
                 ['technoeconomicSharedCommon', 'common_capex_wdc'],
@@ -1704,7 +1749,225 @@
         }
 
         function technoeconomicStandaloneSharedLimitations(year) {
-            return `Declared real ${year} USD. Changing the dollar year does not inflation-adjust entered costs. Later vendor and market prices are unadjusted face-value proxies. O&M coverage of major maintenance remains unresolved; no separate major-maintenance charge is added. Lifecycle conclusions are provisional. Any component allocations are explanatory, not independently sampled. Optimizer quantity and unit price are the values recorded for this run.`;
+            return `Declared real ${year} USD. Applied GDP-deflator conversions retain the original entered amounts and index evidence; they do not verify the original dollar year of vendor or benchmark sources. O&M coverage of major maintenance remains unresolved; no separate major-maintenance charge is added. Lifecycle conclusions are provisional. Any component allocations are explanatory, not independently sampled. Optimizer quantity and unit price are the values recorded for this run.`;
+        }
+
+        let technoeconomicCostYearCatalog = null;
+        let technoeconomicCostYearCatalogPromise = null;
+        let technoeconomicCostYearBasis = null;
+        let technoeconomicCostYearPreview = null;
+        let technoeconomicCostYearDisplayMoney = {};
+
+        function technoeconomicCostYearSanitizeBasis(value) {
+            if (!value || typeof value !== 'object') return null;
+            const source = Number(value.source_year);
+            const applied = Number(value.applied_year);
+            if (![source, applied].every((year) => Number.isInteger(year) && year >= 1900 && year <= 3000)
+                || !Number.isFinite(value.factor) || value.factor <= 0
+                || !value.original_costs || typeof value.original_costs !== 'object') return null;
+            const original = {};
+            for (const [key, amount] of Object.entries(value.original_costs)) {
+                if (!/^(shared\.(common|installation|optimizer_price)|systems\.(solectria|solaredge)\.(Capex|Om|Replacement))$/.test(key)) continue;
+                original[key] = key === 'shared.optimizer_price' ? technoeconomicText(amount)
+                    : technoeconomicStandaloneSanitizeDistributionDraft(amount);
+            }
+            return {source_year: source, applied_year: applied, factor: value.factor,
+                original_costs: original,
+                ...(value.receipt && typeof value.receipt === 'object'
+                    ? {receipt: JSON.parse(JSON.stringify(value.receipt))} : {})};
+        }
+
+        function technoeconomicCostYearMoney(draft) {
+            const money = {};
+            if (draft.shared_capex) {
+                money['shared.common'] = {...draft.shared_capex.common_capex_wdc};
+                money['shared.installation'] = {...draft.shared_capex.optimizer_installation_wdc};
+                money['shared.optimizer_price'] = draft.shared_capex.optimizer_unit_price_usd;
+            }
+            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                for (const line of draft.systems[key].cost_lines) {
+                    if (draft.shared_capex && line.key !== 'Om') continue;
+                    money[`systems.${key}.${line.key}`] = {...line.distribution};
+                }
+            }
+            return money;
+        }
+
+        function technoeconomicCostYearScaleAmount(value, factor) {
+            if (value && typeof value === 'object') return technoeconomicStandaloneScaleDistribution(value, 1 / factor);
+            if (value === '' || value === undefined || value === null) return value;
+            const number = Number(value);
+            return Number.isFinite(number) && Number.isFinite(number * factor) ? String(number * factor) : value;
+        }
+
+        function technoeconomicCostYearAdjustedDraft(draft, basis, targetYear, catalog) {
+            const source = catalog.years?.[basis.source_year];
+            const target = catalog.years?.[targetYear];
+            if (!source || !target || !(source.value > 0) || !(target.value > 0)) {
+                throw new Error(`No recorded GDP deflator is available for ${!source ? basis.source_year : targetYear}. Choose a supported year.`);
+            }
+            const factor = target.value / source.value;
+            const adjusted = JSON.parse(JSON.stringify(draft));
+            const scaled = Object.fromEntries(Object.entries(basis.original_costs).map(
+                ([path, value]) => [path, technoeconomicCostYearScaleAmount(value, factor)]
+            ));
+            if (adjusted.shared_capex) {
+                adjusted.shared_capex.common_capex_wdc = scaled['shared.common'];
+                adjusted.shared_capex.optimizer_installation_wdc = scaled['shared.installation'];
+                adjusted.shared_capex.optimizer_unit_price_usd = scaled['shared.optimizer_price'];
+            }
+            for (const {key} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
+                for (const line of adjusted.systems[key].cost_lines) {
+                    const converted = scaled[`systems.${key}.${line.key}`];
+                    if (converted !== undefined) line.distribution = converted;
+                }
+            }
+            adjusted.cost_year = String(targetYear);
+            adjusted.cost_year_basis = {source_year: basis.source_year, applied_year: Number(targetYear),
+                original_costs: JSON.parse(JSON.stringify(basis.original_costs)), factor,
+                receipt: {method:'gdp_deflator_v1', source_year:basis.source_year, target_year:Number(targetYear),
+                    index_snapshot_id:catalog.snapshot_id, source_index:source.value, target_index:target.value,
+                    factor, source_provisional:source.provisional === true, target_provisional:target.provisional === true}};
+            return adjusted;
+        }
+
+        function technoeconomicCostYearAppliedYear() {
+            return String(technoeconomicCostYearBasis?.applied_year
+                ?? technoeconomicElements.standaloneCostYear?.value ?? '2022');
+        }
+
+        function technoeconomicCostYearHasPendingChange() {
+            return !!technoeconomicCostYearBasis && technoeconomicElements.standaloneCostYear
+                && String(technoeconomicElements.standaloneCostYear.value) !== String(technoeconomicCostYearBasis.applied_year);
+        }
+
+        function technoeconomicCostYearRecordEdits() {
+            if (technoeconomicApplyingDraft || !technoeconomicCostYearBasis) return;
+            const current = technoeconomicCostYearMoney(technoeconomicStandaloneDraftSnapshot());
+            for (const [path, amount] of Object.entries(current)) {
+                if (JSON.stringify(amount) !== JSON.stringify(technoeconomicCostYearDisplayMoney[path])) {
+                    technoeconomicCostYearBasis.original_costs[path] = technoeconomicCostYearScaleAmount(amount, 1 / technoeconomicCostYearBasis.factor);
+                }
+            }
+            for (const path of Object.keys(technoeconomicCostYearBasis.original_costs)) {
+                if (!(path in current)) delete technoeconomicCostYearBasis.original_costs[path];
+            }
+            technoeconomicCostYearDisplayMoney = current;
+        }
+
+        async function technoeconomicLoadCostYearIndices() {
+            if (technoeconomicCostYearCatalog) return technoeconomicCostYearCatalog;
+            if (!technoeconomicCostYearCatalogPromise) {
+                technoeconomicCostYearCatalogPromise = technoeconomicFetchJson('/api/technoeconomic/cost-year-indices')
+                    .then((catalog) => {
+                        if (!catalog?.snapshot_id || !catalog?.years) throw new Error('The GDP-deflator index record is unavailable.');
+                        technoeconomicCostYearCatalog = catalog;
+                        return catalog;
+                    }).finally(() => {technoeconomicCostYearCatalogPromise = null;});
+            }
+            return technoeconomicCostYearCatalogPromise;
+        }
+
+        function technoeconomicCostYearSetStatus(message, ready = false) {
+            const panel = technoeconomicDomElement('technoeconomicCostYearPreview');
+            if (panel) panel.hidden = !technoeconomicCostYearHasPendingChange();
+            const status = technoeconomicDomElement('technoeconomicCostYearStatus');
+            if (status) status.textContent = message;
+            const apply = technoeconomicDomElement('technoeconomicCostYearApply');
+            if (apply) apply.disabled = !ready;
+        }
+
+        async function technoeconomicPreviewCostYearChange() {
+            technoeconomicCostYearPreview = null;
+            const tableRoot = technoeconomicDomElement('technoeconomicCostYearTable');
+            tableRoot?.replaceChildren();
+            if (!technoeconomicCostYearHasPendingChange()) {
+                technoeconomicCostYearSetStatus('');
+                return;
+            }
+            const requested = technoeconomicElements.standaloneCostYear.value;
+            const targetYear = Number(requested);
+            if (!/^\d{4}$/.test(requested) || !Number.isInteger(targetYear)) {
+                technoeconomicCostYearSetStatus('Enter a complete four-digit year. Costs have not changed.');
+                return;
+            }
+            technoeconomicCostYearSetStatus('Loading the recorded GDP deflator. Costs have not changed.');
+            try {
+                const catalog = await technoeconomicLoadCostYearIndices();
+                if (requested !== technoeconomicElements.standaloneCostYear.value) return;
+                const current = technoeconomicStandaloneDraftSnapshot();
+                const adjusted = technoeconomicCostYearAdjustedDraft(current, technoeconomicCostYearBasis, targetYear, catalog);
+                technoeconomicCostYearPreview = adjusted;
+                const receipt = adjusted.cost_year_basis.receipt;
+                const source = catalog.years[receipt.source_year];
+                const target = catalog.years[receipt.target_year];
+                const provisional = [source, target].filter((entry) => entry.provisional).map((entry) => entry.label).filter((value,index,array) => array.indexOf(value) === index);
+                technoeconomicCostYearSetStatus(`Convert original ${receipt.source_year} USD to ${targetYear} USD using GDP deflator ${technoeconomicFormatNumber(receipt.target_index)} / ${technoeconomicFormatNumber(receipt.source_index)} = ${technoeconomicFormatNumber(receipt.factor)}. ${provisional.length ? provisional.join('; ') + '. ' : ''}Displayed values use two decimals; conversion uses the full index values. Costs change only after you apply this conversion.`, true);
+                if (tableRoot) {
+                    const table = technoeconomicNode('table');
+                    const header = technoeconomicNode('tr');
+                    for (const label of ['Cost input', `${current.cost_year} USD`, `${targetYear} USD`]) header.append(technoeconomicNode('th', {text:label, scope:'col'}));
+                    table.append(header);
+                    const suffix = technoeconomicStandaloneRatingSuffix(current.rating_basis);
+                    const labels = {'shared.common':'Common CAPEX (USD/kWdc)', 'shared.installation':'Optimizer installation (USD/kWdc)', 'shared.optimizer_price':'Optimizer unit price (USD)'};
+                    const display = (value, multiplier) => typeof value === 'object'
+                        ? technoeconomicStandaloneDistributionDisplay(value, multiplier)
+                        : technoeconomicFormatNumber(Number(value) * multiplier);
+                    const before = technoeconomicCostYearMoney(current);
+                    for (const [path, amount] of Object.entries(technoeconomicCostYearMoney(adjusted))) {
+                        const [, technology, kind] = path.split('.');
+                        const perWatt = path === 'shared.common' || path === 'shared.installation'
+                            || kind === 'Capex' || kind === 'Replacement';
+                        const multiplier = perWatt ? 1000 : 1;
+                        const label = labels[path] || `${technoeconomicPairedSystem(technology).label} ${kind === 'Om' ? 'annual O&M' : kind === 'Capex' ? 'initial CAPEX' : 'replacement'} (USD/kW${current.shared_capex ? 'dc' : suffix}${kind === 'Om' ? '-year' : ''})`;
+                        const row = technoeconomicNode('tr');
+                        for (const cell of [label, display(before[path], multiplier), display(amount, multiplier)]) row.append(technoeconomicNode('td', {text:cell}));
+                        table.append(row);
+                    }
+                    tableRoot.append(table);
+                }
+            } catch (error) {
+                if (requested === technoeconomicElements.standaloneCostYear.value) technoeconomicCostYearSetStatus(`${error.message} Costs have not changed.`);
+            }
+        }
+
+        function technoeconomicApplyCostYearConversion() {
+            if (!technoeconomicCostYearPreview || String(technoeconomicCostYearPreview.cost_year) !== technoeconomicElements.standaloneCostYear?.value) return false;
+            const adjusted = technoeconomicCostYearPreview;
+            technoeconomicCostYearPreview = null;
+            technoeconomicStandaloneApplyDraft(adjusted);
+            technoeconomicCostYearSetStatus('');
+            technoeconomicMarkDraftChanged();
+            return true;
+        }
+
+        function technoeconomicCancelCostYearConversion() {
+            if (technoeconomicElements.standaloneCostYear) technoeconomicElements.standaloneCostYear.value = technoeconomicCostYearAppliedYear();
+            technoeconomicCostYearPreview = null;
+            technoeconomicCostYearSetStatus('');
+            technoeconomicRenderStandaloneDraft();
+        }
+
+        function technoeconomicCostYearReceipt(payload) {
+            if (!technoeconomicCostYearBasis?.receipt) return null;
+            const receipt = {...technoeconomicCostYearBasis.receipt, original_money:{}};
+            const restore = (amount) => {
+                if (amount === null || amount === undefined) return amount;
+                if (typeof amount === 'number') return amount / receipt.factor;
+                return Object.fromEntries(Object.entries(amount).map(([key,value]) => [key,key === 'family' ? value : value / receipt.factor]));
+            };
+            const shared = payload.paired_commercial.shared_initial_capex;
+            if (shared) {
+                const prefix = 'paired_commercial.shared_initial_capex.';
+                for (const key of ['common_capex_wdc', 'optimizer_installation_wdc', 'optimizer_unit_price_usd']) receipt.original_money[prefix+key] = restore(shared[key]);
+                (shared.report_context?.component_allocations || []).forEach((row,index) => {
+                    for (const key of ['midpoint_wdc','low_wdc','high_wdc']) receipt.original_money[`${prefix}report_context.component_allocations.${index}.${key}`] = restore(row[key]);
+                });
+            }
+            for (const system of payload.paired_commercial.systems) for (const line of system.cost_lines) {
+                receipt.original_money[`paired_commercial.systems.${system.technology}.cost_lines.${line.input_id}.distribution`] = restore(line.distribution);
+            }
+            return receipt;
         }
 
         function technoeconomicStandaloneDerivedEvidence(evidence, derivation) {
@@ -1715,7 +1978,15 @@
 
         function technoeconomicStandaloneRenderSharedCosts() {
             const shared = technoeconomicStandaloneReadSharedCapex();
-            const year = technoeconomicElements.standaloneCostYear?.value || '—';
+            const year = technoeconomicCostYearAppliedYear();
+            const yearHelp = technoeconomicDomElement('technoeconomicStandaloneCostYearHelp');
+            if (yearHelp) yearHelp.textContent = `Original entered costs use the ${technoeconomicCostYearBasis?.source_year ?? year} dollar basis. Choose another year to preview GDP-deflator conversion, then apply it.`;
+            const applied = technoeconomicDomElement('technoeconomicCostYearApplied');
+            if (applied) {
+                const receipt = technoeconomicCostYearBasis?.receipt;
+                applied.hidden = !receipt;
+                applied.textContent = receipt ? `Converted from original ${receipt.source_year} USD to ${receipt.target_year} USD using GDP-deflator factor ${technoeconomicFormatNumber(receipt.factor)}. ${receipt.source_provisional || receipt.target_provisional ? 'The 2026 index uses a provisional Q2 value. ' : ''}Original amounts are retained; editing a converted cost updates its original equivalent.` : '';
+            }
             const assumptionStatus = technoeconomicDomElement('technoeconomicAssumptionStatus');
             if (assumptionStatus) {
                 assumptionStatus.hidden = technoeconomicStandaloneMatchesApproved(technoeconomicAssumptionsDisplayDraft());
@@ -1729,7 +2000,7 @@
                 for (const card of elements.costLines?.querySelectorAll?.('[data-tea-v4-cost-line]') || []) {
                     card.hidden = !!shared && card.dataset.teaV4CostLine === 'Capex';
                     const badge = card.querySelector('.tea-contract-badge');
-                    if (badge) badge.textContent = `real ${year} USD/${card.dataset.teaV4CostLine === 'Om' ? 'kW' : 'W'}${shared ? 'dc' : technoeconomicStandaloneRatingSuffix(elements.costLines?.dataset?.ratingBasis)}${card.dataset.teaV4CostLine === 'Om' ? '-year' : ''}`;
+                    if (badge) badge.textContent = `real ${year} USD/kW${shared ? 'dc' : technoeconomicStandaloneRatingSuffix(elements.costLines?.dataset?.ratingBasis)}${card.dataset.teaV4CostLine === 'Om' ? '-year' : ''}`;
                 }
                 if (elements.replacementEnabled) {
                     elements.replacementEnabled.disabled = !!shared;
@@ -1836,31 +2107,31 @@
             const suffix = technoeconomicStandaloneRatingSuffix(
                 technoeconomicStandaloneSourceCapacityInfo(source, 'solaredge')?.ratingBasis || draft.rating_basis
             );
-            const distribution = (value) => technoeconomicStandaloneDistributionFields(value?.family)
+            const distribution = (value, multiplier = 1) => technoeconomicStandaloneDistributionFields(value?.family)
                 .every(([key]) => value?.[key] !== undefined && String(value[key]).trim() !== '')
-                ? technoeconomicStandaloneDistributionDisplay(value) : 'Incomplete inputs';
+                ? technoeconomicStandaloneDistributionDisplay(value, multiplier) : 'Incomplete inputs';
             const money = (value) => String(value ?? '').trim() && Number.isFinite(Number(value))
                 ? Number(value).toLocaleString('en-US', {style: 'currency', currency: 'USD', maximumFractionDigits: 2}) : '—';
             const rows = [
                 ['Annual Simulation source', draft.source_annual_job_id || 'Select a verified Annual Simulation'],
                 ['Source status', source?.eligible === true ? 'Verified annual energy; re-checked before submission' : 'A currently eligible source is required'],
-                ['Commercial target', `${draft.target_capacity || '—'} MW${suffix}`],
+                ['Commercial target', `${draft.target_capacity ? technoeconomicFormatNumber(draft.target_capacity) : '—'} MW${suffix}`],
                 ['Project life / dollar basis', `${draft.project_life_years || '—'} years / real ${draft.cost_year || '—'} USD`],
                 ['Real discount rate', `${distribution(draft.discount_distribution)} % / year`],
                 ['Annual degradation', `${distribution(draft.degradation_distribution)} % / year`],
             ];
             if (shared) rows.push(
-                ['DC cost capacity', `${shared.dc_capacity_mw || '—'} MWdc`],
+                ['DC cost capacity', `${shared.dc_capacity_mw ? technoeconomicFormatNumber(shared.dc_capacity_mw) : '—'} MWdc`],
                 ['Common CAPEX · one shared draw', `${distribution(shared.common_capex_wdc)} USD/Wdc`],
                 ['SolarEdge optimizer hardware', `${shared.optimizer_count ? Number(shared.optimizer_count).toLocaleString('en-US') : '—'} × ${money(shared.optimizer_unit_price_usd)}`],
-                ['SolarEdge optimizer installation', `${distribution(shared.optimizer_installation_wdc)} USD/Wdc`]
+                ['SolarEdge optimizer installation', `${distribution(shared.optimizer_installation_wdc, 1000)} USD/kWdc`]
             );
             for (const {key, label} of TECHNOECONOMIC_PAIRED_SYSTEMS) {
                 for (const line of draft.systems[key].cost_lines) {
                     if (shared && line.key !== 'Om') continue;
-                    const unit = line.key === 'Om' ? `USD/kW${shared ? 'dc' : suffix}-year` : `USD/W${suffix}`;
+                    const unit = line.key === 'Om' ? `USD/kW${shared ? 'dc' : suffix}-year` : `USD/kW${suffix}`;
                     rows.push([`${label} ${line.key === 'Om' ? 'annual O&M' : line.key === 'Capex' ? 'initial CAPEX' : 'replacement'}`,
-                        `${distribution(line.distribution)} ${unit}${line.key === 'Replacement' ? `; years ${line.occurrence_years}` : ''}`]);
+                        `${distribution(line.distribution, line.key === 'Om' ? 1 : 1000)} ${unit}${line.key === 'Replacement' ? `; years ${line.occurrence_years}` : ''}`]);
                 }
             }
             rows.push(['Realizations / seed', `${draft.n || '—'} / ${draft.seed || '—'}`]);
@@ -1896,20 +2167,24 @@
             const installation = technoeconomicSerializeDistribution(draft.optimizer_installation_wdc, `${path}.optimizer_installation_wdc`, errors, 'cost');
             if (common.nonfixed) context.nonfixedPredictorCount += 1;
             if (installation.nonfixed) context.nonfixedPredictorCount += 1;
-            const approved = technoeconomicStandaloneMatchesApproved(technoeconomicStandaloneDraftSnapshot());
-            const originalCommon = common.payload?.family === 'uniform' && common.payload.low === 1.07 && common.payload.high === 1.17 && year === 2024;
+            const approved = year === 2024 && !technoeconomicCostYearBasis?.receipt && technoeconomicStandaloneMatchesApproved(technoeconomicStandaloneDraftSnapshot());
+            const sourceCommon = technoeconomicCostYearBasis?.original_costs?.['shared.common'] || common.payload;
+            const originalCommon = sourceCommon?.family === 'uniform' && Number(sourceCommon.low) === 1.07 && Number(sourceCommon.high) === 1.17;
+            const allocationFactor = technoeconomicCostYearBasis?.factor || 1;
             return {
                 method: 'shared_base_optimizer_premium_v1', dc_capacity_w: dcMw * 1e6,
                 common_capex_wdc: common.payload, optimizer_installation_wdc: installation.payload,
                 optimizer_count: count, optimizer_unit_price_usd: price,
                 evidence: technoeconomicStandaloneDerivedEvidence(evidence,
-                    `Entered common CAPEX ${technoeconomicStandaloneDistributionDisplay(common.payload)} USD/Wdc shared across systems; optimizer hardware ${count} x ${price} USD; independent installation ${technoeconomicStandaloneDistributionDisplay(installation.payload)} USD/Wdc. DC capacity ${dcMw} MWdc; AC target ${targetCapacity} MWac; declared real ${year} USD.`),
+                    `Entered common CAPEX ${technoeconomicStandaloneDistributionDisplay(common.payload)} USD/Wdc shared across systems; optimizer hardware ${count} x ${technoeconomicFormatNumber(price)} USD; independent installation ${technoeconomicStandaloneDistributionDisplay(installation.payload, 1000)} USD/kWdc. DC capacity ${technoeconomicFormatNumber(dcMw)} MWdc; AC target ${technoeconomicFormatNumber(targetCapacity)} MWac; declared real ${year} USD.`),
                 report_context: {
-                    preset_id: 'thursday-2026-09-17-v1',
+                    preset_id: (technoeconomicCostYearBasis?.source_year ?? year) === 2026 ? 'user-cost-basis-2026-v1' : 'thursday-2026-09-17-v1',
                     assumptions_status: approved ? 'approved_defaults' : 'modified',
                     limitations: technoeconomicStandaloneSharedLimitations(year),
                     component_allocations: originalCommon ? TECHNOECONOMIC_APPROVED_ALLOCATIONS.map(
-                        ([label, midpoint_wdc, low_wdc, high_wdc, source_note]) => ({label, midpoint_wdc, low_wdc, high_wdc, source_note})
+                        ([label, midpoint_wdc, low_wdc, high_wdc, source_note]) => ({label,
+                            midpoint_wdc:midpoint_wdc * allocationFactor, low_wdc:low_wdc * allocationFactor,
+                            high_wdc:high_wdc * allocationFactor, source_note})
                     ) : [],
                 },
             };
@@ -1930,7 +2205,7 @@
                 distribution: limits[0] === limits[1] ? {family: 'fixed', value: limits[0]}
                     : {family: 'uniform', low: limits[0], high: limits[1]},
                 occurrence_years: [], evidence: technoeconomicStandaloneDerivedEvidence(evidence,
-                    `Derived ${technology} initial cost support in USD/Wac: ${limits[0]} to ${limits[1]}. Common DC-cost support multiplied by ${ratio}; SolarEdge additionally includes optimizer hardware and installation. This envelope is not an independently sampled total.`),
+                    `Derived ${technology} initial cost support in USD/Wac: ${technoeconomicFormatNumber(limits[0])} to ${technoeconomicFormatNumber(limits[1])}. Common DC-cost support multiplied by ${technoeconomicFormatNumber(ratio)}; SolarEdge additionally includes optimizer hardware and installation. This envelope is not an independently sampled total.`),
             };
         }
 
@@ -1938,7 +2213,7 @@
             return technoeconomicStandaloneSanitizeDraft({
                 schema_version: TECHNOECONOMIC_STANDALONE_DRAFT_SCHEMA_VERSION,
                 source_annual_job_id: '', target_capacity: '100', n: '10000',
-                seed: '20260916', cost_year: '2024', project_life_years: '30', rating_basis: 'ac_operating_limit',
+                seed: '20260916', cost_year: '2026', project_life_years: '30', rating_basis: 'ac_operating_limit',
                 shared_capex: {
                     dc_capacity_mw: '134', optimizer_count: '103077', optimizer_unit_price_usd: '37.75',
                     common_capex_wdc: {family: 'uniform', low: '1.07', high: '1.17'},
@@ -1980,7 +2255,8 @@
                 target_capacity: technoeconomicElements.standaloneTargetCapacityInput?.value || '',
                 n: technoeconomicElements.standaloneRealizations?.value || '',
                 seed: technoeconomicElements.standaloneSeed?.value || '',
-                cost_year: technoeconomicElements.standaloneCostYear?.value ?? '2022',
+                cost_year: technoeconomicCostYearAppliedYear(),
+                cost_year_basis: technoeconomicCostYearBasis,
                 shared_capex: technoeconomicStandaloneReadSharedCapex(),
                 project_life_years: technoeconomicElements.standaloneProjectLife?.value || '',
                 rating_basis: technoeconomicElements.standaloneSolarEdgeCostLines
@@ -2039,6 +2315,12 @@
         function technoeconomicStandaloneApplyDraft(value) {
             const draft = technoeconomicStandaloneSanitizeDraft(value);
             if (!draft || !technoeconomicElements?.standaloneResults) return false;
+            technoeconomicCostYearBasis = draft.cost_year_basis || {
+                source_year:Number(draft.cost_year), applied_year:Number(draft.cost_year), factor:1,
+                original_costs:technoeconomicCostYearMoney(draft),
+            };
+            technoeconomicCostYearPreview = null;
+            technoeconomicCostYearDisplayMoney = technoeconomicCostYearMoney(draft);
             technoeconomicApplyingDraft = true;
             try {
                 technoeconomicStandaloneApplySharedCapex(draft.shared_capex);
@@ -2108,6 +2390,7 @@
                 technoeconomicApplyingDraft = false;
             }
             technoeconomicRenderStandaloneDraft();
+            technoeconomicCostYearSetStatus('');
             return true;
         }
 
@@ -2147,6 +2430,8 @@
 
         function technoeconomicSerializeStandaloneRequest(options = {}) {
             const errors = [];
+            if (technoeconomicCostYearHasPendingChange()) technoeconomicPushError(errors,
+                'finance.constant_dollar_cost_year', 'Apply or cancel the dollar-year conversion before continuing.');
             const context = {
                 evidenceCount: 0, provisionalEvidenceCount: 0, nonfixedPredictorCount: 0,
             };
@@ -2209,7 +2494,7 @@
                 }
             }
             const costYear = technoeconomicFiniteNumber(
-                technoeconomicElements.standaloneCostYear?.value,
+                technoeconomicCostYearAppliedYear(),
                 'finance.constant_dollar_cost_year', errors, {integer: true, min: 1900, max: 3000}
             );
             const projectLife = technoeconomicFiniteNumber(
@@ -2338,7 +2623,7 @@
                                 distribution: distribution.payload,
                                 occurrence_years: occurrenceYears,
                                 evidence: shared ? technoeconomicStandaloneDerivedEvidence(evidencePayload,
-                                    `Entered ${technoeconomicStandaloneDistributionDisplay(line.distribution)} USD/kWdc-year. Divide by 1000 and multiply by DC/AC cost-capacity ratio ${shared.dc_capacity_w / (targetCapacity * 1e6)} to obtain ${technoeconomicStandaloneDistributionDisplay(distribution.payload, 1)} USD/Wac-year in real ${costYear} USD.`) : evidencePayload,
+                                    `Entered ${technoeconomicStandaloneDistributionDisplay(line.distribution)} USD/kWdc-year. Multiply by DC/AC cost-capacity ratio ${technoeconomicFormatNumber(shared.dc_capacity_w / (targetCapacity * 1e6))} to obtain ${technoeconomicStandaloneDistributionDisplay(distribution.payload, 1000)} USD/kWac-year in real ${costYear} USD.`) : evidencePayload,
                             };
                         }
                     );
@@ -2407,6 +2692,8 @@
                     ...(shared ? {shared_initial_capex: shared} : {}),
                 },
             };
+            const adjustment = technoeconomicCostYearReceipt(payload);
+            if (adjustment) payload.cost_year_adjustment = adjustment;
             return {
                 payload,
                 errors,
@@ -2534,16 +2821,16 @@
                     capacity.watts, capacity.ratingBasis
                 );
                 const energyText = energies.length
-                    ? `${technoeconomicFormatNumber(energies[0], 0)}–${
-                        technoeconomicFormatNumber(energies.at(-1), 0)
+                    ? `${technoeconomicFormatNumber(energies[0])}–${
+                        technoeconomicFormatNumber(energies.at(-1))
                     } kWh/year` : 'Unavailable';
                 const specificLow = energies.length
                     ? energies[0] / (capacity.watts / 1000) : null;
                 const specificHigh = energies.length
                     ? energies.at(-1) / (capacity.watts / 1000) : null;
                 const specificText = specificLow !== null
-                    ? `${technoeconomicFormatNumber(specificLow, 0)}–${
-                        technoeconomicFormatNumber(specificHigh, 0)
+                    ? `${technoeconomicFormatNumber(specificLow)}–${
+                        technoeconomicFormatNumber(specificHigh)
                     } kWh/kW${suffix}-year` : 'Unavailable';
                 let targetEnergyText = specificLow !== null && targetWatts
                     ? `${technoeconomicFormatNumber(
@@ -2595,7 +2882,7 @@
             const capacity = technoeconomicStandaloneSourceCapacityInfo(source, 'solaredge');
             const targetMw = Number(technoeconomicElements.standaloneTargetCapacityInput?.value);
             const projectLife = technoeconomicElements.standaloneProjectLife?.value || '30';
-            const costYear = technoeconomicElements.standaloneCostYear?.value || '—';
+            const costYear = technoeconomicCostYearAppliedYear();
             const discountDraft = technoeconomicStandaloneDistributionDraft(
                 technoeconomicElements.standaloneDiscountFamily,
                 technoeconomicElements.standaloneDiscountParameters
@@ -2658,7 +2945,7 @@
             const number = technoeconomicStandaloneOptionalNumber(value);
             if (number === null) return 'Unavailable';
             const formatted = number.toLocaleString('en-US', {
-                style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+                style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2,
             });
             return `${formatted}${suffix}`;
         }
@@ -2869,6 +3156,80 @@
             }
         }
 
+        const TECHNOECONOMIC_REPORT_NAME_STORAGE_PREFIX = 'sbepv.technoeconomic.report-name.v1.';
+        const TECHNOECONOMIC_REPORT_APPENDIX_STORAGE_PREFIX = 'sbepv.technoeconomic.report-appendix.v1.';
+        const technoeconomicReportNames = new Map();
+        const technoeconomicReportNameSaveStates = new Map();
+        const technoeconomicReportAppendixChoices = new Map();
+        let technoeconomicReportNameJobId = '';
+
+        function technoeconomicLoadReportName(jobId) {
+            if (technoeconomicReportNames.has(jobId)) return technoeconomicReportNames.get(jobId);
+            try {
+                if (typeof localStorage === 'object') {
+                    const stored = localStorage.getItem(TECHNOECONOMIC_REPORT_NAME_STORAGE_PREFIX + jobId);
+                    if (stored !== null) {
+                        technoeconomicReportNameSaveStates.set(jobId, 'Saved in this browser.');
+                        return stored;
+                    }
+                }
+            } catch (_) { /* A blocked browser store must not block report downloads. */ }
+            return `TEA ${jobId}`;
+        }
+
+        function technoeconomicPersistReportName() {
+            const input = technoeconomicElements.analysisName;
+            if (!input || !technoeconomicReportNameJobId) return;
+            if (!technoeconomicReportNameValue(technoeconomicReportNameJobId).valid) return;
+            technoeconomicReportNames.set(technoeconomicReportNameJobId, input.value);
+            let saved = false;
+            try {
+                if (typeof localStorage === 'object') {
+                    localStorage.setItem(
+                        TECHNOECONOMIC_REPORT_NAME_STORAGE_PREFIX + technoeconomicReportNameJobId,
+                        input.value
+                    );
+                    saved = true;
+                }
+            } catch (_) { /* Keep the name in memory when browser storage is unavailable. */ }
+            technoeconomicReportNameSaveStates.set(technoeconomicReportNameJobId, saved
+                ? 'Saved in this browser.' : 'Available for this visit; browser storage is unavailable.');
+        }
+
+        function technoeconomicLoadReportAppendix(jobId) {
+            if (technoeconomicReportAppendixChoices.has(jobId)) return technoeconomicReportAppendixChoices.get(jobId);
+            try {
+                if (typeof localStorage === 'object') {
+                    const stored = localStorage.getItem(TECHNOECONOMIC_REPORT_APPENDIX_STORAGE_PREFIX + jobId);
+                    if (stored === 'true' || stored === 'false') return stored === 'true';
+                }
+            } catch (_) { /* Default to the full report when no saved choice is available. */ }
+            return true;
+        }
+
+        function technoeconomicPersistReportAppendix() {
+            if (!technoeconomicReportNameJobId) return;
+            const include = technoeconomicElements.includeTechnicalAppendix?.checked !== false;
+            technoeconomicReportAppendixChoices.set(technoeconomicReportNameJobId, include);
+            try {
+                if (typeof localStorage === 'object') localStorage.setItem(
+                    TECHNOECONOMIC_REPORT_APPENDIX_STORAGE_PREFIX + technoeconomicReportNameJobId, String(include)
+                );
+            } catch (_) { /* Keep the current visit's preference when browser storage is unavailable. */ }
+        }
+
+        function technoeconomicReportNameValue(jobId) {
+            const input = technoeconomicElements.analysisName;
+            if (!input) return {value: '', valid: true};
+            const raw = input.value || '';
+            const value = raw.trim().replace(/\s+/gu, ' ') || `TEA ${jobId}`;
+            const error = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\p{Cf}\p{Cs}]/u.test(raw)
+                ? 'Analysis name cannot contain control characters.'
+                : Array.from(value).length > 120 ? 'Analysis name must be 120 characters or fewer.' : '';
+            input.setCustomValidity?.(error);
+            return {value, valid: !error};
+        }
+
         function technoeconomicRenderReportDownloads(job) {
             const contractVersion = job?.result?.calculation_contract_version
                 || job?.request?.calculation_contract_version;
@@ -2876,16 +3237,38 @@
                 && contractVersion === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION
                 && /^[A-Za-z0-9_-]+$/.test(job.job_id);
             // This download preference belongs to the report, never the scenario draft.
-            const includeAppendix = technoeconomicElements.includeTechnicalAppendix?.checked !== false;
             if (technoeconomicElements.reportAppendixOption) {
                 technoeconomicElements.reportAppendixOption.hidden = !available;
             }
+            if (technoeconomicElements.reportNameOption) {
+                technoeconomicElements.reportNameOption.hidden = !available;
+            }
+            if (available && technoeconomicReportNameJobId !== job.job_id) {
+                technoeconomicReportNameJobId = job.job_id;
+                if (technoeconomicElements.analysisName) {
+                    technoeconomicElements.analysisName.value = technoeconomicLoadReportName(job.job_id);
+                }
+                if (technoeconomicElements.includeTechnicalAppendix) {
+                    technoeconomicElements.includeTechnicalAppendix.checked = technoeconomicLoadReportAppendix(job.job_id);
+                }
+            } else if (!available) {
+                technoeconomicReportNameJobId = '';
+            }
+            const name = technoeconomicReportNameValue(job?.job_id);
+            if (technoeconomicElements.analysisNameSaveStatus) {
+                technoeconomicElements.analysisNameSaveStatus.textContent = name.valid
+                    ? technoeconomicReportNameSaveStates.get(job?.job_id) || 'Names save automatically in this browser.'
+                    : 'Enter a valid analysis name to save it and enable downloads.';
+            }
+            const includeAppendix = technoeconomicElements.includeTechnicalAppendix?.checked !== false;
+            const nameQuery = technoeconomicElements.analysisName && name.valid
+                ? `&analysis_name=${encodeURIComponent(name.value)}` : '';
             for (const [format, link] of [
                 ['pdf', technoeconomicElements.standalonePdfLink],
                 ['docx', technoeconomicElements.standaloneDocxLink],
             ]) {
-                technoeconomicSetDownload(link, available
-                    ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/${format}?include_technical_appendix=${includeAppendix}`
+                technoeconomicSetDownload(link, available && name.valid
+                    ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/${format}?include_technical_appendix=${includeAppendix}${nameQuery}`
                     : null);
             }
         }
@@ -5318,11 +5701,12 @@
             );
         }
 
-        function technoeconomicFormatNumber(value, maximumFractionDigits = 3) {
+        function technoeconomicFormatNumber(value, maximumFractionDigits = 2) {
             if (value === null || value === undefined || value === '') return 'Unavailable';
             const number = Number(value);
+            const digits = maximumFractionDigits === 0 ? 0 : 2;
             return Number.isFinite(number)
-                ? number.toLocaleString('en-US', {maximumFractionDigits}) : 'Unavailable';
+                ? number.toLocaleString('en-US', {minimumFractionDigits: digits, maximumFractionDigits: digits}) : 'Unavailable';
         }
 
         function technoeconomicQuantile(values, probability) {
@@ -5441,7 +5825,7 @@
             const number = Number(value);
             return Number.isFinite(number)
                 ? number.toLocaleString('en-US', {
-                    style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+                    style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2,
                 })
                 : 'Not available';
         }
@@ -5451,7 +5835,7 @@
             return Number.isFinite(number)
                 ? number.toLocaleString('en-US', {
                     style: 'currency', currency: 'USD',
-                    minimumFractionDigits: 3, maximumFractionDigits: 3,
+                    minimumFractionDigits: 2, maximumFractionDigits: 2,
                 })
                 : 'Not available';
         }
@@ -5892,7 +6276,7 @@
                 triangular: ['low', 'mode', 'high'],
                 bounded_normal: ['low', 'high', 'mean', 'sd'],
             })[family] || [];
-            const parameters = fields.map((field) => `${field}=${distribution[field]}`).join(', ');
+            const parameters = fields.map((field) => `${field}=${technoeconomicFormatNumber(distribution[field])}`).join(', ');
             return parameters ? `${family} (${parameters})` : family;
         }
 
@@ -5935,7 +6319,7 @@
                 + (line.quantity_unit ? ` ${line.quantity_unit}` : '');
             const currencyReview = `${currency.method}; ${currency.source_cost_year} to `
                 + `${currency.target_constant_dollar_cost_year}; index=${currency.index_identity}; `
-                + `factor=${currency.index_factor}; ${currency.derivation}`;
+                + `factor=${technoeconomicFormatNumber(currency.index_factor)}; ${currency.derivation}`;
             return technoeconomicSummaryItem(
                 `Cost line ${index + 1}: ${line.input_id}`,
                 `${line.label} | ${line.ownership} | ${line.cost_type} | `
@@ -6121,8 +6505,8 @@
                     const shared = paired.shared_initial_capex;
                     costSummaryItems.push(
                         technoeconomicSummaryItem('Shared base CAPEX', `${technoeconomicStandaloneDistributionDisplay(shared.common_capex_wdc)} USD/Wdc; one draw applied to both systems`),
-                        technoeconomicSummaryItem('DC cost basis', `${shared.dc_capacity_w.toLocaleString('en-US')} Wdc; multiply DC cost intensities by ${shared.dc_capacity_w / targetWatts} for the AC basis`),
-                        technoeconomicSummaryItem('SolarEdge additions', `${shared.optimizer_count.toLocaleString('en-US')} optimizers × $${shared.optimizer_unit_price_usd}; independent installation ${technoeconomicStandaloneDistributionDisplay(shared.optimizer_installation_wdc)} USD/Wdc`),
+                        technoeconomicSummaryItem('DC cost basis', `${technoeconomicFormatNumber(shared.dc_capacity_w)} Wdc; multiply DC cost intensities by ${technoeconomicFormatNumber(shared.dc_capacity_w / targetWatts)} for the AC basis`),
+                        technoeconomicSummaryItem('SolarEdge additions', `${shared.optimizer_count.toLocaleString('en-US')} optimizers × ${technoeconomicStandaloneFormatUsd(shared.optimizer_unit_price_usd)}; independent installation ${technoeconomicStandaloneDistributionDisplay(shared.optimizer_installation_wdc, 1000)} USD/kWdc`),
                         technoeconomicSummaryItem('Evidence limitations', shared.report_context?.limitations
                             || technoeconomicStandaloneSharedLimitations(payload.finance.constant_dollar_cost_year)),
                     );
@@ -6547,7 +6931,7 @@
             const revision = technoeconomicDraftRevision;
             if (button) button.disabled = true;
             try {
-                const payload = await technoeconomicFetchJson(`/api/technoeconomic/presets/thursday-2026-09-17-v1?source_annual_job_id=${encodeURIComponent(source.source_annual_job_id)}`);
+                const payload = await technoeconomicFetchJson(`/api/technoeconomic/presets/user-cost-basis-2026-v1?source_annual_job_id=${encodeURIComponent(source.source_annual_job_id)}`);
                 if (revision !== technoeconomicDraftRevision || source.source_annual_job_id !== technoeconomicStandaloneSelectedSource()?.source_annual_job_id) return;
                 const frozenPayload = technoeconomicDeepFreeze(JSON.parse(JSON.stringify(payload)));
                 const sourceSummary = technoeconomicDeepFreeze(technoeconomicConfirmationSource(source));
@@ -7010,8 +7394,7 @@
             if (value === null || value === undefined || value === '') return 'Unavailable';
             const number = Number(value);
             if (!Number.isFinite(number)) return 'Unavailable';
-            const digits = metricName.includes('LCOE') || metricName.includes('lcoo') ? 5 : 4;
-            const rendered = number.toLocaleString('en-US', {maximumFractionDigits: digits});
+            const rendered = number.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
             const unit = technoeconomicMetricUnit(metricName);
             return unit ? `${rendered} ${unit}` : rendered;
         }
@@ -7020,7 +7403,7 @@
             if (value === null || value === undefined || value === '') return 'Unavailable';
             const number = Number(value);
             return Number.isFinite(number)
-                ? number.toLocaleString('en-US', {style: 'percent', maximumFractionDigits: 2})
+                ? number.toLocaleString('en-US', {style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2})
                 : 'Unavailable';
         }
 
@@ -7847,9 +8230,25 @@
             applyTechnoeconomicFormState(localDraft || technoeconomicDefaultDraft());
             technoeconomicElements.form.addEventListener('submit', technoeconomicOpenConfirmation);
             technoeconomicElements.includeTechnicalAppendix?.addEventListener('change', () => {
+                technoeconomicPersistReportAppendix();
                 technoeconomicRenderReportDownloads(technoeconomicJob);
             });
+            technoeconomicElements.analysisName?.addEventListener('input', () => {
+                technoeconomicPersistReportName();
+                technoeconomicRenderReportDownloads(technoeconomicJob);
+            });
+            technoeconomicElements.analysisName?.addEventListener('change', () => {
+                technoeconomicElements.analysisName.reportValidity?.();
+            });
+            technoeconomicElements.analysisName?.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    technoeconomicElements.analysisName.reportValidity?.();
+                }
+            });
             document.getElementById('technoeconomicRestoreApprovedBtn')?.addEventListener('click', technoeconomicStandaloneRestoreApproved);
+            document.getElementById('technoeconomicCostYearApply')?.addEventListener('click', technoeconomicApplyCostYearConversion);
+            document.getElementById('technoeconomicCostYearCancel')?.addEventListener('click', technoeconomicCancelCostYearConversion);
             if (typeof window === 'object') window.addEventListener?.('pagehide', () => {
                 technoeconomicPersistStandaloneDraft();
             });
@@ -7863,8 +8262,16 @@
                 });
             }
             technoeconomicElements.form.addEventListener('input', (event) => {
-                if (event.target === technoeconomicElements.includeTechnicalAppendix) return;
+                if (event.target === technoeconomicElements.includeTechnicalAppendix
+                    || event.target === technoeconomicElements.analysisName) return;
+                technoeconomicMoneyInputEdited(event.target);
                 technoeconomicClearStandaloneAcceptance(event.target);
+                if (event.target === technoeconomicElements.standaloneCostYear) {
+                    technoeconomicPreviewCostYearChange();
+                } else if (technoeconomicElements.standaloneAssumptionsDialog?.contains(event.target)) {
+                    technoeconomicCostYearRecordEdits();
+                    if (technoeconomicCostYearHasPendingChange()) technoeconomicPreviewCostYearChange();
+                }
                 const commercialAccept = technoeconomicDomElement(
                     'technoeconomicGuidedCommercialAccept'
                 );
@@ -7903,8 +8310,16 @@
                 technoeconomicMarkDraftChanged();
             });
             technoeconomicElements.form.addEventListener('change', (event) => {
-                if (event.target === technoeconomicElements.includeTechnicalAppendix) return;
+                if (event.target === technoeconomicElements.includeTechnicalAppendix
+                    || event.target === technoeconomicElements.analysisName) return;
+                technoeconomicMoneyInputEdited(event.target, true);
                 technoeconomicClearStandaloneAcceptance(event.target);
+                if (event.target === technoeconomicElements.standaloneCostYear) {
+                    technoeconomicPreviewCostYearChange();
+                } else if (technoeconomicElements.standaloneAssumptionsDialog?.contains(event.target)) {
+                    technoeconomicCostYearRecordEdits();
+                    if (technoeconomicCostYearHasPendingChange()) technoeconomicPreviewCostYearChange();
+                }
                 if (event.target === technoeconomicElements.standaloneSourceSelect) {
                     if (technoeconomicElements.sourceSelect) {
                         technoeconomicElements.sourceSelect.value = event.target.value;

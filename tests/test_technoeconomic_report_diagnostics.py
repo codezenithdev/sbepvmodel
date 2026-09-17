@@ -6,6 +6,7 @@ import unittest
 
 import numpy as np
 from PIL import Image
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 from sbepv import technoeconomic_report_diagnostics as diagnostics
 
@@ -79,7 +80,7 @@ class TornadoTests(unittest.TestCase):
         self.assertEqual(payload["rows"][0]["label"], "CAPEX")
         self.assertEqual((payload["sample_count"], payload["r_squared"]), (80, .82))
         notes = " ".join(payload["notes"])
-        for expected in ("fixed input", "constant predictor", "below entry threshold", "-0.970", "coefficient size and sign"):
+        for expected in ("fixed input", "constant predictor", "below entry threshold", "-0.97", "coefficient size and sign"):
             self.assertIn(expected, notes)
         self.assertEqual(metadata, before)
 
@@ -119,10 +120,20 @@ class TornadoTests(unittest.TestCase):
         self.assertEqual([bar.get_width() for bar in axis.patches], [.6, -.6, -.1])
         self.assertTrue(axis.yaxis_inverted())
         self.assertIn("n = 80", axis.get_title(loc="left"))
-        self.assertIn("R² = 0.820", axis.get_title(loc="left"))
+        self.assertIn("R² = 0.82", axis.get_title(loc="left"))
         image = Image.open(BytesIO(base64.b64decode(diagnostics.render_tornado(payload))))
         self.assertGreater(image.width, 2000)
         self.assertGreater(image.height, 800)
+
+    def test_tornado_endpoint_tick_labels_have_room_at_the_image_edge(self):
+        metadata = sensitivity_fixture()
+        metadata['sensitivity']['commercial_solectria_lifecycle_lcoe']['steps'][0]['standardized_beta'] = .76
+        figure = diagnostics._tornado_figure(diagnostics.tornado_payloads(metadata)[0])
+        canvas = FigureCanvasAgg(figure)
+        canvas.draw()
+        bounds = figure.axes[0].get_tightbbox(canvas.get_renderer())
+        self.assertGreaterEqual(bounds.x0, 6)
+        self.assertLessEqual(bounds.x1, figure.bbox.width - 6)
 
     def test_large_models_paginate_all_coefficients_on_a_common_scale(self):
         metadata = sensitivity_fixture()
@@ -309,6 +320,32 @@ class LifecycleCdfTests(unittest.TestCase):
         image = Image.open(BytesIO(base64.b64decode(diagnostics.render_lifecycle_cdf(payload))))
         self.assertGreater(image.width, 2000)
         self.assertGreater(image.height, 1000)
+
+    def test_cdf_labels_and_percentile_markers_fit_inside_the_embedded_image(self):
+        payload = diagnostics.lifecycle_cdf_payload(*self.fixture())
+        figure = diagnostics._lifecycle_cdf_figure(payload)
+        canvas = FigureCanvasAgg(figure)
+        canvas.draw()
+        renderer = canvas.get_renderer()
+        axis = figure.axes[0]
+        # The tight axes bounds include the actual drawn tick labels, axis
+        # titles, chart title and legend, excluding ticks outside the view.
+        bounds = [axis.get_tightbbox(renderer)]
+        bounds.extend(artist.get_window_extent(renderer) for artist in figure.texts)
+        for box in bounds:
+            self.assertGreaterEqual(box.x0, 6)
+            self.assertGreaterEqual(box.y0, 6)
+            self.assertLessEqual(box.x1, figure.bbox.width - 6)
+            self.assertLessEqual(box.y1, figure.bbox.height - 6)
+        self.assertEqual(len(axis.collections), 6)
+        for collection in axis.collections:
+            points = collection.get_offset_transform().transform(collection.get_offsets())
+            radius = np.sqrt(collection.get_sizes().max()) * figure.dpi / 144
+            for x, y in points:
+                self.assertGreaterEqual(x - radius, axis.bbox.x0)
+                self.assertLessEqual(x + radius, axis.bbox.x1)
+                self.assertGreaterEqual(y - radius, axis.bbox.y0)
+                self.assertLessEqual(y + radius, axis.bbox.y1)
 
 
 if __name__ == "__main__":

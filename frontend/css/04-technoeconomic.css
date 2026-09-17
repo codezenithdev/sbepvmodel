@@ -2317,6 +2317,36 @@
             accent-color: var(--accent);
         }
 
+        .tea-standalone-result-actions .tea-report-name-option {
+            display: grid;
+            gap: 4px;
+            width: 100%;
+            max-width: 400px;
+            font-size: 12px;
+        }
+
+        .tea-report-name-option input {
+            width: 100%;
+            min-height: 36px;
+            padding: 7px 10px;
+        }
+
+        .tea-report-name-option small {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .tea-cost-year-preview {
+            margin-top: 16px;
+            padding: 16px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+        }
+        .tea-cost-year-preview p { margin: 8px 0; }
+        .tea-cost-year-preview table { width: 100%; font-size: 12px; border-collapse: collapse; }
+        .tea-cost-year-preview th, .tea-cost-year-preview td { padding: 7px; text-align: left; border-bottom: 1px solid var(--border); }
+        .tea-cost-year-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
         .tea-standalone-result-body {
             display: grid;
             min-width: 0;

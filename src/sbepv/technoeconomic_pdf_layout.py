@@ -1,6 +1,6 @@
 """Flowing PDF layout for the shared engineering report presentation model."""
 import base64
-from bisect import bisect_right
+from datetime import datetime, timezone
 from io import BytesIO
 import math
 from pathlib import Path
@@ -18,6 +18,37 @@ from reportlab.platypus.tableofcontents import TableOfContents
 
 def text(value):
     return escape(str(value)).replace("\n", "<br/>")
+
+
+def paragraph_markup(block):
+    """Render shared text emphasis and links to numbered figures."""
+    if not block.get('segments'):
+        return text(block['text'])
+    pieces=[]
+    for segment in block['segments']:
+        value=text(segment['text'])
+        if segment.get('bold'):
+            value=f'<b>{value}</b>'
+        if segment.get('figure_ref'):
+            target=escape('figure-'+str(segment['figure_ref']),{'"':'&quot;'})
+            value=f'<link href="#{target}">{value}</link>'
+        pieces.append(value)
+    return ''.join(pieces)
+
+
+def footer_timestamp(report):
+    value=report.get('analysis_at') or report.get('generated_at')
+    label='Completed' if report.get('analysis_at') else 'Exported'
+    if not value:
+        return 'Analysis timestamp unavailable'
+    try:
+        parsed=datetime.fromisoformat(str(value).replace('Z','+00:00'))
+        if parsed.tzinfo is not None:
+            parsed=parsed.astimezone(timezone.utc)
+            return f'{label} {parsed:%Y-%m-%d %H:%M} UTC'
+        return f'{label} {parsed:%Y-%m-%d %H:%M}'
+    except ValueError:
+        return f'{label} {value}'
 
 
 def register_report_fonts(directory=None):
@@ -42,7 +73,7 @@ class LifecycleCDF(Flowable):
 
     def draw(self):
         c, data = self.canv, self.payload
-        left, bottom, right, top = 53, 45, self.width-12, self.height-39
+        left, bottom, right, top = 72, 59, self.width-18, self.height-39
         values = [value for series in data['series'] for value in series['values']]
         lower, upper = min(values), max(values)
         span = upper-lower or max(abs(lower)*.1, 1)
@@ -52,23 +83,25 @@ class LifecycleCDF(Flowable):
         x = lambda value: left+(value-lower)/(upper-lower)*(right-left)
         y = lambda probability: bottom+probability*(top-bottom)
         c.saveState()
-        c.setFont('ReportSans', 9)
+        c.setFont('ReportSans', 8)
         for probability in (0,.25,.5,.75,1):
             c.setStrokeColor(colors.HexColor('#D7DCE1'));c.setLineWidth(.45)
             c.line(left,y(probability),right,y(probability))
             c.setFillColor(colors.HexColor('#26323D'))
-            c.drawRightString(left-8,y(probability)-3,f'{probability:.0%}')
+            c.drawRightString(left-8,y(probability)-3,f'{probability:.2%}')
         for index in range(int(round((upper-lower)/step))+1):
             value = lower+index*step
             c.setStrokeColor(colors.HexColor('#73808A'))
             c.line(x(value),bottom,x(value),bottom-4)
-            c.drawCentredString(x(value),bottom-17,f'{value:g}')
+            label=f'{value:.2f}'
+            c.drawCentredString(x(value),bottom-17,label)
         c.setStrokeColor(colors.HexColor('#73808A'));c.line(left,bottom,left,top);c.line(left,bottom,right,bottom)
-        c.setFont('ReportSans', 10)
+        c.setFont('ReportSans', 8)
         year = data.get('constant_dollar_cost_year')
-        c.drawCentredString((left+right)/2,7,f'Lifecycle LCOE ({year} USD/MWh)' if year else 'Lifecycle LCOE (USD/MWh)')
+        basis = f'real {year} USD' if year is not None else 'constant USD'
+        c.drawCentredString((left+right)/2,22,f'Lifecycle LCOE ({basis}/MWh AC)')
         c.saveState();c.translate(12,(bottom+top)/2);c.rotate(90)
-        c.drawCentredString(0,0,'Cumulative probability');c.restoreState()
+        c.drawCentredString(0,0,'Probability at or below LCOE');c.restoreState()
         for index, series in enumerate(data['series']):
             color = colors.HexColor(series['color'])
             c.setStrokeColor(color);c.setFillColor(color);c.setLineWidth(1.5)
@@ -81,36 +114,52 @@ class LifecycleCDF(Flowable):
                 path.lineTo(x(value),y(probability))
                 previous_probability = probability
             c.drawPath(path,stroke=1,fill=0)
+            c.setDash();c.setFillColor(colors.white)
+            for key, probability, direction in (('p10',.1,-1),('p50',.5,0),('p90',.9,1)):
+                marker_x, marker_y = x(series['percentiles'][key]), y(probability)
+                if direction == 0:
+                    c.circle(marker_x,marker_y,2.7,stroke=1,fill=1)
+                else:
+                    marker = c.beginPath()
+                    marker.moveTo(marker_x,marker_y+direction*3)
+                    marker.lineTo(marker_x-3,marker_y-direction*2.5)
+                    marker.lineTo(marker_x+3,marker_y-direction*2.5)
+                    marker.close()
+                    c.drawPath(marker,stroke=1,fill=1)
             median = series['percentiles']['p50']
-            rank = max(0,bisect_right(series['values'],median)-1)
-            c.setDash();c.circle(x(median),y(series['probability'][rank]),3,stroke=0,fill=1)
             legend_x = left+index*(right-left)/2
             c.setDash(5,3) if series['linestyle']=='--' else c.setDash()
             c.line(legend_x,self.height-13,legend_x+23,self.height-13);c.setDash()
-            c.setFillColor(colors.HexColor('#26323D'));c.setFont('ReportSans-Bold',9)
+            c.setFillColor(colors.HexColor('#26323D'));c.setFont('ReportSans',8)
             c.drawString(legend_x+29,self.height-16,series['label'])
-            c.setFont('ReportSans',8.5)
+            c.setFont('ReportSans',8)
             c.drawString(legend_x,self.height-29,f"n = {data['sample_count']:,}   P50 = ${median:.2f}/MWh")
+        c.setFillColor(colors.HexColor('#26323D'));c.setFont('ReportSans',8)
+        c.drawString(left,4,'Markers: triangle down P10; circle P50; triangle up P90 (type-7 quantiles).')
         c.restoreState()
 
 
 class EngineeringDocument(BaseDocTemplate):
     def __init__(self, stream, report):
         super().__init__(stream, pagesize=letter, leftMargin=45, rightMargin=45,
-                         topMargin=42, bottomMargin=43, title=report['title'], author="SBE PV Dashboard", initialFontName='ReportSans')
+                         topMargin=42, bottomMargin=58, title=report['title'], author="SBE PV Dashboard", initialFontName='ReportSans')
         self.report = report
         self.heading_pages = {}
-        frame = Frame(45,43,self.width,self.height,id="body",leftPadding=0,rightPadding=0,topPadding=0,bottomPadding=0)
+        frame = Frame(45,58,self.width,self.height,id="body",leftPadding=0,rightPadding=0,topPadding=0,bottomPadding=0)
         self.addPageTemplates(PageTemplate(id="report",frames=frame,onPage=self.decorate))
 
     def decorate(self, canvas, doc):
         canvas.saveState()
         canvas.setFillColor(colors.black)
         canvas.setStrokeColor(colors.HexColor("#B0B0B0"))
-        canvas.line(45,32,letter[0]-45,32)
-        canvas.setFont("ReportSans",9)
-        canvas.drawString(45,20,f"PV comparison  |  Report format {self.report['version']}")
-        canvas.drawRightString(letter[0]-45,20,f"Page {doc.page}")
+        canvas.line(45,47,letter[0]-45,47)
+        name=Paragraph(text(self.report.get('analysis_name') or 'PV comparison'),
+                       ParagraphStyle('FooterName',fontName='ReportSans',fontSize=8.5,leading=10,splitLongWords=True))
+        _,height=name.wrap(self.width,30)
+        name.drawOn(canvas,45,40-height)
+        canvas.setFont("ReportSans",8.5)
+        canvas.drawString(45,12,footer_timestamp(self.report))
+        canvas.drawRightString(letter[0]-45,12,f"Page {doc.page}")
         canvas.restoreState()
 
     def afterFlowable(self, flowable):
@@ -125,19 +174,21 @@ class EngineeringDocument(BaseDocTemplate):
 
 def render_pdf(report):
     register_report_fonts()
-    body=ParagraphStyle('Body',fontName='ReportSans',fontSize=10.5,leading=13.7,spaceAfter=7,textColor=colors.black,allowWidows=0,allowOrphans=0)
+    body=ParagraphStyle('Body',fontName='ReportSans',fontSize=10.5,leading=13.7,spaceAfter=7,textColor=colors.HexColor('#333333'),allowWidows=0,allowOrphans=0)
     styles={
         'body':body,
         'lead':ParagraphStyle('Lead',parent=body,keepWithNext=True),
         'small':ParagraphStyle('Small',parent=body,fontSize=10,leading=12.6,spaceAfter=7),
+        'caption':ParagraphStyle('Caption',parent=body,fontSize=8,leading=10,spaceAfter=7),
         'meta':ParagraphStyle('Meta',parent=body,fontSize=10,leading=13,spaceAfter=7),
         'subtitle':ParagraphStyle('Subtitle',parent=body,fontSize=11,leading=14,spaceAfter=8),
-        'finding':ParagraphStyle('Finding',parent=body,fontName='ReportSans-Bold',fontSize=12,leading=15,spaceBefore=7,spaceAfter=10),
-        'toc_title':ParagraphStyle('ContentsTitle',parent=body,fontName='ReportSans-Bold',fontSize=17,leading=21,spaceAfter=9,keepWithNext=True),
+        'finding':ParagraphStyle('Finding',parent=body,spaceBefore=3,spaceAfter=8),
+        'toc_title':ParagraphStyle('ContentsTitle',parent=body,fontSize=17,leading=21,spaceAfter=9,keepWithNext=True),
     }
-    title=ParagraphStyle('Title',parent=body,fontName='ReportSans-Bold',fontSize=25,leading=28,spaceAfter=10,keepWithNext=True)
-    h1=ParagraphStyle('Heading1',parent=body,fontName='ReportSans-Bold',fontSize=19,leading=23,spaceBefore=8,spaceAfter=11,keepWithNext=True)
-    h2=ParagraphStyle('Heading2',parent=body,fontName='ReportSans-Bold',fontSize=12,leading=15,spaceBefore=9,spaceAfter=7,keepWithNext=True)
+    title=ParagraphStyle('Title',parent=body,fontSize=22,leading=26,spaceAfter=10,keepWithNext=True)
+    h1=ParagraphStyle('Heading1',parent=body,fontSize=17,leading=21,spaceBefore=8,spaceAfter=11,keepWithNext=True)
+    h2=ParagraphStyle('Heading2',parent=body,fontName='ReportSans-Bold',fontSize=11.5,leading=14.5,textColor=colors.HexColor('#404040'),spaceBefore=9,spaceAfter=7,keepWithNext=True)
+    h3=ParagraphStyle('Heading3',parent=h2,fontSize=11,leading=14,spaceBefore=7,spaceAfter=6)
     cell=ParagraphStyle('Cell',parent=body,fontSize=10,leading=12,spaceAfter=0,splitLongWords=True)
     numeric=ParagraphStyle('Numeric',parent=cell,alignment=TA_RIGHT)
     head=ParagraphStyle('HeaderCell',parent=cell,fontName='ReportSans-Bold')
@@ -152,11 +203,15 @@ def render_pdf(report):
         elif kind=='heading':
             if block.get('page'):
                 story.append(PageBreak())
-            heading=Paragraph(text(block['text']),h1 if block['level']==1 else h2)
+            label=(str(block['number'])+' ' if block.get('number') else '')+block['text']
+            heading=Paragraph(text(label),{1:h1,2:h2,3:h3}[block['level']])
             heading.report_anchor=block['anchor'];heading.report_level=block['level']
             story.append(heading)
         elif kind=='paragraph':
-            story.append(Paragraph(text(block['text']),styles[block.get('style','body')]))
+            style=styles[block.get('style','body')]
+            if any(segment.get('figure_ref') for segment in block.get('segments',[])):
+                style=ParagraphStyle('FigureReference',parent=style,keepWithNext=True)
+            story.append(Paragraph(paragraph_markup(block),style))
         elif kind=='reference':
             story.append(Paragraph('<link href="'+escape(block['url'],{'"':'&quot;'})+'">'+text(block['text'])+'</link>',styles['small']))
         elif kind=='toc':
@@ -166,14 +221,21 @@ def render_pdf(report):
         elif kind=='chart':
             chart=(LifecycleCDF(block['vector'],522,block['height']) if block.get('vector') else
                    Image(BytesIO(base64.b64decode(block['image'])),width=522,height=block['height']))
-            group=[chart,Paragraph(text(block['caption']),styles['small']),Spacer(1,3)]
+            caption=text(block['caption'])
+            if block.get('figure_id') and block.get('figure_number') is not None:
+                anchor=escape('figure-'+str(block['figure_id']),{'"':'&quot;'})
+                caption=f'<a name="{anchor}"/>Figure {block["figure_number"]}. '+caption
+            group=[chart,Paragraph(caption,styles['caption']),Spacer(1,3)]
             while story and isinstance(story[-1],Paragraph) and getattr(story[-1].style,'keepWithNext',False):
                 group.insert(0,story.pop())
             story.append(KeepTogether(group))
         elif kind=='table':
             numeric_columns=set(block.get('numeric',()))
+            emphasis_rows=set(block.get('emphasis_rows',()))
             data=[[Paragraph(text(value),numeric_head if i in numeric_columns else head) for i,value in enumerate(block['headers'])]]
-            data += [[Paragraph(text(value),numeric if i in numeric_columns else cell) for i,value in enumerate(row)] for row in block['rows']]
+            data += [[Paragraph(text(value),(numeric_head if i in numeric_columns else head) if row_index in emphasis_rows
+                                else (numeric if i in numeric_columns else cell)) for i,value in enumerate(row)]
+                     for row_index,row in enumerate(block['rows'])]
             widths=block.get('widths') or [1/len(block['headers'])]*len(block['headers'])
             table=Table(data,colWidths=[522*w for w in widths],repeatRows=1,hAlign='LEFT',splitByRow=1,splitInRow=1)
             table.setStyle(TableStyle([
@@ -184,6 +246,8 @@ def render_pdf(report):
                 ('LEFTPADDING',(0,0),(-1,-1),6),('RIGHTPADDING',(0,0),(-1,-1),6),
                 ('TOPPADDING',(0,0),(-1,-1),3 if block.get('compact') else 5),('BOTTOMPADDING',(0,0),(-1,-1),3 if block.get('compact') else 5),
             ]))
+            for row_index in emphasis_rows:
+                table.setStyle(TableStyle([('LINEABOVE',(0,row_index+1),(-1,row_index+1),.6,colors.HexColor('#999999'))]))
             if block.get('keep'):
                 group=[table,Spacer(1,8)]
                 # A nested KeepTogether does not inherit a preceding heading's

@@ -1,0 +1,690 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "us-gdp-deflator-2026-09-17",
+  "index_identity": "us_gdp_implicit_price_deflator_2017_100",
+  "index_name": "U.S. GDP implicit price deflator",
+  "units": "Index 2017=100",
+  "provider": "U.S. Bureau of Economic Analysis via Federal Reserve Bank of St. Louis FRED",
+  "source_url": "https://fred.stlouisfed.org/series/A191RD3A086NBEA",
+  "methodology_url": "https://www.bea.gov/data/prices-inflation/gdp-price-deflator",
+  "retrieved_at": "2026-09-17T15:55:15.698224+00:00",
+  "vintage_date": "2026-09-17",
+  "vintage_policy": "Locally frozen observations retrieved from FRED on 2026-09-17. Source data can be revised; these saved values do not refresh automatically.",
+  "missing_year_policy": "Reject years absent from this snapshot. Do not extrapolate future index values.",
+  "provisional_policy": "The 2026 entry uses the latest published quarterly index, 2026 Q2, as a provisional proxy. It is not a published annual 2026 observation.",
+  "conversion_formula": "target_amount = source_amount * target_index / source_index",
+  "sources": {
+    "annual": {
+      "series_id": "A191RD3A086NBEA",
+      "bea_account_code": "A191RD",
+      "source_url": "https://fred.stlouisfed.org/series/A191RD3A086NBEA",
+      "download_url": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=A191RD3A086NBEA&cosd=1947-01-01&coed=2026-09-17",
+      "frequency": "Annual",
+      "seasonal_adjustment": "Not Seasonally Adjusted",
+      "release_date": "2026-04-09",
+      "fred_last_updated": "2026-04-09 07:57 CDT",
+      "observation_start": "1947-01-01",
+      "observation_end": "2025-01-01",
+      "raw_sha256": "b4a07e87eae266f43afcc14e28d4bc091ab9cfc71b0348cfaf22246ba4f60da4",
+      "raw_csv": "observation_date,A191RD3A086NBEA\n1947-01-01,11.426\n1948-01-01,12.067\n1949-01-01,12.046\n1950-01-01,12.195\n1951-01-01,13.060\n1952-01-01,13.286\n1953-01-01,13.447\n1954-01-01,13.572\n1955-01-01,13.801\n1956-01-01,14.271\n1957-01-01,14.744\n1958-01-01,15.080\n1959-01-01,15.287\n1960-01-01,15.495\n1961-01-01,15.660\n1962-01-01,15.850\n1963-01-01,16.032\n1964-01-01,16.276\n1965-01-01,16.574\n1966-01-01,17.039\n1967-01-01,17.533\n1968-01-01,18.280\n1969-01-01,19.176\n1970-01-01,20.189\n1971-01-01,21.212\n1972-01-01,22.130\n1973-01-01,23.342\n1974-01-01,25.443\n1975-01-01,27.800\n1976-01-01,29.330\n1977-01-01,31.152\n1978-01-01,33.343\n1979-01-01,36.110\n1980-01-01,39.371\n1981-01-01,43.097\n1982-01-01,45.759\n1983-01-01,47.552\n1984-01-01,49.267\n1985-01-01,50.826\n1986-01-01,51.849\n1987-01-01,53.134\n1988-01-01,55.008\n1989-01-01,57.165\n1990-01-01,59.305\n1991-01-01,61.310\n1992-01-01,62.707\n1993-01-01,64.194\n1994-01-01,65.564\n1995-01-01,66.939\n1996-01-01,68.164\n1997-01-01,69.340\n1998-01-01,70.119\n1999-01-01,71.111\n2000-01-01,72.722\n2001-01-01,74.360\n2002-01-01,75.515\n2003-01-01,77.006\n2004-01-01,79.077\n2005-01-01,81.556\n2006-01-01,84.071\n2007-01-01,86.349\n2008-01-01,88.013\n2009-01-01,88.556\n2010-01-01,89.632\n2011-01-01,91.481\n2012-01-01,93.185\n2013-01-01,94.771\n2014-01-01,96.421\n2015-01-01,97.316\n2016-01-01,98.241\n2017-01-01,100.000\n2018-01-01,102.291\n2019-01-01,103.979\n2020-01-01,105.377\n2021-01-01,110.186\n2022-01-01,118.023\n2023-01-01,122.390\n2024-01-01,125.428\n2025-01-01,128.979\n"
+    },
+    "quarterly": {
+      "series_id": "GDPDEF",
+      "bea_account_code": "A191RD",
+      "source_url": "https://fred.stlouisfed.org/series/GDPDEF",
+      "download_url": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=GDPDEF&cosd=2025-01-01&coed=2026-09-17",
+      "frequency": "Quarterly",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "release_date": "2026-08-26",
+      "fred_last_updated": "2026-08-26 07:48 CDT",
+      "observation_start": "2025-01-01",
+      "observation_end": "2026-04-01",
+      "proxy_period_start": "2026-04-01",
+      "proxy_period_end": "2026-06-30",
+      "raw_sha256": "6614276db86aa01a2fbb4d069f0885fe34bb480f73f09b3b67180a5dd94c7586",
+      "raw_csv": "observation_date,GDPDEF\n2025-01-01,127.577\n2025-04-01,128.248\n2025-07-01,129.430\n2025-10-01,130.624\n2026-01-01,131.783\n2026-04-01,133.855\n"
+    }
+  },
+  "years": {
+    "1947": {
+      "value": 11.426,
+      "period": "1947",
+      "status": "annual",
+      "provisional": false,
+      "label": "1947 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1948": {
+      "value": 12.067,
+      "period": "1948",
+      "status": "annual",
+      "provisional": false,
+      "label": "1948 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1949": {
+      "value": 12.046,
+      "period": "1949",
+      "status": "annual",
+      "provisional": false,
+      "label": "1949 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1950": {
+      "value": 12.195,
+      "period": "1950",
+      "status": "annual",
+      "provisional": false,
+      "label": "1950 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1951": {
+      "value": 13.06,
+      "period": "1951",
+      "status": "annual",
+      "provisional": false,
+      "label": "1951 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1952": {
+      "value": 13.286,
+      "period": "1952",
+      "status": "annual",
+      "provisional": false,
+      "label": "1952 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1953": {
+      "value": 13.447,
+      "period": "1953",
+      "status": "annual",
+      "provisional": false,
+      "label": "1953 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1954": {
+      "value": 13.572,
+      "period": "1954",
+      "status": "annual",
+      "provisional": false,
+      "label": "1954 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1955": {
+      "value": 13.801,
+      "period": "1955",
+      "status": "annual",
+      "provisional": false,
+      "label": "1955 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1956": {
+      "value": 14.271,
+      "period": "1956",
+      "status": "annual",
+      "provisional": false,
+      "label": "1956 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1957": {
+      "value": 14.744,
+      "period": "1957",
+      "status": "annual",
+      "provisional": false,
+      "label": "1957 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1958": {
+      "value": 15.08,
+      "period": "1958",
+      "status": "annual",
+      "provisional": false,
+      "label": "1958 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1959": {
+      "value": 15.287,
+      "period": "1959",
+      "status": "annual",
+      "provisional": false,
+      "label": "1959 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1960": {
+      "value": 15.495,
+      "period": "1960",
+      "status": "annual",
+      "provisional": false,
+      "label": "1960 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1961": {
+      "value": 15.66,
+      "period": "1961",
+      "status": "annual",
+      "provisional": false,
+      "label": "1961 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1962": {
+      "value": 15.85,
+      "period": "1962",
+      "status": "annual",
+      "provisional": false,
+      "label": "1962 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1963": {
+      "value": 16.032,
+      "period": "1963",
+      "status": "annual",
+      "provisional": false,
+      "label": "1963 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1964": {
+      "value": 16.276,
+      "period": "1964",
+      "status": "annual",
+      "provisional": false,
+      "label": "1964 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1965": {
+      "value": 16.574,
+      "period": "1965",
+      "status": "annual",
+      "provisional": false,
+      "label": "1965 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1966": {
+      "value": 17.039,
+      "period": "1966",
+      "status": "annual",
+      "provisional": false,
+      "label": "1966 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1967": {
+      "value": 17.533,
+      "period": "1967",
+      "status": "annual",
+      "provisional": false,
+      "label": "1967 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1968": {
+      "value": 18.28,
+      "period": "1968",
+      "status": "annual",
+      "provisional": false,
+      "label": "1968 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1969": {
+      "value": 19.176,
+      "period": "1969",
+      "status": "annual",
+      "provisional": false,
+      "label": "1969 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1970": {
+      "value": 20.189,
+      "period": "1970",
+      "status": "annual",
+      "provisional": false,
+      "label": "1970 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1971": {
+      "value": 21.212,
+      "period": "1971",
+      "status": "annual",
+      "provisional": false,
+      "label": "1971 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1972": {
+      "value": 22.13,
+      "period": "1972",
+      "status": "annual",
+      "provisional": false,
+      "label": "1972 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1973": {
+      "value": 23.342,
+      "period": "1973",
+      "status": "annual",
+      "provisional": false,
+      "label": "1973 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1974": {
+      "value": 25.443,
+      "period": "1974",
+      "status": "annual",
+      "provisional": false,
+      "label": "1974 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1975": {
+      "value": 27.8,
+      "period": "1975",
+      "status": "annual",
+      "provisional": false,
+      "label": "1975 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1976": {
+      "value": 29.33,
+      "period": "1976",
+      "status": "annual",
+      "provisional": false,
+      "label": "1976 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1977": {
+      "value": 31.152,
+      "period": "1977",
+      "status": "annual",
+      "provisional": false,
+      "label": "1977 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1978": {
+      "value": 33.343,
+      "period": "1978",
+      "status": "annual",
+      "provisional": false,
+      "label": "1978 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1979": {
+      "value": 36.11,
+      "period": "1979",
+      "status": "annual",
+      "provisional": false,
+      "label": "1979 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1980": {
+      "value": 39.371,
+      "period": "1980",
+      "status": "annual",
+      "provisional": false,
+      "label": "1980 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1981": {
+      "value": 43.097,
+      "period": "1981",
+      "status": "annual",
+      "provisional": false,
+      "label": "1981 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1982": {
+      "value": 45.759,
+      "period": "1982",
+      "status": "annual",
+      "provisional": false,
+      "label": "1982 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1983": {
+      "value": 47.552,
+      "period": "1983",
+      "status": "annual",
+      "provisional": false,
+      "label": "1983 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1984": {
+      "value": 49.267,
+      "period": "1984",
+      "status": "annual",
+      "provisional": false,
+      "label": "1984 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1985": {
+      "value": 50.826,
+      "period": "1985",
+      "status": "annual",
+      "provisional": false,
+      "label": "1985 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1986": {
+      "value": 51.849,
+      "period": "1986",
+      "status": "annual",
+      "provisional": false,
+      "label": "1986 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1987": {
+      "value": 53.134,
+      "period": "1987",
+      "status": "annual",
+      "provisional": false,
+      "label": "1987 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1988": {
+      "value": 55.008,
+      "period": "1988",
+      "status": "annual",
+      "provisional": false,
+      "label": "1988 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1989": {
+      "value": 57.165,
+      "period": "1989",
+      "status": "annual",
+      "provisional": false,
+      "label": "1989 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1990": {
+      "value": 59.305,
+      "period": "1990",
+      "status": "annual",
+      "provisional": false,
+      "label": "1990 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1991": {
+      "value": 61.31,
+      "period": "1991",
+      "status": "annual",
+      "provisional": false,
+      "label": "1991 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1992": {
+      "value": 62.707,
+      "period": "1992",
+      "status": "annual",
+      "provisional": false,
+      "label": "1992 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1993": {
+      "value": 64.194,
+      "period": "1993",
+      "status": "annual",
+      "provisional": false,
+      "label": "1993 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1994": {
+      "value": 65.564,
+      "period": "1994",
+      "status": "annual",
+      "provisional": false,
+      "label": "1994 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1995": {
+      "value": 66.939,
+      "period": "1995",
+      "status": "annual",
+      "provisional": false,
+      "label": "1995 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1996": {
+      "value": 68.164,
+      "period": "1996",
+      "status": "annual",
+      "provisional": false,
+      "label": "1996 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1997": {
+      "value": 69.34,
+      "period": "1997",
+      "status": "annual",
+      "provisional": false,
+      "label": "1997 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1998": {
+      "value": 70.119,
+      "period": "1998",
+      "status": "annual",
+      "provisional": false,
+      "label": "1998 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "1999": {
+      "value": 71.111,
+      "period": "1999",
+      "status": "annual",
+      "provisional": false,
+      "label": "1999 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2000": {
+      "value": 72.722,
+      "period": "2000",
+      "status": "annual",
+      "provisional": false,
+      "label": "2000 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2001": {
+      "value": 74.36,
+      "period": "2001",
+      "status": "annual",
+      "provisional": false,
+      "label": "2001 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2002": {
+      "value": 75.515,
+      "period": "2002",
+      "status": "annual",
+      "provisional": false,
+      "label": "2002 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2003": {
+      "value": 77.006,
+      "period": "2003",
+      "status": "annual",
+      "provisional": false,
+      "label": "2003 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2004": {
+      "value": 79.077,
+      "period": "2004",
+      "status": "annual",
+      "provisional": false,
+      "label": "2004 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2005": {
+      "value": 81.556,
+      "period": "2005",
+      "status": "annual",
+      "provisional": false,
+      "label": "2005 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2006": {
+      "value": 84.071,
+      "period": "2006",
+      "status": "annual",
+      "provisional": false,
+      "label": "2006 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2007": {
+      "value": 86.349,
+      "period": "2007",
+      "status": "annual",
+      "provisional": false,
+      "label": "2007 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2008": {
+      "value": 88.013,
+      "period": "2008",
+      "status": "annual",
+      "provisional": false,
+      "label": "2008 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2009": {
+      "value": 88.556,
+      "period": "2009",
+      "status": "annual",
+      "provisional": false,
+      "label": "2009 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2010": {
+      "value": 89.632,
+      "period": "2010",
+      "status": "annual",
+      "provisional": false,
+      "label": "2010 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2011": {
+      "value": 91.481,
+      "period": "2011",
+      "status": "annual",
+      "provisional": false,
+      "label": "2011 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2012": {
+      "value": 93.185,
+      "period": "2012",
+      "status": "annual",
+      "provisional": false,
+      "label": "2012 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2013": {
+      "value": 94.771,
+      "period": "2013",
+      "status": "annual",
+      "provisional": false,
+      "label": "2013 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2014": {
+      "value": 96.421,
+      "period": "2014",
+      "status": "annual",
+      "provisional": false,
+      "label": "2014 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2015": {
+      "value": 97.316,
+      "period": "2015",
+      "status": "annual",
+      "provisional": false,
+      "label": "2015 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2016": {
+      "value": 98.241,
+      "period": "2016",
+      "status": "annual",
+      "provisional": false,
+      "label": "2016 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2017": {
+      "value": 100.0,
+      "period": "2017",
+      "status": "annual",
+      "provisional": false,
+      "label": "2017 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2018": {
+      "value": 102.291,
+      "period": "2018",
+      "status": "annual",
+      "provisional": false,
+      "label": "2018 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2019": {
+      "value": 103.979,
+      "period": "2019",
+      "status": "annual",
+      "provisional": false,
+      "label": "2019 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2020": {
+      "value": 105.377,
+      "period": "2020",
+      "status": "annual",
+      "provisional": false,
+      "label": "2020 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2021": {
+      "value": 110.186,
+      "period": "2021",
+      "status": "annual",
+      "provisional": false,
+      "label": "2021 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2022": {
+      "value": 118.023,
+      "period": "2022",
+      "status": "annual",
+      "provisional": false,
+      "label": "2022 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2023": {
+      "value": 122.39,
+      "period": "2023",
+      "status": "annual",
+      "provisional": false,
+      "label": "2023 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2024": {
+      "value": 125.428,
+      "period": "2024",
+      "status": "annual",
+      "provisional": false,
+      "label": "2024 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2025": {
+      "value": 128.979,
+      "period": "2025",
+      "status": "annual",
+      "provisional": false,
+      "label": "2025 annual",
+      "source_series_id": "A191RD3A086NBEA"
+    },
+    "2026": {
+      "value": 133.855,
+      "period": "2026-Q2",
+      "status": "quarterly_proxy",
+      "provisional": true,
+      "label": "2026 Q2 provisional proxy",
+      "source_series_id": "GDPDEF"
+    }
+  }
+}

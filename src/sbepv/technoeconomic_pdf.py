@@ -17,6 +17,7 @@ import numpy as np
 from sbepv import technoeconomic_reporting as reporting
 from sbepv import paths
 from sbepv.technoeconomic_report import REPORT_VERSION
+from sbepv.technoeconomic_report_metadata import normalize_analysis_name
 from sbepv.api import artifacts, config, technoeconomic as tea_api
 
 class FullReportError(ValueError):
@@ -121,7 +122,7 @@ def generating_dashboard_identity():
             "build": os.environ.get("PV_DASHBOARD_BUILD_ID") or os.environ.get("RENDER_GIT_COMMIT") or "Not recorded"}
 
 
-def prepare_report(job, *, generated_at=None, include_technical_appendix=True):
+def prepare_report(job, *, generated_at=None, include_technical_appendix=True, analysis_name=None):
     from sbepv import technoeconomic_report
     from sbepv import technoeconomic_report_diagnostics as diagnostics
     from sbepv import technoeconomic_report_energy as energy
@@ -140,17 +141,30 @@ def prepare_report(job, *, generated_at=None, include_technical_appendix=True):
                    "source_sha256": chart_record["sha256"]}
     return technoeconomic_report.build_report(
         job, calculation, routine, checks, generated_at=generated_at, lifecycle_chart=saved_chart,
-        include_technical_appendix=include_technical_appendix, dashboard_identity=generating_dashboard_identity(),
+        include_technical_appendix=include_technical_appendix, analysis_name=analysis_name,
+        dashboard_identity=generating_dashboard_identity(),
         energy_evidence=energy.build_energy_evidence(job['source_snapshot'], output_root=config.OUTPUT_DIR))
 
 
 def report_filename(report, extension):
+    name = normalize_analysis_name(report.get("analysis_name"))
+    # Preserve the existing fallback for the automatically generated display name.
+    if name and name != normalize_analysis_name(None, run_id=report["run_id"]):
+        name = re.sub(r'[<>:"/\\|?*]', '_', name).strip(' .')
+        # Bound bytes as well as characters for filesystems with a 255-byte limit.
+        name = name.encode('utf-8')[:200].decode('utf-8', errors='ignore').rstrip(' .')
+        if re.fullmatch(r'(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])',
+                        name.split('.', 1)[0].rstrip(), flags=re.IGNORECASE):
+            name = '_' + name
+        if name:
+            return f"{name}.{extension}"
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", report["run_id"])[:100]
     scope = "full" if report.get('include_technical_appendix', True) else "summary"
     return f"LCOE_Comparison_v{report['version']}_{scope}_{safe_id}.{extension}"
 
 
-def build_pdf(job, *, generated_at=None, include_technical_appendix=True):
+def build_pdf(job, *, generated_at=None, include_technical_appendix=True, analysis_name=None):
     from sbepv import technoeconomic_pdf_layout
-    report = prepare_report(job, generated_at=generated_at, include_technical_appendix=include_technical_appendix)
+    report = prepare_report(job, generated_at=generated_at,
+                            include_technical_appendix=include_technical_appendix, analysis_name=analysis_name)
     return technoeconomic_pdf_layout.render_pdf(report), report_filename(report, "pdf")

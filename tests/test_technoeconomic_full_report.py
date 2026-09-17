@@ -182,7 +182,7 @@ class FullReportTests(unittest.TestCase):
         original=deepcopy(job)
         payload,name=pdf.build_pdf(job,generated_at=datetime(2026,9,15,tzinfo=timezone.utc))
         self.assertTrue(payload.startswith(b'%PDF-'))
-        self.assertEqual('LCOE_Comparison_v2.4.1_full_tea_full_report.pdf',name)
+        self.assertEqual('LCOE_Comparison_v2.5.1_full_tea_full_report.pdf',name)
         self.assertIn(b'/Outlines',payload)
         self.assertIn(b'/Annots',payload)
         self.assertEqual(job,original)
@@ -219,15 +219,22 @@ class FullReportTests(unittest.TestCase):
     def test_word_and_pdf_share_values_images_and_native_navigation(self):
         job,calculation=completed_fixture()
         original=deepcopy(job)
-        report=pdf.prepare_report(job,generated_at=datetime(2026,9,18,tzinfo=timezone.utc))
+        report=pdf.prepare_report(job,generated_at=datetime(2026,9,18,tzinfo=timezone.utc),analysis_name='Spring factors for fall')
+        self.assertEqual('Spring factors for fall',report['analysis_name'])
         self.assertTrue(any(job['request']['paired_commercial']['shared_initial_capex']['report_context']['limitations'] in block.get('text','') for block in report['blocks']))
         word=docx_report.render_docx(report)
         document_pdf=technoeconomic_pdf_layout.render_pdf(report)
         self.assertTrue(document_pdf.startswith(b'%PDF-'))
         self.assertEqual(job,original)
-        self.assertEqual('LCOE_Comparison_v2.4.1_full_tea_full_report.docx',pdf.report_filename(report,'docx'))
+        self.assertEqual('Spring factors for fall.docx',pdf.report_filename(report,'docx'))
         original_chart=(config.OUTPUT_DIR/job['artifacts']['exports']['artifacts']['cdf_plot']['storage_key']).read_bytes()
         charts=[block for block in report['blocks'] if block['kind']=='chart']
+        self.assertEqual(list(range(1,len(charts)+1)),[b['figure_number'] for b in charts])
+        references={s['figure_ref'] for b in report['blocks'] for s in b.get('segments',[]) if 'figure_ref' in s}
+        self.assertEqual({b['figure_id'] for b in charts},references)
+        headings=[b for b in report['blocks'] if b['kind']=='heading']
+        self.assertTrue(all(len(b['number'].split('.'))==b['level'] for b in headings))
+        self.assertEqual(['1','2','3','4','5','6'],[b['number'] for b in headings if b['level']==1])
         lifecycle=next(block for block in charts if block.get('vector'))
         self.assertNotEqual(base64.b64decode(lifecycle['image']),original_chart)
         self.assertEqual(lifecycle['source_sha256'],job['artifacts']['exports']['artifacts']['cdf_plot']['sha256'])
@@ -273,23 +280,39 @@ class FullReportTests(unittest.TestCase):
         self.assertFalse(concise['include_technical_appendix'])
         full_headings=[b.get('anchor') for b in full['blocks'] if b['kind']=='heading']
         concise_headings=[b.get('anchor') for b in concise['blocks'] if b['kind']=='heading']
-        expected=['executive-summary','introduction','analysis-approach','data-collection','calibration','annual','technoeconomic-analysis','technical-appendix','references']
+        expected=['executive-summary','introduction','analysis-approach','summary','technical-appendix','references']
         actual=[b['anchor'] for b in full['blocks'] if b['kind']=='heading' and b['level']==1]
         self.assertEqual(expected,actual)
-        self.assertNotIn('summary',full_headings)
+        self.assertIn('summary',full_headings)
         self.assertNotIn('technical-appendix',concise_headings)
         self.assertFalse(any(anchor.startswith('appendix-') for anchor in concise_headings))
         for anchor in ('executive-summary','sensitivity','lifecycle-comparison'):
             self.assertIn(anchor,concise_headings)
         headline=lambda report:next(b for b in report['blocks'] if b['kind']=='table' and b['headers'][0]=='LCOE (USD/MWh)')
         self.assertEqual(headline(full),headline(concise))
-        self.assertEqual('LCOE_Comparison_v2.4.1_summary_tea_full_report.pdf',pdf.report_filename(concise,'pdf'))
+        self.assertEqual('LCOE_Comparison_v2.5.1_summary_tea_full_report.pdf',pdf.report_filename(concise,'pdf'))
         self.assertEqual(next(b['vector'] for b in full['blocks'] if b.get('vector')),
                          next(b['vector'] for b in concise['blocks'] if b.get('vector')))
         for report in (full,concise):
             self.assertFalse(any('Paired difference' in b.get('caption','') for b in report['blocks']))
             self.assertFalse(any('Report date ' in b.get('text','') for b in report['blocks']))
             self.assertTrue(any('Analysis dashboard version' in str(b) and 'Not recorded' in str(b) for b in report['blocks']))
+            closing_start=next(i for i,b in enumerate(report['blocks']) if b.get('anchor')=='summary')
+            closing_end=next(i for i,b in enumerate(report['blocks'][closing_start+1:],closing_start+1) if b['kind']=='heading' and b['level']==1)
+            closing=report['blocks'][closing_start:closing_end]
+            closing_table=next(b for b in closing if b['kind']=='table')
+            self.assertIn('USD/MWh',closing_table['rows'][0][0])
+            self.assertIn('commercial systems',closing_table['rows'][0][0])
+            self.assertEqual(['254.50','269.25'],closing_table['rows'][1][1:])
+            self.assertIn('MWh/year',closing_table['rows'][1][0])
+            self.assertIn('SolarTAC site',closing_table['rows'][1][0])
+            self.assertEqual([row[2].removeprefix('$').removesuffix('/MWh') for row in headline(report)['rows']],closing_table['rows'][0][1:])
+            closing_text=' '.join(b.get('text','') for b in closing)
+            self.assertIn('SolarEdge is higher by 14.75 MWh (5.80% relative to the lower value)',closing_text)
+            self.assertIn('this TEA does not sample calibration-factor uncertainty',closing_text)
+            self.assertIn('Higher energy alone does not establish lower LCOE',closing_text)
+            self.assertIn(job['request']['paired_commercial']['shared_initial_capex']['report_context']['limitations'],closing_text)
+            self.assertTrue(any(s.get('bold') for b in closing for s in b.get('segments',[])))
         # The PDF's actual contents notifications exclude the title and optional headings.
         notifications=[]
         original_notify=technoeconomic_pdf_layout.EngineeringDocument.notify
@@ -298,8 +321,8 @@ class FullReportTests(unittest.TestCase):
             return original_notify(document,kind,thing)
         with patch.object(technoeconomic_pdf_layout.EngineeringDocument,'notify',new=notify):
             technoeconomic_pdf_layout.render_pdf(concise)
-        self.assertIn('Executive Summary',notifications)
-        self.assertIn('Analysis Approach',notifications)
+        self.assertIn('1 Executive Summary',notifications)
+        self.assertIn('3 Approach',notifications)
         self.assertNotIn(concise['title'],notifications)
         self.assertNotIn('Technical Appendix',notifications)
         with ZipFile(BytesIO(docx_report.render_docx(concise))) as archive:
@@ -342,6 +365,35 @@ class FullReportTests(unittest.TestCase):
         results['solaredge']['percentiles']['p50']=None
         self.assertIn('unavailable',report_model.median_lcoe_comparison(results))
 
+    def test_summary_emphasizes_only_the_median_comparison(self):
+        results={'solectria':{'percentiles':{'p50':.050}},'solaredge':{'percentiles':{'p50':.061}}}
+        for solar_edge_median,emphasized in (
+            (.061, ['$11.00/MWh lower']),
+            (.040, ['$10.00/MWh lower']),
+            (.050, ['equal median LCOE of $50.00/MWh']),
+            (None, []),
+        ):
+            with self.subTest(solaredge_median=solar_edge_median):
+                results['solaredge']['percentiles']['p50']=solar_edge_median
+                original=deepcopy(results)
+                segments=report_model.median_lcoe_comparison_segments(results)
+                self.assertEqual(emphasized,[segment['text'] for segment in segments if segment.get('bold')])
+                self.assertEqual(report_model.median_lcoe_comparison(results),''.join(segment['text'] for segment in segments))
+                self.assertEqual(original,results)
+
+    def test_concise_summary_preserves_comparisons_without_repeating_table_values(self):
+        results={'solectria':{'percentiles':{'p50':.050}},'solaredge':{'percentiles':{'p50':.061}}}
+        segments=report_model.median_lcoe_comparison_segments(results,include_medians=False)
+        self.assertEqual('Under the modelled assumptions, the median LCOE of the commercial Solectria system is '
+                         '$11.00/MWh lower than that of the equivalent-capacity SolarEdge system.',
+                         ''.join(segment['text'] for segment in segments))
+        self.assertEqual('Annual medians: SolarEdge is higher by 14.75 MWh (5.80% relative to the lower value).',
+                         report_model.energy_comparison('Annual medians',254500,269250,include_values=False))
+        self.assertEqual('Annual medians: The saved energy totals are equal.',
+                         report_model.energy_comparison('Annual medians',254500,254500,include_values=False))
+        self.assertEqual(report_model.energy_comparison('Annual medians',None,269250),
+                         report_model.energy_comparison('Annual medians',None,269250,include_values=False))
+
     def test_dashboard_identity_is_generation_metadata_not_historical_provenance(self):
         with patch.dict(os.environ,{'PV_DASHBOARD_RELEASE':'release-test','PV_DASHBOARD_BUILD_ID':'build-test'}):
             identity=pdf.generating_dashboard_identity()
@@ -369,13 +421,17 @@ class FullReportTests(unittest.TestCase):
         snapshot['excluded_annual_energy_rows']=[{'row':{'year':1990+i},'reasons':['Missing intervals with a long evidence explanation. '*8]} for i in range(12)]
         calculation.metadata['convergence']={'status':'unavailable','checkpoints':[]}
         report=report_model.build_report(presentation_job,calculation,routine,checks)
+        closing_table=next(block for block in report['blocks'] if block.get('headers',[])[:1]==['Median result and basis'])
+        self.assertEqual(1,len(closing_table['rows']))
         text=json.dumps([{k:v for k,v in b.items() if k!='image'} for b in report['blocks']])
         self.assertIn('Annual percentiles are withheld',text)
         self.assertIn('completed-run lifecycle LCOE chart is unavailable',text)
         self.assertIn('Not available',text)
         self.assertNotIn('reasons: []',text)
-        factor_table=next(block for block in report['blocks'] if block.get('headers')==['Season','Observed coverage','Rows','Solectria factor','SolarEdge factor'])
-        self.assertEqual(factor_table['rows'][0][-2:],['0.9512','0.7835'])
+        factor_table=next(block for block in report['blocks'] if block.get('headers')==['Season','Observed coverage','Rows','Solectria\nfactor','SolarEdge\nfactor'])
+        self.assertEqual(factor_table['rows'][0][-2:],['0.95','0.78'])
+        assumption_rows=next(block['rows'] for block in report['blocks'] if block.get('headers')==['Input','Saved assumption'])
+        self.assertEqual('Uniform 4.00 to 10.00 USD/kWdc',next(row[1] for row in assumption_rows if row[0]=='SolarEdge optimizer installation'))
         presented_factors=snapshot['calibration_lineage']['origin_validation_job']['result']['calibration_factors']['seasons'][0]['systems']
         for system,factor in factors.items():
             self.assertEqual(presented_factors[system]['factor'],factor)
@@ -482,11 +538,14 @@ class FullReportTests(unittest.TestCase):
 
     def test_display_zero_is_not_missing_and_dates_are_not_substituted(self):
         self.assertEqual('0.00',report_model.number(0))
+        self.assertEqual('133.86',report_model.number(133.855))
+        self.assertEqual('118.02',report_model.number(118.023))
+        self.assertEqual('0.88',report_model.number(118.023/133.855,8))
         self.assertEqual('Not available',report_model.number(None))
         self.assertEqual('Not recorded',report_model.display_date('malformed-date'))
         self.assertNotEqual(report_model.distribution({'family':'fixed','value':0}),report_model.distribution(None))
-        self.assertEqual('250 kWac',report_model.capacity(250000,'ac'))
-        self.assertEqual('12.5 MWac',report_model.capacity(12500000,'ac'))
+        self.assertEqual('250.00 kWac',report_model.capacity(250000,'ac'))
+        self.assertEqual('12.50 MWac',report_model.capacity(12500000,'ac'))
         self.assertIn('06:30',report_model.measured_window({'from_date':'2026-01-01','from_time':'06:30'},{}))
 
     def test_different_completed_inputs_produce_their_own_report_values(self):
@@ -497,7 +556,7 @@ class FullReportTests(unittest.TestCase):
                 report=pdf.prepare_report(job)
             lcoe_table=next(block for block in report['blocks'] if block['kind']=='table' and block['headers'][0]=='LCOE (USD/MWh)')
             expected=job['result']['paired_commercial']['systems']['solectria']['percentiles']['p50']*1000
-            self.assertEqual(report_model.number(expected),lcoe_table['rows'][0][2])
+            self.assertEqual('$'+report_model.number(expected)+'/MWh',lcoe_table['rows'][0][2])
             self.assertIn(f'{life} years /',json.dumps([{k:v for k,v in b.items() if k!='image'} for b in report['blocks']]))
             displayed.append(lcoe_table['rows'][0][2])
         self.assertNotEqual(*displayed)
@@ -539,14 +598,14 @@ class FullReportTests(unittest.TestCase):
                 self.assertEqual(original,job)
                 lcoe_table=next(block for block in report['blocks'] if block['kind']=='table' and block['headers'][0]=='LCOE (USD/MWh)')
                 expected=job['result']['paired_commercial']['systems']['solectria']['percentiles']['p50']*1000
-                self.assertEqual(report_model.number(expected),lcoe_table['rows'][0][2])
+                self.assertEqual('$'+report_model.number(expected)+'/MWh',lcoe_table['rows'][0][2])
                 displayed.append(expected)
                 if scenario=='modified':
                     report_text=json.dumps([{k:v for k,v in block.items() if k!='image'} for block in report['blocks']])
                     self.assertIn('Modified assumptions',report_text)
                     self.assertIn('Proposed real 2030 USD',report_text)
                     self.assertIn(note,report_text)
-                    self.assertIn('does not automatically inflation-adjust',report_text)
+                    self.assertIn('No price-index conversion is recorded',report_text)
                     self.assertNotIn('Common CAPEX component allocations',report_text)
                     self.assertNotIn('Component allocations explain the base total',report_text)
                     table=calculation.realization_table

@@ -150,6 +150,51 @@ class EnergyEvidenceTests(unittest.TestCase):
             self.assertEqual(result["artifact_diagnostic"]["status"], "unavailable")
             self.assertIn("annual energy differs", result["artifact_diagnostic"]["reason"])
 
+    def test_original_fit_and_substituted_annual_profiles_are_validated_separately(self):
+        with temporary_directory() as directory:
+            snapshot, tables = fixture(Path(directory))
+            lineage = snapshot['calibration_lineage']
+            factors = lineage['resolved_profile']['seasonal_factors']
+            factors['fall'] = deepcopy(factors['spring'])
+            lineage['result_application']['seasonal_substitution'] = {
+                'source_season': 'spring', 'target_season': 'fall', 'explicitly_accepted': True,
+                'factors': deepcopy(factors['spring']),
+            }
+            annual_row = tables[Path(directory) / 'annual.xlsx'][-1]
+            totals = snapshot['source_annual_job']['result']['annual_energy_by_year'][0]
+            for system, prefix, offset in (('solectria', 'sol', 3), ('solaredge', 'se', 7)):
+                before = annual_row[offset + 1]
+                annual_row[offset] = factors['fall'][system]
+                annual_row[offset + 1] = min(1200 * factors['fall'][system], 1000)
+                totals[prefix + '_predicted_kwh'] += (annual_row[offset + 1] - before) / 1000
+            original = deepcopy(snapshot)
+            result = self._inspect(snapshot, tables, directory)
+            diagnostic = result['artifact_diagnostic']
+            self.assertEqual('reconciled_current_artifacts', diagnostic['status'], diagnostic)
+            self.assertFalse(diagnostic['profile_validation']['fitted_equals_applied'])
+            self.assertEqual('original_fitted', diagnostic['profile_validation']['calibration_workbook'])
+            self.assertEqual('annual_applied', diagnostic['profile_validation']['annual_workbook'])
+            self.assertEqual('spring', diagnostic['profile_validation']['seasonal_substitution']['source_season'])
+            self.assertEqual(original, snapshot)
+            fitted = tables[Path(directory) / 'calibration.xlsx'][-1][3]
+            annual_row[3] = fitted
+            rejected = self._inspect(snapshot, tables, directory)['artifact_diagnostic']
+            self.assertEqual('unavailable', rejected['status'])
+            self.assertIn('applied annual calibration profile', rejected['reason'])
+            annual_row[3] = factors['fall']['solectria']
+            tables[Path(directory) / 'calibration.xlsx'][-1][3] = annual_row[3]
+            rejected = self._inspect(snapshot, tables, directory)['artifact_diagnostic']
+            self.assertEqual('unavailable', rejected['status'])
+            self.assertIn('original fitted calibration profile', rejected['reason'])
+
+    def test_changed_observation_window_is_rejected(self):
+        with temporary_directory() as directory:
+            snapshot, tables = fixture(Path(directory))
+            snapshot['calibration_lineage']['origin_profile']['fit_metadata']['seasons'][-1]['first_timestamp'] = '2025-09-16T12:00:00'
+            diagnostic = self._inspect(snapshot, tables, directory)['artifact_diagnostic']
+            self.assertEqual('unavailable', diagnostic['status'])
+            self.assertIn('observation window', diagnostic['reason'])
+
     def test_changed_factors_and_unpaired_measurements_fail_closed(self):
         for changed in ("factor", "measurement"):
             with self.subTest(changed=changed), temporary_directory() as directory:

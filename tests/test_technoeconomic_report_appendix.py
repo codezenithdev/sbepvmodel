@@ -71,8 +71,8 @@ class TechnicalAppendixTests(unittest.TestCase):
 
     def test_applied_values_override_request_and_missing_values_are_not_defaults(self):
         blocks = appendix.build_technical_appendix(saved_job())
-        self.assertEqual("0.973 / 0.987", table_row(blocks, "SolarEdge inverter / BOS efficiencies")[1])
-        self.assertEqual("Not recorded / Not recorded", table_row(blocks, "Solectria inverter / BOS efficiencies")[1])
+        self.assertEqual("97.30 / 98.70", table_row(blocks, "SolarEdge inverter / BOS efficiencies (%)")[1])
+        self.assertEqual("Not recorded / Not recorded", table_row(blocks, "Solectria inverter / BOS efficiencies (%)")[1])
         self.assertEqual("8000 / 18446744073709551615", table_row(blocks, "Realizations / random seed")[1])
         self.assertEqual("Not applicable", table_row(blocks, "Martin-Ruiz coefficient a_r")[1])
         self.assertEqual("1 hour", table_row(blocks, "Weather interval")[1])
@@ -81,7 +81,7 @@ class TechnicalAppendixTests(unittest.TestCase):
         blocks = appendix.build_technical_appendix({})
         self.assertNotIn("appendix-electrical", anchor_set(blocks))
         self.assertEqual("Not recorded", table_row(blocks, "PV model version")[1])
-        self.assertEqual("Not recorded", table_row(blocks, "Real discount rate r (fraction/year)")[1])
+        self.assertEqual("Not recorded", table_row(blocks, "Real discount rate r (%/year)")[1])
         self.assertTrue(all(block["kind"] in {"heading", "paragraph", "table"} for block in blocks))
 
     def test_applied_factors_use_resolved_profile_and_recorded_substitution_not_original_fit(self):
@@ -101,7 +101,7 @@ class TechnicalAppendixTests(unittest.TestCase):
         original = deepcopy(job)
         self.assertTrue(appendix.physics_description_supported(job))
         blocks = appendix.applied_calibration_blocks(job)
-        self.assertEqual(["Fall", "0.9800", "1.0200", "Recorded substitute from Spring"], table_row(blocks, "Fall"))
+        self.assertEqual(["Fall", "0.98", "1.02", "Recorded substitute from Spring"], table_row(blocks, "Fall"))
         self.assertEqual(["Winter", "Not recorded", "Not recorded", "Not recorded"], table_row(blocks, "Winter"))
         self.assertEqual(original, job)
         self.assertNotIn("fall", job["source_snapshot"]["calibration_lineage"]["origin_profile"]["seasonal_factors"])
@@ -129,7 +129,7 @@ class TechnicalAppendixTests(unittest.TestCase):
                 if evidence == "resolved_profile":
                     self.assertTrue(any("acceptance is not recorded" in block.get("text", "") for block in blocks))
 
-    def test_factor_equality_uses_saved_precision_before_four_decimal_display(self):
+    def test_factor_equality_uses_saved_precision_before_two_decimal_display(self):
         factors = {"fall": {"solectria": .951234, "solaredge": .783456}}
         job = {"source_snapshot": {"calibration_lineage": {
             "origin_profile": {"seasonal_factors": deepcopy(factors)},
@@ -137,13 +137,13 @@ class TechnicalAppendixTests(unittest.TestCase):
             "application": {"seasonal_substitution": None},
         }}}
         blocks = appendix.applied_calibration_blocks(job)
-        self.assertEqual(["0.9512", "0.7835"], table_row(blocks, "Fall")[1:3])
+        self.assertEqual(["0.95", "0.78"], table_row(blocks, "Fall")[1:3])
         self.assertTrue(any("equal the original fitted" in b.get("text", "") for b in blocks))
         self.assertTrue(any("no seasonal substitution" in b.get("text", "") for b in blocks))
         job["source_snapshot"]["calibration_lineage"]["resolved_profile"]["seasonal_factors"]["fall"]["solectria"] = .951235
         original = deepcopy(job)
         blocks = appendix.applied_calibration_blocks(job)
-        self.assertEqual(["0.9512", "0.7835"], table_row(blocks, "Fall")[1:3])
+        self.assertEqual(["0.95", "0.78"], table_row(blocks, "Fall")[1:3])
         self.assertFalse(any("equal the original fitted" in b.get("text", "") for b in blocks))
         self.assertEqual(original, job)
 
@@ -165,6 +165,16 @@ class TechnicalAppendixTests(unittest.TestCase):
         lineage["resolved_profile"]["seasonal_factors"] = deepcopy(factors)
         lineage.pop("application")
         self.assertTrue(any(block["kind"] == "table" for block in appendix.applied_calibration_blocks(job)))
+
+    def test_small_rates_display_as_percent_without_rounding_saved_inputs(self):
+        job = saved_job()
+        job['request']['finance']['real_discount_rate'] = {'distribution': {'family': 'uniform', 'low': .042345, 'high': .057891}}
+        job['request']['shared_degradation'] = {'annual_rate': {'distribution': {'family': 'fixed', 'value': .004321}}}
+        original = deepcopy(job)
+        blocks = appendix.build_technical_appendix(job)
+        self.assertEqual('Uniform 4.23 to 5.79', table_row(blocks, 'Real discount rate r (%/year)')[1])
+        self.assertEqual('Fixed 0.43', table_row(blocks, 'Shared degradation g (%/year)')[1])
+        self.assertEqual(original, job)
 
 
 if __name__ == "__main__":

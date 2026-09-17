@@ -24,5 +24,8 @@ dependencies = { file = ["requirements.txt"] }
 where = ["src"]
 include = ["sbepv*"]
 
+[tool.setuptools.package-data]
+sbepv = ["data/*.json"]
+
 # src/run_pipeline.py is intentionally excluded: it is a standalone batch script
 # with no importers, run as `python src/run_pipeline.py`, not part of the API.

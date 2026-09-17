@@ -120,6 +120,7 @@
                                     <nav class="tea-standalone-result-actions" aria-label="Result exports">
                                         <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneCdfLink" href="#" target="_blank" rel="noopener noreferrer" hidden>Chart</a>
                                         <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneXlsxLink" href="#" hidden>Workbook</a>
+                                        <label class="tea-report-name-option" id="technoeconomicReportNameOption" for="technoeconomicAnalysisName" hidden><span>Analysis name</span><input id="technoeconomicAnalysisName" type="text" maxlength="120" autocomplete="off" placeholder="Name this analysis" aria-describedby="technoeconomicAnalysisNameHelp technoeconomicAnalysisNameSaveStatus"><small id="technoeconomicAnalysisNameHelp"></small><small id="technoeconomicAnalysisNameSaveStatus" role="status" aria-live="polite"></small></label>
                                         <label class="tea-report-appendix-option" id="technoeconomicReportAppendixOption" for="technoeconomicIncludeTechnicalAppendix" hidden><input id="technoeconomicIncludeTechnicalAppendix" type="checkbox" checked><span>Include technical appendix</span></label>
                                         <a class="tea-button tea-button-secondary" id="technoeconomicStandalonePdfLink" href="#" hidden>Download PDF report</a>
                                         <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneDocxLink" href="#" hidden>Download Word report</a>
@@ -257,17 +258,25 @@
                                                     </div>
                                                     <div class="tea-field">
                                                         <label for="technoeconomicStandaloneCostYear">Constant-dollar year</label>
-                                                        <input id="technoeconomicStandaloneCostYear" type="number" value="2024" min="1900" max="3000" step="1" required aria-describedby="technoeconomicStandaloneCostYearHelp">
-                                                        <p class="tea-field-help" id="technoeconomicStandaloneCostYearHelp">Price basis for all entered costs. Changing this year does not adjust prices for inflation.</p>
+                                                        <input id="technoeconomicStandaloneCostYear" type="number" value="2026" min="1900" max="3000" step="1" required aria-describedby="technoeconomicStandaloneCostYearHelp">
+                                                        <p class="tea-field-help" id="technoeconomicStandaloneCostYearHelp">Current costs use the user-declared 2026 dollar basis. Choose another year to preview GDP-deflator conversion, then apply it.</p>
                                                     </div>
                                                 </div>
+                                                <section id="technoeconomicCostYearPreview" class="tea-cost-year-preview" aria-labelledby="technoeconomicCostYearPreviewTitle" hidden>
+                                                    <h4 id="technoeconomicCostYearPreviewTitle">Review dollar-year conversion</h4>
+                                                    <p id="technoeconomicCostYearStatus" role="status" aria-live="polite"></p>
+                                                    <div id="technoeconomicCostYearTable"></div>
+                                                    <div class="tea-cost-year-actions"><button type="button" class="tea-button" id="technoeconomicCostYearApply" disabled>Apply conversion</button><button type="button" class="tea-button tea-button-secondary" id="technoeconomicCostYearCancel">Keep current year</button></div>
+                                                </section>
+                                                <p id="technoeconomicCostYearApplied" class="tea-field-help" hidden></p>
                                             </section>
 
                                             <section id="technoeconomicAssumptionsPanelCosts" class="tea-assumptions-tabpanel" data-tea-assumptions-panel="costs" role="tabpanel" aria-labelledby="technoeconomicAssumptionsTabCosts" tabindex="0" hidden>
                                                 <div class="tea-assumptions-section-heading">
                                                     <div><h3 id="technoeconomicStandaloneCostsHeading">System costs</h3><p id="technoeconomicSystemCostGuide">Initial installed cost, annual O&amp;M, and optional sourced replacements.</p></div>
-                                                    <span class="tea-assumptions-tag" data-tea-dollar-year>Real 2024 USD</span>
+                                                    <span class="tea-assumptions-tag" data-tea-dollar-year>Real 2026 USD</span>
                                                 </div>
+                                                <p class="tea-field-help">Displayed costs use two decimals; calculations retain full precision.</p>
                                                 <div id="technoeconomicSharedCapexFields" class="tea-assumptions-cost-stack" hidden>
                                                     <section class="tea-assumptions-card tea-assumptions-shared-card" aria-labelledby="technoeconomicSharedCapexHeading">
                                                         <div class="tea-assumptions-card-heading"><div><h4 id="technoeconomicSharedCapexHeading">Shared base CAPEX</h4><p>One common cost draw is applied to both systems.</p></div><span class="tea-assumptions-tag">Both systems</span></div>
@@ -285,7 +294,7 @@
                                                         </div>
                                                         <div class="tea-assumptions-subtotal"><span>Optimizer hardware</span><output data-tea-cost-preview="hardware">Unavailable</output></div>
                                                         <div class="tea-assumptions-distribution-row tea-assumptions-installation">
-                                                            <div class="tea-field"><label for="technoeconomicSharedInstallationFamily">Optimizer installation distribution (USD/Wdc)</label><select id="technoeconomicSharedInstallationFamily"><option value="fixed">Fixed</option><option value="uniform" selected>Uniform</option><option value="triangular">Triangular</option><option value="bounded_normal">Normal (bounded)</option></select></div>
+                                                            <div class="tea-field"><label for="technoeconomicSharedInstallationFamily">Optimizer installation distribution (USD/kWdc)</label><select id="technoeconomicSharedInstallationFamily"><option value="fixed">Fixed</option><option value="uniform" selected>Uniform</option><option value="triangular">Triangular</option><option value="bounded_normal">Normal (bounded)</option></select></div>
                                                             <div id="technoeconomicSharedInstallationParameters" class="tea-v4-distribution-parameters"></div>
                                                         </div>
                                                         <div class="tea-assumptions-subtotal"><span>Midpoint installation cost</span><output data-tea-cost-preview="installation">Unavailable</output></div>

@@ -15,12 +15,14 @@ import textwrap
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
-from matplotlib.ticker import MaxNLocator, PercentFormatter
+from matplotlib.ticker import MaxNLocator, PercentFormatter, StrMethodFormatter
 
 
 SYSTEMS = (("solectria", "Solectria", "#AD7610"), ("solaredge", "SolarEdge", "#2E66A3"))
 PERCENTILES = (("p10", .1), ("p50", .5), ("p90", .9))
 MAX_TORNADO_HEIGHT = 6.0  # Inches; leaves room for captions within either page layout.
+CHART_WIDTH_INCHES = 522 / 72  # Match the embedded width so 8 pt remains 8 pt.
+CHART_FONT_SIZE = 8
 
 
 class ReportDiagnosticsError(ValueError):
@@ -138,7 +140,7 @@ Large models are split into consecutive panels without dropping coefficients.
         for warning in model.get("warnings") or []:
             if isinstance(warning, Mapping) and warning.get("code") == "high_pairwise_rank_correlation":
                 correlation = warning.get("correlation")
-                value = f"{correlation:+.3f}" if _finite(correlation) else "not recorded"
+                value = f"{correlation:+.2f}" if _finite(correlation) else "not recorded"
                 notes.append("High rank correlation between " + _label(str(warning.get("left_predictor")), labels)
                              + " and " + _label(str(warning.get("right_predictor")), labels)
                              + f" ({value}); correlated inputs can affect coefficient size and sign.")
@@ -356,13 +358,15 @@ def _style_axis(ax, *, grid):
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
     ax.spines[["bottom", "left"]].set_color("#AAAAAA")
-    ax.tick_params(axis="both", labelsize=10)
+    ax.tick_params(axis="both", labelsize=CHART_FONT_SIZE)
+    ax.xaxis.offsetText.set_fontsize(CHART_FONT_SIZE)
+    ax.yaxis.offsetText.set_fontsize(CHART_FONT_SIZE)
 
 
 def _tornado_figure(payload):
     if payload.get("status") != "available":
         raise ReportDiagnosticsError("An unavailable tornado payload cannot be charted.")
-    fig = Figure(figsize=(7.15, payload["height"]), dpi=320, facecolor="white")
+    fig = Figure(figsize=(CHART_WIDTH_INCHES, payload["height"]), dpi=320, facecolor="white")
     ax = fig.add_subplot(111)
     rows = payload["rows"]
     positions = np.arange(len(rows))
@@ -372,36 +376,39 @@ def _tornado_figure(payload):
     ax.axvline(0, color="#444444", linewidth=.9)
     for position, value in zip(positions, values):
         ax.text(value + (.025 * limit if value >= 0 else -.025 * limit), position,
-                f"{value:+.3f}", ha="left" if value >= 0 else "right", va="center", fontsize=9)
+                f"{value:+.2f}", ha="left" if value >= 0 else "right", va="center", fontsize=CHART_FONT_SIZE)
     ax.set_yticks(positions, [row["display_label"] for row in rows])
     ax.tick_params(axis="y", length=0)
     ax.invert_yaxis()
     ax.set_xlim(-limit, limit)
-    ax.set_xlabel("Standardized rank coefficient (dimensionless)", fontsize=10)
-    title = f"{payload['label']} lifecycle LCOE  |  n = {payload['sample_count']:,}  |  R² = {payload['r_squared']:.3f}"
+    ax.set_xlabel("Standardized rank coefficient (dimensionless)", fontsize=CHART_FONT_SIZE)
+    title = f"{payload['label']} lifecycle LCOE  |  n = {payload['sample_count']:,}  |  R² = {payload['r_squared']:.2f}"
     if payload["panel_count"] > 1:
         title += f"\nCoefficient ranks {payload['rank_start']}–{payload['rank_end']} of {payload['entered_predictor_count']}"
-    ax.set_title(title, loc="left", fontsize=10, pad=12)
+    ax.set_title(title, loc="left", fontsize=CHART_FONT_SIZE, pad=12)
     ax.xaxis.set_major_locator(MaxNLocator(5))
+    ax.xaxis.set_major_formatter(StrMethodFormatter('{x:.2f}'))
     _style_axis(ax, grid="x")
     top_margin = .60 if payload["panel_count"] > 1 else .38
-    fig.subplots_adjust(left=.37, right=.98, top=1 - top_margin / payload["height"], bottom=.50 / payload["height"])
+    fig.subplots_adjust(left=.37, right=.96, top=1 - top_margin / payload["height"], bottom=.50 / payload["height"])
     return fig
 
 
 def _convergence_figure(payload):
     if payload.get("status") != "available":
         raise ReportDiagnosticsError("An unavailable convergence payload cannot be charted.")
-    fig = Figure(figsize=(7.15, payload["height"]), dpi=320, facecolor="white")
+    fig = Figure(figsize=(CHART_WIDTH_INCHES, payload["height"]), dpi=320, facecolor="white")
     ax = fig.add_subplot(111)
     for item, style, marker in zip(payload["series"], ("--", "-", ":"), ("v", "o", "^")):
         ax.plot(item["x"], item["values"], label=item["label"], color=payload["color"],
                 linestyle=style, marker=marker, markersize=4, linewidth=1.7)
-    ax.set_title(f"{payload['label']} lifecycle LCOE percentile stability", loc="left", fontsize=10, pad=37)
-    ax.set_xlabel("Cumulative realizations", fontsize=10)
-    ax.set_ylabel("LCOE (USD/MWh)", fontsize=10)
+    ax.set_title(f"{payload['label']} lifecycle LCOE percentile stability", loc="left", fontsize=CHART_FONT_SIZE, pad=37)
+    ax.set_xlabel("Cumulative realizations", fontsize=CHART_FONT_SIZE)
+    ax.set_ylabel("LCOE (USD/MWh)", fontsize=CHART_FONT_SIZE)
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.01), ncols=3, frameon=False, fontsize=9, borderaxespad=0)
+    ax.xaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'))
+    ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.01), ncols=3, frameon=False, fontsize=CHART_FONT_SIZE, borderaxespad=0)
     _style_axis(ax, grid="y")
     fig.subplots_adjust(left=.115, right=.97, top=.75, bottom=.21)
     return fig
@@ -410,7 +417,7 @@ def _convergence_figure(payload):
 def _lifecycle_cdf_figure(payload):
     if payload.get("status") != "available":
         raise ReportDiagnosticsError("An unavailable lifecycle CDF cannot be charted.")
-    fig = Figure(figsize=(7.15, payload["height"]), dpi=320, facecolor="white")
+    fig = Figure(figsize=(CHART_WIDTH_INCHES, payload["height"]), dpi=320, facecolor="white")
     ax = fig.add_subplot(111)
     for item in payload["series"]:
         # Include the first jump, including a constant population's jump 0 -> 1.
@@ -421,17 +428,20 @@ def _lifecycle_cdf_figure(payload):
                        facecolor="white", edgecolor=item["color"], linewidth=1.1, zorder=4)
     year = payload.get("constant_dollar_cost_year")
     basis = f"real {year} USD" if year is not None else "constant USD"
-    ax.set_xlabel(f"Lifecycle LCOE ({basis}/MWh AC)", fontsize=10)
-    ax.set_ylabel("Probability at or below LCOE", fontsize=10)
+    ax.set_xlabel(f"Lifecycle LCOE ({basis}/MWh AC)", fontsize=CHART_FONT_SIZE)
+    ax.set_ylabel("Probability at or below LCOE", fontsize=CHART_FONT_SIZE)
     ax.set_ylim(0, 1.025)
     ax.margins(x=.07)
     ax.set_yticks(np.linspace(0, 1, 6))
-    ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=0))
-    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.01), ncols=2, frameon=False, fontsize=10, borderaxespad=0)
-    ax.set_title(f"Lifecycle LCOE  |  n = {payload['sample_count']:,} per system", loc="left", fontsize=10, pad=36)
-    fig.text(.115, .025, "Markers: triangle down P10; circle P50; triangle up P90 (type-7 quantiles).", fontsize=9)
+    ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=2))
+    ax.xaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.01), ncols=2, frameon=False, fontsize=CHART_FONT_SIZE, borderaxespad=0)
+    ax.set_title(f"Lifecycle LCOE  |  n = {payload['sample_count']:,} per system", loc="left", fontsize=CHART_FONT_SIZE, pad=36)
+    fig.text(.15, .025, "Markers: triangle down P10; circle P50; triangle up P90 (type-7 quantiles).", fontsize=CHART_FONT_SIZE)
     _style_axis(ax, grid="y")
-    fig.subplots_adjust(left=.115, right=.98, top=.78, bottom=.21)
+    # Leave room for the full vertical title beside two-decimal percentage
+    # ticks, including 100.00%. The PNG is embedded at its fixed document size.
+    fig.subplots_adjust(left=.15, right=.98, top=.78, bottom=.21)
     return fig
 
 

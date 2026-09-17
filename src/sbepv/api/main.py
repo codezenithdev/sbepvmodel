@@ -30,6 +30,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
@@ -1199,6 +1200,20 @@ def technoeconomic_thursday_preset(source_annual_job_id: str) -> JSONResponse:
     return JSONResponse(payload, headers={"Cache-Control": "private, no-store"})
 
 
+@app.get("/api/technoeconomic/presets/user-cost-basis-2026-v1")
+def technoeconomic_current_preset(source_annual_job_id: str) -> JSONResponse:
+    from sbepv import technoeconomic_presets
+    return JSONResponse(technoeconomic_presets.current_assumptions(source_annual_job_id),
+                        headers={"Cache-Control": "private, no-store"})
+
+
+@app.get("/api/technoeconomic/cost-year-indices")
+def technoeconomic_cost_year_indices() -> JSONResponse:
+    from sbepv import technoeconomic_cost_year
+    return JSONResponse(technoeconomic_cost_year.get_index_catalog(),
+                        headers={"Cache-Control": "private, no-store"})
+
+
 def _technoeconomic_export_response(job_id: str, export_format: str) -> FileResponse:
     _require_supported_technoeconomic_job(job_id)
     job = state.AGENT_STORE.get_technoeconomic_job(job_id)
@@ -1255,37 +1270,56 @@ def download_technoeconomic_xlsx(job_id: str) -> FileResponse:
 
 
 @app.get("/api/technoeconomic/jobs/{job_id}/exports/pdf")
-def download_technoeconomic_pdf(job_id: str, include_technical_appendix: bool = True) -> Response:
+def download_technoeconomic_pdf(
+    job_id: str, include_technical_appendix: bool = True, analysis_name: str | None = None,
+) -> Response:
     """Render a verified full report without mutating the completed job."""
-    return _technoeconomic_document_response(job_id, "pdf", include_technical_appendix=include_technical_appendix)
+    return _technoeconomic_document_response(job_id, "pdf",
+        include_technical_appendix=include_technical_appendix, analysis_name=analysis_name)
 
 
 @app.get("/api/technoeconomic/jobs/{job_id}/exports/docx")
-def download_technoeconomic_docx(job_id: str, include_technical_appendix: bool = True) -> Response:
+def download_technoeconomic_docx(
+    job_id: str, include_technical_appendix: bool = True, analysis_name: str | None = None,
+) -> Response:
     """Editable Word report from the same verified content as PDF."""
-    return _technoeconomic_document_response(job_id, "docx", include_technical_appendix=include_technical_appendix)
+    return _technoeconomic_document_response(job_id, "docx",
+        include_technical_appendix=include_technical_appendix, analysis_name=analysis_name)
 
 
 def _technoeconomic_document_response(
-    job_id: str, document_format: str, *, include_technical_appendix: bool = True,
+    job_id: str, document_format: str, *, include_technical_appendix: bool = True, analysis_name=None,
 ) -> Response:
     from sbepv import technoeconomic_pdf
     from sbepv import technoeconomic_docx
+    from sbepv import technoeconomic_docx_refresh
     from sbepv import technoeconomic_reporting
+    from sbepv.technoeconomic_report_metadata import normalize_analysis_name
+    try:
+        report_name = normalize_analysis_name(analysis_name, run_id=job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     _require_supported_technoeconomic_job(job_id)
     job = state.AGENT_STORE.get_technoeconomic_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown technoeconomic job id")
     try:
         renderer = technoeconomic_docx.build_docx if document_format == "docx" else technoeconomic_pdf.build_pdf
-        payload, filename = renderer(job, include_technical_appendix=include_technical_appendix)
+        payload, filename = renderer(job, include_technical_appendix=include_technical_appendix,
+                                     analysis_name=report_name)
+    except technoeconomic_docx_refresh.DocxRefreshError as exc:
+        logger.warning("Word report refresh failed for TEA %s: %s", job_id, type(exc).__name__)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (technoeconomic_pdf.FullReportError, technoeconomic_reporting.TechnoeconomicExportError,
             ArtifactIntegrityError, KeyError, ValueError) as exc:
         logger.warning("Full report evidence rejected for TEA %s: %s", job_id, type(exc).__name__)
         raise HTTPException(status_code=409, detail="The full report requires verified completed results and frozen calibration/annual lineage. Existing saved results are unchanged.") from exc
     media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if document_format == "docx" else "application/pdf"
+    encoded_filename = quote(filename, safe="")
+    disposition = (f"attachment; filename*=utf-8''{encoded_filename}" if encoded_filename != filename
+                   else f'attachment; filename="{filename}"')
     return Response(content=payload, media_type=media_type, headers={
-        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Disposition": disposition,
         "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
     })
 

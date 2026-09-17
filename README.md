@@ -362,17 +362,39 @@ uses a scrolling body and visible actions on narrow screens. Frozen-request revi
 shows actual source, sampling, finance, costs, and evidence, not invented post-run
 totals. Close/cancel controls respect in-flight submission.
 
-New scenarios use September 15 approved defaults: **100 MWac / 134 MWdc**, **30
+New scenarios use the September 15 default amounts with the user's September 17
+clarification that entered costs are in **2026 USD**: **100 MWac / 134 MWdc**, **30
 years**, **10,000 realizations**, **seed 20260916**. Common CAPEX is shared;
 SolarEdge adds optimizer hardware and an independent installation draw. Original
 DC costs convert using the entered DC/AC cost-capacity ratio. Midpoint previews are
 deterministic input summaries, not completed simulation medians. LHS samples
 continuous assumptions; balanced seeded paired weather-year allocation is separate.
 
-The default constant-dollar year is **2024** and editable. Changing it declares
-price basis without inflation-adjusting entered prices. Drafts persist year/costs
-across reopening/reload. Existing custom drafts retain values; older drafts without
-a year keep their original 2022 basis. **Restore defaults** keeps the selected
+The default constant-dollar year is **2026** and editable. Choosing another year
+opens a before/after preview using `target index / original index` from a frozen
+U.S. GDP implicit price deflator snapshot (BEA via FRED). **Apply conversion** scales
+CAPEX, O&M, optimizer unit price, and monetary distribution parameters; quantities,
+capacity, discount rate, degradation, and energy remain unchanged. The snapshot has
+annual observations for 1947–2025. Its 2026 value is explicitly a **2026 Q2
+provisional proxy**, not a complete annual observation. Missing years are rejected
+without extrapolation. This converts purchasing-power basis, not future market prices.
+
+Original monetary values and their basis persist across year changes, avoiding
+repeated compounding. Monetary editors show two decimals but retain unrounded
+amounts until the user edits a field; optimizer installation displays USD/kWdc
+while the stored calculation basis remains USD/Wdc. The server verifies the complete conversion against the
+frozen snapshot and records original amounts, years, indices, factor, provisional
+status, source URLs, and snapshot identity in the immutable request/provenance.
+Converted assumptions require the existing review and confirmation workflow. The
+PDF and Word reports disclose the conversion and any provisional index. The
+catalog is available at `/api/technoeconomic/cost-year-indices`; the current preset
+is `/api/technoeconomic/presets/user-cost-basis-2026-v1`.
+
+Drafts persist the applied year/costs across reopening/reload. An unapplied year
+selection cannot silently become the stored cost basis. Existing custom drafts
+retain values and years; older drafts without a year keep their original 2022
+basis. The historical `thursday-2026-09-17-v1` preset and completed analyses retain
+their recorded 2024 basis. **Restore defaults** keeps the selected
 source. Compatible AC source changes preserve modified assumptions; shared CAPEX
 requires both systems' verified AC limits. Reports omit original component
 allocations when common CAPEX or dollar basis changes.
@@ -402,10 +424,16 @@ generation verifies frozen inputs, calibration/Annual lineage, saved arrays, and
 exports. Missing/tampered evidence blocks download without changing job status.
 Editing drafts never rewrites completed results.
 
-Report format v2.4.1 places contents after the title metadata, excluding the title
-from the contents. Its Executive Summary covers Objectives, Approach, and Results,
-followed by Introduction and Objectives, Data Collection, Modeling and Calibration,
-Annual Simulation, and Technoeconomic Analysis. Measured-period energy is kept
+Report format v2.5.1 numbers major headings and their subheadings. Contents follow
+the title metadata and exclude the title itself. The Executive Summary covers
+Objectives, Approach, and Results, with $/MWh shown on each LCOE percentile value.
+After Introduction and Objectives, the Approach section contains Data Collection,
+Modeling and Calibration, Annual Simulation, and Technoeconomic Analysis
+subheadings. Full sentences describe each method, including pvlib/PVMismatch for
+recognized physics identities. Continuous uncertain inputs use Latin Hypercube
+Sampling; weather years are assigned directly with balanced counts and paired
+system energies, without sampling interpolated annual CDF values. A brief Summary
+states the saved results and their qualifications. Measured-period energy is kept
 distinct from full-year predictions, and seasonal calibration coverage qualifies
 their comparison. The summary subtracts the two full-precision system medians;
 this is distinct from the median of paired LCOE differences. Cost tables and the
@@ -415,8 +443,10 @@ in the main TEA section, with sample counts and model R-squared. O&M predictors
 and exclusion notes identify the owning system explicitly. Lifecycle CDFs are
 redrawn from the verified sealed realizations as native vector graphics in PDF
 and PNGs from the same data in Word; the saved chart artifact still passes its integrity
-checks. Calibration factors display four decimal places, while comparisons use
-saved precision. Confirmed identical fitted and applied profiles are summarized
+checks. Report measurements and calibration factors display two decimal places;
+counts remain integers and comparisons use saved precision. Small cost intensities
+use USD/kW and rates use percent to keep the displayed values meaningful. Confirmed
+identical fitted and applied profiles are summarized
 without a duplicate factor table.
 
 The optional technical appendix uses concise equation tables with short meanings,
@@ -436,22 +466,65 @@ it does not represent those bytes as historically sealed evidence. Missing or
 unreconciled workbooks leave the diagnostic unavailable without replacing saved
 results or launching a new simulation.
 
+An **Analysis name** field beside the report downloads supplies a subtitle below
+the project title and the lower-left footer label. Both endpoints accept the
+optional `analysis_name` query parameter. Names are normalized to one line, limited
+to 120 characters after whitespace normalization, and checked for unsupported
+control characters. Blank or omitted names default to `TEA {job_id}`. The dashboard
+uses a custom analysis name for the PDF and Word download filenames, replacing
+unsupported filename characters and shortening long names as needed. The automatic
+name retains the version/scope/job-ID filename. The dashboard automatically saves
+names and appendix choices per completed job in the current browser. The name field
+confirms when it is saved, or explains when browser storage
+is unavailable and the name will last only for the current visit. A name is export metadata only: it does not edit the job,
+scenario inputs, calculation provenance, or numerical results.
+
+The footer shows the analysis name and the saved completion timestamp in UTC;
+legacy records without that timestamp show an explicitly labeled export timestamp.
 The title retains the analysis timestamp and labels the generating dashboard
-version separately from report format v2.4.1; there is no separate visible report
+version separately from report format v2.5.1; there is no separate visible report
 date. `PV_DASHBOARD_RELEASE` supplies a release label when configured; otherwise
 `package.json` supplies an explicitly labeled package-declared version.
 `PV_DASHBOARD_BUILD_ID`, then `RENDER_GIT_COMMIT`, supplies the build identifier;
 if neither is available it is shown as not recorded. The generating software
 identity does not establish the dashboard version used for a historical analysis:
 missing historical version metadata remains not recorded. New filenames follow
-`LCOE_Comparison_v2.4.1_{full|summary}_{run_id}.{pdf|docx}`, with a sanitized run ID.
+`LCOE_Comparison_v2.5.1_{full|summary}_{run_id}.{pdf|docx}`, with a sanitized run ID.
 Previously downloaded reports and their filenames are preserved.
 Generation metadata may change file hashes without changing numerical evidence.
 
-PDF links/bookmarks use final page numbers. Word uses native Title/Heading styles
-and TOC/page fields; refresh fields after opening/editing for its pagination.
+Every figure has a numbered caption and a reference in the body text. PDF numbers
+and Word fields come from the same figure sequence, including optional appendix
+figures. PDF links/bookmarks use final page numbers. Word uses native Title/Heading
+styles, multilevel heading numbering, `SEQ Figure` captions, bookmarked `REF`
+references, and TOC/page fields. Before a Word download, an isolated headless
+LibreOffice process updates the contents, figure references and pagination, then
+the exporter verifies the native fields and cached results. The contents remain
+editable and can be refreshed after later edits in Word.
 Both share one presentation model, chart data, and values. Dependencies
 are ReportLab 4.4.9 and python-docx 1.2.0; the server does not need Microsoft Word.
+Report text uses dark charcoal, with lighter section headings and selective emphasis
+on the key LCOE comparison. Every figure caption and chart label uses 8-point type
+at the report's displayed chart size in both formats. The closing Summary separates
+key results, interpretation, and cost qualifications, with a compact comparison table.
+
+Word exports additionally require LibreOffice Writer and its UNO-compatible Python
+on the **Python backend**. Configure `PV_REPORT_SOFFICE` with the full path to
+`soffice`/`soffice.exe` and `PV_REPORT_UNO_PYTHON` with the Python executable that
+can import `uno`. On a managed Linux image, install `libreoffice-writer`,
+`python3-uno` and suitable fonts (for example `fonts-liberation`), then use
+`/usr/bin/libreoffice` and `/usr/bin/python3`. A Windows administrative extraction
+can use its own `program/soffice.exe` and bundled `python-core-*/bin/python.exe`;
+no desktop office profile or default application association is changed.
+For the isolated local runtime, `tmp/runtime/libreoffice-runtime.json` can record
+absolute `soffice` and `uno_python` paths; this ignored local manifest is used
+automatically when environment overrides are absent.
+Each export gets a temporary profile, a loopback-only UNO listener, and a bounded
+120-second refresh. GPU calculation is disabled only in the renderer child
+environment to avoid device profiling during each isolated startup.
+Missing engines, timeouts or lost fields return HTTP 503
+instead of an unfinished Word file. PDF exports remain available independently.
+These settings do not install or deploy the runtime automatically.
 
 ## Frontend development
 

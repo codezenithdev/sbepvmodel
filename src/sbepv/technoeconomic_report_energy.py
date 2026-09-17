@@ -170,7 +170,7 @@ def _verified_measurements(lineage, output_root):
     return values, expected
 
 
-def _read_workbook(job, *, output_root, applied_factors, measurements=None):
+def _read_workbook(job, *, output_root, applied_factors, measurements=None, factor_basis="applied annual"):
     import openpyxl
 
     artifact = ((job.get("artifacts") or {}).get("model_workbook") or {})
@@ -191,6 +191,7 @@ def _read_workbook(job, *, output_root, applied_factors, measurements=None):
     seasonal = defaultdict(lambda: defaultdict(float))
     yearly = defaultdict(lambda: defaultdict(float))
     scenario = defaultdict(lambda: defaultdict(float))
+    seasonal_windows = {}
     seen, previous = set(), None
     sensitivity_supported = all(
         _number((applied_factors.get(season) or {}).get(system)) is not None
@@ -219,6 +220,8 @@ def _read_workbook(job, *, output_root, applied_factors, measurements=None):
             previous = utc
             seen.add(utc)
             season = MONTH_SEASON[local.month]
+            seasonal_windows.setdefault(season, {"first_local": local.isoformat()})
+            seasonal_windows[season]["last_local"] = local.isoformat()
             year = (utc - timedelta(hours=7)).year
             dt = _number(row[positions["dt_hours"]])
             if dt is None or not 0 < dt <= interval_hours + 1e-10:
@@ -229,7 +232,7 @@ def _read_workbook(job, *, output_root, applied_factors, measurements=None):
                 factor = _number(row[positions[prefix + "_calibration_factor"]])
                 expected_factor = _number((applied_factors.get(season) or {}).get(system))
                 if factor is None or expected_factor is None or not math.isclose(factor, expected_factor, abs_tol=1e-12, rel_tol=1e-12):
-                    raise ValueError("Workbook factors differ from the frozen applied calibration profile.")
+                    raise ValueError(f"Workbook factors differ from the frozen {factor_basis} calibration profile.")
                 powers = {kind: _number(row[positions[prefix + "_" + kind + "_power_w"]])
                           for kind in ("measured", "uncalibrated", "calibrated")}
                 if any(value is None for value in powers.values()):
@@ -270,19 +273,31 @@ def _read_workbook(job, *, output_root, applied_factors, measurements=None):
                          "byte_count": path.stat().st_size, "historical_byte_hash_recorded": bool(artifact.get("sha256")),
                          "historical_bytes_verified": bool(artifact.get("sha256") == before)},
             "seasonal": seasonal, "yearly": yearly, "scenario": scenario,
+            "seasonal_windows": seasonal_windows,
             "sensitivity_supported": sensitivity_supported, "row_count": len(seen)}
 
 
 def _reconstruct(snapshot, frozen, output_root):
     lineage = snapshot["calibration_lineage"]
     factors = lineage["resolved_profile"]["seasonal_factors"]
+    # The calibration workbook belongs to the original fit. A later Annual
+    # substitution changes only its applied profile, not those fitted intervals.
+    fitted_factors = {row["season"]: {system: row["factors"][system]["fitted"]
+                                     for system, _ in SYSTEMS}
+                      for row in frozen["seasonal_rows"]}
     measurements, reviewed_sha = _verified_measurements(lineage, output_root)
     calibration = _read_workbook(lineage["origin_validation_job"], output_root=output_root,
-                                 applied_factors=factors, measurements=measurements)
+                                 applied_factors=fitted_factors, measurements=measurements,
+                                 factor_basis="original fitted")
     for record in frozen["seasonal_rows"]:
         actual = calibration["seasonal"].get(record["season"])
         if not actual or actual["rows"] != record["row_count"] or record["measured"] is None:
             raise ValueError("Workbook seasonal retained rows do not match frozen calibration evidence.")
+        for bound, key in (("first_timestamp", "first_local"), ("last_timestamp", "last_local")):
+            if record.get(bound) is not None:
+                expected = datetime.fromisoformat(record[bound]).replace(tzinfo=None).isoformat()
+                if calibration["seasonal_windows"][record["season"]][key] != expected:
+                    raise ValueError("Workbook observation window differs from the frozen calibration evidence.")
         for system, _ in SYSTEMS:
             for kind in ("measured", "calibrated"):
                 if abs(actual[system + "_" + kind + "_kwh"] - record["measured"][system + "_kwh"]) > 0.0011:
@@ -327,7 +342,14 @@ def _reconstruct(snapshot, frozen, output_root):
         return [{"year": year, "sol_predicted_kwh": row["solectria_calibrated_kwh"],
                  "se_predicted_kwh": row["solaredge_calibrated_kwh"]} for year, row in values.items()]
     baseline = _annual_comparison(rows_for(annual["yearly"]))
-    sensitivity = {"status": "unavailable", "reason": "At least one summer factor is below the fall factor; the clipped upstream power cannot be recovered exactly."}
+    reductions = [system for system, _ in SYSTEMS if factors["summer"][system] < factors["fall"][system]]
+    capped_fall_rows = {system: int(annual["seasonal"]["fall"][system + "_calibrated_at_cap_rows"])
+                       for system in reductions}
+    reduction_names = ", ".join("SolarEdge" if system == "solaredge" else "Solectria" for system in reductions)
+    sensitivity = {"status": "unavailable",
+                   "reason": f"Summer-for-fall would reduce the applied factor for {reduction_names or 'at least one system'}. The saved powers are already capped, so an exact decrease requires unavailable pre-cap power",
+                   "systems_requiring_lower_factor": reductions,
+                   "affected_system_capped_fall_rows": capped_fall_rows}
     if annual["sensitivity_supported"]:
         scenario = _annual_comparison(rows_for(annual["scenario"]))
         sensitivity = {
@@ -357,11 +379,15 @@ def _reconstruct(snapshot, frozen, output_root):
                      "The fall observation window is not recorded. ")
     return {"status": "reconciled_current_artifacts",
             "identity": {"annual": annual["identity"], "calibration": calibration["identity"],
-                         "diagnostic_method": "saved_interval_energy_reconstruction_v1",
+                         "diagnostic_method": "saved_interval_energy_reconstruction_v2",
                          "source_annual_job_id": snapshot.get("source_annual_job_id"),
                          "source_calibration_job_id": lineage["origin_validation_job"].get("id"),
                          "reviewed_measurement_sha256": reviewed_sha},
             "seasonal_rows": seasonal_rows, "annual_comparison": baseline, "fall_sensitivity": sensitivity,
+            "profile_validation": {"calibration_workbook": "original_fitted",
+                                   "annual_workbook": "annual_applied",
+                                   "fitted_equals_applied": frozen["calibration_application"]["fitted_equals_applied"],
+                                   "seasonal_substitution": frozen["calibration_application"]["seasonal_substitution"]},
             "reconciliation": {"annual_rows": annual["row_count"], "paired_measurement_rows": calibration["row_count"],
                                "maximum_annual_rounding_difference_kwh": max_error,
                                "annual_tolerance_kwh": ENERGY_TOLERANCE_KWH,

@@ -2161,17 +2161,27 @@ tie-outs, including independent direct year-by-year finance sums. It neither run
 the model nor modifies completed jobs or the existing five-artifact export manifest.
 Incomplete jobs, missing historical lineage or failed integrity checks return 409.
 
-Report format v2.4.1 uses one presentation model for PDF and Word values, structure,
-and chart data. Contents follow the title metadata and exclude the title itself.
-The Executive Summary contains Objectives, Approach, and Results; the main report
-then follows Introduction and Objectives, Data Collection, Modeling and Calibration,
-Annual Simulation, and Technoeconomic Analysis. Measured calibration-period energy
+Report format v2.5 uses one presentation model for PDF and Word values, structure,
+and chart data. Major headings and their subheadings are numbered. Contents follow
+the title metadata and exclude the title itself. The Executive Summary contains
+Objectives, Approach, and Results, with a currency symbol and /MWh unit on every
+headline percentile value. After Introduction and Objectives, the Approach section
+contains Data Collection, Modeling and Calibration, Annual Simulation, and
+Technoeconomic Analysis subheadings. Full-sentence descriptions explain the methods;
+the pvlib/PVMismatch description retains the existing frozen-physics identity guard.
+The sampling description distinguishes Latin Hypercube Sampling of continuous
+uncertain inputs from the balanced assignment of discrete paired weather years.
+Annual CDF interpolation is for display and does not supply sampled energy values.
+A brief Summary restates saved results and their qualifications before the optional
+appendix. Measured calibration-period energy
 and modeled full-year energy are distinguished, with seasonal coverage and evidence
 limitations disclosed. The headline comparison uses the difference between the
 two marginal system medians at full saved precision, handles either ordering and
 ties, and does not relabel the median of paired differences as that quantity.
-Calibration factors display four decimal places without rounding stored values
-or their comparisons. When all four seasons match at saved precision and the
+Report measurements and calibration factors display two decimal places without
+rounding stored values or their comparisons. Counts remain integers; small cost
+intensities use USD/kW and rates use percent for readable displays. Exact equation
+constants and audit data retain their precision. When all four seasons match at saved precision and the
 frozen application explicitly records no substitution, one note confirms equality
 instead of repeating the applied-factor table. Missing or differing evidence is
 shown explicitly.
@@ -2215,6 +2225,17 @@ the headline percentile table. These display calculations do not resample, rerun
 the model, or change existing convergence criteria or the saved convergence status.
 Every integrity check still runs when the appendix is omitted.
 
+Both endpoints also accept an optional `analysis_name` query parameter. The name is
+trimmed, whitespace is collapsed to a single line, unsupported control characters
+are rejected, and the normalized length cannot exceed 120 characters. Blank or
+omitted names resolve to `TEA {job_id}`. The dashboard remembers each completed
+job's name in browser-local storage, with an in-memory fallback when storage is
+unavailable. This value is export metadata, outside the immutable request and saved
+results. It changes no calculation, source identity, or numerical export contract.
+The name appears below the project title and in the lower-left footer. The footer
+uses the saved completion timestamp in UTC; a legacy record without one receives
+an explicitly labeled export timestamp instead.
+
 The visible title metadata retains the analysis timestamp and separates the report
 format version from the generating dashboard identity; it omits a separate report
 date. The generating release is `PV_DASHBOARD_RELEASE` when set, otherwise the
@@ -2223,13 +2244,67 @@ date. The generating release is `PV_DASHBOARD_RELEASE` when set, otherwise the
 identity is distinct from the dashboard version used for a historical analysis;
 missing historical metadata is not inferred from current software.
 
-Native Word heading and TOC/page fields retain editable navigation; PDF bookmarks
-and contents resolve to final PDF pages. Word computes its own page numbers when
-fields are refreshed. New filenames follow
-`LCOE_Comparison_v2.4.1_{full|summary}_{run_id}.{pdf|docx}`, using a sanitized run ID;
+Every rendered figure has a sequential number, a caption, and a body-text reference
+resolved from its stable figure identifier. Optional appendix figures participate
+in the same sequence. Word uses native multilevel Heading numbering, `SEQ Figure`
+caption fields, bookmarked `REF` fields, and TOC/page fields. These retain editable
+navigation and automatic numbering; PDF bookmarks, references, and contents resolve
+to the same report structure and final PDF pages. Word computes its own page numbers
+and updates references when fields are refreshed. New filenames follow
+`LCOE_Comparison_v2.5_{full|summary}_{run_id}.{pdf|docx}`, using a sanitized run ID;
 previously downloaded reports and historical filenames remain unchanged. Removing
 the TEA view's CSV button does not remove sealed CSV evidence or historical export
 API support. A new
 completed run uses its own frozen inputs/results; draft changes and later baseline
 promotions cannot rewrite old evidence. This presentation revision changes neither
 the v5 kernel's numerical probe digests nor its numerical export contracts.
+
+### 18.7 Dollar-year conversion of entered v5 costs (September 17, 2026)
+
+The user clarified that the currently entered default amounts are 2026 USD and
+authorized explicit conversion when selecting another constant-dollar year. The
+`user-cost-basis-2026-v1` preset retains those amounts and declares the corrected
+2026 basis. This does not rewrite the historical Thursday preset, saved jobs,
+source citations, or existing drafts. It does not independently authenticate the
+dollar year of vendor quotes.
+
+The assumptions editor previews the current and proposed amounts, then applies:
+
+```text
+target cost = original cost × GDP deflator(target year) / GDP deflator(original year)
+```
+
+The locally frozen `us-gdp-deflator-2026-09-17` snapshot contains BEA annual GDP
+implicit price deflators distributed by FRED (2017=100) for 1947–2025. Its 2026
+entry is a provisional proxy using the latest published quarterly value, 2026 Q2
+(133.855), not an annual observation or forecast. Annual 2022/2023/2024/2025 values
+are 118.023/122.390/125.428/128.979. The snapshot preserves source URLs, observation
+periods, release dates, retrieval time, downloaded CSV text, and SHA256 hashes.
+Absent years fail closed rather than being extrapolated. Data do not refresh
+during a calculation or export.
+
+Conversion is a preprocessing step for paired commercial v5 requests. It scales
+monetary distributions, including all applicable value/bound/mode/mean/standard
+deviation parameters, optimizer unit price, derived total CAPEX support envelopes,
+and any retained monetary component allocations. It does not scale quantities,
+capacities, schedules, degradation, real discount rates, or energy. Shared CAPEX
+support envelopes remain derived and are never independently sampled. The kernel
+continues to calculate in one declared constant-dollar basis with no additional
+inflation escalation over the project life.
+
+The optional `cost_year_adjustment` request field records the method, original and
+selected years, frozen index identity, index values, ratio, provisional flags,
+and original monetary fields. Missing receipts remain omitted from historical
+canonical serialization. Receipts are limited to v5 and must cover exactly all
+submitted monetary fields. Validation recomputes the ratio from the saved index
+snapshot, verifies cost-year agreement, and ties every converted amount to its
+recorded original. Submission provenance also freezes source metadata and the
+catalog digest. These checks establish conversion consistency, not quote accuracy.
+
+The editor retains original amounts through repeated year changes, tracks manual
+cost edits, and prevents pending conversions from being submitted or silently saved
+as an applied basis. Applying a conversion clears the existing assumptions
+acceptance. Ordinary source verification, evidence review, confirmation, seeded
+sampling, and immutable job storage continue to apply. PDF and Word reports show
+the conversion factor and provisional periods. Existing completed results are
+never adjusted in place.

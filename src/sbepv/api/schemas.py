@@ -894,7 +894,7 @@ class CapexAllocationRequest(StrictTechnoeconomicRequest):
 
 
 class SharedCapexReportContext(StrictTechnoeconomicRequest):
-    preset_id: Literal["thursday-2026-09-17-v1"]
+    preset_id: Literal["thursday-2026-09-17-v1", "user-cost-basis-2026-v1"]
     assumptions_status: Literal["approved_defaults", "modified"] | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
@@ -962,6 +962,24 @@ class PairedCommercialRequest(StrictTechnoeconomicRequest):
         return self
 
 
+class CostYearAdjustmentRequest(StrictTechnoeconomicRequest):
+    """User-declared source costs tied to a locally frozen GDP-deflator snapshot."""
+
+    method: Literal["gdp_deflator_v1"]
+    source_year: Annotated[int, Field(ge=1900, le=3000)]
+    target_year: Annotated[int, Field(ge=1900, le=3000)]
+    index_snapshot_id: NonemptyTechnoeconomicText
+    source_index: FinitePositiveFloat
+    target_index: FinitePositiveFloat
+    factor: FinitePositiveFloat
+    source_provisional: StrictBool
+    target_provisional: StrictBool
+    original_money: dict[
+        NonemptyTechnoeconomicText,
+        TechnoeconomicDistributionRequest | FiniteNonnegativeFloat,
+    ] = Field(min_length=1, max_length=3000)
+
+
 class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
     calculation_contract_version: Literal[
         "tea-calculation-v1", "tea-calculation-v2", "tea-calculation-v3",
@@ -990,6 +1008,9 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
     commercial_scaling: CommercialScalingRequest | None = None
     standalone_commercial: StandaloneCommercialRequest | None = None
     paired_commercial: PairedCommercialRequest | None = None
+    cost_year_adjustment: CostYearAdjustmentRequest | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_submission_contract(self) -> "TechnoeconomicSubmissionRequest":
@@ -1006,6 +1027,11 @@ class TechnoeconomicSubmissionRequest(StrictTechnoeconomicRequest):
                 "calculation_contract_version does not match the submitted request shape: "
                 f"expected {inferred_contract_version}"
             )
+        if self.cost_year_adjustment is not None:
+            if inferred_contract_version != "tea-calculation-v5":
+                raise ValueError("cost_year_adjustment is only supported for paired commercial v5 analyses")
+            from sbepv import technoeconomic_cost_year
+            technoeconomic_cost_year.validate_cost_year_adjustment(self.model_dump(mode="json"))
         input_ids = [line.input_id for line in self.cost_lines]
         standalone_lines = (
             self.standalone_commercial.cost_lines
@@ -1302,6 +1328,7 @@ __all__ = [
     "CommercialTechnologyDesignRequest",
     "CommercialTransferMechanismRequest",
     "CurrencyYearNormalizationRequest",
+    "CostYearAdjustmentRequest",
     "DocumentedDistributionRequest",
     "EvidenceCitationRequest",
     "FixedDistributionRequest",

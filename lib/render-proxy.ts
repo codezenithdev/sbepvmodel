@@ -63,10 +63,11 @@ export function isAllowedApiPath(path: string[]): boolean {
       (path[0] === "data-collections" && isCollectionId(path[1])) ||
       (path[0] === "agent" && path[1] === "state") ||
       (path[0] === "saved-results" && isSafeId(path[1])) ||
-      (path[0] === "technoeconomic" && ["sources", "jobs"].includes(path[1]));
+      (path[0] === "technoeconomic" && ["sources", "jobs", "cost-year-indices"].includes(path[1]));
   }
   if (path.length === 3) {
-    return (path[0] === "technoeconomic" && path[1] === "presets" && path[2] === "thursday-2026-09-17-v1") ||
+    return (path[0] === "technoeconomic" && path[1] === "presets" &&
+      ["thursday-2026-09-17-v1", "user-cost-basis-2026-v1"].includes(path[2])) ||
       (path[0] === "jobs" && isSafeId(path[1]) &&
       ["cancel", "delete", "promote", "retry"].includes(path[2])) ||
       (path[0] === "calibration-reviews" && isSafeId(path[1]) && ["run", "rows"].includes(path[2])) ||

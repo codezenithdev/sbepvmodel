@@ -57,29 +57,36 @@ def _value(value):
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
-        return f"{value:.12g}" if math.isfinite(value) else "Not available"
+        return f"{value:.2f}" if math.isfinite(value) else "Not available"
     return str(value)
 
 
-def _distribution(value):
+def _distribution(value, scale=1):
     value = _mapping(value)
+    def formatted(key):
+        item = value.get(key)
+        return _value(float(item) * scale) if isinstance(item, (int, float)) and not isinstance(item, bool) else _value(item)
     family = value.get("family")
     if family == "fixed":
-        return "Fixed " + _value(value.get("value"))
+        return "Fixed " + formatted("value")
     if family == "uniform":
-        return "Uniform " + _value(value.get("low")) + " to " + _value(value.get("high"))
+        return "Uniform " + formatted("low") + " to " + formatted("high")
     if family == "triangular":
-        return "Triangular low/mode/high: " + " / ".join(_value(value.get(k)) for k in ("low", "mode", "high"))
+        return "Triangular low/mode/high: " + " / ".join(formatted(k) for k in ("low", "mode", "high"))
     if family == "bounded_normal":
-        return ("Bounded normal " + _value(value.get("low")) + " to " + _value(value.get("high"))
-                + "; mean " + _value(value.get("mean")) + ", SD " + _value(value.get("sd")))
+        return ("Bounded normal " + formatted("low") + " to " + formatted("high")
+                + "; mean " + formatted("mean") + ", SD " + formatted("sd"))
     return "Not recorded"
 
 
 def _factor_value(value):
     if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
-        return f"{value:.4f}"
+        return f"{value:.2f}"
     return _value(value)
+
+
+def _percent(value):
+    return _value(float(value) * 100) if isinstance(value, (int, float)) and not isinstance(value, bool) else _value(value)
 
 
 def physics_description_supported(job):
@@ -150,17 +157,17 @@ def applied_calibration_blocks(job):
                 source_text = "Not recorded"
             rows.append([season.title(), _factor_value(values.get("solectria")),
                          _factor_value(values.get("solaredge")), source_text])
-        blocks.append({"kind": "table", "headers": ["Season", "Solectria factor", "SolarEdge factor", "Factor source"],
+        blocks.append({"kind": "table", "headers": ["Season", "Solectria\nfactor", "SolarEdge\nfactor", "Factor source"],
                        "rows": rows, "widths": [.16, .20, .20, .44], "numeric": [1, 2], "keep": True})
         if factors == fitted:
             text = ("Applied Annual factors equal the original fitted factors at saved precision for every recorded season. "
-                    "Values are dimensionless and displayed to four decimal places.")
+                    "Values are dimensionless and displayed to two decimal places.")
         elif fitted:
             text = ("The resolved Annual factor profile differs from the original fitted profile. "
-                    "Values are dimensionless and displayed to four decimal places; substitutions do not add measured coverage.")
+                    "Values are dimensionless and displayed to two decimal places; substitutions do not add measured coverage.")
         else:
             text = ("Applied Annual factors come from the frozen resolved profile; equality with the original fitted factors "
-                    "is not established. Values are dimensionless and displayed to four decimal places.")
+                    "is not established. Values are dimensionless and displayed to two decimal places.")
     else:
         text = ("Applied Annual calibration factors are unavailable in the frozen resolved profile. "
                 "The original fitted factors alone do not establish which factors this Annual Simulation used.")
@@ -203,7 +210,7 @@ def build_technical_appendix(job):
 
     def table(headers, rows, widths=(.5, .5)):
         blocks.append({"kind": "table", "headers": headers, "rows": rows,
-                       "widths": list(widths), "numeric": [], "keep": False})
+                       "widths": list(widths), "numeric": [], "keep": False, "compact": True})
 
     def setting(key):
         return annual_stats[key] if key in annual_stats else annual_request.get(key)
@@ -226,8 +233,8 @@ def build_technical_appendix(job):
         ["Tracker backtracking", _value(setting("backtrack"))],
         ["Incidence-angle model", _value(iam)],
         ["Martin-Ruiz coefficient a_r", "Not applicable" if iam == "physical" else _value(setting("iam_a_r"))],
-        ["SolarEdge inverter / BOS efficiencies", _value(setting("solaredge_inverter_efficiency")) + " / " + _value(setting("solaredge_bos_efficiency"))],
-        ["Solectria inverter / BOS efficiencies", _value(setting("solectria_inverter_efficiency")) + " / " + _value(setting("solectria_bos_efficiency"))],
+        ["SolarEdge inverter / BOS efficiencies (%)", _percent(setting("solaredge_inverter_efficiency")) + " / " + _percent(setting("solaredge_bos_efficiency"))],
+        ["Solectria inverter / BOS efficiencies (%)", _percent(setting("solectria_inverter_efficiency")) + " / " + _percent(setting("solectria_bos_efficiency"))],
         ["Optional AC cap", _value(setting("curtailment_enabled")) + "; saved setting " + _value(setting("curtailment_limit_kw")) + " kW per system"],
         ["Weather interval", _value(annual_request.get("interval_value")) + " " + interval_unit],
         ["DHI source", _value(annual_stats.get("dhi_source"))],
@@ -288,11 +295,12 @@ def build_technical_appendix(job):
     table(["Saved assumption", "Value"], [
         ["Project life L (years)", _value(finance.get("project_life_years"))],
         ["Constant-dollar cost year", _value(finance.get("constant_dollar_cost_year"))],
-        ["Real discount rate r (fraction/year)", _distribution(_mapping(finance.get("real_discount_rate")).get("distribution"))],
-        ["Shared degradation g (fraction/year)", _distribution(_mapping(degradation.get("annual_rate")).get("distribution"))],
+        ["Real discount rate r (%/year)", _distribution(_mapping(finance.get("real_discount_rate")).get("distribution"), 100)],
+        ["Shared degradation g (%/year)", _distribution(_mapping(degradation.get("annual_rate")).get("distribution"), 100)],
         ["Realizations / random seed", _value(request.get("n")) + " / " + _value(request.get("seed"))],
     ])
     financial_rows = []
+    paragraph("Rates are displayed as percentages; the equations use r and g as fractions.")
     if scenario:
         financial_rows.append([
             "E_j,1 = E_source,j P_target / P_applied,j",

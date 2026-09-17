@@ -863,7 +863,7 @@ console.log(JSON.stringify({checkedEdits: changes.length}));
             'Not included until a sourced line is added',
             'The same generic benchmark starts both systems.',
             'id="technoeconomicStandaloneCostYear"',
-            'Changing this year does not adjust prices for inflation.',
+            'Choose another year to preview GDP-deflator conversion, then apply it.',
             'id="technoeconomicSharedCapexFields"',
             'id="technoeconomicSharedCommonFamily"',
             'id="technoeconomicSharedInstallationFamily"',
@@ -1357,20 +1357,20 @@ const clipped = {
 };
 const at100 = technoeconomicStandaloneScaleText(clipped, 100000000);
 const at75 = technoeconomicStandaloneScaleText(clipped, 75000000);
-assert.equal(at100, '125 kWac to 100 MWac (800x)');
-assert.equal(at75, '125 kWac to 75 MWac (600x)');
+assert.equal(at100, '125.00 kWac to 100.00 MWac (800.00x)');
+assert.equal(at75, '125.00 kWac to 75.00 MWac (600.00x)');
 const nameplate = {
   solectria_installed_wdc: 139180.8,
   solaredge_installed_wdc: 139180.8,
 };
 const fallback = technoeconomicStandaloneScaleText(nameplate, 100000000);
-assert.ok(fallback.startsWith('139.1808 kWdc to 100 MWdc'));
+assert.ok(fallback.startsWith('139.18 kWdc to 100.00 MWdc'));
 console.log(JSON.stringify({at100, at75, fallback}));
 """
         )
-        self.assertEqual("125 kWac to 100 MWac (800x)", payload["at100"])
-        self.assertEqual("125 kWac to 75 MWac (600x)", payload["at75"])
-        self.assertTrue(payload["fallback"].startswith("139.1808 kWdc to 100 MWdc"))
+        self.assertEqual("125.00 kWac to 100.00 MWac (800.00x)", payload["at100"])
+        self.assertEqual("125.00 kWac to 75.00 MWac (600.00x)", payload["at75"])
+        self.assertTrue(payload["fallback"].startswith("139.18 kWdc to 100.00 MWdc"))
 
     def test_v4_results_route_by_exact_contract_and_keep_v1_v3_rendering(self) -> None:
         route = self.script.split(
@@ -1483,11 +1483,11 @@ technoeconomicRenderPairedResult(job, result);
 assert.equal(resultRoot.dataset.state, 'done');
 assert.equal(body.children.length, 3);
 assert.deepEqual(body.children[1].children.map((child) => child.textContent), [
-  'P50 (median)', '50 USD/MWh', '55 USD/MWh',
+  'P50 (median)', '50.00 USD/MWh', '55.00 USD/MWh',
 ]);
-assert.ok(interpretation.textContent.includes('Solectria 50 USD/MWh'));
-assert.ok(interpretation.textContent.includes('SolarEdge 55 USD/MWh'));
-assert.ok(interpretation.textContent.includes('SolarEdge minus Solectria 5 USD/MWh'));
+assert.ok(interpretation.textContent.includes('Solectria 50.00 USD/MWh'));
+assert.ok(interpretation.textContent.includes('SolarEdge 55.00 USD/MWh'));
+assert.ok(interpretation.textContent.includes('SolarEdge minus Solectria 5.00 USD/MWh'));
 console.log(JSON.stringify({
   state: resultRoot.dataset.state,
   p50: body.children[1].children.map((child) => child.textContent),
@@ -1496,7 +1496,7 @@ console.log(JSON.stringify({
         )
         self.assertEqual("done", payload["state"])
         self.assertEqual(
-            ["P50 (median)", "50 USD/MWh", "55 USD/MWh"], payload["p50"]
+            ["P50 (median)", "50.00 USD/MWh", "55.00 USD/MWh"], payload["p50"]
         )
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
@@ -1508,8 +1508,8 @@ for (const missing of [null, undefined, '', '   ']) {
   assert.equal(technoeconomicStandaloneFormatUsd(missing), 'Unavailable');
   assert.equal(technoeconomicStandaloneFormatLcoePerMwh(missing), 'Unavailable');
 }
-assert.equal(technoeconomicStandaloneFormatUsd(0), '$0');
-assert.equal(technoeconomicStandaloneFormatLcoePerMwh(0), '0 USD/MWh');
+assert.equal(technoeconomicStandaloneFormatUsd(0), '$0.00');
+assert.equal(technoeconomicStandaloneFormatLcoePerMwh(0), '0.00 USD/MWh');
 const annual = [
   {timing: 'annual_year_end', percentiles: {p50: 2200000}},
   {timing: 'annual_year_end', percentiles: {p50: '3300000'}},
@@ -1549,7 +1549,7 @@ console.log(JSON.stringify({
             r"""
 const assert = require('node:assert/strict');
 const fresh = technoeconomicStandaloneDefaultDraft();
-assert.equal(fresh.cost_year, '2024');
+assert.equal(fresh.cost_year, '2026');
 assert.equal(fresh.target_capacity, '100');
 assert.equal(fresh.project_life_years, '30');
 assert.equal(fresh.n, '10000');
@@ -1616,7 +1616,7 @@ assert.deepEqual(changed.shared_capex.optimizer_installation_wdc,
 console.log(JSON.stringify({fresh, legacy: restored, changed}));
 """
         )
-        self.assertEqual("2024", payload["fresh"]["cost_year"])
+        self.assertEqual("2026", payload["fresh"]["cost_year"])
         self.assertEqual("2022", payload["legacy"]["cost_year"])
         self.assertEqual("2031", payload["changed"]["cost_year"])
 
@@ -1630,7 +1630,7 @@ globalThis.localStorage = {
   getItem: (key) => memory.get(key) ?? null,
   setItem: (key, value) => memory.set(key, String(value)),
 };
-const control = (value = '', checked = false) => ({value, checked});
+const control = (value = '', checked = false) => ({value, checked, dataset:{}});
 const parameters = (values = {}) => ({
   values,
   querySelectorAll() {
@@ -1725,13 +1725,18 @@ for (const [system, low, high] of [['solectria', 8, 13], ['solaredge', 12, 18]])
 }
 
 technoeconomicElements.standaloneCostYear.value = '2031';
+const unapplied = technoeconomicSerializeStandaloneRequest({sources});
+assert.equal(unapplied.valid, false);
+assert.ok(unapplied.errors.some((error) => error.path === 'finance.constant_dollar_cost_year'));
 dom.technoeconomicSharedDcCapacity.value = '145';
 dom.technoeconomicSharedOptimizerCount.value = '110000';
 dom.technoeconomicSharedOptimizerPrice.value = '40';
 dom.technoeconomicSharedCommonParameters.values = {low: '1.1', high: '1.3'};
 dom.technoeconomicSharedInstallationParameters.values = {low: '0.005', high: '0.009'};
 cards.solectria[1].params.values = {low: '9', high: '14'};
+technoeconomicCostYearRecordEdits();
 const edited = technoeconomicStandaloneDraftSnapshot();
+assert.equal(edited.cost_year, '2026'); // Unapplied 2031 must never relabel these amounts.
 assert.equal(technoeconomicStandaloneMatchesApproved(edited), false);
 assert.equal(technoeconomicPersistStandaloneDraft(), true);
 const loaded = technoeconomicLoadStandaloneDraft();
@@ -1744,11 +1749,11 @@ technoeconomicElements.standaloneSourceSelect.value = 'annual-compatible';
 technoeconomicElements.standaloneAccept.checked = true;
 const modified = technoeconomicSerializeStandaloneRequest({sources});
 assert.equal(modified.valid, true, JSON.stringify(modified.errors));
-assert.equal(modified.payload.finance.constant_dollar_cost_year, 2031);
+assert.equal(modified.payload.finance.constant_dollar_cost_year, 2026);
 assert.equal(modified.payload.source_annual_job_id, 'annual-compatible');
 assert.equal(modified.payload.paired_commercial.shared_initial_capex.dc_capacity_w, 145000000);
 for (const system of modified.payload.paired_commercial.systems) {
-  for (const line of system.cost_lines) assert.equal(line.constant_dollar_cost_year, 2031);
+  for (const line of system.cost_lines) assert.equal(line.constant_dollar_cost_year, 2026);
 }
 const dcSource = {...sources[1], applied_capacity: Object.fromEntries(['solectria', 'solaredge'].map((system) => [system,
   {applied_capacity_w: 139180.8, rating_basis: 'dc_installed_nameplate'},
@@ -1758,14 +1763,13 @@ console.log(JSON.stringify({approved: approved.payload, modified: modified.paylo
 """
         )
         from sbepv.api.schemas import TechnoeconomicSubmissionRequest
-        from sbepv.technoeconomic_presets import thursday_assumptions
+        from sbepv.technoeconomic_presets import current_assumptions
 
         for request in payload.values():
             validated = TechnoeconomicSubmissionRequest.model_validate(request)
             self.assertIsNotNone(validated.paired_commercial.shared_initial_capex)
-        # The editor's defaults must stay numerically equivalent to the approved
-        # server preset, while keeping their separately recorded review evidence.
-        expected = thursday_assumptions("annual-approved")
+        # Current user-declared 2026 defaults match the new server preset.
+        expected = current_assumptions("annual-approved")
         actual = payload["approved"]
         for key in ("n", "seed", "basis", "capacity_normalization"):
             self.assertEqual(expected[key], actual[key])
@@ -2019,6 +2023,7 @@ assert.equal(technoeconomicElements.standalonePdfLink.href,
 assert.equal(technoeconomicElements.standaloneDocxLink.href,
   '/api/technoeconomic/jobs/verified_tea-123/exports/docx?include_technical_appendix=true');
 technoeconomicElements.includeTechnicalAppendix = {checked: false};
+technoeconomicPersistReportAppendix();
 technoeconomicRenderReportDownloads(job);
 assert.equal(technoeconomicElements.reportAppendixOption.hidden, false);
 for (const link of [technoeconomicElements.standalonePdfLink, technoeconomicElements.standaloneDocxLink]) {
@@ -2526,14 +2531,14 @@ console.log(JSON.stringify(context));
         source = route.group(1)
         for marker in (
             'path[0] === "technoeconomic"',
-            '["sources", "jobs"].includes(path[1])',
+            '["sources", "jobs", "cost-year-indices"].includes(path[1])',
             'path[1] === "jobs"',
             'isSafeId(path[2])',
             '["cancel", "retry"].includes(path[3])',
             'path[3] === "exports"',
             '["csv", "xlsx", "pdf", "docx"].includes(path[4])',
             'path[1] === "presets"',
-            'path[2] === "thursday-2026-09-17-v1"',
+            '["thursday-2026-09-17-v1", "user-cost-basis-2026-v1"].includes(path[2])',
             'path[3] === "artifacts"',
             '"cdf_plot"',
             '"sensitivity_plot"',
@@ -2761,7 +2766,7 @@ for (const invalid of [
 ]) assert.equal(technoeconomicGuidedEstimate(invalid), null);
 
 assert.equal(technoeconomicFormatCapacity(139180.8), '139.18 kWdc');
-assert.equal(technoeconomicFormatEnergy(200000), '200 MWh/year');
+assert.equal(technoeconomicFormatEnergy(200000), '200.00 MWh/year');
 const clippedSource = {
   eligible: true,
   solectria_installed_wdc: 139180.8,
@@ -2773,8 +2778,8 @@ const clippedSource = {
     operating_limit: {curtailment_enabled: true, curtailment_limit_kw: 125},
   },
 };
-assert.equal(technoeconomicAppliedCapacity(clippedSource, 'solectria'), '125 kWac');
-assert.equal(technoeconomicAppliedCapacity(clippedSource, 'solaredge'), '125 kWac');
+assert.equal(technoeconomicAppliedCapacity(clippedSource, 'solectria'), '125.00 kWac');
+assert.equal(technoeconomicAppliedCapacity(clippedSource, 'solaredge'), '125.00 kWac');
 const unclippedSource = {
   ...clippedSource,
   provenance: {operating_limit: {curtailment_enabled: false}},
@@ -2882,22 +2887,22 @@ assert.equal(technoeconomicElements.sourceStatusPanel.dataset.state, 'ready');
 assert.equal(technoeconomicElements.sourceStatus.textContent,
   'Calibrated annual energy is ready');
 assert.ok(technoeconomicElements.sourceDetail.textContent.includes('2 eligible weather years'));
-assert.equal(technoeconomicElements.sourceOperatingLimit.textContent, '125 kWac');
+assert.equal(technoeconomicElements.sourceOperatingLimit.textContent, '125.00 kWac');
 assert.ok(technoeconomicElements.sourceCapacityNote.textContent.includes(
   'applied capacity used for cost and energy normalization'
 ));
 assert.equal(technoeconomicElements.sourceCapacityNote.textContent.includes(
   'Installed DC nameplate remains separate and is used'
 ), false);
-assert.equal(technoeconomicElements.sourceSolectriaCapacity.textContent, '125 kWac');
-assert.equal(technoeconomicElements.sourceSolarEdgeCapacity.textContent, '125 kWac');
-assert.equal(technoeconomicElements.sourceSolectriaEnergy.textContent, '190 MWh/year');
-assert.equal(technoeconomicElements.sourceSolarEdgeEnergy.textContent, '205 MWh/year');
+assert.equal(technoeconomicElements.sourceSolectriaCapacity.textContent, '125.00 kWac');
+assert.equal(technoeconomicElements.sourceSolarEdgeCapacity.textContent, '125.00 kWac');
+assert.equal(technoeconomicElements.sourceSolectriaEnergy.textContent, '190.00 MWh/year');
+assert.equal(technoeconomicElements.sourceSolarEdgeEnergy.textContent, '205.00 MWh/year');
 assert.deepEqual(
   energyRows.children.map((row) => row.children.map((cell) => cell.textContent)),
   [
-    ['2023', '180 MWh/year', '195 MWh/year'],
-    ['2024', '200 MWh/year', '215 MWh/year'],
+    ['2023', '180.00 MWh/year', '195.00 MWh/year'],
+    ['2024', '200.00 MWh/year', '215.00 MWh/year'],
   ],
 );
 const renderedText = JSON.stringify(technoeconomicElements) + JSON.stringify(energyRows);
@@ -2948,7 +2953,7 @@ console.log(JSON.stringify({
         )
         self.assertEqual("No AC limit enabled", payload["operatingLimit"])
         self.assertEqual("139.18 kWdc", payload["capacity"])
-        self.assertEqual("190 MWh/year", payload["typicalEnergy"])
+        self.assertEqual("190.00 MWh/year", payload["typicalEnergy"])
         self.assertEqual(2, payload["rowCount"])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
@@ -3191,7 +3196,7 @@ const sourceSummary = technoeconomicConfirmationSource({
 });
 assert.equal(
   technoeconomicConfirmationCapacity(sourceSummary, 'solectria', true),
-  '125,000 W (AC operating limit)'
+  '125,000.00 W (AC operating limit)'
 );
 for (const derived of [
   'capacities', 'annual_energy_by_year', 'lifecycle_cost', 'annualized_cost',

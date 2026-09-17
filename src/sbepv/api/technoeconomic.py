@@ -27,6 +27,7 @@ import uuid
 
 from sbepv import calibration, model, reporting
 from sbepv import technoeconomic as technoeconomic_kernel
+from sbepv import technoeconomic_cost_year
 from sbepv.api import config, timewindows
 from sbepv.api.schemas import (
     ANNUAL_APPLIED_CAPACITY_NORMALIZATION,
@@ -3927,6 +3928,7 @@ def build_technoeconomic_submission_provenance(
         request,
         supplied_kernel,
     )
+    cost_year_adjustment = technoeconomic_cost_year.build_cost_year_adjustment_receipt(canonical_request)
     receipts = {
         "normalization": normalization,
         "overlap": overlap,
@@ -3939,6 +3941,8 @@ def build_technoeconomic_submission_provenance(
         receipts["standalone_commercial"] = standalone_commercial
     if paired_commercial is not None:
         receipts["paired_commercial"] = paired_commercial
+    if cost_year_adjustment is not None:
+        receipts["cost_year_adjustment"] = cost_year_adjustment
     provenance = {
         "schema_version": (
             5
@@ -4009,6 +4013,9 @@ def build_technoeconomic_submission_provenance(
         provenance["paired_commercial_receipt_sha256"] = canonical_json_sha256(
             paired_commercial
         )
+    if cost_year_adjustment is not None:
+        provenance["cost_year_adjustment_receipt"] = cost_year_adjustment
+        provenance["cost_year_adjustment_receipt_sha256"] = canonical_json_sha256(cost_year_adjustment)
     return provenance
 
 
