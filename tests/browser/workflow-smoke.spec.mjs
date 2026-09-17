@@ -430,7 +430,7 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   await expect(omLow).toHaveValue('8');
   await expect(omHigh).toHaveValue('13');
   await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('150.08 million');
-  await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('154.909157 million');
+  await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('154.64 million');
   await expect(page.locator('#technoeconomicStandaloneCostPreset')).toHaveText('Default assumptions');
   await expect(page.locator('#technoeconomicAssumptionStatus')).toBeHidden();
   await expect(page.locator('#technoeconomicRestoreApprovedBtn')).toHaveText('Restore defaults');
@@ -454,11 +454,11 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   await optimizerPrice.fill('40');
   await omLow.fill('9');
   await omHigh.fill('14');
-  await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('155.14108 million');
+  await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('154.86 million');
   await expect(page.locator('#technoeconomicStandaloneCostPreset')).toHaveText('Modified assumptions');
   await reviewTab.click();
   await expect(reviewSummary).toContainText('2030');
-  await expect(reviewSummary).toContainText('103,077');
+  await expect(reviewSummary).toContainText('96,000');
   await expect(reviewSummary).toContainText('$40');
   await acceptance.check();
   await projectTab.click();
@@ -513,7 +513,7 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   const confirmation = page.locator('#technoeconomicConfirmDialog');
   await expect(confirmation).toBeVisible();
   await expect(confirmation).toContainText('2030');
-  await expect(confirmation).toContainText('103,077 optimizers × $40');
+  await expect(confirmation).toContainText('96,000 optimizers × $40');
   await expect(confirmation).toContainText('134,000,000 Wdc');
   await expect(confirmation).toContainText('one draw applied to both systems');
   await expect(confirmation).not.toContainText('Proposed real 2024 dollars');
@@ -710,26 +710,20 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   const plotPath = '/api/technoeconomic/jobs/tea_browser_fixture/artifacts/cdf_plot';
   const plotUrl = `http://dashboard.test${plotPath}`;
   const pdfPath = '/api/technoeconomic/jobs/tea_browser_fixture/exports/pdf';
-  const docxPath = '/api/technoeconomic/jobs/tea_browser_fixture/exports/docx';
+  const workbookPath = '/api/technoeconomic/jobs/tea_browser_fixture/exports/xlsx';
   const reportRequests = [];
   const validationUrl = 'http://dashboard.test/outputs/browser-validation.png';
   // Only local mock responses: no calculation or saved model result is changed.
   await page.context().route('http://dashboard.test/**', async (route) => {
     const url = route.request().url();
     const parsedUrl = new URL(url);
-    if ([pdfPath, docxPath].includes(parsedUrl.pathname)) {
-      reportRequests.push({format: parsedUrl.pathname.split('/').at(-1),
-        appendix: parsedUrl.searchParams.get('include_technical_appendix')});
-    }
     if (parsedUrl.pathname === pdfPath) {
+      const name = parsedUrl.searchParams.get('analysis_name');
+      reportRequests.push({format: 'pdf', name,
+        appendix: parsedUrl.searchParams.get('include_technical_appendix')});
       await route.fulfill({status: 200, contentType: 'application/pdf',
-        headers: {'Content-Disposition': 'attachment; filename="LCOE_comparsion.pdf"'},
+        headers: {'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name + '.pdf')}`},
         body: Buffer.from('%PDF-1.4\n% synthetic download fixture\n%%EOF\n')});
-    } else if (parsedUrl.pathname === docxPath) {
-      await route.fulfill({status: 200,
-        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        headers: {'Content-Disposition': 'attachment; filename="PV_Comparison_fixture_v2.0_tea_browser_fixture.docx"'},
-        body: Buffer.from('PK synthetic Word download fixture')});
     } else if (url === plotUrl || url === validationUrl) {
       await route.fulfill({status: 200, contentType: 'image/png', body: Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -740,6 +734,8 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
     }
   });
   await page.goto('http://dashboard.test/');
+  await page.evaluate(() => localStorage.setItem(
+    'sbepv.technoeconomic.report-appendix.v1.tea_browser_fixture', 'false'));
   await expect(page.locator('#technoeconomicStandaloneSourceStatus'))
     .toHaveText('Calibrated annual energy is ready');
   await page.locator('#technoeconomicTab').click();
@@ -756,14 +752,13 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   // Empty placeholders are never advertised as links.
   await expect(page.locator('#technoeconomicStandaloneCdfPlot')).not.toHaveAttribute('data-chart-openable');
   await expect(page.locator('#technoeconomicStandalonePdfLink')).toBeHidden();
-  await expect(page.locator('#technoeconomicStandaloneDocxLink')).toBeHidden();
-  const appendix = page.getByRole('checkbox', {name: 'Include technical appendix'});
-  await expect(page.locator('#technoeconomicIncludeTechnicalAppendix')).toBeChecked();
-  await expect(appendix).toBeHidden();
+  await expect(page.locator('#technoeconomicStandaloneDocxLink')).toHaveCount(0);
+  await expect(page.getByRole('checkbox', {name: 'Include technical appendix'})).toHaveCount(0);
+  await expect(page.locator('#technoeconomicIncludeTechnicalAppendix')).toHaveCount(0);
   await page.locator('.tea-standalone-cdf-card').screenshot({path: test.info().outputPath('tea-v5-interpretation-below.png')});
   // Exercise completed-job adoption, contract dispatch, and verified artifact URL
   // selection together, including the separate Chart action in the result header.
-  await page.evaluate(({sourceId, plotPath}) => technoeconomicAdoptJob({
+  await page.evaluate(({sourceId, plotPath, workbookPath}) => technoeconomicAdoptJob({
     job_id: 'tea_browser_fixture', workflow: 'technoeconomic', state: 'done',
     progress: 100, stage: 'Completed browser fixture', source_annual_job_id: sourceId,
     request: {
@@ -793,16 +788,18 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
         lcoe_delta_se_minus_sol: {percentiles: {p10: 0.004, p50: 0.005, p90: 0.006}},
       },
     },
-    artifacts: {exports: {artifacts: {cdf_plot: {url: plotPath}}}},
-  }), {sourceId: SOURCE_ID, plotPath});
+    artifacts: {exports: {artifacts: {cdf_plot: {url: plotPath}, xlsx_workbook: {url: workbookPath}}}},
+  }), {sourceId: SOURCE_ID, plotPath, workbookPath});
   await expect(page.locator('#technoeconomicStandaloneResults')).toHaveAttribute('data-state', 'done');
   await expect(page.locator('#technoeconomicStandaloneCostPreset'))
     .toContainText('Thursday comparison assumptions (proposed 2024 USD');
   const pdfLink = page.locator('#technoeconomicStandalonePdfLink');
-  const wordLink = page.locator('#technoeconomicStandaloneDocxLink');
-  await expect(appendix).toBeVisible();
-  await expect(appendix).toBeChecked();
-  // A report preference must not revoke reviewed assumptions or change the draft.
+  const analysisName = page.getByRole('textbox', {name: 'Analysis name', exact: true});
+  await expect(page.locator('#technoeconomicSharedOptimizerCount')).toHaveValue('96000');
+  await expect(analysisName).toBeVisible();
+  await expect(analysisName).toHaveAttribute('placeholder', 'Analysis name');
+  await expect(page.locator('label[for="technoeconomicAnalysisName"]')).toHaveCount(0);
+  // Report names must not revoke reviewed assumptions or change the scenario draft.
   await page.locator('#technoeconomicEditAssumptionsBtn').click();
   await page.locator('#technoeconomicAssumptionsDialog').getByRole('tab', {name: 'Review', exact: true}).click();
   await page.locator('#technoeconomicStandaloneAccept').check();
@@ -813,23 +810,22 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
     request: technoeconomicJob.request,
     pending: technoeconomicPendingSubmission,
   }));
-  for (const includeAppendix of [true, false, true]) {
-    await appendix.setChecked(includeAppendix);
-    // A status refresh must preserve the selected report option.
+  const reportNames = ['Lcoe report', 'Spring factors & étude'];
+  for (const name of reportNames) {
+    await analysisName.fill(name);
+    // A status refresh preserves the name and always includes the appendix.
     await page.evaluate(() => renderTechnoeconomicJobResult(technoeconomicJob));
-    await expect(appendix).toBeChecked({checked: includeAppendix});
-    for (const [link, path, filename] of [
-      [pdfLink, pdfPath, 'LCOE_comparsion.pdf'],
-      [wordLink, docxPath, 'PV_Comparison_fixture_v2.0_tea_browser_fixture.docx'],
-    ]) {
-      await expect(link).toBeVisible();
-      await expect(link).toHaveAttribute('href', `${path}?include_technical_appendix=${includeAppendix}`);
-      const downloadPromise = page.waitForEvent('download');
-      await link.click();
-      const download = await downloadPromise;
-      expect(download.suggestedFilename()).toBe(filename);
-      expect(await download.failure()).toBeNull();
-    }
+    await expect(analysisName).toHaveValue(name);
+    await expect(pdfLink).toBeVisible();
+    const reportUrl = new URL(await pdfLink.getAttribute('href'), 'http://dashboard.test');
+    expect(reportUrl.pathname).toBe(pdfPath);
+    expect(reportUrl.searchParams.get('analysis_name')).toBe(name);
+    expect(reportUrl.searchParams.get('include_technical_appendix')).toBe('true');
+    const downloadPromise = page.waitForEvent('download');
+    await pdfLink.click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe(name + '.pdf');
+    expect(await download.failure()).toBeNull();
     await expect(page.locator('#technoeconomicStandaloneAccept')).toBeChecked();
     expect(await page.evaluate(() => ({
       revision: technoeconomicDraftRevision,
@@ -838,15 +834,52 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
       pending: technoeconomicPendingSubmission,
     }))).toEqual(draftBeforeReports);
   }
-  expect(reportRequests).toEqual([
-    {format: 'pdf', appendix: 'true'}, {format: 'docx', appendix: 'true'},
-    {format: 'pdf', appendix: 'false'}, {format: 'docx', appendix: 'false'},
-    {format: 'pdf', appendix: 'true'}, {format: 'docx', appendix: 'true'},
-  ]);
+  expect(reportRequests).toEqual(reportNames.map(name => ({format: 'pdf', name, appendix: 'true'})));
+  const resultHeader = page.locator('.tea-standalone-result-heading');
+  const workbookLink = page.locator('#technoeconomicStandaloneXlsxLink');
+  const chartExport = page.locator('#technoeconomicStandaloneCdfLink');
+  await expect(workbookLink).toBeVisible();
+  await expect(workbookLink).toHaveAttribute('href', workbookPath);
+  const checkExportAlignment = async (stacked) => {
+    const [input, pdf, chart, workbook, nameOption, saveStatus] = await Promise.all([
+      analysisName, pdfLink, chartExport, workbookLink,
+      page.locator('#technoeconomicReportNameOption'), page.locator('#technoeconomicAnalysisNameSaveStatus'),
+    ].map(control => control.boundingBox()));
+    expect(Math.abs(chart.y - workbook.y)).toBeLessThanOrEqual(1);
+    expect(chart.x + chart.width).toBeLessThanOrEqual(workbook.x);
+    expect(Math.max(chart.y + chart.height, workbook.y + workbook.height)).toBeLessThanOrEqual(input.y);
+    expect(saveStatus.y).toBeGreaterThanOrEqual(input.y + input.height - 1);
+    if (stacked) {
+      expect(pdf.y).toBeGreaterThanOrEqual(nameOption.y + nameOption.height - 1);
+      expect(Math.abs(input.x - pdf.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(input.width - pdf.width)).toBeLessThanOrEqual(1);
+    } else {
+      expect(Math.abs(input.y - pdf.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(input.height - pdf.height)).toBeLessThanOrEqual(1);
+      expect(input.x + input.width).toBeLessThanOrEqual(pdf.x);
+    }
+    for (const bounds of [input, pdf, chart, workbook]) {
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(page.viewportSize().width);
+    }
+  };
+  await analysisName.focus();
+  await checkExportAlignment(false);
+  await resultHeader.screenshot({path: test.info().outputPath('report-download-controls-desktop.png')});
+  const originalViewport = page.viewportSize();
+  await page.setViewportSize({width: 390, height: 844});
+  await analysisName.focus();
+  await checkExportAlignment(true);
+  await resultHeader.screenshot({path: test.info().outputPath('report-download-controls-mobile.png')});
+  await page.setViewportSize({width: 760, height: 900});
+  await analysisName.focus();
+  await checkExportAlignment(false);
+  await resultHeader.screenshot({path: test.info().outputPath('report-download-controls-tablet.png')});
+  await page.setViewportSize(originalViewport);
   await expect(page.getByRole('link', { name: /CSV bundle/i })).toHaveCount(0);
   await expect(page.locator('#technoeconomicLcoePercentileBody tr')).toHaveCount(3);
   await expect(page.locator('#technoeconomicStandaloneInterpretation'))
-    .toContainText('Solectria 50 USD/MWh');
+    .toContainText('Solectria 50.00 USD/MWh');
   const chart = page.locator('#technoeconomicStandaloneCdfPlot');
   const chartLink = page.locator('a#technoeconomicStandaloneCdfPlotLink');
   const chartAction = page.locator('a#technoeconomicStandaloneCdfLink');
@@ -873,8 +906,7 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   await expect(page.locator('#technoeconomicStandaloneCostPreset'))
     .toHaveText('Default assumptions');
   await expect(pdfLink).toBeHidden();
-  await expect(wordLink).toBeHidden();
-  await expect(appendix).toBeHidden();
+  await expect(analysisName).toBeHidden();
   await expect(chart).not.toHaveAttribute('data-chart-openable');
   for (const link of [chartLink, chartAction]) {
     await expect(link).toBeHidden();

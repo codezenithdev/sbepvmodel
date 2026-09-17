@@ -2215,7 +2215,7 @@
                 source_annual_job_id: '', target_capacity: '100', n: '10000',
                 seed: '20260916', cost_year: '2026', project_life_years: '30', rating_basis: 'ac_operating_limit',
                 shared_capex: {
-                    dc_capacity_mw: '134', optimizer_count: '103077', optimizer_unit_price_usd: '37.75',
+                    dc_capacity_mw: '134', optimizer_count: '96000', optimizer_unit_price_usd: '37.75',
                     common_capex_wdc: {family: 'uniform', low: '1.07', high: '1.17'},
                     optimizer_installation_wdc: {family: 'uniform', low: '0.004', high: '0.010'},
                 },
@@ -3157,10 +3157,8 @@
         }
 
         const TECHNOECONOMIC_REPORT_NAME_STORAGE_PREFIX = 'sbepv.technoeconomic.report-name.v1.';
-        const TECHNOECONOMIC_REPORT_APPENDIX_STORAGE_PREFIX = 'sbepv.technoeconomic.report-appendix.v1.';
         const technoeconomicReportNames = new Map();
         const technoeconomicReportNameSaveStates = new Map();
-        const technoeconomicReportAppendixChoices = new Map();
         let technoeconomicReportNameJobId = '';
 
         function technoeconomicLoadReportName(jobId) {
@@ -3196,28 +3194,6 @@
                 ? 'Saved in this browser.' : 'Available for this visit; browser storage is unavailable.');
         }
 
-        function technoeconomicLoadReportAppendix(jobId) {
-            if (technoeconomicReportAppendixChoices.has(jobId)) return technoeconomicReportAppendixChoices.get(jobId);
-            try {
-                if (typeof localStorage === 'object') {
-                    const stored = localStorage.getItem(TECHNOECONOMIC_REPORT_APPENDIX_STORAGE_PREFIX + jobId);
-                    if (stored === 'true' || stored === 'false') return stored === 'true';
-                }
-            } catch (_) { /* Default to the full report when no saved choice is available. */ }
-            return true;
-        }
-
-        function technoeconomicPersistReportAppendix() {
-            if (!technoeconomicReportNameJobId) return;
-            const include = technoeconomicElements.includeTechnicalAppendix?.checked !== false;
-            technoeconomicReportAppendixChoices.set(technoeconomicReportNameJobId, include);
-            try {
-                if (typeof localStorage === 'object') localStorage.setItem(
-                    TECHNOECONOMIC_REPORT_APPENDIX_STORAGE_PREFIX + technoeconomicReportNameJobId, String(include)
-                );
-            } catch (_) { /* Keep the current visit's preference when browser storage is unavailable. */ }
-        }
-
         function technoeconomicReportNameValue(jobId) {
             const input = technoeconomicElements.analysisName;
             if (!input) return {value: '', valid: true};
@@ -3236,10 +3212,7 @@
             const available = job?.state === 'done'
                 && contractVersion === TECHNOECONOMIC_PAIRED_CONTRACT_VERSION
                 && /^[A-Za-z0-9_-]+$/.test(job.job_id);
-            // This download preference belongs to the report, never the scenario draft.
-            if (technoeconomicElements.reportAppendixOption) {
-                technoeconomicElements.reportAppendixOption.hidden = !available;
-            }
+            // The analysis name belongs to the report, never the scenario draft.
             if (technoeconomicElements.reportNameOption) {
                 technoeconomicElements.reportNameOption.hidden = !available;
             }
@@ -3247,9 +3220,6 @@
                 technoeconomicReportNameJobId = job.job_id;
                 if (technoeconomicElements.analysisName) {
                     technoeconomicElements.analysisName.value = technoeconomicLoadReportName(job.job_id);
-                }
-                if (technoeconomicElements.includeTechnicalAppendix) {
-                    technoeconomicElements.includeTechnicalAppendix.checked = technoeconomicLoadReportAppendix(job.job_id);
                 }
             } else if (!available) {
                 technoeconomicReportNameJobId = '';
@@ -3260,17 +3230,11 @@
                     ? technoeconomicReportNameSaveStates.get(job?.job_id) || 'Names save automatically in this browser.'
                     : 'Enter a valid analysis name to save it and enable downloads.';
             }
-            const includeAppendix = technoeconomicElements.includeTechnicalAppendix?.checked !== false;
             const nameQuery = technoeconomicElements.analysisName && name.valid
                 ? `&analysis_name=${encodeURIComponent(name.value)}` : '';
-            for (const [format, link] of [
-                ['pdf', technoeconomicElements.standalonePdfLink],
-                ['docx', technoeconomicElements.standaloneDocxLink],
-            ]) {
-                technoeconomicSetDownload(link, available && name.valid
-                    ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/${format}?include_technical_appendix=${includeAppendix}${nameQuery}`
-                    : null);
-            }
+            technoeconomicSetDownload(technoeconomicElements.standalonePdfLink, available && name.valid
+                ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/pdf?include_technical_appendix=true${nameQuery}`
+                : null);
         }
 
         function technoeconomicRenderPairedResult(job, result) {
@@ -8229,10 +8193,6 @@
             const localDraft = technoeconomicLoadLocalDraft();
             applyTechnoeconomicFormState(localDraft || technoeconomicDefaultDraft());
             technoeconomicElements.form.addEventListener('submit', technoeconomicOpenConfirmation);
-            technoeconomicElements.includeTechnicalAppendix?.addEventListener('change', () => {
-                technoeconomicPersistReportAppendix();
-                technoeconomicRenderReportDownloads(technoeconomicJob);
-            });
             technoeconomicElements.analysisName?.addEventListener('input', () => {
                 technoeconomicPersistReportName();
                 technoeconomicRenderReportDownloads(technoeconomicJob);
@@ -8262,8 +8222,7 @@
                 });
             }
             technoeconomicElements.form.addEventListener('input', (event) => {
-                if (event.target === technoeconomicElements.includeTechnicalAppendix
-                    || event.target === technoeconomicElements.analysisName) return;
+                if (event.target === technoeconomicElements.analysisName) return;
                 technoeconomicMoneyInputEdited(event.target);
                 technoeconomicClearStandaloneAcceptance(event.target);
                 if (event.target === technoeconomicElements.standaloneCostYear) {
@@ -8310,8 +8269,7 @@
                 technoeconomicMarkDraftChanged();
             });
             technoeconomicElements.form.addEventListener('change', (event) => {
-                if (event.target === technoeconomicElements.includeTechnicalAppendix
-                    || event.target === technoeconomicElements.analysisName) return;
+                if (event.target === technoeconomicElements.analysisName) return;
                 technoeconomicMoneyInputEdited(event.target, true);
                 technoeconomicClearStandaloneAcceptance(event.target);
                 if (event.target === technoeconomicElements.standaloneCostYear) {

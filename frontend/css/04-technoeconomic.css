@@ -2272,8 +2272,14 @@
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
+            flex-wrap: wrap;
             gap: 16px;
             padding: 16px 18px 12px;
+        }
+
+        .tea-standalone-result-heading > div {
+            flex: 1 1 260px;
+            min-width: 0;
         }
 
         .tea-standalone-result-heading h3 {
@@ -2290,50 +2296,81 @@
         }
 
         .tea-standalone-result-actions {
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            flex-wrap: wrap;
-            gap: 6px;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            align-items: start;
+            flex: 0 1 500px;
+            width: 100%;
+            min-width: 0;
+            margin-left: auto;
+            gap: 8px;
         }
 
         .tea-standalone-result-actions .tea-button {
             min-height: 36px;
             padding: 7px 10px;
+            white-space: nowrap;
         }
 
-        .tea-standalone-result-actions .tea-report-appendix-option {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            min-height: 36px;
-            font-size: 12px;
-            cursor: pointer;
+        #technoeconomicStandaloneCdfLink {
+            grid-column: 2;
+            grid-row: 1;
         }
 
-        .tea-report-appendix-option input {
-            width: 18px;
-            height: 18px;
-            accent-color: var(--accent);
+        #technoeconomicStandaloneXlsxLink {
+            grid-column: 3;
+            grid-row: 1;
+        }
+
+        #technoeconomicStandalonePdfLink {
+            grid-column: 2 / -1;
+            grid-row: 2;
         }
 
         .tea-standalone-result-actions .tea-report-name-option {
             display: grid;
+            grid-column: 1;
+            grid-row: 2;
             gap: 4px;
             width: 100%;
-            max-width: 400px;
+            min-width: 0;
             font-size: 12px;
         }
 
         .tea-report-name-option input {
             width: 100%;
+            min-width: 0;
             min-height: 36px;
             padding: 7px 10px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.35;
+        }
+
+        .tea-report-name-option input::placeholder {
+            color: var(--muted);
+            opacity: 1;
+        }
+
+        .tea-report-name-option input:focus {
+            border-color: var(--accent);
+            outline: 3px solid rgba(15, 118, 110, 0.14);
+            outline-offset: 0;
         }
 
         .tea-report-name-option small {
             color: var(--muted);
             font-size: 11px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+        }
+
+        .tea-report-name-option small:empty {
+            display: none;
         }
 
         .tea-cost-year-preview {
@@ -3413,7 +3450,11 @@
             }
 
             .tea-standalone-result-actions {
-                justify-content: flex-start;
+                flex: none;
+            }
+
+            .tea-standalone-result-heading > div {
+                flex: none;
             }
 
             .tea-bridge-footer p:first-child {
@@ -3539,9 +3580,30 @@
 
             .tea-scenario-actions .tea-button,
             .tea-assumption-actions .tea-button,
-            #technoeconomicStandaloneCdfLink {
+            .tea-standalone-result-actions .tea-button {
                 width: 100%;
                 min-height: 44px;
+            }
+
+            .tea-standalone-result-actions {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            #technoeconomicStandaloneCdfLink {
+                grid-column: 1;
+            }
+
+            #technoeconomicStandaloneXlsxLink {
+                grid-column: 2;
+            }
+
+            .tea-standalone-result-actions .tea-report-name-option {
+                grid-column: 1 / -1;
+            }
+
+            #technoeconomicStandalonePdfLink {
+                grid-column: 1 / -1;
+                grid-row: 3;
             }
 
             .tea-field input:not([type="checkbox"]):not([type="radio"]),
@@ -3557,7 +3619,8 @@
             .tea-cost-line textarea,
             .tea-commercial-panel input:not([type="checkbox"]):not([type="radio"]),
             .tea-commercial-panel select,
-            .tea-commercial-panel textarea {
+            .tea-commercial-panel textarea,
+            .tea-report-name-option input {
                 min-height: 44px;
                 font-size: 16px;
             }

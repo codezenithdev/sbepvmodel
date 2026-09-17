@@ -461,7 +461,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     heading("Introduction and Objectives", "introduction", page=True)
     paragraph("The SBE Innovation Center at SolarTAC hosts SolarEdge and Solectria PV systems. SolarEdge optimizes power at the module level; Solectria uses a common inverter operating point for connected strings. These architectures respond differently to uneven module conditions.")
     paragraph("This study calibrates each system against reviewed site measurements, predicts production across full historical weather years, and compares lifecycle cost per unit of AC energy at equal commercial capacity. It uses the recorded geometry and model assumptions without assuming either technology produces more energy. Calibration coverage and cost assumptions limit how broadly the results apply.")
-    heading("Approach", "analysis-approach")
+    heading("Analysis", "analysis-approach")
     paragraph("The study has four steps. We collect power and weather measurements, review data quality and calibrate the PV model, simulate full historical weather years, and calculate lifecycle LCOE from the recorded energy and cost assumptions. Saved records link each step to its source.")
 
     heading("Data Collection", "data-collection", level=2)

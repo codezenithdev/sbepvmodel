@@ -1,6 +1,7 @@
 """Currency-year transformations must preserve energy and sampling semantics."""
 from copy import deepcopy
 import hashlib
+import json
 import unittest
 
 import numpy as np
@@ -18,6 +19,41 @@ class CostYearConversionTests(unittest.TestCase):
         self.source = presets.current_assumptions('annual-report-fixture')
         self.source['n'] = 128
         self.source = api.canonical_submission_request_payload(self.source)
+
+    def test_current_optimizer_default_preserves_historical_requests_and_source(self):
+        historical = presets.thursday_assumptions('annual-report-fixture')
+        saved_request = deepcopy(historical)
+        current = presets.current_assumptions('annual-report-fixture')
+        snapshot = synthetic_snapshot()
+        frozen_source = deepcopy(snapshot)
+        for payload, count, year, preset_id, hardware, midpoint in (
+            (historical, 103_077, 2024, presets.PRESET_ID, 3_891_156.75, 154_909_156.75),
+            (current, 96_000, 2026, presets.CURRENT_PRESET_ID, 3_624_000, 154_642_000),
+        ):
+            with self.subTest(preset_id=preset_id):
+                shared = payload['paired_commercial']['shared_initial_capex']
+                self.assertEqual(count, shared['optimizer_count'])
+                self.assertEqual(year, payload['finance']['constant_dollar_cost_year'])
+                self.assertEqual(preset_id, shared['report_context']['preset_id'])
+                self.assertEqual('annual-report-fixture', payload['source_annual_job_id'])
+                self.assertEqual(hardware, count * shared['optimizer_unit_price_usd'])
+                solaredge = next(system for system in payload['paired_commercial']['systems']
+                                 if system['technology'] == 'solaredge')
+                capex = next(line['distribution'] for line in solaredge['cost_lines']
+                             if line['cost_category'] == 'full_initial_capex')
+                self.assertAlmostEqual(midpoint, (capex['low'] + capex['high']) / 2 * 100_000_000)
+                # The kernel request validates the support against quantity, unit price,
+                # DC capacity and installation, without changing frozen Annual evidence.
+                canonical = api.canonical_submission_request_payload(payload)
+                api.build_technoeconomic_kernel_request(canonical, snapshot)
+        self.assertAlmostEqual(1.4754, current['paired_commercial']['systems'][1]['cost_lines'][0]['distribution']['low'])
+        self.assertAlmostEqual(1.61744, current['paired_commercial']['systems'][1]['cost_lines'][0]['distribution']['high'])
+        self.assertNotIn('103077', json.dumps(current))
+        self.assertNotIn('103,077', json.dumps(current))
+        self.assertIn('96,000', current['paired_commercial']['shared_initial_capex']['report_context']['limitations'])
+        self.assertEqual(saved_request, historical)
+        self.assertEqual(saved_request, presets.thursday_assumptions('annual-report-fixture'))
+        self.assertEqual(frozen_source, snapshot)
 
     def test_frozen_catalog_and_provisional_2026_are_inspectable(self):
         catalog = cost_year.get_index_catalog()

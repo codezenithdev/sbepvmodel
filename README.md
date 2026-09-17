@@ -362,8 +362,8 @@ uses a scrolling body and visible actions on narrow screens. Frozen-request revi
 shows actual source, sampling, finance, costs, and evidence, not invented post-run
 totals. Close/cancel controls respect in-flight submission.
 
-New scenarios use the September 15 default amounts with the user's September 17
-clarification that entered costs are in **2026 USD**: **100 MWac / 134 MWdc**, **30
+New scenarios use the September 15 assumptions with the user's September 17
+updates: **2026 USD**, **96,000 optimizers**, **100 MWac / 134 MWdc**, **30
 years**, **10,000 realizations**, **seed 20260916**. Common CAPEX is shared;
 SolarEdge adds optimizer hardware and an independent installation draw. Original
 DC costs convert using the entered DC/AC cost-capacity ratio. Midpoint previews are
@@ -394,7 +394,9 @@ Drafts persist the applied year/costs across reopening/reload. An unapplied year
 selection cannot silently become the stored cost basis. Existing custom drafts
 retain values and years; older drafts without a year keep their original 2022
 basis. The historical `thursday-2026-09-17-v1` preset and completed analyses retain
-their recorded 2024 basis. **Restore defaults** keeps the selected
+their recorded 2024 basis. New scenarios and **Restore defaults** use 96,000
+optimizers; saved drafts and completed analyses retain their entered quantities.
+**Restore defaults** keeps the selected
 source. Compatible AC source changes preserve modified assumptions; shared CAPEX
 requires both systems' verified AC limits. Reports omit original component
 allocations when common CAPEX or dollar basis changes.
@@ -413,11 +415,11 @@ table. Failed charts leave tables usable. Technical IDs/versions/hashes remain
 in records/exports. Curves share an axis, with line styles as well as color;
 equal quantile positions are not paired realizations.
 
-Completed TEAs offer **Download PDF report**, **Download Word report**, and
-the workbook. **Include technical appendix** is checked by default and applies
-to both document downloads. Clearing it omits the appendix without editing the
-scenario or revoking reviewed assumptions. Both export endpoints accept
-`include_technical_appendix=true|false`; requests without the option include it.
+Completed TEAs offer **Download PDF report** and the workbook. Dashboard PDF
+downloads always include the technical appendix, including when the browser has
+an older saved preference to omit it. The Word button and appendix checkbox are
+removed. Existing PDF/DOCX API access remains compatible: both export endpoints
+accept `include_technical_appendix=true|false`; requests without the option include it.
 The CSV-bundle UI button is removed; sealed CSVs and historical
 API access remain for integrity/compatibility. Read-only, on-demand PDF/DOCX
 generation verifies frozen inputs, calibration/Annual lineage, saved arrays, and
@@ -427,7 +429,7 @@ Editing drafts never rewrites completed results.
 Report format v2.5.1 numbers major headings and their subheadings. Contents follow
 the title metadata and exclude the title itself. The Executive Summary covers
 Objectives, Approach, and Results, with $/MWh shown on each LCOE percentile value.
-After Introduction and Objectives, the Approach section contains Data Collection,
+After Introduction and Objectives, the Analysis section contains Data Collection,
 Modeling and Calibration, Annual Simulation, and Technoeconomic Analysis
 subheadings. Full sentences describe each method, including pvlib/PVMismatch for
 recognized physics identities. Continuous uncertain inputs use Latin Hypercube
@@ -449,7 +451,7 @@ use USD/kW and rates use percent to keep the displayed values meaningful. Confir
 identical fitted and applied profiles are summarized
 without a duplicate factor table.
 
-The optional technical appendix uses concise equation tables with short meanings,
+The technical appendix uses concise equation tables with short meanings,
 units, saved assumptions, and statistical methods. Detailed physics descriptions
 require a recognized frozen model identity; unavailable historical details remain
 unavailable. References and provenance remain available. P10/P50/P90 stability
@@ -466,15 +468,17 @@ it does not represent those bytes as historically sealed evidence. Missing or
 unreconciled workbooks leave the diagnostic unavailable without replacing saved
 results or launching a new simulation.
 
-An **Analysis name** field beside the report downloads supplies a subtitle below
+An **Analysis name** field beside the report downloads uses that placeholder and
+accessible name without a duplicate visible label. It supplies a subtitle below
 the project title and the lower-left footer label. Both endpoints accept the
 optional `analysis_name` query parameter. Names are normalized to one line, limited
 to 120 characters after whitespace normalization, and checked for unsupported
 control characters. Blank or omitted names default to `TEA {job_id}`. The dashboard
-uses a custom analysis name for the PDF and Word download filenames, replacing
-unsupported filename characters and shortening long names as needed. The automatic
+uses a custom analysis name for the PDF download filename; the Word API supports
+the same naming behavior. Export filenames replace unsupported filename characters
+and shorten long names as needed. The automatic
 name retains the version/scope/job-ID filename. The dashboard automatically saves
-names and appendix choices per completed job in the current browser. The name field
+names per completed job in the current browser. The name field
 confirms when it is saved, or explains when browser storage
 is unavailable and the name will last only for the current visit. A name is export metadata only: it does not edit the job,
 scenario inputs, calculation provenance, or numerical results.

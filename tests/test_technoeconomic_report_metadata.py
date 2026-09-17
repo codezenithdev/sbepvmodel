@@ -138,8 +138,7 @@ globalThis.localStorage = {
 };
 const link = () => ({hidden: true, removeAttribute(key) { delete this[key]; }});
 technoeconomicElements = {
-  standalonePdfLink: link(), standaloneDocxLink: link(), reportAppendixOption: {},
-  reportNameOption: {}, includeTechnicalAppendix: {checked: true},
+  standalonePdfLink: link(), reportNameOption: {},
   analysisName: {value: '', setCustomValidity(value) { this.error = value; }},
 };
 const job = {job_id: 'tea_one', state: 'done',
@@ -150,15 +149,10 @@ assert.equal(technoeconomicElements.analysisName.value, 'TEA tea_one');
 technoeconomicElements.analysisName.value = '  Spring factors & étude <A>  ';
 technoeconomicPersistReportName();
 technoeconomicRenderReportDownloads(job);
-for (const [format, link] of [['pdf', technoeconomicElements.standalonePdfLink],
-                            ['docx', technoeconomicElements.standaloneDocxLink]]) {
-  const url = new URL(link.href, 'https://example.test');
-  assert.equal(url.pathname, '/api/technoeconomic/jobs/tea_one/exports/' + format);
-  assert.equal(url.searchParams.get('analysis_name'), 'Spring factors & étude <A>');
-}
-technoeconomicElements.includeTechnicalAppendix.checked = false;
-technoeconomicPersistReportAppendix();
-technoeconomicRenderReportDownloads(job);
+const url = new URL(technoeconomicElements.standalonePdfLink.href, 'https://example.test');
+assert.equal(url.pathname, '/api/technoeconomic/jobs/tea_one/exports/pdf');
+assert.equal(url.searchParams.get('analysis_name'), 'Spring factors & étude <A>');
+assert.equal(url.searchParams.get('include_technical_appendix'), 'true');
 assert.equal(technoeconomicElements.analysisName.value, '  Spring factors & étude <A>  ');
 technoeconomicRenderReportDownloads({...job, job_id: 'tea_two'});
 assert.equal(technoeconomicElements.analysisName.value, 'TEA tea_two');
@@ -169,7 +163,6 @@ technoeconomicRenderReportDownloads(null);
 assert.equal(technoeconomicElements.reportNameOption.hidden, true);
 technoeconomicRenderReportDownloads(job);
 assert.equal(technoeconomicElements.analysisName.value, '  Spring factors & étude <A>  ');
-assert.equal(technoeconomicElements.includeTechnicalAppendix.checked, false);
 technoeconomicElements.analysisName.value = '  ';
 technoeconomicRenderReportDownloads(job);
 assert.equal(new URL(technoeconomicElements.standalonePdfLink.href, 'https://example.test')
@@ -182,8 +175,7 @@ technoeconomicElements.analysisName.value = '\ud800';
 technoeconomicRenderReportDownloads(job);
 assert.equal(technoeconomicElements.standalonePdfLink.hidden, true);
 assert.equal(JSON.stringify(job), original);
-assert.equal([...values.keys()].every((key) => key.startsWith(TECHNOECONOMIC_REPORT_NAME_STORAGE_PREFIX)
-  || key.startsWith(TECHNOECONOMIC_REPORT_APPENDIX_STORAGE_PREFIX)), true);
+assert.equal([...values.keys()].every((key) => key.startsWith(TECHNOECONOMIC_REPORT_NAME_STORAGE_PREFIX)), true);
 console.log(JSON.stringify({passed: true}));
 """
         result = subprocess.run([shutil.which('node'), '-'], input=script + '\n' + assertions,
@@ -192,74 +184,71 @@ console.log(JSON.stringify({passed: true}));
         self.assertTrue(json.loads(result.stdout)['passed'])
         # Report controls bubble through the TEA form; both handlers must exclude them.
         initializer = script.split('function initializeTechnoeconomicWorkspace', 1)[1]
-        self.assertEqual(2, initializer.count('|| event.target === technoeconomicElements.analysisName) return;'))
+        self.assertEqual(2, initializer.count('event.target === technoeconomicElements.analysisName) return;'))
 
     @unittest.skipUnless(shutil.which('node'), 'Node.js is required')
-    def test_report_control_events_save_reload_and_export_both_appendix_choices(self):
+    def test_report_name_events_save_reload_and_ignore_stale_appendix_preference(self):
         script = (PROJECT_ROOT / 'frontend/js/06-technoeconomic.js').read_text(encoding='utf-8')
         assertions = r"""
 const assert = require('node:assert/strict');
 const values = new Map();
-globalThis.localStorage = {getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)};
+const reads = [];
+globalThis.localStorage = {getItem(key){reads.push(key);return values.get(key)??null;},setItem:(key,value)=>values.set(key,value)};
 const control=options=>({...options,handlers:{},addEventListener(kind,callback){this.handlers[kind]=callback;}});
 const link=()=>({hidden:true,removeAttribute(key){delete this[key];}});
 technoeconomicElements={
-  standalonePdfLink:link(),standaloneDocxLink:link(),reportAppendixOption:{},reportNameOption:{},
-  includeTechnicalAppendix:control({checked:true}),analysisNameSaveStatus:{textContent:''},
+  standalonePdfLink:link(),reportNameOption:{},analysisNameSaveStatus:{textContent:''},
   analysisName:control({value:'',setCustomValidity(value){this.error=value;},reportValidity(){return !this.error;}}),
 };
 const first={job_id:'tea_4313e2de43d8421cbf55e17b49f021de',state:'done',result:{calculation_contract_version:TECHNOECONOMIC_PAIRED_CONTRACT_VERSION}};
 const second={...first,job_id:'tea_other'};
+const staleAppendixKey='sbepv.technoeconomic.report-appendix.v1.'+first.job_id;
+values.set(staleAppendixKey,'false');
 const original=JSON.stringify(first);
 const source=require('node:fs').readFileSync('frontend/js/06-technoeconomic.js','utf8');
-const start=source.indexOf("technoeconomicElements.includeTechnicalAppendix?.addEventListener('change'");
+const start=source.indexOf("technoeconomicElements.analysisName?.addEventListener('input'");
 const end=source.indexOf("document.getElementById('technoeconomicRestoreApprovedBtn')",start);
 eval(source.slice(start,end));
-const urls=(name,appendix)=>{
-  for(const [format,link] of [['pdf',technoeconomicElements.standalonePdfLink],['docx',technoeconomicElements.standaloneDocxLink]]){
-    assert.equal(link.hidden,false);
-    const url=new URL(link.href,'https://example.test');
-    assert.equal(url.pathname,`/api/technoeconomic/jobs/${technoeconomicJob.job_id}/exports/${format}`);
-    assert.equal(url.searchParams.get('analysis_name'),name);
-    assert.equal(url.searchParams.get('include_technical_appendix'),String(appendix));
-  }
+const urlFor=(name)=>{
+  const link=technoeconomicElements.standalonePdfLink;
+  assert.equal(link.hidden,false);
+  const url=new URL(link.href,'https://example.test');
+  assert.equal(url.pathname,`/api/technoeconomic/jobs/${technoeconomicJob.job_id}/exports/pdf`);
+  assert.equal(url.searchParams.get('analysis_name'),name);
+  assert.equal(url.searchParams.get('include_technical_appendix'),'true');
 };
 technoeconomicJob=first;technoeconomicRenderReportDownloads(first);
-assert.equal(technoeconomicElements.includeTechnicalAppendix.checked,true);
+urlFor('TEA '+first.job_id);
 technoeconomicElements.analysisName.value='Spring calibration applied to fall';
 technoeconomicElements.analysisName.handlers.input();
 assert.equal(technoeconomicElements.analysisNameSaveStatus.textContent,'Saved in this browser.');
-urls('Spring calibration applied to fall',true);
+urlFor('Spring calibration applied to fall');
 let prevented=false;technoeconomicElements.analysisName.handlers.keydown({key:'Enter',preventDefault(){prevented=true;}});
 assert.equal(prevented,true);
-technoeconomicElements.includeTechnicalAppendix.checked=false;
-technoeconomicElements.includeTechnicalAppendix.handlers.change();
-urls('Spring calibration applied to fall',false);
 technoeconomicJob=second;technoeconomicRenderReportDownloads(second);
-urls('TEA tea_other',true);
+urlFor('TEA tea_other');
 technoeconomicJob=first;technoeconomicRenderReportDownloads(first);
-urls('Spring calibration applied to fall',false);
-// Reset all in-memory report state and the checkbox to its HTML default, as on reload.
+urlFor('Spring calibration applied to fall');
+// Reset in-memory report state, as on reload; legacy preferences remain in storage.
 const reload=()=>{
-  technoeconomicReportNames.clear();technoeconomicReportNameSaveStates.clear();technoeconomicReportAppendixChoices.clear();
+  technoeconomicReportNames.clear();technoeconomicReportNameSaveStates.clear();
   technoeconomicRenderReportDownloads(null);
-  technoeconomicElements.analysisName.value='';technoeconomicElements.includeTechnicalAppendix.checked=true;
+  technoeconomicElements.analysisName.value='';
   technoeconomicRenderReportDownloads(first);
 };
-reload();urls('Spring calibration applied to fall',false);
+reload();urlFor('Spring calibration applied to fall');
 assert.equal(technoeconomicElements.analysisName.value,'Spring calibration applied to fall');
 assert.equal(technoeconomicElements.analysisNameSaveStatus.textContent,'Saved in this browser.');
-technoeconomicElements.includeTechnicalAppendix.checked=true;
-technoeconomicElements.includeTechnicalAppendix.handlers.change();
-reload();urls('Spring calibration applied to fall',true);
 technoeconomicElements.analysisName.value='invalid\u0000name';technoeconomicElements.analysisName.handlers.input();
 assert.equal(technoeconomicElements.standalonePdfLink.hidden,true);
 assert.equal(technoeconomicElements.analysisNameSaveStatus.textContent,'Enter a valid analysis name to save it and enable downloads.');
-reload();urls('Spring calibration applied to fall',true);
+reload();urlFor('Spring calibration applied to fall');
+assert.equal(reads.includes(staleAppendixKey),false);
+assert.equal(values.get(staleAppendixKey),'false');
 globalThis.localStorage={getItem(){throw new Error('blocked');},setItem(){throw new Error('blocked');}};
 technoeconomicElements.analysisName.value='Temporary name';technoeconomicElements.analysisName.handlers.input();
 assert.equal(technoeconomicElements.analysisNameSaveStatus.textContent,'Available for this visit; browser storage is unavailable.');
-urls('Temporary name',true);
+urlFor('Temporary name');
 assert.equal(JSON.stringify(first),original);
 console.log(JSON.stringify({passed:true}));
 """

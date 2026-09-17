@@ -322,7 +322,7 @@ class FullReportTests(unittest.TestCase):
         with patch.object(technoeconomic_pdf_layout.EngineeringDocument,'notify',new=notify):
             technoeconomic_pdf_layout.render_pdf(concise)
         self.assertIn('1 Executive Summary',notifications)
-        self.assertIn('3 Approach',notifications)
+        self.assertIn('3 Analysis',notifications)
         self.assertNotIn(concise['title'],notifications)
         self.assertNotIn('Technical Appendix',notifications)
         with ZipFile(BytesIO(docx_report.render_docx(concise))) as archive:

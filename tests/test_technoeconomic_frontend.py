@@ -1562,7 +1562,7 @@ assert.deepEqual(fresh.shared_capex, {
   dc_capacity_mw: '134',
   common_capex_wdc: {family: 'uniform', low: '1.07', high: '1.17'},
   optimizer_installation_wdc: {family: 'uniform', low: '0.004', high: '0.010'},
-  optimizer_count: '103077', optimizer_unit_price_usd: '37.75',
+  optimizer_count: '96000', optimizer_unit_price_usd: '37.75',
 });
 for (const [system, low, high] of [['solectria', '8', '13'], ['solaredge', '12', '18']]) {
   assert.deepEqual(fresh.systems[system].cost_lines.find((line) => line.key === 'Om').distribution,
@@ -1707,7 +1707,7 @@ const paired = approved.payload.paired_commercial;
 const shared = paired.shared_initial_capex;
 assert.equal(shared.method, 'shared_base_optimizer_premium_v1');
 assert.equal(shared.dc_capacity_w, 134000000);
-assert.equal(shared.optimizer_count, 103077);
+assert.equal(shared.optimizer_count, 96000);
 assert.equal(shared.optimizer_unit_price_usd, 37.75);
 assert.deepEqual(shared.common_capex_wdc, {family: 'uniform', low: 1.07, high: 1.17});
 assert.deepEqual(shared.optimizer_installation_wdc,
@@ -1717,7 +1717,7 @@ const cost = (system, category) => paired.systems.find((item) => item.technology
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-7, `${a} != ${b}`);
 const midpoint = (d) => (d.low + d.high) / 2;
 close(midpoint(cost('solectria', 'full_initial_capex').distribution) * 100000000, 150080000);
-close(midpoint(cost('solaredge', 'full_initial_capex').distribution) * 100000000, 154909156.75);
+close(midpoint(cost('solaredge', 'full_initial_capex').distribution) * 100000000, 154642000);
 for (const [system, low, high] of [['solectria', 8, 13], ['solaredge', 12, 18]]) {
   const om = cost(system, 'full_annual_om').distribution;
   close(om.low, low * 1.34 / 1000);
@@ -2004,15 +2004,16 @@ console.log(JSON.stringify({cleared: true, applyingPreserved: acceptance.checked
         )
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_report_download_options_default_on_and_preserve_selection(self) -> None:
+    def test_report_download_is_pdf_with_appendix_and_requires_completed_v5_job(self) -> None:
         payload = self.run_node(
             r"""
 const assert = require('node:assert/strict');
 const link = () => ({hidden: true, removeAttribute(key) { delete this[key]; }});
 technoeconomicElements = {
-  standalonePdfLink: link(), standaloneDocxLink: link(),
-  reportAppendixOption: {hidden: true},
+  standalonePdfLink: link(), reportNameOption: {hidden: true},
 };
+const staleKey = 'sbepv.technoeconomic.report-appendix.v1.verified_tea-123';
+globalThis.localStorage = {getItem: key => key === staleKey ? 'false' : null};
 const job = {
   job_id: 'verified_tea-123', state: 'done',
   result: {calculation_contract_version: TECHNOECONOMIC_PAIRED_CONTRACT_VERSION},
@@ -2020,38 +2021,29 @@ const job = {
 technoeconomicRenderReportDownloads(job);
 assert.equal(technoeconomicElements.standalonePdfLink.href,
   '/api/technoeconomic/jobs/verified_tea-123/exports/pdf?include_technical_appendix=true');
-assert.equal(technoeconomicElements.standaloneDocxLink.href,
-  '/api/technoeconomic/jobs/verified_tea-123/exports/docx?include_technical_appendix=true');
-technoeconomicElements.includeTechnicalAppendix = {checked: false};
-technoeconomicPersistReportAppendix();
-technoeconomicRenderReportDownloads(job);
-assert.equal(technoeconomicElements.reportAppendixOption.hidden, false);
-for (const link of [technoeconomicElements.standalonePdfLink, technoeconomicElements.standaloneDocxLink]) {
-  assert.equal(link.hidden, false);
-  assert.ok(link.href.endsWith('?include_technical_appendix=false'));
-}
+assert.equal(technoeconomicElements.standalonePdfLink.hidden, false);
+assert.equal(technoeconomicElements.reportNameOption.hidden, false);
 technoeconomicRenderReportDownloads(null);
-assert.equal(technoeconomicElements.reportAppendixOption.hidden, true);
-assert.equal(technoeconomicElements.includeTechnicalAppendix.checked, false);
+assert.equal(technoeconomicElements.reportNameOption.hidden, true);
+assert.equal(technoeconomicElements.standalonePdfLink.hidden, true);
 technoeconomicRenderReportDownloads(job);
-assert.ok(technoeconomicElements.standalonePdfLink.href.endsWith('=false'));
+assert.equal(technoeconomicElements.standalonePdfLink.href,
+  '/api/technoeconomic/jobs/verified_tea-123/exports/pdf?include_technical_appendix=true');
 for (const invalid of [
   {...job, state: 'running'}, {...job, job_id: '../private'},
   {...job, result: {calculation_contract_version: TECHNOECONOMIC_STANDALONE_CONTRACT_VERSION}},
 ]) {
   technoeconomicRenderReportDownloads(invalid);
-  assert.equal(technoeconomicElements.reportAppendixOption.hidden, true);
+  assert.equal(technoeconomicElements.reportNameOption.hidden, true);
   assert.equal(technoeconomicElements.standalonePdfLink.href, undefined);
-  assert.equal(technoeconomicElements.standaloneDocxLink.href, undefined);
 }
-console.log(JSON.stringify({preserved: !technoeconomicElements.includeTechnicalAppendix.checked}));
+console.log(JSON.stringify({passed: true}));
 """
         )
-        self.assertTrue(payload["preserved"])
-        self.assertRegex(
-            self.markup,
-            r'id="technoeconomicIncludeTechnicalAppendix" type="checkbox" checked',
-        )
+        self.assertTrue(payload["passed"])
+        self.assertNotIn('technoeconomicIncludeTechnicalAppendix', self.markup)
+        self.assertNotIn('technoeconomicReportAppendixOption', self.markup)
+        self.assertNotIn('technoeconomicStandaloneDocxLink', self.markup)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_assumptions_tabs_preserve_inputs_acceptance_and_support_keyboard_navigation(self) -> None:
@@ -2251,8 +2243,8 @@ const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-7
   `${actual} != ${expected}`);
 const approved = technoeconomicAssumptionsCostPreview(fresh);
 for (const [name, amount] of Object.entries({common: 150080000,
-  hardware: 3891156.75, installation: 938000, solectria: 150080000,
-  solaredge: 154909156.75, om_solectria: 1407000, om_solaredge: 2010000})) {
+  hardware: 3624000, installation: 938000, solectria: 150080000,
+  solaredge: 154642000, om_solectria: 1407000, om_solaredge: 2010000})) {
   close(approved[name], amount);
 }
 // These are support midpoints, not simulated medians or distribution means.
@@ -2299,7 +2291,7 @@ assert.equal(legacyPreview.hardware, null);
 console.log(JSON.stringify({approved, legacyPreview}));
 """
         )
-        self.assertAlmostEqual(154909156.75, payload["approved"]["solaredge"])
+        self.assertAlmostEqual(154642000, payload["approved"]["solaredge"])
         self.assertEqual(78000000, payload["legacyPreview"]["solectria"])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")

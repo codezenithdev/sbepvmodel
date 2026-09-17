@@ -32,7 +32,18 @@ class CostYearExportTests(unittest.TestCase):
         current = presets.current_assumptions('annual-fixture')
         self.assertEqual(2024, historical['finance']['constant_dollar_cost_year'])
         self.assertEqual(2026, current['finance']['constant_dollar_cost_year'])
-        self.assertEqual(currency.collect_money(historical), currency.collect_money(current))
+        historical_money = currency.collect_money(historical)
+        current_money = currency.collect_money(current)
+        capex_path = 'paired_commercial.systems.solaredge.cost_lines.solaredge.full-capex.distribution'
+        historical_capex = historical_money.pop(capex_path)
+        current_capex = current_money.pop(capex_path)
+        # The new quantity changes only derived SolarEdge CAPEX; unit prices,
+        # common CAPEX, installation, O&M and component allocations keep their amounts.
+        self.assertEqual(historical_money, current_money)
+        self.assertEqual('uniform', current_capex['family'])
+        for bound in ('low', 'high'):
+            self.assertAlmostEqual((103_077 - 96_000) * 37.75 / 100_000_000,
+                                   historical_capex[bound] - current_capex[bound])
         self.assertNotEqual(historical['paired_commercial']['shared_initial_capex']['report_context']['preset_id'],
                             current['paired_commercial']['shared_initial_capex']['report_context']['preset_id'])
         TechnoeconomicSubmissionRequest.model_validate(current)

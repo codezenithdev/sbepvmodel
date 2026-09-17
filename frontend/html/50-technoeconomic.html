@@ -120,10 +120,8 @@
                                     <nav class="tea-standalone-result-actions" aria-label="Result exports">
                                         <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneCdfLink" href="#" target="_blank" rel="noopener noreferrer" hidden>Chart</a>
                                         <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneXlsxLink" href="#" hidden>Workbook</a>
-                                        <label class="tea-report-name-option" id="technoeconomicReportNameOption" for="technoeconomicAnalysisName" hidden><span>Analysis name</span><input id="technoeconomicAnalysisName" type="text" maxlength="120" autocomplete="off" placeholder="Name this analysis" aria-describedby="technoeconomicAnalysisNameHelp technoeconomicAnalysisNameSaveStatus"><small id="technoeconomicAnalysisNameHelp"></small><small id="technoeconomicAnalysisNameSaveStatus" role="status" aria-live="polite"></small></label>
-                                        <label class="tea-report-appendix-option" id="technoeconomicReportAppendixOption" for="technoeconomicIncludeTechnicalAppendix" hidden><input id="technoeconomicIncludeTechnicalAppendix" type="checkbox" checked><span>Include technical appendix</span></label>
+                                        <div class="tea-report-name-option" id="technoeconomicReportNameOption" hidden><input id="technoeconomicAnalysisName" type="text" maxlength="120" autocomplete="off" placeholder="Analysis name" aria-label="Analysis name" aria-describedby="technoeconomicAnalysisNameHelp technoeconomicAnalysisNameSaveStatus"><small id="technoeconomicAnalysisNameHelp"></small><small id="technoeconomicAnalysisNameSaveStatus" role="status" aria-live="polite"></small></div>
                                         <a class="tea-button tea-button-secondary" id="technoeconomicStandalonePdfLink" href="#" hidden>Download PDF report</a>
-                                        <a class="tea-button tea-button-secondary" id="technoeconomicStandaloneDocxLink" href="#" hidden>Download Word report</a>
                                     </nav>
                                 </header>
                                 <div class="tea-standalone-result-body">
@@ -289,7 +287,7 @@
                                                     <section class="tea-assumptions-card" aria-labelledby="technoeconomicSolarEdgeAdditionsHeading">
                                                         <div class="tea-assumptions-card-heading"><div><h4 id="technoeconomicSolarEdgeAdditionsHeading">SolarEdge additions</h4><p>Optimizer hardware and installation are added to the shared base cost.</p></div><span class="tea-assumptions-tag">SolarEdge only</span></div>
                                                         <div class="tea-assumptions-field-grid">
-                                                            <div class="tea-field"><label for="technoeconomicSharedOptimizerCount">Optimizer count</label><input id="technoeconomicSharedOptimizerCount" type="number" min="1" max="100000000" step="1" value="103077"></div>
+                                                            <div class="tea-field"><label for="technoeconomicSharedOptimizerCount">Optimizer count</label><input id="technoeconomicSharedOptimizerCount" type="number" min="1" max="100000000" step="1" value="96000"></div>
                                                             <div class="tea-field"><label for="technoeconomicSharedOptimizerPrice">Optimizer unit price (USD)</label><input id="technoeconomicSharedOptimizerPrice" type="number" min="0" step="any" value="37.75"></div>
                                                         </div>
                                                         <div class="tea-assumptions-subtotal"><span>Optimizer hardware</span><output data-tea-cost-preview="hardware">Unavailable</output></div>

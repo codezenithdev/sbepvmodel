@@ -32,7 +32,7 @@ CURRENT_LIMITATIONS = (
     "of major maintenance remains unresolved; no separate major-maintenance charge "
     "is added. Lifecycle conclusions are provisional. Component allocations are "
     "explanatory, not independently sampled. Inverter quote assumed per Wdc; "
-    "optimizer design uses 103,077 H1300 units for two 650 W modules each, excluding spares."
+    "optimizer quantity defaults to the user-specified 96,000 units."
 )
 
 
@@ -40,9 +40,21 @@ def current_assumptions(source_annual_job_id: str) -> dict:
     """Current entered amounts in the user's 2026 basis; preserve the old preset."""
     payload = thursday_assumptions(source_annual_job_id)
     payload['finance']['constant_dollar_cost_year'] = 2026
+    paired = payload['paired_commercial']
+    shared = paired['shared_initial_capex']
+    shared['optimizer_count'] = 96_000
+    target_capacity_w = paired['target_capacity'] * 1_000_000
+    ratio = shared['dc_capacity_w'] / target_capacity_w
+    hardware_per_ac_w = shared['optimizer_count'] * shared['optimizer_unit_price_usd'] / target_capacity_w
     for system in payload['paired_commercial']['systems']:
         for line in system['cost_lines']:
             line['constant_dollar_cost_year'] = 2026
+            if system['technology'] == 'solaredge' and line['cost_category'] == 'full_initial_capex':
+                line['distribution'] = {
+                    'family': 'uniform',
+                    **{bound: shared['common_capex_wdc'][bound] * ratio + hardware_per_ac_w
+                       + shared['optimizer_installation_wdc'][bound] * ratio for bound in ('low', 'high')},
+                }
     context = payload['paired_commercial']['shared_initial_capex']['report_context']
     context.update(preset_id=CURRENT_PRESET_ID, assumptions_status='modified',
                    limitations=CURRENT_LIMITATIONS)
@@ -61,7 +73,8 @@ def current_assumptions(source_annual_job_id: str) -> dict:
                 citation['title'] = 'Entered TEA assumptions with user-declared 2026 cost basis'
                 citation['stable_reference'] += '; cost-basis clarification 2026-09-17; preset ' + CURRENT_PRESET_ID
                 citation['excerpt_or_derivation_note'] = (
-                    citation['excerpt_or_derivation_note'].replace(LIMITATIONS, '').strip()
+                    citation['excerpt_or_derivation_note'].replace(LIMITATIONS, '')
+                    .replace('103077 x USD37.75 hardware', '96000 x USD37.75 hardware').strip()
                     + ' ' + CURRENT_LIMITATIONS
                 )
             else:
