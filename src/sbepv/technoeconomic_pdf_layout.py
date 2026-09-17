@@ -26,6 +26,9 @@ FOOTER_RULE_Y = 47
 # column. Rescaling by this factor keeps their proportions on the wider margins.
 AUTHORED_WIDTH = 522
 CHART_SCALE = CONTENT_WIDTH / AUTHORED_WIDTH
+# Height the CDF no longer needs below its axis title now that the marker key
+# lives in the caption.
+CDF_CAPTION_RECLAIM = 12
 INK = colors.HexColor('#1A1D21')
 BODY_INK = colors.HexColor('#333333')
 MUTED_INK = colors.HexColor('#5A6470')
@@ -92,7 +95,7 @@ class LifecycleCDF(Flowable):
 
     def draw(self):
         c, data = self.canv, self.payload
-        left, bottom, right, top = 72, 59, self.width-18, self.height-39
+        left, bottom, right, top = 72, 47, self.width-18, self.height-39
         values = [value for series in data['series'] for value in series['values']]
         lower, upper = min(values), max(values)
         span = upper-lower or max(abs(lower)*.1, 1)
@@ -118,7 +121,7 @@ class LifecycleCDF(Flowable):
         c.setFont('ReportSans', 8)
         year = data.get('constant_dollar_cost_year')
         basis = f'real {year} USD' if year is not None else 'constant USD'
-        c.drawCentredString((left+right)/2,22,f'Lifecycle LCOE ({basis}/MWh AC)')
+        c.drawCentredString((left+right)/2,10,f'Lifecycle LCOE ({basis}/MWh AC)')
         c.saveState();c.translate(12,(bottom+top)/2);c.rotate(90)
         c.drawCentredString(0,0,'Probability at or below LCOE');c.restoreState()
         for index, series in enumerate(data['series']):
@@ -348,7 +351,7 @@ def render_pdf(report):
             story.extend([contents,Spacer(1,12)])
         elif kind=='chart':
             height=block['height']*CHART_SCALE
-            chart=(LifecycleCDF(block['vector'],CONTENT_WIDTH,height) if block.get('vector') else
+            chart=(LifecycleCDF(block['vector'],CONTENT_WIDTH,height-CDF_CAPTION_RECLAIM) if block.get('vector') else
                    Image(BytesIO(base64.b64decode(block['image'])),width=CONTENT_WIDTH,height=height))
             caption=text(block['caption'])
             if block.get('vector'):
