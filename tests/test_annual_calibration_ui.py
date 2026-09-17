@@ -660,6 +660,84 @@ console.log(JSON.stringify({{
         self.assertIn("function annualLatestAvailableDate(value = new Date())", self.html)
         self.assertGreaterEqual(self.html.count("dateIsoInTimeZone(value, 'Etc/GMT+7')"), 2)
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_spring_checkbox_request_cache_and_confirmation_invalidation(self) -> None:
+        checkbox = self.html.split('id="annualUseSpringForFall"', 1)[1].split('>', 1)[0]
+        self.assertNotIn("checked", checkbox)
+        self.assertIn('aria-describedby="annualUseSpringForFallHelp"', checkbox)
+        functions = []
+        for signature in (
+            "function buildAnnualRequest()",
+            "function getAnnualFormState()",
+            "function applyAnnualFormState(form)",
+            "function invalidateAnnualRequestFromFormEdit()",
+        ):
+            source = self.html.split(signature, 1)[1]
+            end = "\n        document.querySelectorAll" if "invalidate" in signature else "\n        function "
+            source = source.split(end, 1)[0]
+            functions.append(signature + source)
+        script = """
+const assert = require('node:assert/strict');
+const nodes = new Map();
+const document = { getElementById: (id) => {
+    if (!nodes.has(id)) nodes.set(id, {value: '1', checked: false});
+    return nodes.get(id);
+}};
+document.getElementById('annualIntervalUnit').value = 'hours';
+const annualCalibrationElements = {useSpringForFall: {checked: false}};
+let annualCalibrationBaseline = {job_id: 'baseline'};
+const annualErrorBanner = {classList: {remove() {}}};
+const annualProgressWrap = {classList: {remove() {}}};
+const annualCurtailmentEnabled = {checked: false};
+const annualCurtailmentLimitKw = {value: ''};
+const annualIamModelRadios = [];
+const annualIamAr = {value: '0.16'};
+const MAX_ANNUAL_MODEL_ROWS = 1048575;
+const readAnnualSelectedYears = () => [2025];
+const isSupportedAnnualInterval = () => true;
+const estimateAnnualModelRows = () => 8760;
+const readAnnualEfficiency = () => 1;
+const getSelectedIamModel = () => 'physical';
+const setAnnualSelectedYears = () => {};
+const applyAnnualIntervalFormState = () => {};
+const setSelectedIamModel = () => {};
+const resolveSavedIamModel = () => 'physical';
+const syncAnnualCurtailmentLimit = () => {};
+const syncAnnualIamAr = () => {};
+const updateAnnualRuntimeWarning = () => {};
+let annualRequestRevision = 5;
+let annualRunState = {state: 'confirmation_required'};
+let pending = true, displayed = true, rendered = false;
+const clearAnnualFallbackConfirmation = () => {pending = false;};
+const clearAnnualSeasonalFallbackDisplay = () => {displayed = false;};
+const renderAnnualSeasonalFactors = () => {rendered = true;};
+const resetAnnualRunBtn = () => {};
+const renderAnnualSettingDiffs = () => {};
+""" + "\n".join(functions) + """
+assert.equal(buildAnnualRequest().use_spring_for_fall, false);
+annualCalibrationElements.useSpringForFall.checked = true;
+assert.equal(buildAnnualRequest().use_spring_for_fall, true);
+const saved = getAnnualFormState();
+annualCalibrationElements.useSpringForFall.checked = false;
+applyAnnualFormState(saved);
+assert.equal(annualCalibrationElements.useSpringForFall.checked, true);
+invalidateAnnualRequestFromFormEdit();
+assert.equal(annualRequestRevision, 6);
+assert.equal(pending, false);
+assert.equal(displayed, false);
+assert.equal(rendered, true);
+assert.equal(annualRunState, null);
+applyAnnualFormState({});
+assert.equal(annualCalibrationElements.useSpringForFall.checked, false);
+annualCalibrationBaseline = null;
+annualCalibrationElements.useSpringForFall.checked = true;
+assert.equal('use_spring_for_fall' in buildAnnualRequest(), false);
+"""
+        subprocess.run(
+            [shutil.which("node"), "-e", script],
+            check=True, capture_output=True, text=True,
+        )
+
     def test_missing_fall_uses_inline_server_bound_confirmation(self) -> None:
         for marker in (
             'id="annualFallbackDrawer"',

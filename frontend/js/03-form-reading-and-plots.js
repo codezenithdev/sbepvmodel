@@ -487,6 +487,7 @@
 
         function getAnnualFormState() {
             return {
+                useSpringForFall: annualCalibrationElements.useSpringForFall.checked,
                 years: readAnnualSelectedYears(),
                 fromDate: document.getElementById('annualFromDate').value,
                 toDate: document.getElementById('annualToDate').value,
@@ -506,6 +507,7 @@
 
         function applyAnnualFormState(form) {
             if (!form) return;
+            annualCalibrationElements.useSpringForFall.checked = form.useSpringForFall === true;
             const setValue = (id, value) => {
                 if (value !== undefined && value !== null) document.getElementById(id).value = value;
             };

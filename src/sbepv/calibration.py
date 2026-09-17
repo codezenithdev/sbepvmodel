@@ -1830,7 +1830,11 @@ def apply_frozen_seasonal_calibration(
                 ]
                 * factor
             )
-            evidence = fit_evidence.get((label, public_system), {})
+            evidence_season = (
+                "spring" if label == "fall" and seasonal_substitution is not None
+                else label
+            )
+            evidence = fit_evidence.get((evidence_season, public_system), {})
             fit_source = evidence.get("source")
             record["systems"][public_system] = {
                 **evidence,

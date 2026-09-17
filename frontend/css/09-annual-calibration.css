@@ -312,6 +312,33 @@
             font-weight: 790;
         }
 
+        .annual-season-substitution {
+            margin-top: 16px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .annual-season-substitution label {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .annual-season-substitution input {
+            width: 18px;
+            height: 18px;
+            margin-top: 2px;
+            flex-shrink: 0;
+            accent-color: var(--accent);
+        }
+
+        .annual-season-substitution p {
+            margin: 8px 0 0 28px;
+            color: var(--muted-strong);
+        }
+
         .annual-factor-note {
             margin-top: 14px;
             padding: 11px 12px;

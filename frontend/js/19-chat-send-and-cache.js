@@ -434,6 +434,7 @@
             annualRequestRevision += 1;
             clearAnnualFallbackConfirmation();
             clearAnnualSeasonalFallbackDisplay();
+            renderAnnualSeasonalFactors(annualCalibrationBaseline);
             if (['starting', 'confirmation_required'].includes(annualRunState?.state)) {
                 annualRunState = null;
                 annualProgressWrap.classList.remove('visible');

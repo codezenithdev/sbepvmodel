@@ -110,6 +110,37 @@ class FrozenAnnualProfileTests(unittest.TestCase):
         )
         self.assertIn("Fall used", factors["warnings"][0])
 
+    def test_substituted_fall_uses_spring_fit_evidence(self):
+        profile = resolved_profile()
+        profile["fit_metadata"] = {"seasons": [
+            {"season": season, "systems": {
+                system: {"source": season + "_fit", "sample_count": count, "rmse_w": rmse}
+                for system in ("solaredge", "solectria")
+            }}
+            for season, count, rmse in (("spring", 100, 2.0), ("fall", 4, 9.0))
+        ]}
+        original = deepcopy(profile)
+        frame = pd.DataFrame(
+            {"se_predicted_power_w": [100.0], "sol_predicted_power_w": [200.0]},
+            index=pd.DatetimeIndex(["2025-10-15 12:00"], tz="America/Denver"),
+        )
+        for substituted in (True, False):
+            with self.subTest(substituted=substituted):
+                candidate = deepcopy(profile)
+                if not substituted:
+                    candidate.pop("seasonal_substitution")
+                output, factors, _ = calibration.apply_frozen_seasonal_calibration(
+                    frame, calibration_profile=candidate,
+                )
+                for system in ("solaredge", "solectria"):
+                    evidence = factors["seasons"][0]["systems"][system]
+                    self.assertEqual(evidence["fit_source"], "spring_fit" if substituted else "fall_fit")
+                    self.assertEqual(evidence["sample_count"], 100 if substituted else 4)
+                    self.assertEqual(evidence["rmse_w"], 2.0 if substituted else 9.0)
+                self.assertEqual(output["se_predicted_power_w"].tolist(), [200.0])
+                self.assertEqual(output["sol_predicted_power_w"].tolist(), [100.0])
+        self.assertEqual(profile, original)
+
     def test_substitution_annotation_requires_exact_spring_copy(self):
         profile = resolved_profile()
         profile["seasonal_factors"]["fall"]["solaredge"] = 1.999

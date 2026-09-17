@@ -128,6 +128,7 @@ class AnnualRunSubmission(AnnualRunRequest):
     """Annual request plus API-only calibration selection and consent fields."""
 
     calibration_baseline_job_id: str | None = None
+    use_spring_for_fall: StrictBool = False
     seasonal_fallback_acknowledgement: SeasonalFallbackAcknowledgement | None = None
 
 

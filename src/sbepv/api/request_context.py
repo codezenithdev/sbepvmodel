@@ -97,6 +97,7 @@ def _annual_submission_request(
     _annual_dates(submission)
     values = _model_dump(submission)
     values.pop("calibration_baseline_job_id", None)
+    values.pop("use_spring_for_fall", None)
     values.pop("seasonal_fallback_acknowledgement", None)
     if inherited_settings:
         effective_fields = set(supplied_fields)

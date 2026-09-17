@@ -84,6 +84,7 @@
             if (iamModel === 'martin_ruiz') body.iam_a_r = iamArValue;
             if (annualCalibrationBaseline?.job_id) {
                 body.calibration_baseline_job_id = annualCalibrationBaseline.job_id;
+                body.use_spring_for_fall = annualCalibrationElements.useSpringForFall.checked;
             }
             return body;
         }
@@ -128,7 +129,9 @@
                         return;
                     }
                     const message = annualResponseMessage(detail, 'Failed to start annual simulation (' + res.status + ')');
-                    if (res.status === 409 && body.calibration_baseline_job_id) {
+                    if (res.status === 409 && body.calibration_baseline_job_id &&
+                        ['calibration_baseline_changed', 'calibration_baseline_unavailable',
+                            'seasonal_fallback_confirmation_context_changed'].includes(code)) {
                         annualProgressWrap.classList.remove('visible');
                         annualRunState = null;
                         clearAnnualFallbackConfirmation();

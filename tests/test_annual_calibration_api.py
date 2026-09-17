@@ -438,6 +438,115 @@ class AnnualCalibrationApiTests(unittest.TestCase):
             {"solaredge": 1.04, "solectria": 1.0},
         )
 
+    def test_selected_spring_replaces_existing_fall_only_in_confirmed_run(self):
+        baseline = self._completed_reviewed_baseline(
+            seasons=("winter", "spring", "summer", "fall"),
+            to_date="2025-12-01",
+        )
+        original = self.client.get("/api/current-calibration").json()
+        detail = self._request_confirmation(baseline["id"], use_spring_for_fall=True)
+        self.assertTrue(detail["replaces_existing_fall"])
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
+        response = self.client.post(
+            "/api/annual-run",
+            json=self._annual_payload(
+                baseline["id"],
+                use_spring_for_fall=True,
+                seasonal_fallback_acknowledgement=self._acknowledgement(
+                    detail["confirmation_context_sha256"]
+                ),
+            ),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        job = state.AGENT_STORE.get_job(response.json()["job_id"])
+        self.assertNotIn("use_spring_for_fall", job["request"])
+        application = job["provenance"]["calibration_application"]
+        origin = application["origin_profile"]["seasonal_factors"]
+        resolved = application["resolved_profile"]["seasonal_factors"]
+        self.assertEqual(origin["fall"], {"solaredge": 1.04, "solectria": 1.0})
+        self.assertEqual(resolved["fall"], origin["spring"])
+        for season in ("winter", "spring", "summer"):
+            self.assertEqual(resolved[season], origin[season])
+        self.assertEqual(
+            application["seasonal_substitution"]["reason"],
+            "user_selected_spring_for_fall",
+        )
+        self.assertTrue(application["server_confirmation"]["accepted"])
+        self.assertEqual(self.client.get("/api/current-calibration").json(), original)
+
+    def test_checkbox_change_invalidates_confirmation(self):
+        baseline = self._completed_reviewed_baseline()
+        detail = self._request_confirmation(baseline["id"], use_spring_for_fall=True)
+        response = self.client.post(
+            "/api/annual-run",
+            json=self._annual_payload(
+                baseline["id"],
+                use_spring_for_fall=False,
+                seasonal_fallback_acknowledgement=self._acknowledgement(
+                    detail["confirmation_context_sha256"]
+                ),
+            ),
+        )
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "seasonal_fallback_confirmation_context_changed",
+        )
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
+
+    def test_selected_spring_requires_baseline_and_strict_boolean(self):
+        for selected in (True, "true", 1):
+            with self.subTest(selected=selected):
+                response = self.client.post(
+                    "/api/annual-run",
+                    json={
+                        "from_date": "2025-01-01",
+                        "to_date": "2025-12-31",
+                        "use_spring_for_fall": selected,
+                    },
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
+
+    def test_selected_spring_requires_spring_factors_and_fall_dates(self):
+        baseline = self._completed_reviewed_baseline(
+            seasons=("summer", "fall"),
+            from_date="2025-06-01", to_date="2025-11-30",
+        )
+        response = self.client.post(
+            "/api/annual-run",
+            json=self._annual_payload(
+                baseline["id"], use_spring_for_fall=True,
+                from_date="2025-09-01", to_date="2025-11-30",
+            ),
+        )
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "seasonal_substitution_unavailable")
+        baseline = self._completed_reviewed_baseline(job_id="with-spring")
+        response = self.client.post(
+            "/api/annual-run",
+            json=self._annual_payload(
+                baseline["id"], use_spring_for_fall=True,
+                from_date="2025-03-01", to_date="2025-05-31",
+            ),
+        )
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "seasonal_substitution_unavailable")
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
+
+    def test_selected_spring_does_not_bypass_other_missing_seasons(self):
+        baseline = self._completed_reviewed_baseline(
+            seasons=("spring",),
+            from_date="2025-03-01", to_date="2025-05-31",
+        )
+        response = self.client.post(
+            "/api/annual-run",
+            json=self._annual_payload(baseline["id"], use_spring_for_fall=True),
+        )
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "seasonal_calibration_coverage_missing")
+        self.assertEqual(state.AGENT_STORE.list_jobs(mode="annual"), [])
+
     def test_legacy_annual_request_remains_physics_only(self):
         response = self.client.post(
             "/api/annual-run",

@@ -327,10 +327,12 @@
             restoreButton: document.getElementById('annualRestoreSettingsBtn'),
             factorRows: document.getElementById('annualSeasonalFactorRows'),
             factorNote: document.getElementById('annualFactorNote'),
+            useSpringForFall: document.getElementById('annualUseSpringForFall'),
             actionTitle: document.getElementById('annualActionTitle'),
             actionCopy: document.getElementById('annualActionCopy'),
         };
         const annualFallbackElements = {
+            title: document.getElementById('annualFallbackTitle'),
             drawer: document.getElementById('annualFallbackDrawer'),
             closeButton: document.getElementById('annualFallbackCloseBtn'),
             cancelButton: document.getElementById('annualFallbackCancelBtn'),

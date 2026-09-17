@@ -255,6 +255,9 @@
 
         function renderAnnualSeasonalFactors(baseline, loading = false) {
             const fallback = !loading ? activeAnnualSeasonalFallback(baseline) : null;
+            const springAvailable = !!normalizeAnnualFallbackFactors(annualFactorRecord(baseline, 'spring'));
+            annualCalibrationElements.useSpringForFall.disabled = loading || !springAvailable;
+            if (!loading && !springAvailable) annualCalibrationElements.useSpringForFall.checked = false;
             const seasons = [
                 ['winter', 'Winter', 'Dec–Feb'],
                 ['spring', 'Spring', 'Mar–May'],
@@ -297,6 +300,8 @@
                 annualCalibrationElements.factorNote.classList.add('warning');
             } else if (fallback) {
                 annualCalibrationElements.factorNote.textContent = 'Fall now uses the exact Spring factors shown above for this annual run.';
+            } else if (annualCalibrationElements.useSpringForFall.checked) {
+                annualCalibrationElements.factorNote.textContent = 'Spring → Fall is selected for the next run. The table shows the inherited factors until you review and confirm the substitution.';
             } else if (!annualSeasonCovered(baseline, 'fall') && annualSeasonCovered(baseline, 'spring')) {
                 annualCalibrationElements.factorNote.textContent = 'Fall is missing. If the selected MIDC years require Fall, you will be asked to approve an exact Spring → Fall substitution before any job starts.';
                 annualCalibrationElements.factorNote.classList.add('warning');
@@ -391,6 +396,7 @@
                 const shouldApplySettings = forceSettings || !previousJobId || changed;
                 if (changed) {
                     annualRequestRevision += 1;
+                    annualCalibrationElements.useSpringForFall.checked = false;
                     clearAnnualFallbackConfirmation();
                     clearAnnualSeasonalFallbackDisplay({ render: false });
                 }
@@ -481,8 +487,13 @@
             const calibrationWindow = annualCalibrationBaseline?.calibration_window || {};
             const start = calibrationWindow.from_date ?? calibrationWindow.from ?? calibrationWindow.start;
             const end = calibrationWindow.to_date ?? calibrationWindow.to ?? calibrationWindow.end;
-            annualFallbackElements.windowCopy.textContent = 'Fall (Sep–Nov) factors are not available in the inherited calibration window' +
-                (start || end ? ' (' + formatAnnualCalibrationDate(start) + ' – ' + formatAnnualCalibrationDate(end) + ')' : '') + '.';
+            annualFallbackElements.title.textContent = detail.replaces_existing_fall
+                ? 'Review Spring for Fall substitution.'
+                : 'Fall factor is unavailable.';
+            annualFallbackElements.windowCopy.textContent = detail.replaces_existing_fall
+                ? 'You selected Spring factors instead of the inherited Fall (Sep–Nov) factors for this provisional annual comparison. The promoted Fall factors remain unchanged.'
+                : 'Fall (Sep–Nov) factors are not available in the inherited calibration window' +
+                    (start || end ? ' (' + formatAnnualCalibrationDate(start) + ' – ' + formatAnnualCalibrationDate(end) + ')' : '') + '.';
             annualFallbackElements.solarEdgeFactor.textContent = formatAnnualFactor(solarEdge);
             annualFallbackElements.solectriaFactor.textContent = formatAnnualFactor(solectria);
             annualFallbackElements.modifiedSettings.textContent = Array.isArray(detail.modified_settings)

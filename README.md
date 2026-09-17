@@ -264,12 +264,18 @@ Physics-only columns remain in outputs. Runs without a calibration baseline rema
 physics-only.
 
 The only cross-season exception is **Fall from Spring for Annual Simulation**.
-If Fall is required but absent and Spring exists, the server requests confirmation
-before queueing/downloading. The user sees exact SolarEdge/Solectria Spring factors.
-Consent is bound to the request, baseline, and mapping; the server rechecks them
-and records factors/time in provenance. A true Fall factor wins. Other missing
-seasons or changed inputs/baselines require new review. The promoted profile is
-never modified.
+The optional **Use spring calibration factors for fall** checkbox defaults to off.
+Select it for a provisional comparison while Fall data is limited: each system's
+exact Spring factor replaces its Fall factor for September–November in this run,
+even when reviewed Fall factors exist. With it off, available Fall factors apply.
+If Fall is absent and Spring exists, the existing fallback confirmation is still
+offered. Both paths require review of the exact SolarEdge/Solectria Spring factors
+before queueing/downloading. Consent is bound to the request, baseline, mapping,
+and checkbox choice; the server rechecks them and records the substitution in
+results, workbook, and provenance. Other missing seasons block the run; changed
+inputs/baselines require new review. The promoted profile is never modified.
+This is a comparison assumption, not validation of Spring factors for Fall; use
+the reviewed Fall factors to compare again as Fall data becomes more complete.
 
 ### Annual-energy chart interpretation
 

@@ -737,11 +737,11 @@ def calibration_review_rows(
 def start_annual_run(req: AnnualRunSubmission) -> JSONResponse:
     selected_baseline = req.calibration_baseline_job_id
     if selected_baseline is None:
-        if req.seasonal_fallback_acknowledgement is not None:
+        if req.use_spring_for_fall or req.seasonal_fallback_acknowledgement is not None:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "A seasonal fallback acknowledgement requires a selected "
+                    "A seasonal substitution requires a selected "
                     "calibration baseline."
                 ),
             )
@@ -801,6 +801,16 @@ def start_annual_run(req: AnnualRunSubmission) -> JSONResponse:
         server_confirmation: dict[str, Any] | None = None
         server_timestamp = datetime.now(timezone.utc).isoformat()
 
+        if req.use_spring_for_fall and (
+            "fall" not in required_seasons or "spring" not in available_factors
+        ):
+            raise _calibration_conflict(
+                "seasonal_substitution_unavailable",
+                "Using Spring for Fall requires reviewed Spring factors and an "
+                "annual range that includes Fall.",
+                required_seasons=list(required_seasons),
+            )
+
         if missing_seasons:
             fall_from_spring_supported = (
                 set(missing_seasons) == {"fall"} and "spring" in available_factors
@@ -822,12 +832,14 @@ def start_annual_run(req: AnnualRunSubmission) -> JSONResponse:
                     ],
                 )
 
+        if missing_seasons or req.use_spring_for_fall:
             confirmation_context = _annual_confirmation_context(
                 baseline_job_id=current_baseline_id,
                 profile_sha256=bundle["profile_sha256"],
                 annual_request=annual_request,
                 required_seasons=required_seasons,
             )
+            confirmation_context["use_spring_for_fall"] = req.use_spring_for_fall
             confirmation_sha256 = _json_sha256(confirmation_context)
             acknowledgement = req.seasonal_fallback_acknowledgement
             confirmation_detail = {
@@ -835,6 +847,7 @@ def start_annual_run(req: AnnualRunSubmission) -> JSONResponse:
                 "profile_sha256": bundle["profile_sha256"],
                 "mapping": deepcopy(_ANNUAL_FALLBACK_MAPPING),
                 "spring_factors": deepcopy(available_factors["spring"]),
+                "replaces_existing_fall": "fall" in available_factors,
                 "required_seasons": list(required_seasons),
                 "modified_settings": deepcopy(settings_deltas),
                 "confirmation_context_sha256": confirmation_sha256,
@@ -843,8 +856,8 @@ def start_annual_run(req: AnnualRunSubmission) -> JSONResponse:
                 raise _calibration_conflict(
                     "seasonal_fallback_confirmation_required",
                     (
-                        "Fall factors are unavailable. Confirm whether the exact "
-                        "reviewed Spring factors should be used for Fall."
+                        "Confirm using the exact reviewed Spring factors for Fall "
+                        "in this annual run."
                     ),
                     **confirmation_detail,
                 )
@@ -876,6 +889,11 @@ def start_annual_run(req: AnnualRunSubmission) -> JSONResponse:
                 **deepcopy(_ANNUAL_FALLBACK_MAPPING),
                 "factors": deepcopy(available_factors["spring"]),
                 "explicitly_accepted": True,
+                "reason": (
+                    "user_selected_spring_for_fall"
+                    if req.use_spring_for_fall
+                    else "missing_fall_factors"
+                ),
             }
             server_confirmation = {
                 "accepted": True,
