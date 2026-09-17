@@ -174,7 +174,7 @@ def applied_calibration_blocks(job):
     blocks.append({"kind": "paragraph", "text": text, "style": "small"})
 
     if substitution:
-        relation = target.title() + " <- " + source.title() if source and target else "mapping not recorded"
+        relation = target.title() + " \u2190 " + source.title() if source and target else "mapping not recorded"
         accepted = substitution.get("explicitly_accepted")
         acceptance = ("Explicit acceptance is recorded." if accepted is True else
                       "The record marks explicit acceptance as false." if accepted is False else
@@ -208,9 +208,10 @@ def build_technical_appendix(job):
     def paragraph(text):
         blocks.append({"kind": "paragraph", "text": text, "style": "small"})
 
-    def table(headers, rows, widths=(.5, .5)):
+    def table(headers, rows, widths=None, mono=()):
         blocks.append({"kind": "table", "headers": headers, "rows": rows,
-                       "widths": list(widths), "numeric": [], "keep": False, "compact": True})
+                       "widths": list(widths) if widths else None, "numeric": [],
+                       "mono_columns": list(mono), "keep": False, "compact": True})
 
     def setting(key):
         return annual_stats[key] if key in annual_stats else annual_request.get(key)
@@ -225,7 +226,7 @@ def build_technical_appendix(job):
 
     heading("Saved model settings", "scope")
     paragraph(f"Methods revision {APPENDIX_CONTENT_VERSION}; saved results only, with no rerun or refit.")
-    table(["Recorded item", "Saved value"], [
+    table(["Recorded item", "Saved value"], mono=(1,), rows=[
         ["PV model version", _value(contract.get("model_version"))],
         ["Physics version", _value(contract.get("calibration_physics_version"))],
         ["Physics SHA-256", _value(contract.get("calibration_physics_fingerprint"))],
@@ -242,14 +243,14 @@ def build_technical_appendix(job):
 
     if supported:
         heading("Sunlight and temperature", "irradiance")
-        paragraph("NREL solar position; as-built bay tilts; single-axis tracking with 180-degree azimuth, 60-degree rotation limit and ground coverage ratio 0.4.")
+        paragraph("NREL solar position; as-built bay tilts; single-axis tracking with 180\u00b0 azimuth, 60\u00b0 rotation limit and ground coverage ratio 0.4.")
         rows = [
             ["DHI = max(GHI - DNI cos(z), 0)",
-             "Fallback only when DHI is missing. z = solar zenith; irradiance in W/m2."],
+             "Fallback only when DHI is missing. z = solar zenith; irradiance in W/m\u00b2."],
             ["G_sky = DHI [A R_b + (1 - A)(1 + cos(tilt))/2]",
              "Hay-Davies sky diffuse. A = DNI / extraterrestrial DNI; R_b = projection ratio with horizon guards."],
             ["T_module = T_air + G_POA exp(a + b wind)\nT_cell = T_module + (G_POA / 1000) deltaT",
-             "SAPM temperature in degrees C; wind in m/s. a = -3.47, b = -0.0594, deltaT = 0."],
+             "SAPM temperature in \u00b0C; wind in m/s. a = -3.47, b = -0.0594, deltaT = 0."],
         ]
         if iam == "physical":
             rows.append(["G_effective = G_beam IAM + G_diffuse",
@@ -259,10 +260,10 @@ def build_technical_appendix(job):
                          "Martin-Ruiz: zero outside front incidence; applied once before recalculating CEC power."])
         else:
             rows.append(["IAM selection unavailable", "The saved selection is missing; no default is applied."])
-        table(["Equation", "Meaning and units"], rows, (.53, .47))
+        table(["Equation", "Meaning and units"], rows, mono=(0,))
 
         heading("Electrical power and calibration", "electrical")
-        table(["Equation", "Meaning and units"], [
+        table(["Equation", "Meaning and units"], mono=(0,), rows=[
             ["I = I_L - I_0 [exp((V + I R_s)/a) - 1]\n    - (V + I R_s)/R_sh",
              "CEC model: I_L = photocurrent; I_0 = saturation current. I[A], V/a[V], R_s/R_sh[ohms]; parameters follow irradiance/temperature."],
             ["P_DC,SE = sum(P_mp,module)",
@@ -279,7 +280,7 @@ def build_technical_appendix(job):
              "Seasonal factor f includes active caps. Uncapped: f = measured / uncalibrated seasonal energy."],
             ["E_kWh = sum(P_W,i dt_hours,i)/1000",
              "Bounded intervals; gaps add no energy. Non-finite power contributes zero without implying measured zero output."],
-        ], (.53, .47))
+        ])
         paragraph("Limits: ideal SolarEdge module extraction; no optimizer efficiency curve or SolarEdge hardware clipping. No rear irradiance; uniform bay conditions.")
     else:
         paragraph("Detailed PV equations are unavailable for this frozen physics identity; current defaults are not assigned to historical runs.")
@@ -316,7 +317,7 @@ def build_technical_appendix(job):
         ["AF = sum(DF_t); CRF = 1/AF",
          "Annualizing both present values preserves LCOE. At r = 0: AF = L; CRF = 1/L."],
     ])
-    table(["Equation", "Meaning and units"], financial_rows, (.53, .47))
+    table(["Equation", "Meaning and units"], financial_rows, mono=(0,))
     if scenario.get("shared_initial_capex"):
         paragraph("Shared CAPEX enters each system once; SolarEdge adds optimizer hardware/installation. Maintenance follows recorded coverage.")
 
@@ -325,7 +326,7 @@ def build_technical_appendix(job):
         ["Seeded Latin Hypercube Sampling",
          "Stratified uncertain inputs; fixed inputs use no dimension. Systems share weather years; year counts differ by at most one."],
         ["P10 / P50 / P90 and empirical CDF",
-         "Type-7 quantiles; CDF = P(X <= x), retaining ties. Sampled uncertainty, not measured-performance confidence."],
+         "Type-7 quantiles; CDF = P(X \u2264 x), retaining ties. Sampled uncertainty, not measured-performance confidence."],
         ["Rank model: z(rank LCOE) = intercept + sum(beta_k z(rank input_k))",
          "Average ranks for ties; z standardizes by sample SD. Forward selection maximizes added R-squared; stop below 1e-6 improvement or insufficient degrees of freedom."],
         ["Signed standardized coefficients beta",

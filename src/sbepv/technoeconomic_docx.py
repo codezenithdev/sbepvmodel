@@ -129,7 +129,7 @@ def render_docx(report):
             document.add_paragraph(block['text'],style='Title')
         elif kind=='heading':
             p=document.add_paragraph(style=f"Heading {block['level']}")
-            p.paragraph_format.page_break_before=bool(block.get('page'))
+            p.paragraph_format.page_break_before=block.get('page') is True
             props=p._p.get_or_add_pPr().get_or_add_numPr()
             props.get_or_add_ilvl().val=block['level']-1
             props.get_or_add_numId().val=num_id if block.get('number') else 0
@@ -157,7 +157,7 @@ def render_docx(report):
         elif kind=='toc':
             # Native fields recalculate against Word's own pagination; never copy PDF page numbers.
             p=document.add_paragraph()
-            field(p,'TOC \\o "1-1" \\h \\z','Open in Word and update the table of contents to display page numbers.')
+            field(p,'TOC \\o "1-2" \\h \\z','Open in Word and update the table of contents to display page numbers.')
         elif kind=='reference':
             p=document.add_paragraph()
             link=OxmlElement('w:hyperlink')

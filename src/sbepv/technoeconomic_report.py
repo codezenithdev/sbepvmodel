@@ -174,8 +174,8 @@ def chart_image(kind, payload, height=2.55):
                         linestyle=('--', '-')[i % 2], marker=('o', 's')[i % 2],
                         markersize=4, label=item['label'])
             ax.set_ylim(0, 1)
-            ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=2))
-            ax.xaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
+            ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=0))
+            ax.xaxis.set_major_formatter(StrMethodFormatter('{x:,.6g}'))
             ax.set_ylabel('Cumulative probability', fontsize=font_size)
             ax.set_xlabel('SolarTAC annual AC energy (MWh)', fontsize=font_size)
             ax.legend(loc='lower left', bbox_to_anchor=(0, 1.02), ncols=2, frameon=False, fontsize=font_size, borderaxespad=0)
@@ -193,8 +193,8 @@ def chart_image(kind, payload, height=2.55):
                                 bbox={"facecolor":"white", "edgecolor":"none", "pad":2},
                                 arrowprops={"arrowstyle":"-", "color":COLORS[i], "lw":.8})
             ax.set_ylim(0, 1.04)
-            ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=2))
-            ax.xaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
+            ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=0))
+            ax.xaxis.set_major_formatter(StrMethodFormatter('{x:,.6g}'))
             ax.set_ylabel("Cumulative probability", fontsize=font_size)
             ax.set_xlabel("LCOE (USD/MWh)" if kind=="cdf" else "SolarEdge minus Solectria LCOE (USD/MWh)", fontsize=font_size)
             if kind == "paired":
@@ -212,7 +212,7 @@ def chart_image(kind, payload, height=2.55):
                 ax.bar(x, item["values"], width=.78/len(series), label=item["label"], color=COLORS[i], hatch=("", "//", "..")[i % 3])
             ax.set_xticks(np.arange(len(labels)), labels)
             ax.set_ylabel(payload["ylabel"], fontsize=font_size)
-            ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
+            ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.6g}'))
             ax.legend(loc="lower left", bbox_to_anchor=(0,1.02), ncols=len(series), frameon=False, fontsize=font_size, borderaxespad=0)
         else:
             for i, item in enumerate(series):
@@ -221,9 +221,9 @@ def chart_image(kind, payload, height=2.55):
             ax.set_xlabel(payload.get("xlabel", "Weather year"), fontsize=font_size)
             ax.xaxis.set_major_locator(MaxNLocator(integer=True))
             ax.xaxis.set_major_formatter(StrMethodFormatter('{x:.0f}'))
-            ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
+            ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.6g}'))
             ax.legend(loc="lower left", bbox_to_anchor=(0,1.02), ncols=2, frameon=False, fontsize=font_size, borderaxespad=0)
-        # Probability charts need space for 100.00% plus the vertical title.
+        # Probability charts need space for the percent ticks plus the vertical title.
         left = .15 if kind in ('annual_cdf', 'cdf', 'paired') else .12
         fig.subplots_adjust(left=left, right=.97, top=.84, bottom=.23 if height<2.5 else .19)
     for ax in axes:
@@ -393,11 +393,11 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         blocks.append(block)
     def heading(text, anchor, *, page=False, level=1):
         blocks.append({"kind":"heading", "text":text, "anchor":anchor, "page":page, "level":level})
-    def table(headers, rows, widths=None, numeric=(), *, keep=False, compact=False, emphasis_rows=()):
+    def table(headers, rows, widths=None, numeric=(), *, keep=False, compact=False, emphasis_rows=(), mono=()):
         if not rows:
             paragraph("No supporting values were recorded.")
             return
-        blocks.append({"kind":"table", "headers":headers, "rows":rows, "widths":widths, "numeric":list(numeric), "keep":keep or len(rows)<=3, "compact":compact, "emphasis_rows":list(emphasis_rows)})
+        blocks.append({"kind":"table", "headers":headers, "rows":rows, "widths":widths, "numeric":list(numeric), "keep":keep or len(rows)<=3, "compact":compact, "emphasis_rows":list(emphasis_rows), "mono_columns":list(mono)})
     def figure(block, figure_id, description):
         blocks.append({'kind':'paragraph', 'style':'body', 'text':'', 'segments':[
             {'text':'Figure '}, {'figure_ref':figure_id, 'text':''}, {'text':' ' + description}]})
@@ -430,6 +430,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     paragraph(f"SBE Innovation Center at SolarTAC  |  {target_text} commercial comparison", "subtitle")
     paragraph(f"Analysis completed {display_date(job.get('completed_at'),time=True)}\n"
               f"Generating dashboard version {identity['version']} ({identity['version_source']})", "meta")
+    blocks.append({"kind":"pagebreak"})
     paragraph("Contents", "toc_title")
     blocks.append({"kind":"toc"})
     heading("Executive Summary", "executive-summary", page=True)
@@ -443,7 +444,9 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     rows = []
     for key,label,_ in SYSTEMS:
         result = system_results.get(key) or {}
-        rows.append([label,*['$' + q(result,p,1000) + '/MWh' if (result.get('percentiles') or {}).get(p) is not None else 'Not available' for p in ("p10","p50","p90")]])
+        # The header already declares USD/MWh; repeating it in every cell only
+        # breaks the numeric alignment readers scan down.
+        rows.append([label,*[q(result,p,1000) if (result.get('percentiles') or {}).get(p) is not None else 'Not available' for p in ("p10","p50","p90")]])
     table(["LCOE (USD/MWh)","P10","P50 median","P90"],rows,[.37,.21,.21,.21],numeric=(1,2,3),keep=True)
     paragraph("Lower LCOE means a lower discounted cost per unit of generated AC energy. Cost P10 and P90 bound the middle 80% of the sampled LCOEs. The headline comparison subtracts system medians; it is not the median of paired differences.", "small")
     rounding_note = median_rounding_note(system_results)
@@ -596,7 +599,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
                   [[row['season'].title(),number(row['measured']['difference_kwh']/1000,2)] for row in measured_seasons],[.3,.7],numeric=(1,))
         paragraph("Interval-level seasonal and controlled comparisons are unavailable: " + energy_diagnostic.get('reason','supporting artifacts unavailable') +
                   " Frozen totals remain valid, but they do not quantify individual factor or cap contributions.","small")
-    heading("Annual energy distribution", "annual-distribution", level=3, page=True)
+    heading("Annual energy distribution", "annual-distribution", level=3, page='auto')
     interpolation_series = []
     for _, label, prefix in SYSTEMS:
         values = [row[prefix+'_predicted_kwh']/1000 for row in eligible if row.get(prefix+'_predicted_kwh') is not None]
@@ -620,7 +623,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     else:
         paragraph("No weather years are excluded in the frozen annual source.","small")
 
-    heading("Technoeconomic Analysis", "technoeconomic-analysis", level=2, page=True)
+    heading("Technoeconomic Analysis", "technoeconomic-analysis", level=2, page='auto')
     paragraph(f"The {finance.get('project_life_years','recorded')}-year commercial comparison scales each system's annual SolarTAC AC energy by its own applied source capacity to the common {target_text} target. The declared DC capacity provides the cost basis; it does not independently multiply energy.")
     paragraph("Latin Hypercube Sampling draws the uncertain continuous cost, discount-rate and degradation inputs from their recorded distributions. Each realization uses the same selected weather year, discount rate and degradation for both systems; system-specific O&M inputs are sampled independently. Pairing describes the shared inputs, while Latin Hypercube Sampling describes the sampling method.")
     if eligible and request.get('n'):
@@ -650,7 +653,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     if shared:
         inputs += [["Common initial CAPEX",distribution(shared.get('common_capex_wdc'),digits=2)+" USD/Wdc"],
                    ["SolarEdge optimizer installation",distribution(shared.get('optimizer_installation_wdc'),1000)+" USD/kWdc"],
-                   ["SolarEdge optimizer hardware",f"{number(shared.get('optimizer_count'),0)} units x ${number(shared.get('optimizer_unit_price_usd'))}"]]
+                   ["SolarEdge optimizer hardware",f"{number(shared.get('optimizer_count'),0)} units \u00d7 ${number(shared.get('optimizer_unit_price_usd'))}"]]
     for key,label,_ in SYSTEMS:
         system=next((s for s in scenario.get('systems',[]) if s.get('technology')==key),{})
         for line in system.get('cost_lines',[]):
@@ -766,7 +769,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     if include_technical_appendix:
         heading("Technical Appendix", "technical-appendix", page=True)
         blocks.extend(appendix.build_technical_appendix(job))
-        heading("LCOE percentile stability", "appendix-convergence", level=2, page=True)
+        heading("LCOE percentile stability", "appendix-convergence", level=2, page='auto')
         paragraph("P10/P50/P90 are recalculated over increasing prefixes of the saved realizations. Final points match the headline table. These are subsets of one experiment, not new simulations.","lead")
         for payload in diagnostics.convergence_payloads(metadata,calculation.by_name,routine,row_count=calculation.row_count):
             if payload['status']=='available':
@@ -801,7 +804,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     if include_technical_appendix:
         for reference_title,reference_url in appendix.APPENDIX_REFERENCES:
             blocks.append({"kind":"reference", "text":reference_title, "url":reference_url})
-    heading("Technical record", "technical-record",level=2,page=include_technical_appendix)
+    heading("Technical record", "technical-record",level=2,page='auto' if include_technical_appendix else False)
     model_contract=snapshot.get('model_contract') or {}
     table(["Record","Saved identifier"],[["TEA analysis",report['run_id']],["Annual simulation",request['source_annual_job_id']],["Calibration",calibration.get('id') or calibration.get('job_id') or 'Not recorded'],["Random seed",str(request.get('seed','Not recorded'))],
           ["Generating dashboard version",f"{identity['version']} ({identity['version_source']})"],
@@ -817,6 +820,6 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     if energy_diagnostic.get('status') == 'reconciled_current_artifacts':
         table(['Diagnostic source','Current workbook SHA-256'],[
             [label,energy_diagnostic['identity'][key]['sha256']] for key,label in (
-                ('calibration','Calibration workbook'),('annual','Annual workbook'))],[.3,.7])
+                ('calibration','Calibration workbook'),('annual','Annual workbook'))],mono=(1,))
     _number_report_blocks(blocks)
     return report

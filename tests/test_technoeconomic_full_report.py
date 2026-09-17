@@ -556,7 +556,7 @@ class FullReportTests(unittest.TestCase):
                 report=pdf.prepare_report(job)
             lcoe_table=next(block for block in report['blocks'] if block['kind']=='table' and block['headers'][0]=='LCOE (USD/MWh)')
             expected=job['result']['paired_commercial']['systems']['solectria']['percentiles']['p50']*1000
-            self.assertEqual('$'+report_model.number(expected)+'/MWh',lcoe_table['rows'][0][2])
+            self.assertEqual(report_model.number(expected),lcoe_table['rows'][0][2])
             self.assertIn(f'{life} years /',json.dumps([{k:v for k,v in b.items() if k!='image'} for b in report['blocks']]))
             displayed.append(lcoe_table['rows'][0][2])
         self.assertNotEqual(*displayed)
@@ -598,7 +598,7 @@ class FullReportTests(unittest.TestCase):
                 self.assertEqual(original,job)
                 lcoe_table=next(block for block in report['blocks'] if block['kind']=='table' and block['headers'][0]=='LCOE (USD/MWh)')
                 expected=job['result']['paired_commercial']['systems']['solectria']['percentiles']['p50']*1000
-                self.assertEqual('$'+report_model.number(expected)+'/MWh',lcoe_table['rows'][0][2])
+                self.assertEqual(report_model.number(expected),lcoe_table['rows'][0][2])
                 displayed.append(expected)
                 if scenario=='modified':
                     report_text=json.dumps([{k:v for k,v in block.items() if k!='image'} for block in report['blocks']])
