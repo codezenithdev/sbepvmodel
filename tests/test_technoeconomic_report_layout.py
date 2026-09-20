@@ -66,6 +66,16 @@ class ReportPaginationTests(unittest.TestCase):
         for index in range(1, 8):
             self.assertEqual(sum(f"Equation line {index}" in page for page in pages), 1)
 
+    def test_every_page_footer_shows_current_and_total_page_count(self):
+        pages = self.page_texts(self.prefix() + [
+            {"kind": "pagebreak"},
+            {"kind": "paragraph", "text": "Final page"},
+        ])
+        self.assertGreaterEqual(len(pages), 2)
+        for page_number, page in enumerate(pages, start=1):
+            self.assertIn(f"{page_number}/{len(pages)}", page)
+            self.assertNotIn(f"Page {page_number}", page)
+
     def test_chart_heading_introduction_and_caption_travel_with_figure(self):
         pages = self.page_texts(self.prefix(lines=30) + [
             {"kind": "heading", "text": "Lifecycle comparison", "level": 2, "anchor": "lifecycle"},

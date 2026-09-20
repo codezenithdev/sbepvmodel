@@ -104,8 +104,8 @@ def render_docx(report):
     name=section.footer.paragraphs[0]
     name.add_run(str(report.get('analysis_name') or 'PV comparison'))
     footer=section.footer.add_paragraph(style='Footer')
-    footer.add_run(_footer_timestamp(report)+'\tPage ')
-    field(footer,'PAGE','1');footer.add_run(' of ');field(footer,'NUMPAGES','1')
+    footer.add_run(_footer_timestamp(report)+'\t')
+    field(footer,'PAGE','1');footer.add_run('/');field(footer,'NUMPAGES','1')
     for paragraph in section.footer.paragraphs:
         paragraph.alignment=WD_ALIGN_PARAGRAPH.LEFT
         paragraph.paragraph_format.keep_with_next=False

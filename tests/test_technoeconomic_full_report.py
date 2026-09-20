@@ -221,6 +221,12 @@ class FullReportTests(unittest.TestCase):
         original=deepcopy(job)
         report=pdf.prepare_report(job,generated_at=datetime(2026,9,18,tzinfo=timezone.utc),analysis_name='Spring factors for fall')
         self.assertEqual('Spring factors for fall',report['analysis_name'])
+        self.assertEqual(
+            'Technoeconomic Analysis of Module-Level vs. Centrally Optimized Solar Photovoltaic Systems',
+            report['title'])
+        self.assertEqual('Evaluation of SolarEdge and Solectria PV systems at SolarTAC',report['subtitle'])
+        self.assertEqual([report['title'],report['subtitle']],
+                         [report['blocks'][0]['text'],report['blocks'][1]['text']])
         self.assertTrue(any(job['request']['paired_commercial']['shared_initial_capex']['report_context']['limitations'] in block.get('text','') for block in report['blocks']))
         word=docx_report.render_docx(report)
         document_pdf=technoeconomic_pdf_layout.render_pdf(report)

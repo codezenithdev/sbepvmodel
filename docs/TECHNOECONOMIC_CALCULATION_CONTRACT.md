@@ -2171,6 +2171,11 @@ Technoeconomic Analysis subheadings. Full-sentence descriptions explain the meth
 the pvlib/PVMismatch description retains the existing frozen-physics identity guard.
 The sampling description distinguishes Latin Hypercube Sampling of continuous
 uncertain inputs from the balanced assignment of discrete paired weather years.
+
+The report title is "Technoeconomic Analysis of Module-Level vs. Centrally
+Optimized Solar Photovoltaic Systems" and the subheader is "Evaluation of
+SolarEdge and Solectria PV systems at SolarTAC." PDF and Word footers identify
+every page using the `current/total` form, including the title page.
 Annual CDF interpolation is for display and does not supply sampled energy values.
 A brief Summary restates saved results and their qualifications before the optional
 appendix. Measured calibration-period energy

@@ -10,6 +10,7 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.pdfgen import canvas as pdfcanvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import BaseDocTemplate, CondPageBreak, Flowable, Frame, HRFlowable, Image, KeepTogether, PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle
@@ -245,6 +246,29 @@ class ReportTable(Table):
         piece._cellvalues[0] = header
 
 
+class PageCountCanvas(pdfcanvas.Canvas):
+    """Replay completed pages so each footer can include the final page count."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        total_pages = len(self._saved_page_states)
+        for page_number, state in enumerate(self._saved_page_states, start=1):
+            self.__dict__.update(state)
+            self.setFont("ReportSans", 8.5)
+            self.setFillColor(MUTED_INK)
+            self.drawRightString(PAGE_WIDTH-SIDE_MARGIN, FOOTER_RULE_Y-12,
+                                 f"{page_number}/{total_pages}")
+            pdfcanvas.Canvas.showPage(self)
+        pdfcanvas.Canvas.save(self)
+
+
 class EngineeringDocument(BaseDocTemplate):
     def __init__(self, stream, report):
         super().__init__(stream, pagesize=letter, leftMargin=SIDE_MARGIN, rightMargin=SIDE_MARGIN,
@@ -257,10 +281,6 @@ class EngineeringDocument(BaseDocTemplate):
         self.addPageTemplates(PageTemplate(id="report",frames=frame,onPage=self.decorate))
 
     def decorate(self, canvas, doc):
-        # The cover carries the title block and its own timestamp; repeating the
-        # footer there only labels the title page "Page 1".
-        if doc.page == 1:
-            return
         canvas.saveState()
         canvas.setStrokeColor(colors.HexColor("#D0D4D8"))
         canvas.setLineWidth(.5)
@@ -272,7 +292,6 @@ class EngineeringDocument(BaseDocTemplate):
                                       textColor=MUTED_INK,splitLongWords=True))
         _,height=name.wrap(self.width*.7,20)
         name.drawOn(canvas,SIDE_MARGIN,FOOTER_RULE_Y-12-height+10)
-        canvas.drawRightString(PAGE_WIDTH-SIDE_MARGIN,FOOTER_RULE_Y-12,f"Page {doc.page}")
         canvas.restoreState()
 
     def afterFlowable(self, flowable):
@@ -401,5 +420,5 @@ def render_pdf(report):
                 story.append(Spacer(1,8))
     output=BytesIO()
     document=EngineeringDocument(output,report)
-    document.multiBuild(story)
+    document.multiBuild(story, canvasmaker=PageCountCanvas)
     return output.getvalue()

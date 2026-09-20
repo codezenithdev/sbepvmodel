@@ -22,6 +22,8 @@ from sbepv import technoeconomic_report_appendix as appendix
 from sbepv.technoeconomic_report_metadata import normalize_analysis_name
 
 REPORT_VERSION = "2.5.1"
+REPORT_TITLE = "Technoeconomic Analysis of Module-Level vs. Centrally Optimized Solar Photovoltaic Systems"
+REPORT_SUBTITLE = "Evaluation of SolarEdge and Solectria PV systems at SolarTAC"
 SYSTEMS = (("solectria", "Solectria", "sol"), ("solaredge", "SolarEdge", "se"))
 COLORS = ("#CC921A", "#2E66A3", "#454545")
 
@@ -417,7 +419,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     identity = dashboard_identity or {"version":"Not recorded", "version_source":"not recorded", "build":"Not recorded"}
     run_id = str(job.get("id") or job.get("job_id"))
     resolved_analysis_name = normalize_analysis_name(analysis_name, run_id=run_id)
-    report = {"title":"SolarEdge and Solectria PV comparison", "version":REPORT_VERSION,
+    report = {"title":REPORT_TITLE, "subtitle":REPORT_SUBTITLE, "version":REPORT_VERSION,
               "generated_at":generated.isoformat(), "analysis_at":job.get("completed_at"),
               "run_id":run_id, "analysis_name":resolved_analysis_name, "blocks":blocks,
               "include_technical_appendix":bool(include_technical_appendix), "dashboard_identity":dict(identity)}
@@ -426,8 +428,9 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     report['energy_evidence'] = energy_evidence
 
     blocks.append({"kind":"title", "text":report["title"]})
+    paragraph(report['subtitle'], 'subtitle')
     paragraph(report['analysis_name'], 'subtitle')
-    paragraph(f"SBE Innovation Center at SolarTAC  |  {target_text} commercial comparison", "subtitle")
+    paragraph(f"{target_text} commercial comparison", "subtitle")
     paragraph(f"Analysis completed {display_date(job.get('completed_at'),time=True)}\n"
               f"Generating dashboard version {identity['version']} ({identity['version_source']})", "meta")
     blocks.append({"kind":"pagebreak"})
