@@ -2172,10 +2172,13 @@ the pvlib/PVMismatch description retains the existing frozen-physics identity gu
 The sampling description distinguishes Latin Hypercube Sampling of continuous
 uncertain inputs from the balanced assignment of discrete paired weather years.
 
-The report title is "Technoeconomic Analysis of Module-Level vs. Centrally
-Optimized Solar Photovoltaic Systems" and the subheader is "Evaluation of
-SolarEdge and Solectria PV systems at SolarTAC." PDF and Word footers identify
-every page using the `current/total` form, including the title page.
+The report title is "Technoeconomic Analysis of Module-Level and Central
+Optimization in Solar PV Systems" and the subheader is "Evaluation of
+SolarEdge and Solectria PV systems at SolarTAC." The title block carries the
+subheader above the cover rule, and the analysis name, compared capacity and
+timestamps render below it in the muted detail tier. PDF and Word footers
+identify every page using the `current/total` form, including the title page;
+the title page omits the footer's analysis name that the cover already states.
 Annual CDF interpolation is for display and does not supply sampled energy values.
 A brief Summary restates saved results and their qualifications before the optional
 appendix. Measured calibration-period energy

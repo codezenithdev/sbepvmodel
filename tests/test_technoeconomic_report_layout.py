@@ -76,6 +76,20 @@ class ReportPaginationTests(unittest.TestCase):
             self.assertIn(f"{page_number}/{len(pages)}", page)
             self.assertNotIn(f"Page {page_number}", page)
 
+    def test_cover_carries_its_subheader_and_names_the_run_once(self):
+        data = layout.render_pdf({"title": "Cover title", "subtitle": "Cover subheader",
+                                  "version": "test", "analysis_name": "Fall substitution run",
+                                  "blocks": [{"kind": "title", "text": "Cover title", "subtitle": "Cover subheader"},
+                                             {"kind": "paragraph", "style": "meta", "text": "Fall substitution run"},
+                                             {"kind": "pagebreak"},
+                                             {"kind": "paragraph", "text": "Body page"}]})
+        pages = [page.extract_text() for page in PdfReader(BytesIO(data)).pages]
+        self.assertIn("Cover subheader", pages[0])
+        # The cover states the run under its title; the repeated footer name put
+        # it on the page twice.
+        self.assertEqual(1, pages[0].count("Fall substitution run"))
+        self.assertIn("Fall substitution run", pages[1])
+
     def test_chart_heading_introduction_and_caption_travel_with_figure(self):
         pages = self.page_texts(self.prefix(lines=30) + [
             {"kind": "heading", "text": "Lifecycle comparison", "level": 2, "anchor": "lifecycle"},
