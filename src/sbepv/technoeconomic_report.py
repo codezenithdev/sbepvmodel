@@ -22,7 +22,7 @@ from sbepv import technoeconomic_report_appendix as appendix
 from sbepv.technoeconomic_report_metadata import normalize_analysis_name
 
 REPORT_VERSION = "2.5.1"
-REPORT_TITLE = "Technoeconomic Analysis of Module-Level vs. Centrally Optimized Solar Photovoltaic Systems"
+REPORT_TITLE = "Technoeconomic Analysis of Module-Level and Central Optimization in Solar PV Systems"
 REPORT_SUBTITLE = "Evaluation of SolarEdge and Solectria PV systems at SolarTAC"
 SYSTEMS = (("solectria", "Solectria", "sol"), ("solaredge", "SolarEdge", "se"))
 COLORS = ("#CC921A", "#2E66A3", "#454545")
@@ -427,10 +427,12 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     report['verification_check_ids'] = [str(row[0]) for row in checks]
     report['energy_evidence'] = energy_evidence
 
-    blocks.append({"kind":"title", "text":report["title"]})
-    paragraph(report['subtitle'], 'subtitle')
-    paragraph(report['analysis_name'], 'subtitle')
-    paragraph(f"{target_text} commercial comparison", "subtitle")
+    # The subheader travels with the title so the cover rule closes the whole
+    # heading. Run details sit below it in the muted tier; giving them the
+    # subheader's own size left three equal lines and no visible hierarchy.
+    blocks.append({"kind":"title", "text":report["title"], "subtitle":report["subtitle"]})
+    paragraph(report['analysis_name'], 'meta')
+    paragraph(f"{target_text} commercial comparison", "meta")
     paragraph(f"Analysis completed {display_date(job.get('completed_at'),time=True)}\n"
               f"Generating dashboard version {identity['version']} ({identity['version_source']})", "meta")
     blocks.append({"kind":"pagebreak"})

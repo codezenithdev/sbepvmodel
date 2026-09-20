@@ -287,11 +287,14 @@ class EngineeringDocument(BaseDocTemplate):
         canvas.line(SIDE_MARGIN,FOOTER_RULE_Y,PAGE_WIDTH-SIDE_MARGIN,FOOTER_RULE_Y)
         canvas.setFont("ReportSans",8.5)
         canvas.setFillColor(MUTED_INK)
-        name=Paragraph(text(self.report.get('analysis_name') or 'PV comparison'),
-                       ParagraphStyle('FooterName',fontName='ReportSans',fontSize=8.5,leading=10,
-                                      textColor=MUTED_INK,splitLongWords=True))
-        _,height=name.wrap(self.width*.7,20)
-        name.drawOn(canvas,SIDE_MARGIN,FOOTER_RULE_Y-12-height+10)
+        # The cover already names the run under its title; repeating it in the
+        # footer there printed the same name twice. Page 1 keeps only its number.
+        if doc.page > 1:
+            name=Paragraph(text(self.report.get('analysis_name') or 'PV comparison'),
+                           ParagraphStyle('FooterName',fontName='ReportSans',fontSize=8.5,leading=10,
+                                          textColor=MUTED_INK,splitLongWords=True))
+            _,height=name.wrap(self.width*.7,20)
+            name.drawOn(canvas,SIDE_MARGIN,FOOTER_RULE_Y-12-height+10)
         canvas.restoreState()
 
     def afterFlowable(self, flowable):
@@ -320,6 +323,11 @@ def render_pdf(report):
         'toc_title':ParagraphStyle('ContentsTitle',parent=body,fontName='ReportSans-Bold',fontSize=17,leading=21,spaceAfter=12,textColor=INK,keepWithNext=True),
     }
     title=ParagraphStyle('Title',parent=body,fontName='ReportSans-Bold',fontSize=23,leading=27,spaceAfter=12,textColor=INK,keepWithNext=True)
+    # A subheader set at the run details' size reads as another detail line. The
+    # 23/14/10 ramp and the darker ink keep it attached to the title instead.
+    cover_title=ParagraphStyle('CoverTitle',parent=title,spaceAfter=6)
+    cover_subtitle=ParagraphStyle('CoverSubtitle',parent=body,fontSize=14,leading=18,spaceAfter=12,
+                                  textColor=colors.HexColor('#2B3138'),keepWithNext=True)
     # Weight now increases up the hierarchy and every step is legible on its own:
     # the old 11.5/11/10.5 ramp made h2, h3 and body indistinguishable.
     h1=ParagraphStyle('Heading1',parent=body,fontName='ReportSans-Bold',fontSize=17,leading=21,spaceBefore=4,spaceAfter=12,textColor=INK,keepWithNext=True)
@@ -339,7 +347,10 @@ def render_pdf(report):
         if kind=='pagebreak':
             story.append(PageBreak())
         elif kind=='title':
-            story.append(Paragraph(text(block['text']),title))
+            subtitle=block.get('subtitle')
+            story.append(Paragraph(text(block['text']),cover_title if subtitle else title))
+            if subtitle:
+                story.append(Paragraph(text(subtitle),cover_subtitle))
             story.append(HRFlowable(width=CONTENT_WIDTH,thickness=1.2,color=INK,spaceBefore=0,spaceAfter=14,hAlign='LEFT'))
         elif kind=='heading':
             # A hard break belongs to a numbered section. Subsections ask only

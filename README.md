@@ -451,10 +451,13 @@ use USD/kW and rates use percent to keep the displayed values meaningful. Confir
 identical fitted and applied profiles are summarized
 without a duplicate factor table.
 
-The report title is **Technoeconomic Analysis of Module-Level vs. Centrally
-Optimized Solar Photovoltaic Systems**, with the subheader **Evaluation of
-SolarEdge and Solectria PV systems at SolarTAC**. PDF and Word footers show the
-current page and total page count as `current/total`, including the title page.
+The report title is **Technoeconomic Analysis of Module-Level and Central
+Optimization in Solar PV Systems**, with the subheader **Evaluation of
+SolarEdge and Solectria PV systems at SolarTAC**. The subheader sits with the
+title above the cover rule; the analysis name, compared capacity and timestamps
+follow below it in the muted detail tier. PDF and Word footers show the current
+page and total page count as `current/total`, including the title page. The
+title page omits the footer's analysis name because the cover already states it.
 
 The technical appendix uses concise equation tables with short meanings,
 units, saved assumptions, and statistical methods. Detailed physics descriptions

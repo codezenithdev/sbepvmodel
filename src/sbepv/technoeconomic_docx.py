@@ -127,6 +127,12 @@ def render_docx(report):
             p.add_run().add_break(WD_BREAK.PAGE)
         elif kind=='title':
             document.add_paragraph(block['text'],style='Title')
+            if block.get('subtitle'):
+                # Word's Subtitle style carries the 11pt detail size; the cover
+                # subheader needs its own step between the title and the run details.
+                subtitle=document.add_paragraph(style='Subtitle')
+                subtitle.add_run(block['subtitle']).font.size=Pt(14)
+                subtitle.paragraph_format.keep_with_next=True
         elif kind=='heading':
             p=document.add_paragraph(style=f"Heading {block['level']}")
             p.paragraph_format.page_break_before=block.get('page') is True
