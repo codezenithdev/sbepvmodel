@@ -2342,10 +2342,31 @@ class SemiAutomaticAgentBackendTests(unittest.TestCase):
 
         self.assertEqual(len(api_calls), 1)
         self.assertNotIn(app.SCENARIO_TOOL, api_calls[0]["tools"])
-        self.assertEqual(api_calls[0]["tools"], [])
+        self.assertEqual({tool['name'] for tool in api_calls[0]['tools']}, {'find_analysis_records', 'get_model_run_evidence'})
         self.assertIsNone(result["action"])
         self.assertEqual(state.AGENT_STORE.list_proposals(), [])
         self.assertEqual(state.AGENT_STORE.list_jobs(), [])
+
+
+class AgentApplicationKnowledgeTests(unittest.TestCase):
+    def test_tea_guidance_includes_both_authoritative_capacity_branches(self):
+        from sbepv.agent import knowledge
+
+        for question in (
+            "Explain the complete workflow from measured data to a TEA report.",
+            "Explain paired commercial LCOE step by step.",
+            "Explain the selected assumptions, formula, cost lines and convergence.",
+        ):
+            with self.subTest(question=question):
+                guidance = knowledge.relevant_sections(question)["tea"]["text"]
+                self.assertIn("enabled, finite and positive", guidance)
+                self.assertIn("ac_operating_limit", guidance)
+                self.assertIn("Otherwise", guidance)
+                self.assertIn("own verified installed_wdc", guidance)
+                self.assertIn("dc_installed_nameplate", guidance)
+                self.assertIn("matching units and rating basis", guidance)
+                self.assertIn("predicted energy remains AC energy", guidance)
+                self.assertIn("no source is selected", guidance)
 
 
 if __name__ == "__main__":

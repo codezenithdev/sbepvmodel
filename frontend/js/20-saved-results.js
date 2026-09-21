@@ -196,7 +196,7 @@
                 const readOnlyJobId = savedResultsViewedJobIds.annual;
                 const readOnlyLegacyResultIsDisplayed = activeView === 'annual' &&
                     !annualLatestJobId && !annualRunState && !!readOnlyJobId &&
-                    !!savedResultByJobId(readOnlyJobId);
+                    !!(savedResultByJobId(readOnlyJobId) || savedResultsRestoredJobs.annual);
                 return readOnlyLegacyResultIsDisplayed ? readOnlyJobId : null;
             }
             return latestJobId && latestResult && currentRunState?.state === 'done'
@@ -759,7 +759,7 @@
                 trigger.textContent = 'Opening…';
                 trigger.setAttribute('aria-disabled', 'true');
             }
-            const loaded = await viewAgentJobResults(item.job_id, mode);
+            const loaded = await viewAgentJobResults(item.job_id, mode, { preserveDraft: true });
             savedResultsBusyJobId = null;
             if (!loaded) {
                 if (trigger) {

@@ -1019,7 +1019,7 @@ def harden_annual_source_artifact(
             reporting.verify_source_sha256(destination, source_hash)
         else:
             temporary = destination.with_name(
-                f".{destination.name}.{uuid.uuid4().hex}.tmp"
+                f".{uuid.uuid4().hex}.tmp"
             )
             try:
                 with source.open("rb") as source_handle, temporary.open("xb") as target_handle:
@@ -1057,7 +1057,7 @@ def harden_annual_source_artifact(
     except (OSError, RuntimeError, TypeError, ValueError, SourceFingerprintMismatch) as exc:
         raise AnnualSourceValidationError(
             "annual_source_artifact_unavailable",
-            "The private content-addressed Annual source artifact could not be created or verified.",
+            "The private content-addressed Annual source artifact could not be created or verified. Check output-directory permissions, available space, and Windows path length; use a short writable output root.",
         ) from exc
 
     return {

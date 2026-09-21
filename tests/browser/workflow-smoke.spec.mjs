@@ -158,6 +158,14 @@ function browserMocks(options = {}) {
       }
       return json({sources: sourceRecords});
     }
+    if (url.pathname === '/api/technoeconomic/cost-year-indices') {
+      // Synthetic index values isolate the explicit conversion UI contract.
+      // Numeric conversion is checked separately with a non-unit factor.
+      return json({snapshot_id: 'synthetic-browser-index-v1', years: {
+        2026: {value: 100, provisional: false, label: 'Synthetic 2026 index'},
+        2030: {value: 100 * (options.costYearFactor || 1), provisional: true, label: 'Synthetic 2030 index'},
+      }});
+    }
     return json({detail: 'Not mocked by the bounded browser smoke test.'}, 404);
   };
 }
@@ -378,7 +386,7 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   }
   await expect(source).toBeVisible();
   await expect(year).toBeEditable();
-  await expect(year).toHaveValue('2024');
+  await expect(year).toHaveValue('2026');
   await expect(source).toHaveValue(SOURCE_ID);
   await expect(back).toBeHidden();
   await expect(next).toBeVisible();
@@ -426,9 +434,9 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   await expect(page.locator('#technoeconomicStandaloneDegradationFamily')).toHaveValue('triangular');
   await expect(page.locator('#technoeconomicSharedDcCapacity')).toHaveValue('134');
   await costsTab.click();
-  await expect(optimizerPrice).toHaveValue('37.75');
-  await expect(omLow).toHaveValue('8');
-  await expect(omHigh).toHaveValue('13');
+  await expect.poll(async () => Number(await optimizerPrice.inputValue())).toBe(37.75);
+  await expect.poll(async () => Number(await omLow.inputValue())).toBe(8);
+  await expect.poll(async () => Number(await omHigh.inputValue())).toBe(13);
   await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('150.08 million');
   await expect(page.locator('#technoeconomicSharedCostPreview')).toContainText('154.64 million');
   await expect(page.locator('#technoeconomicStandaloneCostPreset')).toHaveText('Default assumptions');
@@ -450,6 +458,10 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   await projectTab.click();
   await year.fill('2030');
   await expect(acceptance).not.toBeChecked();
+  await expect(page.locator('#technoeconomicCostYearApply')).toBeEnabled();
+  await expect(page.locator('#technoeconomicCostYearStatus')).toContainText('Costs change only after you apply');
+  await page.locator('#technoeconomicCostYearApply').click();
+  await expect(page.locator('#technoeconomicCostYearPreview')).toBeHidden();
   await costsTab.click();
   await optimizerPrice.fill('40');
   await omLow.fill('9');
@@ -466,9 +478,9 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   await expect(acceptance).not.toBeChecked();
   await expect(year).toHaveValue('2030');
   await costsTab.click();
-  await expect(optimizerPrice).toHaveValue('40');
-  await expect(omLow).toHaveValue('9');
-  await expect(omHigh).toHaveValue('14');
+  await expect.poll(async () => Number(await optimizerPrice.inputValue())).toBe(40);
+  await expect.poll(async () => Number(await omLow.inputValue())).toBe(9);
+  await expect.poll(async () => Number(await omHigh.inputValue())).toBe(14);
   await page.locator('#technoeconomicAssumptionsFooterCloseBtn').click();
   await expect(dialog).not.toBeVisible();
   await expect(page.locator('#technoeconomicScenarioInputs')).toContainText('USD (real 2030)');
@@ -486,9 +498,9 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   await expect(source).toHaveValue('annual-browser-compatible');
   await expect(year).toHaveValue('2030');
   await costsTab.click();
-  await expect(optimizerPrice).toHaveValue('40');
-  await expect(omLow).toHaveValue('9');
-  await expect(omHigh).toHaveValue('14');
+  await expect.poll(async () => Number(await optimizerPrice.inputValue())).toBe(40);
+  await expect.poll(async () => Number(await omLow.inputValue())).toBe(9);
+  await expect.poll(async () => Number(await omHigh.inputValue())).toBe(14);
   await reviewTab.click();
   await expect(reviewSummary).toContainText('annual-browser-compatible');
   await expect(reviewSummary).toContainText('2030');
@@ -514,7 +526,7 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   await expect(confirmation).toBeVisible();
   await expect(confirmation).toContainText('2030');
   await expect(confirmation).toContainText('96,000 optimizers × $40');
-  await expect(confirmation).toContainText('134,000,000 Wdc');
+  await expect(confirmation).toContainText(/134,000,000(?:\.00)? Wdc/);
   await expect(confirmation).toContainText('one draw applied to both systems');
   await expect(confirmation).not.toContainText('Proposed real 2024 dollars');
   await expect(confirmation).toContainText('real 2030 USD/kWac-year');
@@ -523,11 +535,11 @@ test('tabbed TEA assumptions preserve Annual source selection, edits, review, an
   await page.locator('#technoeconomicRestoreApprovedBtn').click();
   await projectTab.click();
   await expect(source).toHaveValue('annual-browser-compatible');
-  await expect(year).toHaveValue('2024');
+  await expect(year).toHaveValue('2026');
   await costsTab.click();
-  await expect(optimizerPrice).toHaveValue('37.75');
-  await expect(omLow).toHaveValue('8');
-  await expect(omHigh).toHaveValue('13');
+  await expect.poll(async () => Number(await optimizerPrice.inputValue())).toBe(37.75);
+  await expect.poll(async () => Number(await omLow.inputValue())).toBe(8);
+  await expect.poll(async () => Number(await omHigh.inputValue())).toBe(13);
   await expect(acceptance).not.toBeChecked();
   await expect(page.locator('#technoeconomicStandaloneCostPreset')).toHaveText('Default assumptions');
   await page.setViewportSize({width: 390, height: 844});
@@ -703,6 +715,9 @@ test('annual CDF interpolation follows selected series and additional complete y
 });
 
 test('TEA v5 interpretation stays below the chart and loaded image charts open in new tabs', async ({page}) => {
+  // This scenario includes two downloads, three viewport screenshots, and
+  // three popup checks; retain its assertions with a bounded interaction budget.
+  test.setTimeout(60_000);
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.addInitScript(browserMocks);
@@ -925,4 +940,169 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   await expect(validationPage).toHaveURL(validationUrl);
   await validationPage.close();
   expect(pageErrors).toEqual([]);
+});
+
+test('analysis library searches, preserves drafts, selects evidence and keeps active TEA progress', async ({page}) => {
+  const html = assembledDashboard();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(browserMocks);
+  await page.addInitScript(() => {
+    const previousFetch = window.fetch;
+    window.libraryRequests = [];
+    window.fetch = (input, init = {}) => {
+      const url = new URL(String(input), location.origin);
+      if (!url.pathname.startsWith('/api/analysis-library') && !url.pathname.startsWith('/api/status/library-annual') && !url.pathname.startsWith('/api/technoeconomic/jobs/tea_library')) return previousFetch(input, init);
+      window.libraryRequests.push({path: url.pathname, search: url.search, method: init.method || 'GET'});
+      const json = body => Promise.resolve(new Response(JSON.stringify(body), {status: 200, headers: {'Content-Type': 'application/json'}}));
+      if (url.pathname === '/api/analysis-library') return json({items: [
+        {id: 'annual:library-annual', job_id: 'library-annual', workflow: 'annual', status: 'done', name: 'Reviewed Annual', created_at: '2026-09-21T12:00:00Z', saved: true},
+        {id: 'technoeconomic:tea_library', job_id: 'tea_library', workflow: 'technoeconomic', status: 'done', name: 'Paired TEA', created_at: '2026-09-21T13:00:00Z', saved: false, source_annual_job_id: 'library-annual'},
+      ], next_offset: null});
+      if (url.pathname.includes('/status/')) return json({job_id: 'library-annual', mode: 'annual', state: 'done', request: {years: [2024], interval_value: 60, interval_unit: 'minutes', curtailment_limit_kw: 99}, result: {stats: {se_predicted_kwh: 210000, sol_predicted_kwh: 200000}, warnings: []}});
+      return json({job_id: 'tea_library', workflow: 'technoeconomic', state: 'done', result: {}, source_annual_job_id: 'library-annual'});
+    };
+  });
+  await page.route('http://dashboard.test/**', route => route.fulfill({status: 200, contentType: 'text/html', body: html}));
+  await page.goto('http://dashboard.test/');
+  await page.locator('#annualTab').click();
+  const draftBefore = await page.evaluate(() => getAnnualFormState());
+  await page.locator('#analysisLibraryNavBtn').click();
+  await expect(page.locator('#analysisLibraryDialog')).toBeVisible();
+  await expect(page.locator('#analysisLibrarySearch')).toBeFocused();
+  await page.locator('#analysisLibraryClose').focus();
+  await page.keyboard.press('Shift+Tab');
+  // Native dialogs may send reverse Tab to browser chrome (reported as body).
+  // Background page controls must remain unfocusable while the modal is open.
+  expect(await page.evaluate(() => {
+    const dialog = document.getElementById('analysisLibraryDialog');
+    const withinModalOrBrowserChrome = document.activeElement === document.body || dialog.contains(document.activeElement);
+    document.getElementById('annualTab').focus();
+    return dialog.matches(':modal') && withinModalOrBrowserChrome && document.activeElement !== document.getElementById('annualTab');
+  })).toBe(true);
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#analysisLibraryClose')).toBeFocused();
+  await page.locator('#analysisLibrarySearch').fill('Reviewed');
+  await page.locator('#analysisLibrarySearchButton').click();
+  await expect(page.locator('#analysisLibraryLive')).toHaveText('2 analyses shown, newest first.');
+  expect(await page.evaluate(() => window.libraryRequests.some(x => x.search.includes('q=Reviewed')))).toBe(true);
+  await page.screenshot({path: 'analysis/library-desktop.png'});
+  await page.setViewportSize({width: 390, height: 844});
+  await page.screenshot({path: 'analysis/library-mobile.png'});
+  expect(await page.locator('#analysisLibraryDialog').evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth)).toBe(true);
+  await page.setViewportSize({width: 1280, height: 900});
+  await page.getByRole('button', {name: 'Open result: Reviewed Annual, library-annual', exact: true}).click();
+  await expect(page.locator('#analysisLibraryDialog')).not.toBeVisible();
+  expect(await page.evaluate(() => getAnnualFormState())).toEqual(draftBefore);
+  expect(await page.evaluate(() => annualLatestJobId)).toBe('library-annual');
+  await expect(page.locator('#annualStatSePred')).toHaveText('210,000.0');
+  await page.locator('#analysisLibraryNavBtn').click();
+  const teaDraftBefore = await page.evaluate(() => getTechnoeconomicFormState());
+  await page.getByRole('button', {name: 'Open result: Paired TEA, tea_library', exact: true}).click();
+  await expect(page.locator('#analysisLibraryDialog')).not.toBeVisible();
+  expect(await page.evaluate(() => getTechnoeconomicFormState())).toEqual(teaDraftBefore);
+  expect(await page.evaluate(() => getTechnoeconomicChatContext().job_id)).toBe('tea_library');
+  await page.evaluate(() => {technoeconomicJob = {...technoeconomicJob, job_id: 'tea_active', state: 'running'}; technoeconomicActiveJobId = 'tea_active';});
+  await page.locator('#analysisLibraryNavBtn').click();
+  await page.getByRole('button', {name: 'Open result: Paired TEA, tea_library', exact: true}).click();
+  await expect(page.locator('#analysisLibraryLive')).toContainText('Finish or cancel the active TEA request');
+  expect(await page.evaluate(() => technoeconomicActiveJobId)).toBe('tea_active');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#analysisLibraryNavBtn')).toBeFocused();
+  expect(await page.evaluate(() => window.libraryRequests.every(x => x.method === 'GET'))).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('collection cancellation stays pending across reload and never exposes cancelled downloads', async ({page}) => {
+  const html = assembledDashboard();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(browserMocks);
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch;
+    const id = 'collect_0123456789abcdef01234567';
+    const stateKey = 'synthetic-browser-cancel-state';
+    const json = body => Promise.resolve(new Response(JSON.stringify(body), {status: 200, headers: {'Content-Type': 'application/json'}}));
+    const record = state => ({collection_id: id, state, progress: state === 'cancelled' ? 100 : 35,
+      stage: state === 'cancelling' ? 'Cancellation requested. Waiting for the current retrieval or export step to finish; no downloads will be published.'
+        : state === 'cancelled' ? 'Collection cancelled. No downloads were published.' : 'Reading synthetic collection data',
+      request: {from_date: '2026-06-01', from_time: '00:00', to_date: '2026-06-02', to_time: '00:00', interval_value: 1, interval_unit: 'hours', data_groups: ['solaredge']}});
+    window.fetch = (input, init = {}) => {
+      const path = new URL(String(input), location.origin).pathname;
+      if (path === '/api/data-collections' && init.method === 'POST') {
+        localStorage.setItem(stateKey, 'collecting');
+        return json(record('collecting'));
+      }
+      if (path === '/api/data-collections/' + id + '/cancel' && init.method === 'POST') {
+        localStorage.setItem(stateKey, 'cancelling');
+        return json(record('cancelling'));
+      }
+      if (path === '/api/data-collections/' + id) return json(record(localStorage.getItem(stateKey)));
+      return originalFetch(input, init);
+    };
+  });
+  await page.route('http://dashboard.test/**', route => route.fulfill({status: 200, contentType: 'text/html', body: html}));
+  await page.goto('http://dashboard.test/');
+  await page.locator('#collectDataFromDate').fill('2026-06-01');
+  await page.locator('#collectDataToDate').fill('2026-06-02');
+  await page.locator('#collectDataSubmit').click();
+  const cancel = page.getByRole('button', {name: 'Cancel collection', exact: true});
+  await expect(cancel).toBeVisible();
+  await cancel.focus();
+  await cancel.press('Enter');
+  await expect(page.locator('#collectDataStateLabel')).toHaveText('Cancelling');
+  await expect(page.locator('#collectDataCancel')).toBeDisabled();
+  await expect(page.locator('#collectDataSubmit')).toBeDisabled();
+  await expect(page.locator('#collectDataStage')).toContainText('Waiting for the current retrieval');
+  await page.locator('#collectDataStatus').screenshot({path: test.info().outputPath('collection-cancellation-pending.png')});
+  await page.reload();
+  await expect(page.locator('#collectDataStateLabel')).toHaveText('Cancelling');
+  await expect(page.locator('#collectDataCancel')).toBeDisabled();
+  await page.evaluate(() => localStorage.setItem('synthetic-browser-cancel-state', 'cancelled'));
+  await expect(page.locator('#collectDataStateLabel')).toHaveText('Cancelled');
+  await expect(page.locator('#collectDataCancel')).toBeHidden();
+  await expect(page.locator('#collectDataSubmit')).toBeEnabled();
+  await expect(page.locator('#collectDataDownloads')).toBeHidden();
+  await expect(page.locator('#collectDataCsvDownload')).not.toHaveAttribute('href');
+  await page.locator('#collectDataStatus').screenshot({path: test.info().outputPath('collection-cancellation-complete.png')});
+  expect(errors).toEqual([]);
+});
+
+test('an empty Annual workspace never claims completed data quality', async ({page}) => {
+  await page.addInitScript(browserMocks);
+  const html = assembledDashboard();
+  await page.route('http://dashboard.test/**', route => route.fulfill({status: 200, contentType: 'text/html', body: html}));
+  await page.goto('http://dashboard.test/');
+  await page.locator('#annualTab').click();
+  await expect(page.locator('#annualStatQuality')).toHaveText('Not evaluated');
+  await expect(page.locator('#annualStatQuality')).not.toHaveClass(/positive/);
+  await expect(page.locator('#annualQualityPanel')).not.toHaveClass(/ok/);
+  await expect(page.locator('#annualQualityPanel')).toContainText('after a completed run');
+  await page.locator('#annualQualityPanel').scrollIntoViewIfNeeded();
+  await page.screenshot({path: test.info().outputPath('annual-empty-quality-not-evaluated.png')});
+});
+
+test('cost year preview requires explicit application and scales monetary inputs', async ({page}) => {
+  await page.addInitScript(browserMocks, {costYearFactor: 1.1});
+  const html = assembledDashboard();
+  await page.route('http://dashboard.test/**', route => route.fulfill({status: 200, contentType: 'text/html', body: html}));
+  await page.goto('http://dashboard.test/');
+  await page.locator('#technoeconomicTab').click();
+  await page.locator('#technoeconomicEditAssumptionsBtn').click();
+  const year = page.locator('#technoeconomicStandaloneCostYear');
+  await year.fill('2030');
+  await expect(page.locator('#technoeconomicCostYearApply')).toBeEnabled();
+  const before = await page.evaluate(() => technoeconomicStandaloneDraftSnapshot());
+  expect(before.cost_year).toBe('2026');
+  expect(Number(before.shared_capex.optimizer_unit_price_usd)).toBe(37.75);
+  await page.locator('#technoeconomicCostYearCancel').click();
+  await expect(year).toHaveValue('2026');
+  await year.fill('2030');
+  await expect(page.locator('#technoeconomicCostYearApply')).toBeEnabled();
+  await page.locator('#technoeconomicCostYearApply').click();
+  const after = await page.evaluate(() => technoeconomicStandaloneDraftSnapshot());
+  expect(after.cost_year).toBe('2030');
+  expect(Number(after.shared_capex.optimizer_unit_price_usd)).toBeCloseTo(37.75 * 1.1, 2);
+  expect(after.cost_year_basis.receipt.factor).toBeCloseTo(1.1, 10);
+  expect(after.cost_year_basis.receipt.index_snapshot_id).toBe('synthetic-browser-index-v1');
 });

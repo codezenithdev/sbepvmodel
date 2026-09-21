@@ -8,6 +8,7 @@
             intervalValue: document.getElementById('collectDataIntervalValue'),
             intervalUnit: document.getElementById('collectDataIntervalUnit'),
             submit: document.getElementById('collectDataSubmit'),
+            cancel: document.getElementById('collectDataCancel'),
             error: document.getElementById('collectDataError'),
             status: document.getElementById('collectDataStatus'),
             stateLabel: document.getElementById('collectDataStateLabel'),
@@ -39,6 +40,7 @@
         let collectDataActiveId = null;
         let collectDataPollFailures = 0;
         let collectDataBusy = false;
+        let collectDataCancelPending = false;
         const COLLECT_DATA_ACTIVE_ID_STORAGE_KEY = 'sb-energy-data-collection-active-id-v1';
         const COLLECT_DATA_ID_PATTERN = /^collect_[a-f0-9]{24}$/;
 
@@ -166,6 +168,7 @@
         }
 
         function collectDataClearResult() {
+            collectDataElements.cancel.hidden = true;
             collectDataResetDownload();
             collectDataResetPlots();
             collectDataSetCollapsed(false);
@@ -202,7 +205,13 @@
             if (state === 'completed') return 'Complete';
             if (state === 'failed') return 'Needs attention';
             if (state === 'collecting') return 'Collecting';
+            if (state === 'cancelling') return 'Cancelling';
+            if (state === 'cancelled') return 'Cancelled';
             return 'Queued';
+        }
+
+        function collectDataIsActive(state) {
+            return state === 'queued' || state === 'collecting' || state === 'cancelling';
         }
 
         function collectDataFormatEnergy(value) {
@@ -296,6 +305,20 @@
             collectDataElements.collectionId.textContent = safeId ? 'Collection ID: ' + safeId : '';
             collectDataElements.stateLabel.textContent = collectDataStateText(record?.state);
             collectDataElements.stage.textContent = String(record?.stage || 'Checking collection status');
+            const active = collectDataIsActive(record?.state);
+            collectDataSetBusy(active);
+            if (!active && document.activeElement === collectDataElements.cancel) {
+                collectDataElements.submit.focus({ preventScroll: true });
+            }
+            collectDataElements.cancel.hidden = !active || !safeId;
+            collectDataElements.cancel.disabled = collectDataCancelPending || record?.state === 'cancelling';
+            collectDataElements.cancel.textContent = record?.state === 'cancelling' ? 'Cancelling…' : 'Cancel collection';
+            if (record?.state === 'cancelled') {
+                collectDataResetDownload();
+                collectDataResetPlots();
+                collectDataElements.summary.hidden = true;
+                collectDataElements.qualityNote.hidden = true;
+            }
             collectDataSetProgress(record?.progress);
             const result = record?.result;
             if (record?.state === 'completed' && result) {
@@ -432,7 +455,7 @@
                 collectDataPollFailures = 0;
                 collectDataApplyRequest(payload.request);
                 collectDataRender(payload);
-                if (payload.state === 'queued' || payload.state === 'collecting') {
+                if (collectDataIsActive(payload.state)) {
                     collectDataSchedulePoll(collectionId, revision, 900);
                     return;
                 }
@@ -450,6 +473,42 @@
                     error?.message || 'Collection status is unavailable.',
                     document.body.classList.contains('dashboard-mode-collect-data')
                 );
+            }
+        }
+
+        async function collectDataCancel() {
+            const collectionId = collectDataValidatedId(collectDataActiveId);
+            if (!collectionId || collectDataCancelPending) return;
+            collectDataCancelPending = true;
+            collectDataRevision += 1;
+            const revision = collectDataRevision;
+            window.clearTimeout(collectDataPollTimer);
+            collectDataClearError();
+            collectDataElements.cancel.disabled = true;
+            collectDataElements.cancel.textContent = 'Requesting cancellation…';
+            try {
+                const response = await fetch('/api/data-collections/' + encodeURIComponent(collectionId) + '/cancel', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                });
+                const payload = await collectDataReadPayload(response);
+                if (!response.ok) throw new Error(collectDataErrorDetail(payload, 'Cancellation could not be confirmed.'));
+                if (revision !== collectDataRevision || collectionId !== collectDataActiveId) return;
+                if (collectDataValidatedId(payload.collection_id) !== collectionId) {
+                    throw new Error('The collection service returned an invalid identifier.');
+                }
+                collectDataCancelPending = false;
+                collectDataRender(payload);
+                if (collectDataIsActive(payload.state)) collectDataSchedulePoll(collectionId, revision, 250);
+            } catch (error) {
+                if (revision !== collectDataRevision || collectionId !== collectDataActiveId) return;
+                collectDataElements.cancel.disabled = false;
+                collectDataElements.cancel.textContent = 'Retry cancellation';
+                collectDataSetError(error?.message || 'Cancellation could not be confirmed. Checking collection status.', true);
+                collectDataSchedulePoll(collectionId, revision, 250);
+            } finally {
+                collectDataCancelPending = false;
             }
         }
 
@@ -605,6 +664,7 @@
         collectDataHandlePlotError(collectDataElements.acPowerPlot, collectDataElements.acPowerCard);
         collectDataHandlePlotError(collectDataElements.energyPlot, collectDataElements.energyCard);
         collectDataElements.form.addEventListener('submit', collectDataSubmit);
+        collectDataElements.cancel.addEventListener('click', () => void collectDataCancel());
         collectDataElements.form.addEventListener('input', collectDataInvalidateResult);
         collectDataElements.form.addEventListener('change', collectDataInvalidateResult);
         collectDataApplyDefaults();

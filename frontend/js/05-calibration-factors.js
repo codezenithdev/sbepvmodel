@@ -284,10 +284,22 @@
             setExcelLink(result.excel, result.excel_filename);
         }
 
-        function renderAnnualQuality(warnings) {
+        function renderAnnualQuality(warnings, state = 'empty') {
             const panel = document.getElementById('annualQualityPanel');
             const quality = document.getElementById('annualStatQuality');
             const items = Array.isArray(warnings) ? warnings.filter(Boolean) : [];
+            if (state !== 'done') {
+                panel.classList.remove('ok');
+                quality.classList.remove('positive', 'warning');
+                const pending = ['starting', 'queued', 'running'].includes(state);
+                quality.textContent = pending ? 'Pending' : (state === 'empty' ? 'Not evaluated' : 'Unavailable');
+                panel.textContent = pending
+                    ? 'Data quality will be evaluated after this simulation completes.'
+                    : (state === 'empty'
+                        ? 'No completed simulation is selected. Data quality has not been evaluated.'
+                        : 'This simulation has no completed result. Data quality is unavailable.');
+                return;
+            }
             panel.classList.toggle('ok', items.length === 0);
             quality.classList.toggle('positive', items.length === 0);
             quality.classList.toggle('warning', items.length > 0);

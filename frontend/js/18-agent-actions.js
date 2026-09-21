@@ -100,7 +100,7 @@
             return null;
         }
 
-        async function viewAgentJobResults(jobId, requestedMode = null) {
+        async function viewAgentJobResults(jobId, requestedMode = null, options = {}) {
             const snapshotMode = requestedMode || agentJobSnapshots.get(jobId)?.mode;
             if (snapshotMode && dashboardModeHasBlockingRun(snapshotMode, jobId)) {
                 appendSystemNotice('Finish or cancel the active ' + (snapshotMode === 'annual' ? 'annual' : 'calibration') + ' run before viewing older results.');
@@ -129,7 +129,7 @@
                     ? legacyAnnualRequestYear(job.request)
                     : null;
                 const annualRequestCanBeLoaded = hasCanonicalAnnualYears || mappedLegacyAnnualYear !== null;
-                if (!annual || annualRequestCanBeLoaded) {
+                if (!options.preserveDraft && (!annual || annualRequestCanBeLoaded)) {
                     applyPromotedRequest(annual ? 'annual' : 'validation', mappedLegacyAnnualYear === null
                         ? (job.request || {})
                         : { ...(job.request || {}), years: [mappedLegacyAnnualYear] });

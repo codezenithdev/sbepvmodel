@@ -64,7 +64,7 @@ class SavedResultsFrontendTests(unittest.TestCase):
         self.assertIn("method: 'DELETE'", self.script)
         self.assertIn("body: JSON.stringify({ name: defaultName })", self.script)
         self.assertIn("body: JSON.stringify({ name: name.slice(0, 120) })", self.script)
-        self.assertIn("const loaded = await viewAgentJobResults(item.job_id, mode)", self.script)
+        self.assertIn("const loaded = await viewAgentJobResults(item.job_id, mode, { preserveDraft: true })", self.script)
         self.assertNotIn("/api/run", self.script)
         self.assertNotIn("/api/annual-run", self.script)
 

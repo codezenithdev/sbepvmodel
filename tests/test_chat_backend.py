@@ -77,8 +77,21 @@ class ChatBackendTests(unittest.TestCase):
         self.assertIn("Performance Summary", self.calls[0]["instructions"])
         self.assertIn("SolarEdge", self.calls[0]["instructions"])
         self.assertIn("Solectria", self.calls[0]["instructions"])
-        self.assertIn("stay under 90 words", self.calls[0]["instructions"])
-        self.assertEqual(1_200, self.calls[0]["max_output_tokens"])
+        self.assertIn("Match explanation depth to the question", self.calls[0]["instructions"])
+        self.assertEqual(config.OPENAI_MAX_OUTPUT_TOKENS, self.calls[0]["max_output_tokens"])
+
+    def test_empty_answer_has_one_read_only_recovery_attempt(self):
+        responses = [types.SimpleNamespace(output_text='', output=[], status='incomplete'),
+                     types.SimpleNamespace(output_text='Recovered explanation.', output=[])]
+        def create(**kwargs):
+            self.calls.append(kwargs)
+            return responses.pop(0)
+        sys.modules['openai'].OpenAI = lambda **kwargs: types.SimpleNamespace(responses=types.SimpleNamespace(create=create))
+        reply, _, _ = chat._openai_chat_response(app.ChatRequest(message='Explain calibration.', allow_scenario_actions=False))
+        self.assertEqual('Recovered explanation.', reply)
+        self.assertEqual(2, len(self.calls))
+        self.assertEqual([], self.calls[-1]['tools'])
+        self.assertGreater(self.calls[-1]['max_output_tokens'], self.calls[0]['max_output_tokens'])
 
     def test_reference_question_enables_web_search(self):
         state.JOBS["job123"] = {"state": "done", "result": {"stats": {}}}
@@ -89,7 +102,36 @@ class ChatBackendTests(unittest.TestCase):
 
         self.assertTrue(web_enabled)
         self.assertIn({"type": "web_search"}, self.calls[0]["tools"])
-        self.assertIn(app.SCENARIO_TOOL, self.calls[0]["tools"])
+        self.assertNotIn(app.SCENARIO_TOOL, self.calls[0]["tools"])
+        self.assertIn(app.SCENARIO_TOOL, self.calls[1]["tools"])
+        self.assertNotIn({"type": "web_search"}, self.calls[1]["tools"])
+
+    def test_web_query_excludes_private_context_and_raw_question(self):
+        state.JOBS['private-job'] = {'state': 'done', 'result': {'stats': {'se_predicted_kwh': 987654321}}}
+        chat._openai_chat_response(app.ChatRequest(message='Search optimizer prices for SECRET_SITE_987 and password=secret-canary-123.', job_id='private-job'))
+        public_request = json.dumps(self.calls[0])
+        for secret in ('SECRET_SITE_987', 'secret-canary-123', '987654321', 'private-job'):
+            self.assertNotIn(secret, public_request)
+        self.assertNotIn('dashboard_run_context', public_request)
+        self.assertIn('optimizer', public_request)
+        self.assertNotIn({'type': 'web_search'}, self.calls[-1]['tools'])
+
+    def test_freshness_routing_and_explicit_no_search(self):
+        self.assertTrue(chat._should_allow_web_search('What are optimizer prices today?'))
+        self.assertTrue(chat._should_allow_web_search('Has the inverter efficiency standard changed since last year?'))
+        self.assertFalse(chat._should_allow_web_search('Do not search the web. Explain pvlib IAM.'))
+        self.assertFalse(chat._should_allow_web_search("If web search is unavailable, can you tell me today's exact price?"))
+        self.assertFalse(chat._should_allow_web_search('Search existing Annual history and read its saved evidence.'))
+        self.assertFalse(chat._should_allow_web_search('Find my oldest saved result and its source references.'))
+        self.assertTrue(chat._should_allow_web_search('Search saved history and compare with current public optimizer prices.'))
+
+    def test_public_source_urls_reject_credentials_even_in_encoded_paths(self):
+        safe = 'https://pvlib-python.readthedocs.io/en/stable/'
+        unsafe = 'https://example.com/pvwatts.php/api_key%3Dsynthetic-canary?utm_source=example'
+        self.assertTrue(chat._safe_public_url(safe))
+        self.assertFalse(chat._safe_public_url(unsafe))
+        self.assertFalse(chat._safe_public_url('https://user:synthetic@example.com/docs'))
+        self.assertNotIn('synthetic-canary', chat._public_research_text('See ' + unsafe))
 
     def test_dashboard_prediction_wording_does_not_enable_web_search(self):
         state.JOBS["job123"] = {"state": "done", "result": {"stats": {}}}

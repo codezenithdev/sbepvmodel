@@ -358,10 +358,10 @@ class AgentFrontendContractTests(unittest.TestCase):
             "agentActivityFilter = 'complete'",
             '>History <span data-agent-filter-count="complete">',
             "View results",
-            "async function viewAgentJobResults(jobId, requestedMode = null)",
+            "async function viewAgentJobResults(jobId, requestedMode = null, options = {})",
         ):
             self.assertIn(marker, self.html)
-        viewer = self.html.split("async function viewAgentJobResults(jobId, requestedMode = null)", 1)[1].split(
+        viewer = self.html.split("async function viewAgentJobResults(jobId, requestedMode = null, options = {})", 1)[1].split(
             "\n        function handleAgentAction", 1
         )[0]
         self.assertIn("'/api/status/' + encodeURIComponent(jobId)", viewer)

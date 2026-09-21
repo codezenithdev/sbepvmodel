@@ -141,6 +141,9 @@ OPENAI_MAX_RETRIES = int(
     _bounded_env_number("OPENAI_MAX_RETRIES", 0, minimum=0, maximum=5)
 )
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
+OPENAI_MAX_OUTPUT_TOKENS = int(
+    _bounded_env_number("OPENAI_MAX_OUTPUT_TOKENS", 6000, minimum=2000, maximum=16000)
+)
 OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "high").strip().lower() or "high"
 OPENAI_REASONING_EFFORTS = frozenset({
     "none",

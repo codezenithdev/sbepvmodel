@@ -1,0 +1,27 @@
+        .analysis-library { margin: auto; width: min(1050px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); box-sizing: border-box; border: 1px solid var(--border, #dce3df); border-radius: 14px; padding: 24px; background: var(--surface, #fff); color: var(--text, #243b32); }
+        .analysis-library::backdrop { background: rgb(10 30 20 / 50%); }
+        .analysis-library-header { display: flex; gap: 24px; align-items: flex-start; justify-content: space-between; }
+        .analysis-library h2 { margin: 0 0 8px; }
+        .analysis-library p { line-height: 1.5; }
+        .analysis-library button, .analysis-library input, .analysis-library select { font: inherit; border: 1px solid #77877e; border-radius: 6px; padding: 9px 12px; background: #fff; color: #243b32; }
+        .analysis-library button { cursor: pointer; min-height: 42px; }
+        .analysis-library button:disabled { cursor: default; opacity: .65; }
+        .analysis-library :focus-visible { outline: 3px solid #137247; outline-offset: 3px; }
+        .analysis-library-filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+        .analysis-library-filters label { display: grid; gap: 6px; flex: 1 1 160px; font-size: 13px; }
+        .analysis-library-filters label:first-child { flex-basis: 280px; }
+        .analysis-library input, .analysis-library select { min-width: 0; width: 100%; box-sizing: border-box; }
+        .analysis-library-list { display: grid; gap: 12px; }
+        .analysis-library-card { border: 1px solid #c9d5cd; border-radius: 8px; padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 18px; }
+        .analysis-library-card h3 { font-size: 16px; margin: 0; overflow-wrap: anywhere; }
+        .analysis-library-card p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+        .analysis-library-card button { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+        .analysis-library-note { font-size: 12px; color: #52675b; }
+        #analysisLibraryMore { margin-top: 16px; }
+        .top-nav .nav-right { flex-wrap: wrap; }
+        @media (max-width: 560px) {
+            .analysis-library { width: calc(100vw - 16px); max-height: calc(100dvh - 24px); padding: 16px; }
+            .analysis-library-header { gap: 12px; }
+            .analysis-library-card { grid-template-columns: minmax(0, 1fr); }
+            .analysis-library-card button { grid-column: 1; grid-row: auto; }
+        }

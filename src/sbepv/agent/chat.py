@@ -13,6 +13,7 @@ import os
 from copy import deepcopy
 from datetime import datetime
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from fastapi import HTTPException
 
@@ -21,7 +22,7 @@ from time import perf_counter
 from sbepv.agent.message_guards import _ambiguous_numeric_iam, _visible_iam_selection
 from sbepv.agent.prompts import SOLAR_AGENT_INSTRUCTIONS, SOLAR_MODEL_KNOWLEDGE
 from sbepv.agent.scenario_math import _normalise_config_keys
-from sbepv.agent import technoeconomic_evidence
+from sbepv.agent import history as history_tools, knowledge, research, technoeconomic_evidence
 from sbepv.agent.tool_schemas import (
     MAX_PARAMETER_SWEEP_VALUES,
     PARAMETER_SWEEP_TOOL,
@@ -67,17 +68,19 @@ def _clean_chat_history(
     history: list[ChatMessage], *, current_message: str | None = None
 ) -> list[dict[str, str]]:
     cleaned: list[dict[str, str]] = []
-    for item in history[-8:]:
+    for item in history[-12:]:
         role = item.role if item.role in {"user", "assistant"} else "user"
         content = (item.content or "").strip()
         if not content:
             continue
-        cleaned.append({"role": role, "content": content[:1400]})
+        if len(content) > 2400:
+            content = content[:1600] + '\n[Middle of earlier message omitted]\n' + content[-800:]
+        cleaned.append({"role": role, "content": content})
     if (
         cleaned
         and cleaned[-1]["role"] == "user"
         and current_message
-        and cleaned[-1]["content"] == current_message.strip()[:1400]
+        and (history[-1].content or '').strip() == current_message.strip()
     ):
         cleaned.pop()
     return cleaned
@@ -236,9 +239,11 @@ def _chat_run_context(
             "job_id": resolved_job_id,
             "state": "missing",
             "message": (
-                "The browser had a cached job id, but this FastAPI process does "
-                "not have that job in memory. Ask the user to rerun analysis for "
-                "grounded run-specific answers."
+                "The selected job was not found in the available job store. "
+                "Its absence does not establish deletion or loss from memory. "
+                "Ask the user to select the existing record from history or "
+                "check server storage/access before considering a rerun. "
+                "Do not substitute a different recent job."
             ),
         }
 
@@ -434,6 +439,20 @@ def _should_allow_web_search(message: str) -> bool:
     import re
 
     text = (message or "").lower()
+    if re.search(r"^\s*(?:if|when)\s+(?:the\s+)?(?:web\s+search|internet)\s+(?:is\s+)?(?:unavailable|offline|fails)", text):
+        return False
+    if re.search(r"\b(?:do not|don't|without|no)\s+(?:use\s+)?(?:web\s+search|search(?:ing)?|brows(?:e|ing)|internet)\b", text):
+        return False
+    internal_lookup = re.search(
+        r"\b(?:search|find|look\s+up)\b.*\b(?:history|library|saved|bookmarks?|existing\s+(?:annual|calibration|tea|runs?|analys[ei]s))\b",
+        text,
+    )
+    public_topic = re.search(
+        r"\b(?:web|internet|online|external|public|research|papers?|prices?|standards?|vendors?|manufacturers?)\b",
+        text,
+    )
+    if internal_lookup and not public_topic:
+        return False
     explicit_external_intent = re.search(
         r"\b(?:web|internet|online|sources?|citations?|references?|external|research|search)\b"
         r"|\blook\s+up\b",
@@ -444,10 +463,10 @@ def _should_allow_web_search(message: str) -> bool:
     if re.search(r"\b(?:weather|forecast|nrel|pvlib|pvmismatch)\b", text):
         return True
     current_external_topic = re.search(
-        r"\b(?:latest|current|today|recent)\b.*"
-        r"\b(?:news|version|release|documentation|standard|specification|policy|law|price)\b"
-        r"|\b(?:news|version|release|documentation|standard|specification|policy|law|price)\b.*"
-        r"\b(?:latest|current|today|recent)\b",
+        r"\b(?:latest|newest|current|today|recent|changed|last year)\b.*"
+        r"\b(?:news|versions?|releases?|documentation|standards?|specifications?|polic(?:y|ies)|laws?|prices?)\b"
+        r"|\b(?:news|versions?|releases?|documentation|standards?|specifications?|polic(?:y|ies)|laws?|prices?)\b.*"
+        r"\b(?:latest|newest|current|today|recent|changed|last year)\b",
         text,
     )
     return current_external_topic is not None
@@ -477,7 +496,7 @@ def _extract_web_sources(response: Any) -> list[dict[str, str]]:
             for annotation in (_response_item_value(block, "annotations", []) or []):
                 citation = _response_item_value(annotation, "url_citation", annotation)
                 url = _response_item_value(citation, "url")
-                if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+                if not _safe_public_url(url):
                     continue
                 if url in seen:
                     continue
@@ -485,6 +504,29 @@ def _extract_web_sources(response: Any) -> list[dict[str, str]]:
                 title = _response_item_value(citation, "title") or "External source"
                 sources.append({"title": str(title)[:200], "url": url})
     return sources
+
+
+def _safe_public_url(url: Any) -> bool:
+    import re
+
+    if not isinstance(url, str):
+        return False
+    try:
+        parts = urlsplit(url)
+        decoded = unquote(unquote(url))
+        return (
+            parts.scheme in {'http', 'https'} and bool(parts.hostname)
+            and parts.username is None and parts.password is None
+            and not re.search(r'(?:api[_-]?key|(?:access[_-]?)?token|password|secret|credential|authorization)\s*=', decoded, re.IGNORECASE)
+        )
+    except ValueError:
+        return False
+
+
+def _public_research_text(text: str) -> str:
+    import re
+
+    return re.sub(r'https?://[^\s<>\]\)]+', lambda match: match[0] if _safe_public_url(match[0]) else '[source URL omitted]', text)
 
 
 def _response_item_value(item: Any, name: str, default: Any = None) -> Any:
@@ -507,14 +549,39 @@ def _scenario_tool_calls(response: Any) -> list[Any]:
     ]
 
 
-def _technoeconomic_evidence_tool_calls(response: Any) -> list[Any]:
+def _read_only_tool_calls(response: Any) -> list[Any]:
     return [
         item
         for item in (getattr(response, "output", None) or [])
         if _response_item_value(item, "type") == "function_call"
         and _response_item_value(item, "name")
-        == technoeconomic_evidence.TOOL_NAME
+        in {technoeconomic_evidence.TOOL_NAME, *history_tools.TOOL_NAMES}
     ]
+
+
+def _read_evidence(req: ChatRequest, name: str, arguments: dict) -> dict:
+    if name == technoeconomic_evidence.TOOL_NAME:
+        return technoeconomic_evidence.get_technoeconomic_evidence(req.current_config, arguments)
+    if name == history_tools.SEARCH_TOOL['name']:
+        if set(arguments) != {'query', 'workflow', 'offset'}:
+            raise ValueError('Invalid history search fields')
+        query, workflow, offset = arguments['query'], arguments['workflow'], arguments['offset']
+        if not isinstance(query, str) or len(query) > 120 or workflow not in {'all', 'annual', 'validation', 'technoeconomic'}:
+            raise ValueError('Invalid history query')
+        if type(offset) is not int or not 0 <= offset <= 10000:
+            raise ValueError('Invalid history offset')
+        return {'read_only': True, 'status': 'available', 'metadata_only': True,
+                **state.AGENT_STORE.list_analysis_library(query=query, workflow=workflow, offset=offset, limit=20)}
+    if set(arguments) != {'job_id'} or not isinstance(arguments['job_id'], str):
+        raise ValueError('An exact model job identifier is required')
+    job_id = arguments['job_id']
+    if not job_id or len(job_id) > 100 or job_id.startswith(TECHNOECONOMIC_ID_PREFIX):
+        raise ValueError('Select a supported Calibration or Annual record')
+    record = job_store._get_job_record(job_id)
+    if record is None or record.get('mode') not in {'annual', 'validation'}:
+        return {'read_only': True, 'status': 'unavailable', 'job_id': job_id}
+    _, context = _chat_run_context(job_id)
+    return {'read_only': True, 'status': 'available', 'evidence': context}
 
 
 def _function_call_input_item(tool_call: Any) -> dict[str, Any] | None:
@@ -582,14 +649,15 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         if req.allow_scenario_actions
         else []
     )
+    tools.extend([history_tools.SEARCH_TOOL, history_tools.MODEL_EVIDENCE_TOOL])
+    read_only_tools = [history_tools.SEARCH_TOOL, history_tools.MODEL_EVIDENCE_TOOL]
     technoeconomic_context = _technoeconomic_chat_context(req.current_config)
     if (
         isinstance(technoeconomic_context, dict)
         and technoeconomic_context.get("job_state") == "done"
     ):
         tools.append(TECHNOECONOMIC_EVIDENCE_TOOL)
-    if allow_web:
-        tools.append({"type": "web_search"})
+        read_only_tools.append(TECHNOECONOMIC_EVIDENCE_TOOL)
     payload = {
         "question": req.message.strip(),
         "context_generated_at": datetime.now(config.LOCAL_TZ).isoformat(),
@@ -601,11 +669,18 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         ),
         "visible_iam_selection": _visible_iam_selection(req.current_config),
         "model_knowledge": SOLAR_MODEL_KNOWLEDGE,
+        "application_knowledge": knowledge.relevant_sections(req.message),
+        "saved_results_index": [
+            {**{key: item.get(key) for key in ("job_id", "name", "saved_at", "updated_at")},
+             'mode': (item.get('job') or {}).get('mode')}
+            for item in state.AGENT_STORE.list_saved_results()
+        ],
         "technoeconomic_context": technoeconomic_context,
         "recent_runs": _recent_run_context(req.active_mode),
         "recent_chat_history": _clean_chat_history(
             req.history, current_message=req.message
         ),
+        "history_truncated": len(req.history) > 12 or any(len(item.content or '') > 2400 for item in req.history[-12:]),
     }
     user_input = {
         "role": "user",
@@ -625,6 +700,35 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
         # Lightweight test doubles and older compatible clients may not expose
         # constructor options. The supported production SDK does.
         client = OpenAI()
+    public_sources = []
+    if allow_web:
+        research_started = perf_counter()
+        try:
+            public_response = client.responses.create(
+                model=config.OPENAI_MODEL,
+                instructions=research.INSTRUCTIONS,
+                input=[{"role": "user", "content": research.public_query(req.message)}],
+                tools=[{"type": "web_search"}],
+                store=False,
+                max_output_tokens=config.OPENAI_MAX_OUTPUT_TOKENS,
+                reasoning={"effort": "low"},
+                text={"verbosity": "medium"},
+            )
+            public_sources = _extract_web_sources(public_response)
+            public_text = _extract_response_text(public_response)
+            payload['external_research'] = {
+                'status': 'available' if public_text and public_sources and _response_item_value(public_response, 'status') != 'incomplete' else 'incomplete_or_unsourced',
+                'public_query': research.public_query(req.message),
+                'findings': _public_research_text(public_text)[:16000],
+                'sources': public_sources,
+                'private_run_data_sent_to_search': False,
+            }
+        except Exception as exc:
+            logger.warning('Public research failed: type=%s', exc.__class__.__name__)
+            payload['external_research'] = {'status': 'unavailable', 'findings': 'Public research failed. Do not invent current facts or sources.'}
+        finally:
+            gpt_seconds += perf_counter() - research_started
+        user_input['content'] = 'Answer using this JSON context. Saved scientific evidence and untrusted public research are separate.\n\n' + json.dumps(payload, indent=2, default=str)
     gpt_started = perf_counter()
     try:
         request_options: dict[str, Any] = {}
@@ -639,9 +743,9 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             tools=tools,
             store=False,
             include=["reasoning.encrypted_content"],
-            max_output_tokens=1_200,
+            max_output_tokens=config.OPENAI_MAX_OUTPUT_TOKENS,
             reasoning={"effort": config.OPENAI_REASONING_EFFORT},
-            text={"verbosity": "low"},
+            text={"verbosity": "medium"},
             **request_options,
         )
     except Exception as exc:
@@ -658,10 +762,13 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
     finally:
         gpt_seconds += perf_counter() - gpt_started
 
-    web_sources = _extract_web_sources(response)
+    web_sources = list(public_sources)
+    for source in _extract_web_sources(response):
+        if source not in web_sources:
+            web_sources.append(source)
     action: dict[str, Any] | None = None
     deterministic_reply: str | None = None
-    evidence_calls = _technoeconomic_evidence_tool_calls(response)
+    evidence_calls = _read_only_tool_calls(response)
     tool_calls = _scenario_tool_calls(response) if req.allow_scenario_actions else []
     if evidence_calls and tool_calls:
         deterministic_reply = (
@@ -676,7 +783,10 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             "section was requested at once."
         )
         evidence_calls = []
-    if evidence_calls:
+    evidence_rounds = 0
+    evidence_input = [user_input]
+    while evidence_calls and deterministic_reply is None:
+        evidence_rounds += 1
         evidence_call = evidence_calls[0]
         call_input = _function_call_input_item(evidence_call)
         try:
@@ -685,10 +795,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             )
             if not isinstance(evidence_arguments, dict):
                 raise ValueError("Tool arguments must be an object")
-            evidence_result = technoeconomic_evidence.get_technoeconomic_evidence(
-                req.current_config,
-                evidence_arguments,
-            )
+            evidence_result = _read_evidence(req, _response_item_value(evidence_call, 'name'), evidence_arguments)
         except (TypeError, ValueError, json.JSONDecodeError):
             evidence_result = {
                 "schema_version": "technoeconomic-agent-evidence-v1",
@@ -704,7 +811,7 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             )
         else:
             followup_input = [
-                user_input,
+                *evidence_input,
                 *(getattr(response, "output", None) or [call_input]),
                 {
                     "type": "function_call_output",
@@ -724,12 +831,14 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
                     model=config.OPENAI_MODEL,
                     instructions=SOLAR_AGENT_INSTRUCTIONS,
                     input=followup_input,
-                    tools=[],
+                    tools=read_only_tools if evidence_rounds < 6 else [],
                     store=False,
                     include=["reasoning.encrypted_content"],
-                    max_output_tokens=1_200,
+                    max_output_tokens=config.OPENAI_MAX_OUTPUT_TOKENS,
                     reasoning={"effort": config.OPENAI_REASONING_EFFORT},
-                    text={"verbosity": "low"},
+                    text={"verbosity": "medium"},
+                    max_tool_calls=1,
+                    parallel_tool_calls=False,
                 )
             except Exception as exc:
                 logger.error(
@@ -747,6 +856,12 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             for source in _extract_web_sources(response):
                 if source not in web_sources:
                     web_sources.append(source)
+            evidence_input = followup_input
+        evidence_calls = _read_only_tool_calls(response)
+        if _scenario_tool_calls(response):
+            deterministic_reply = "I did not take an action: this follow-up is limited to reading the selected TEA evidence."
+        elif len(evidence_calls) > 1 or (evidence_calls and evidence_rounds >= 6):
+            deterministic_reply = "The evidence request exceeded the read-only retrieval limit. Please ask for one remaining section; no model job was started."
     if len(tool_calls) > 1:
         deterministic_reply = (
             "I did not start a run because more than one scenario action was "
@@ -780,9 +895,31 @@ def _openai_agent_response(req: ChatRequest) -> dict[str, Any]:
             tool_result.get("message") or "Scenario request prepared."
         )
 
+    if deterministic_reply is None and not (
+        _extract_response_text(response).strip()
+    ) and not _scenario_tool_calls(response) and not _read_only_tool_calls(response):
+        gpt_started = perf_counter()
+        try:
+            response = client.responses.create(
+                model=config.OPENAI_MODEL,
+                instructions=SOLAR_AGENT_INSTRUCTIONS,
+                input=[*evidence_input, {"role": "user", "content": "The previous attempt produced no answer. Answer directly from the evidence already provided. State missing evidence clearly; do not claim additional searches or actions."}],
+                tools=[],
+                store=False,
+                max_output_tokens=min(16000, config.OPENAI_MAX_OUTPUT_TOKENS * 2),
+                reasoning={"effort": "low"},
+                text={"verbosity": "medium"},
+            )
+        except Exception as exc:
+            logger.warning("OpenAI answer recovery failed: type=%s", exc.__class__.__name__)
+        finally:
+            gpt_seconds += perf_counter() - gpt_started
     reply = deterministic_reply or _extract_response_text(response)
     if not reply:
-        reply = "I could not generate a response from the model for this question."
+        reply = "Solar Agent could not complete an answer after one recovery attempt. Your saved results are unchanged. Please retry, or ask for one part of the explanation. No additional model job was started."
+    elif _response_item_value(response, "status") == "incomplete" and deterministic_reply is None:
+        reply += "\n\nThis answer is incomplete. Please ask me to continue the explanation before relying on it."
+    reply = _public_research_text(reply)
     result = {
         "reply": reply,
         "job_id": resolved_job_id,

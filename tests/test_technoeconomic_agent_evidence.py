@@ -451,7 +451,8 @@ class TechnoeconomicAgentEvidenceTests(unittest.TestCase):
 
         self.assertEqual(2, len(api_calls))
         self.assertIn(TECHNOECONOMIC_EVIDENCE_TOOL, api_calls[0]["tools"])
-        self.assertEqual([], api_calls[1]["tools"])
+        self.assertIn(TECHNOECONOMIC_EVIDENCE_TOOL, api_calls[1]["tools"])
+        self.assertFalse(any(tool['name'] == 'propose_model_scenario' for tool in api_calls[1]['tools']))
         self.assertEqual("function_call_output", api_calls[1]["input"][-1]["type"])
         returned = json.loads(api_calls[1]["input"][-1]["output"])
         self.assertEqual(self.JOB_ID, returned["job_id"])
@@ -459,6 +460,27 @@ class TechnoeconomicAgentEvidenceTests(unittest.TestCase):
         self.assertIn(self.JOB_ID, response["reply"])
         self.assertIsNone(response["action"])
         self.assertIn("Never calculate P50 LCOE", api_calls[0]["instructions"])
+
+    def test_multiple_sections_accumulate_without_scenario_actions(self):
+        calls = []
+        sections = ['assumptions', 'formulas', 'diagnostics']
+        responses = [types.SimpleNamespace(output_text='', output=[{
+            'type': 'function_call', 'name': 'get_technoeconomic_evidence',
+            'call_id': f'call-{section}', 'arguments': json.dumps({'section': section, 'metric_id': None}),
+        }]) for section in sections]
+        responses.append(types.SimpleNamespace(output_text='The three verified sections are available.', output=[]))
+        def create(**kwargs):
+            calls.append(kwargs)
+            return responses.pop(0)
+        fake = types.SimpleNamespace(OpenAI=lambda **kwargs: types.SimpleNamespace(responses=types.SimpleNamespace(create=create)))
+        with patch.object(state.AGENT_STORE, 'get_technoeconomic_job', return_value=self.job), patch.dict(sys.modules, {'openai': fake}):
+            answer = chat._openai_agent_response(ChatRequest(message='Explain assumptions, formula and diagnostics.', current_config=self.visible_config(), allow_scenario_actions=False))
+        outputs = [json.loads(item['output']) for item in calls[-1]['input'] if isinstance(item, dict) and item.get('type') == 'function_call_output']
+        self.assertEqual(3, len(outputs))
+        self.assertTrue(all(item['job_id'] == self.JOB_ID for item in outputs))
+        self.assertIsNone(answer['action'])
+        self.assertTrue(all(TECHNOECONOMIC_EVIDENCE_TOOL in call['tools'] for call in calls[1:]))
+        self.assertFalse(any(tool['name'] == 'propose_model_scenario' for call in calls[1:] for tool in call['tools']))
 
 
     def test_retired_job_is_unavailable_to_the_solar_agent(self):

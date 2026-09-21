@@ -55,7 +55,7 @@ export function isAllowedApiPath(path: string[]): boolean {
   const isCollectionId = (value: string) => /^collect_[a-f0-9]{24}$/.test(value);
   if (path.length === 1) {
     return ["session", "current-calibration", "run", "annual-run", "chat",
-      "calibration-reviews", "data-collections", "saved-results",
+      "calibration-reviews", "data-collections", "saved-results", "analysis-library",
     ].includes(path[0]);
   }
   if (path.length === 2) {
@@ -71,7 +71,7 @@ export function isAllowedApiPath(path: string[]): boolean {
       (path[0] === "jobs" && isSafeId(path[1]) &&
       ["cancel", "delete", "promote", "retry"].includes(path[2])) ||
       (path[0] === "calibration-reviews" && isSafeId(path[1]) && ["run", "rows"].includes(path[2])) ||
-      (path[0] === "data-collections" && isCollectionId(path[1]) && ["download", "download-xlsx"].includes(path[2])) ||
+      (path[0] === "data-collections" && isCollectionId(path[1]) && ["download", "download-xlsx", "cancel"].includes(path[2])) ||
       (path[0] === "technoeconomic" && path[1] === "jobs" && isSafeId(path[2]));
   }
   if (path.length === 4) {

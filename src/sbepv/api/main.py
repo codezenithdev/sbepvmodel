@@ -41,7 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from sbepv import dashboard, model, reporting
 from sbepv import technoeconomic as technoeconomic_kernel
-from sbepv.api import collect_data as collect_data_api
+from sbepv.api import analysis_library, collect_data as collect_data_api
 from sbepv.api import config, job_store, plots, review_store, state
 from sbepv.api import technoeconomic as technoeconomic_api
 from sbepv.api import baselines as baselines_module
@@ -253,6 +253,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.include_router(collect_data_api.router)
+app.include_router(analysis_library.router)
 app.mount(
     "/outputs",
     PublicOutputStaticFiles(directory=str(config.OUTPUT_DIR)),

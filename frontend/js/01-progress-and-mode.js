@@ -46,7 +46,7 @@
             dashboardSubtitle.textContent = technoeconomic
                 ? 'Compare commercial Solectria and SolarEdge LCOE distributions.'
                 : annual
-                    ? 'Carry the reviewed calibration into a long-range forecast of energy and performance.'
+                    ? 'Simulate energy using historical MIDC weather and the selected calibration or physics-only settings.'
                     : 'Compare measured power, irradiance, physics-model predictions, and export-ready run artifacts for the SBE Innovation Site.';
             document.body.classList.toggle('dashboard-mode-annual', annual);
             document.body.classList.toggle('dashboard-mode-technoeconomic', technoeconomic);
@@ -160,4 +160,3 @@
             annualIamArGroup.classList.toggle('visible', enabled);
             if (!annualIamAr.value) annualIamAr.value = '0.2';
         }
-

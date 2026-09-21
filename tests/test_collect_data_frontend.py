@@ -38,6 +38,7 @@ class CollectDataFrontendTests(unittest.TestCase):
             "collectDataForm",
             "collectDataStatus",
             "collectDataCollectionId",
+            "collectDataCancel",
             "collectDataCollapseToggle",
             "collectDataStatusContent",
             "collectDataPlots",
@@ -213,6 +214,73 @@ assert.match(attention, /2 screened issues/);
 assert.match(attention, /Usable completeness 97.5%/);
 assert.match(attention, /3 non-good Bazefield flags/);
 assert.equal(attention.includes('<img'), false);
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_cancellation_keeps_polling_until_confirmed_and_ignores_stale_responses(self) -> None:
+        cancel = "async function collectDataCancel" + self.script.split(
+            "async function collectDataCancel", 1
+        )[1].split("\n        async function collectDataRestoreStoredCollection", 1)[0]
+        active = "function collectDataIsActive" + self.script.split(
+            "function collectDataIsActive", 1
+        )[1].split("\n        function collectDataFormatEnergy", 1)[0]
+        script = f"""
+const assert = require('node:assert/strict');
+let collectDataActiveId = 'collect_' + 'a'.repeat(24);
+let collectDataRevision = 3, collectDataCancelPending = false, collectDataPollTimer = 42;
+const collectDataElements = {{cancel: {{disabled: false, textContent: ''}}}};
+const window = {{clearTimeout() {{}}}};
+let polls = [], rendered = [], errors = [], calls = [];
+let replyState = 'cancelling', responseOk = true, changeRevision = false;
+function collectDataValidatedId(value) {{return /^collect_[a-f0-9]{{24}}$/.test(value) ? value : null;}}
+function collectDataClearError() {{errors = [];}}
+function collectDataSetError(message) {{errors.push(message);}}
+function collectDataErrorDetail(payload, fallback) {{return fallback;}}
+async function collectDataReadPayload(response) {{return response.payload;}}
+function collectDataSchedulePoll(id, revision) {{polls.push({{id, revision}});}}
+function collectDataRender(payload) {{rendered.push(payload);}}
+async function fetch(url, options) {{
+  calls.push({{url, options}});
+  if (changeRevision) collectDataRevision++;
+  return {{ok: responseOk, payload: {{collection_id: collectDataActiveId, state: replyState}}}};
+}}
+{active}
+{cancel}
+(async () => {{
+  await collectDataCancel();
+  assert.equal(collectDataRevision, 4);
+  assert.equal(calls[0].url, '/api/data-collections/' + collectDataActiveId + '/cancel');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(rendered[0].state, 'cancelling');
+  assert.equal(polls.length, 1);
+  assert.equal(collectDataCancelPending, false);
+  assert.equal(collectDataIsActive('cancelling'), true);
+  assert.equal(collectDataIsActive('cancelled'), false);
+  replyState = 'completed'; polls = []; rendered = [];
+  await collectDataCancel();
+  assert.equal(rendered[0].state, 'completed');
+  assert.equal(polls.length, 0);
+  responseOk = false; rendered = [];
+  await collectDataCancel();
+  assert.equal(rendered.length, 0);
+  assert.equal(errors.length, 1);
+  assert.equal(polls.length, 1);
+  assert.equal(collectDataElements.cancel.disabled, false);
+  assert.equal(collectDataElements.cancel.textContent, 'Retry cancellation');
+  responseOk = true; changeRevision = true; rendered = []; polls = [];
+  await collectDataCancel();
+  assert.equal(rendered.length, 0);
+  assert.equal(polls.length, 0);
+  assert.equal(collectDataCancelPending, false);
+}})().catch(error => {{console.error(error); process.exit(1);}});
 """
         completed = subprocess.run(
             [shutil.which("node"), "-e", script],

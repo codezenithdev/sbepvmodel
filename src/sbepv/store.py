@@ -1740,6 +1740,67 @@ class AgentStore:
             ).fetchall()
         return [self._job_from_row(row) for row in rows]  # type: ignore[misc]
 
+    def list_analysis_library(
+        self, *, query: str = "", workflow: str = "all", status: str = "all",
+        offset: int = 0, limit: int = 50,
+    ) -> dict[str, Any]:
+        """Page metadata only; preserve separate storage and retired-work guards.
+
+        The offset counts eligible rows after retired records are removed. Large
+        result/provenance payloads are never loaded for discovery.
+        """
+        if workflow not in {"all", "validation", "annual", "technoeconomic"}:
+            raise ValueError("unknown analysis workflow")
+        if status != "all" and status not in JOB_STATES:
+            raise ValueError("unknown analysis status")
+        if offset < 0 or not 1 <= limit <= 100 or len(query) > 200:
+            raise ValueError("invalid analysis pagination or search")
+        sql = """
+            SELECT * FROM (
+                SELECT j.job_id, j.mode AS workflow, j.state AS status,
+                       j.created_at, j.completed_at, j.request_json,
+                       COALESCE(s.name, CASE j.mode WHEN 'annual' THEN 'Annual'
+                           ELSE 'Calibration' END || ' · ' || substr(j.created_at, 1, 10)) AS name,
+                       CASE WHEN s.job_id IS NULL THEN 0 ELSE 1 END AS saved,
+                       CASE WHEN b.job_id IS NULL THEN 0 ELSE 1 END AS promoted_baseline,
+                       NULL AS source_annual_job_id
+                FROM jobs j LEFT JOIN saved_results s ON s.job_id = j.job_id
+                LEFT JOIN current_baselines b ON b.job_id = j.job_id AND b.mode = j.mode
+                UNION ALL
+                SELECT tea_job_id, 'technoeconomic', state, created_at,
+                       completed_at, request_json,
+                       'TEA · ' || substr(created_at, 1, 10), 0, 0, source_annual_job_id
+                FROM technoeconomic_jobs
+            ) WHERE (? = 'all' OR workflow = ?)
+                AND (? = 'all' OR status = ?)
+                AND instr(lower(name || ' ' || job_id || ' ' || created_at || ' '
+                    || COALESCE(source_annual_job_id, '')), lower(?)) > 0
+            ORDER BY created_at DESC, job_id DESC, workflow DESC
+        """
+        items = []
+        eligible = 0
+        with self._transaction() as connection:
+            rows = connection.execute(sql, (workflow, workflow, status, status, query))
+            for row in rows:
+                if row["workflow"] == "technoeconomic":
+                    try:
+                        self._ensure_technoeconomic_row_supported(connection, {
+                            "tea_job_id": row["job_id"], "request_json": row["request_json"],
+                        })
+                    except RetiredWorkflow:
+                        continue
+                eligible += 1
+                if eligible <= offset:
+                    continue
+                if len(items) == limit:
+                    return {"items": items, "next_offset": offset + limit}
+                item = {key: row[key] for key in row.keys() if key != "request_json"}
+                item["id"] = item["workflow"] + ":" + item["job_id"]
+                item["saved"] = bool(item["saved"])
+                item["promoted_baseline"] = bool(item["promoted_baseline"])
+                items.append(item)
+        return {"items": items, "next_offset": None}
+
     def list_parameter_sweep_jobs(
         self,
         sweep_ids: Sequence[str],

@@ -151,6 +151,7 @@
                 annualLatestJobId = job_id;
                 annualLatestResult = null;
                 annualRunState = { state: 'queued', progress: 0, stage: 'Queued...' };
+                renderAnnualQuality([], 'queued');
                 renderAnnualResultCalibration(null);
                 clearAnnualImages();
                 setAnnualExcelLink(null);
@@ -245,6 +246,7 @@
                 if (pollRevision !== annualPollRevision || jobId !== annualLatestJobId) return;
                 setAnnualProgress(data.progress, data.stage);
                 annualRunState = { state: data.state, progress: data.progress, stage: data.stage || '' };
+                if (data.state !== 'done') renderAnnualQuality([], data.state);
                 putAgentJob(data);
                 renderAgentJobUpdate(data);
                 saveDashboardState();

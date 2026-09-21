@@ -112,6 +112,7 @@ browser code, screenshots, logs, or committed files.
 | `BAZEFIELD_API_KEY`, `BAZEFIELD_BASE_URL` | Historian credential and optional origin; origin defaults to the SB Energy Bazefield API. |
 | `OPENAI_API_KEY` | Required for Solar Agent. |
 | `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT` | Optional settings; consult current defaults in `config.py`. |
+| `OPENAI_MAX_OUTPUT_TOKENS` | Answer budget, default 6,000 and bounded to 2,000–16,000. More detailed answers can cost more and take longer. |
 | `OPENAI_REQUEST_TIMEOUT_SECONDS`, `OPENAI_MAX_RETRIES` | Provider request bounds; defaults are 45 seconds and zero provider retries. |
 | `DASHBOARD_BASIC_USER`, `DASHBOARD_BASIC_PASSWORD` | Backend shared authentication; configure both for shared deployment. |
 | `PV_DASHBOARD_OUTPUT_DIR` | Outputs/private state; defaults to repo `outputs/`. Relative values resolve from the repo. Use durable storage on Render. |
@@ -140,6 +141,14 @@ cleanup. Private files are accessed through collection routes, not unrestricted
 output URLs. Collection currently assumes one API process; review durable
 ownership and cross-process coordination before scaling processes or instances.
 
+**Cancel collection** stops queued work immediately. For a running collection,
+it waits for the current historian retrieval, plot rendering, or workbook step
+to return, then removes partial artifacts without publishing downloads. The
+cancelling request continues to occupy its active slot until cleanup finishes.
+Reloading restores its status; cancelling an already completed collection keeps
+its verified downloads intact. Cancellation does not interrupt a provider call
+in progress or affect calibration, model jobs, or analyses.
+
 The collection form uses two date/time columns where space permits and one on
 phones. Mobile inputs/collapse controls have at least 44px height, long summary
 values wrap, and collection closes the shared chat drawer so an invisible modal
@@ -149,11 +158,38 @@ cannot leave the page inert.
 | --- | --- |
 | Browser state | Drafts, preferences, chat history, job references, and cached result state. Server-owned evidence must be revalidated; browser storage may be denied or full. |
 | Recent activity | Active jobs and the ten newest terminal activities from SQLite; open **Ask Solar Agent → Runs → History**. |
-| Saved results | Up to ten explicitly pinned completed Calibration/Annual results. **Saved results** supports view, rename, export, and removal without rerunning. Separate from recent history. |
+| Analysis library | Search shared Calibration/model, Annual, and supported TEA history by name, run/source ID, date, workflow, and status. Open completed evidence without rerunning or replacing input drafts. Active runs keep their progress; finish or cancel the same workflow before opening an older result. |
+| Saved results | Up to ten shared server bookmarks for completed Calibration/Annual results. View, rename, export, or remove a bookmark without deleting its completed job. TEA remains in its separate store and is discoverable in the Analysis library. |
 
 Preserve the entire output root and SQLite state together. Public workbooks or
 plots alone cannot restore reviewed inputs, baseline lineage, saved-result
 identities, or completed TEA evidence.
+
+For the internal pilot, operators share access to these records. Shared credentials
+do not identify which person edited a bookmark or changed a baseline. Follow the
+[backup and restore procedure](docs/BACKUP_AND_RESTORE.md) before operational
+maintenance; the database and private artifacts must be preserved together.
+
+## Solar Agent evidence and explanations
+
+The Agent uses task-specific application notes, selected-run context, and bounded
+read-only evidence tools. It can find historical Calibration/Annual records and
+read their stored evidence without rerunning them. Select a TEA analysis in the
+dashboard to ground its explanation; TEA evidence remains tied to that selection.
+Compound questions can retrieve multiple evidence sections. Scenario execution
+still follows the existing review and confirmation policy.
+
+Answers should state the direct conclusion, explain the relevant steps and units,
+identify evidence and limitations, and suggest a useful next action. An empty
+provider answer gets one read-only recovery attempt, then an explicit failure
+message. This improves recoverability but does not guarantee a correct answer.
+
+External research runs separately using server-defined public topic queries.
+Private run context, chat history, and the raw user question are not sent to the
+web-enabled request. This deliberately limits arbitrary site-specific searches.
+External findings remain distinct from saved scientific evidence; failed searches
+must not be replaced with invented current values. The maintained knowledge lives
+in `src/sbepv/agent/knowledge.py` and should change alongside workflow contracts.
 
 ## Calibration and validation
 

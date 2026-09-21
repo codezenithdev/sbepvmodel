@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -600,6 +601,130 @@ class CollectDataApiTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "client disconnected"):
             asyncio.run(response(scope, receive, interrupted_send))
         self.assertNotIn(collection_id, collect_data._DOWNLOAD_PINS)
+
+    def test_cancel_queued_is_idempotent_and_never_calls_provider(self) -> None:
+        collection_id = "collect_" + "a" * 24
+        self._store_record(collection_id, state_name="queued")
+        with patch.object(collect_data.historian_collection, "collect_historian_data") as provider:
+            first = self.client.post(f"/api/data-collections/{collection_id}/cancel")
+            second = self.client.post(f"/api/data-collections/{collection_id}/cancel")
+            collect_data._run_collection(collection_id)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+        self.assertEqual(first.json()["state"], "cancelled")
+        provider.assert_not_called()
+        self.assertEqual(self.client.get(f"/api/data-collections/{collection_id}/download").status_code, 409)
+        self.assertEqual(state.JOBS, self.jobs_before)
+
+    def test_cancel_running_waits_for_provider_and_cleans_without_exports(self) -> None:
+        collection_id = "collect_" + "b" * 24
+        self._store_record(collection_id, state_name="queued")
+        entered, release = threading.Event(), threading.Event()
+
+        def delayed_provider(**kwargs):
+            entered.set()
+            if not release.wait(10):
+                raise RuntimeError("Test provider was not released")
+            return self._fake_collection(**kwargs)
+
+        with (
+            patch.object(collect_data.historian_collection, "collect_historian_data", side_effect=delayed_provider),
+            patch.object(collect_data.historian_collection, "render_measurement_plots") as plots,
+            patch.object(collect_data.historian_collection, "write_collection_workbook") as workbook,
+        ):
+            worker = threading.Thread(target=collect_data._run_collection, args=(collection_id,))
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(5))
+                first = self.client.post(f"/api/data-collections/{collection_id}/cancel")
+                second = self.client.post(f"/api/data-collections/{collection_id}/cancel")
+                self.assertEqual(first.status_code, 202)
+                self.assertEqual(first.json()["state"], "cancelling")
+                self.assertEqual(first.json(), second.json())
+                self.assertTrue(worker.is_alive())
+                with patch.object(config, "DATA_COLLECTION_MAX_ACTIVE", 1):
+                    rejected = self.client.post("/api/data-collections", json=self._request(to_time="02:00"))
+                self.assertEqual(rejected.status_code, 429)
+            finally:
+                release.set()
+                worker.join(10)
+            self.assertFalse(worker.is_alive())
+            plots.assert_not_called()
+            workbook.assert_not_called()
+        self.assertEqual(self.client.get(f"/api/data-collections/{collection_id}").json()["state"], "cancelled")
+        self.assertFalse(any(path.exists() for path in collect_data._collection_output_paths(collection_id)))
+
+    def test_cancellation_wins_at_each_export_and_publication_boundary(self) -> None:
+        for index, boundary in enumerate(("plots", "workbook", "publication", "provider_failure")):
+            with self.subTest(boundary=boundary):
+                collection_id = "collect_" + str(index) * 24
+                self._store_record(collection_id, state_name="queued")
+
+                def cancel():
+                    response = collect_data.cancel_data_collection(collection_id)
+                    self.assertEqual(response.status_code, 202)
+
+                def provider(**kwargs):
+                    result = self._fake_collection(**kwargs)
+                    if boundary == "provider_failure":
+                        cancel()
+                        raise bazefield.BazefieldError("fixture failure")
+                    return result
+
+                def plots(**kwargs):
+                    result = self._fake_plots(**kwargs)
+                    if boundary == "plots":
+                        cancel()
+                    return result
+
+                def workbook(**kwargs):
+                    result = self._fake_workbook(**kwargs)
+                    if boundary == "workbook":
+                        cancel()
+                    return result
+
+                def quota(**kwargs):
+                    if boundary == "publication":
+                        cancel()
+                    return True, 0
+
+                with (
+                    patch.object(collect_data.historian_collection, "collect_historian_data", side_effect=provider),
+                    patch.object(collect_data.historian_collection, "render_measurement_plots", side_effect=plots),
+                    patch.object(collect_data.historian_collection, "write_collection_workbook", side_effect=workbook) as export,
+                    patch.object(collect_data, "_enforce_storage_quota_locked", side_effect=quota),
+                ):
+                    collect_data._run_collection(collection_id)
+                record = self.client.get(f"/api/data-collections/{collection_id}").json()
+                self.assertEqual(record["state"], "cancelled")
+                self.assertNotIn("result", record)
+                self.assertNotIn("error", record)
+                self.assertFalse(any(path.exists() for path in collect_data._collection_output_paths(collection_id)))
+                if boundary in {"plots", "provider_failure"}:
+                    export.assert_not_called()
+
+    def test_cancel_completed_preserves_verified_download_and_failed_is_unchanged(self) -> None:
+        collection_id = "collect_" + "d" * 24
+        original, artifact = self._store_completed_record(collection_id)
+        response = self.client.post(f"/api/data-collections/{collection_id}/cancel")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), collect_data._public_record(original))
+        self.assertTrue(artifact.exists())
+        self.assertEqual(self.client.get(f"/api/data-collections/{collection_id}/download").status_code, 200)
+        failed_id = "collect_" + "e" * 24
+        failed = self._store_record(failed_id, state_name="failed")
+        self.assertEqual(self.client.post(f"/api/data-collections/{failed_id}/cancel").json(), collect_data._public_record(failed))
+
+    def test_restart_completes_pending_cancellation_and_cancel_requires_authentication(self) -> None:
+        collection_id = "collect_" + "f" * 24
+        self._store_record(collection_id, state_name="cancelling")
+        collect_data._output_path(collection_id).write_text("partial", encoding="utf-8")
+        self.assertEqual(collect_data.reconcile_interrupted_collections(), 1)
+        self.assertEqual(collect_data._load_record(collection_id)["state"], "cancelled")
+        self.assertFalse(collect_data._output_path(collection_id).exists())
+        with patch.dict(os.environ, {"DASHBOARD_BASIC_USER": "audit", "DASHBOARD_BASIC_PASSWORD": "fixture-only"}):
+            self.assertEqual(self.client.post(f"/api/data-collections/{collection_id}/cancel").status_code, 401)
+        self.assertEqual(self.client.post("/api/data-collections/collect_" + "0" * 24 + "/cancel").status_code, 404)
 
     def test_unknown_and_malformed_ids_are_not_disclosed(self) -> None:
         for collection_id in (

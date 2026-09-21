@@ -1062,7 +1062,7 @@
             document.getElementById('annualResultInterval').textContent = Number.isFinite(intervalValue) && intervalUnit
                 ? intervalValue.toLocaleString() + ' ' + intervalUnit
                 : '--';
-            renderAnnualQuality(result.warnings || s.data_quality_warnings || []);
+            renderAnnualQuality(result.warnings || s.data_quality_warnings || [], 'done');
             if (result.ac_png) showImage('annualAcImg', 'annualAcIcon', 'annualAcChartBox', result.ac_png, cacheBust);
             if (result.energy_png) showImage('annualEnergyImg', 'annualEnergyIcon', 'annualEnergyChartBox', result.energy_png, cacheBust);
             if (result.monthly_png) showImage('annualMonthlyImg', 'annualMonthlyIcon', 'annualMonthlyChartBox', result.monthly_png, cacheBust);

@@ -34,8 +34,8 @@ _COLLECTION_STORAGE_PATTERN = re.compile(
     r"^(collect_[a-f0-9]{24})(?:\.(?:json|csv|xlsx)|\.(?:measured-ac-power|cumulative-energy)\.png)$"
 )
 _COLLECTION_LOCK = threading.RLock()
-_ACTIVE_STATES = frozenset({"queued", "collecting"})
-_TERMINAL_STATES = frozenset({"completed", "failed"})
+_ACTIVE_STATES = frozenset({"queued", "collecting", "cancelling"})
+_TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
 _TEMP_RECORD_PATTERN = re.compile(
     r"^\.(collect_[a-f0-9]{24})\.json\.[a-f0-9]{32}\.tmp$"
 )
@@ -137,10 +137,37 @@ def _update_record(collection_id: str, **changes: Any) -> dict[str, Any]:
         record = _load_record(collection_id)
         if record is None:
             raise RuntimeError("The data collection record no longer exists.")
+        if record.get("state") == "cancelling" and changes.get("state") in _TERMINAL_STATES:
+            _remove_collection_outputs(collection_id)
+            changes = _cancelled_changes()
         record.update(changes)
         record["updated_at"] = _utc_now()
         _save_record(record)
         return record
+
+
+def _cancelled_changes() -> dict[str, Any]:
+    return {
+        "state": "cancelled",
+        "progress": 100,
+        "stage": "Collection cancelled. No downloads were published.",
+        "result": None,
+        "error": None,
+    }
+
+
+class _CollectionCancelled(Exception):
+    pass
+
+
+def _check_collection_cancellation(collection_id: str) -> None:
+    with _COLLECTION_LOCK:
+        record = _load_record(collection_id)
+        if record is not None and record.get("state") in {"cancelling", "cancelled"}:
+            _remove_collection_outputs(collection_id)
+            if record["state"] == "cancelling":
+                _update_record(collection_id, **_cancelled_changes())
+            raise _CollectionCancelled
 
 
 def _sha256_file(path: Path) -> str:
@@ -408,6 +435,10 @@ def reconcile_interrupted_collections() -> int:
                 continue
             collection_id = str(record["collection_id"])
             _remove_collection_outputs(collection_id)
+            if record.get("state") == "cancelling":
+                _update_record(collection_id, **_cancelled_changes())
+                reconciled += 1
+                continue
             record.update(
                 {
                     "state": "failed",
@@ -599,12 +630,16 @@ def _download_filename(record: dict[str, Any], extension: str = "csv") -> str:
 def _run_collection(collection_id: str) -> None:
     output = _output_path(collection_id)
     try:
-        record = _update_record(
-            collection_id,
-            state="collecting",
-            progress=15,
-            stage="Requesting selected data from Bazefield",
-        )
+        with _COLLECTION_LOCK:
+            record = _load_record(collection_id)
+            if record is None or record.get("state") != "queued":
+                return
+            record = _update_record(
+                collection_id,
+                state="collecting",
+                progress=15,
+                stage="Requesting selected data from Bazefield",
+            )
         internal = record["internal_request"]
         result = historian_collection.collect_historian_data(
             from_time=internal["from_iso"],
@@ -613,6 +648,7 @@ def _run_collection(collection_id: str) -> None:
             data_groups=internal["data_groups"],
             output_csv=output,
         )
+        _check_collection_cancellation(collection_id)
         plot_outputs = {
             plot_key: _plot_path(collection_id, plot_key)
             for plot_key in _PLOT_KEY_TO_ROUTE
@@ -636,6 +672,7 @@ def _run_collection(collection_id: str) -> None:
             for path in plot_outputs.values():
                 _remove_partial_output(path)
             rendered_plots = {}
+        _check_collection_cancellation(collection_id)
         stored_plots: dict[str, dict[str, Any]] = {}
         for plot_key, metadata in rendered_plots.items():
             if plot_key not in plot_outputs or not isinstance(metadata, dict):
@@ -679,6 +716,7 @@ def _run_collection(collection_id: str) -> None:
             )
             _remove_partial_output(workbook_path)
             stored_workbook = None
+        _check_collection_cancellation(collection_id)
         with _COLLECTION_LOCK:
             within_quota, removed = _enforce_storage_quota_locked(
                 protected_collection_id=collection_id
@@ -722,6 +760,8 @@ def _run_collection(collection_id: str) -> None:
             },
             error=None,
         )
+    except _CollectionCancelled:
+        return
     except bazefield.BazefieldError as exc:
         _remove_collection_outputs(collection_id)
         logger.warning(
@@ -854,6 +894,31 @@ def create_data_collection(
         ) from exc
     background_tasks.add_task(_run_collection, collection_id)
     return JSONResponse(_public_record(record), status_code=202)
+
+
+@router.post("/{collection_id}/cancel")
+def cancel_data_collection(collection_id: str) -> JSONResponse:
+    with _COLLECTION_LOCK:
+        record = _load_record(collection_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Unknown data collection id")
+        if record.get("state") == "queued":
+            _remove_collection_outputs(collection_id)
+            record = _update_record(collection_id, **_cancelled_changes())
+        elif record.get("state") == "collecting":
+            record = _update_record(
+                collection_id,
+                state="cancelling",
+                stage=(
+                    "Cancellation requested. Waiting for the current retrieval or "
+                    "export step to finish; no downloads will be published."
+                ),
+            )
+    return JSONResponse(
+        _public_record(record),
+        status_code=202 if record.get("state") == "cancelling" else 200,
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @router.get("/{collection_id}")

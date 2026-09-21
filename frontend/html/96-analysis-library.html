@@ -1,0 +1,17 @@
+    <dialog class="analysis-library" id="analysisLibraryDialog" aria-labelledby="analysisLibraryHeading" aria-describedby="analysisLibraryDescription">
+        <header class="analysis-library-header">
+            <div><h2 id="analysisLibraryHeading">Analysis library</h2>
+                <p id="analysisLibraryDescription">Shared workspace history. Open completed results without rerunning them or replacing your input drafts. Saved results are up to 10 shared bookmarks for quick access.</p></div>
+            <button id="analysisLibraryClose" type="button" aria-label="Close analysis library">Close</button>
+        </header>
+        <form id="analysisLibrarySearchForm" class="analysis-library-filters">
+            <label>Search name, run ID, source ID or date<input id="analysisLibrarySearch" type="search" maxlength="200" placeholder="Search history"></label>
+            <label>Workflow<select id="analysisLibraryWorkflow"><option value="all">All workflows</option><option value="validation">Calibration / model</option><option value="annual">Annual</option><option value="technoeconomic">TEA</option></select></label>
+            <label>Status<select id="analysisLibraryStatus"><option value="all">All statuses</option><option value="done">Completed</option><option value="queued">Queued</option><option value="running">Running</option><option value="error">Error</option><option value="cancelled">Cancelled</option><option value="interrupted">Interrupted</option></select></label>
+            <button type="submit" id="analysisLibrarySearchButton">Search / refresh</button>
+        </form>
+        <p id="analysisLibraryLive" role="status" aria-live="polite"></p>
+        <div id="analysisLibraryList" class="analysis-library-list" aria-busy="false"></div>
+        <button id="analysisLibraryMore" type="button" hidden>Load more</button>
+        <p class="analysis-library-note">Opening a result keeps its original evidence and exports. TEA analyses retain their separate history and controls. Bookmarks do not create copies or backups.</p>
+    </dialog>
