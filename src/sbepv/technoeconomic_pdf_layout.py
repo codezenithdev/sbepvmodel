@@ -247,26 +247,26 @@ class ReportTable(Table):
 
 
 class PageCountCanvas(pdfcanvas.Canvas):
-    """Replay completed pages so each footer can include the final page count."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._saved_page_states = []
+    """Defer footer drawing while registering pages and their links normally."""
 
     def showPage(self):
-        self._saved_page_states.append(dict(self.__dict__))
-        self._startPage()
+        # ReportLab permits forward form references. Register each page now so
+        # bookmarks and annotations retain its actual PDF page destination.
+        self.doForm(f"report-page-footer-{self.getPageNumber()}")
+        super().showPage()
 
     def save(self):
-        total_pages = len(self._saved_page_states)
-        for page_number, state in enumerate(self._saved_page_states, start=1):
-            self.__dict__.update(state)
+        if self._code:
+            self.showPage()
+        total_pages = self.getPageNumber() - 1
+        for page_number in range(1, total_pages + 1):
+            self.beginForm(f"report-page-footer-{page_number}")
             self.setFont("ReportSans", 8.5)
             self.setFillColor(MUTED_INK)
             self.drawRightString(PAGE_WIDTH-SIDE_MARGIN, FOOTER_RULE_Y-12,
                                  f"Page {page_number} of {total_pages}")
-            pdfcanvas.Canvas.showPage(self)
-        pdfcanvas.Canvas.save(self)
+            self.endForm()
+        super().save()
 
 
 class EngineeringDocument(BaseDocTemplate):

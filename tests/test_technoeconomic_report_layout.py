@@ -76,6 +76,41 @@ class ReportPaginationTests(unittest.TestCase):
             self.assertIn(f"Page {page_number} of {len(pages)}", page)
             self.assertNotIn(f"{page_number}/{len(pages)}", page)
 
+    def test_page_counts_preserve_contents_bookmarks_and_figure_destinations(self):
+        reader = self.pdf_reader([
+            {"kind": "title", "text": "Navigation regression"},
+            {"kind": "pagebreak"},
+            {"kind": "toc"},
+            {"kind": "heading", "text": "Alpha", "level": 1, "anchor": "alpha", "page": True},
+            {"kind": "paragraph", "text": "Alpha body marker"},
+            {"kind": "paragraph", "text": "See Figure 1.", "segments": [
+                {"text": "See Figure "}, {"figure_ref": "beta-cdf", "text": "1"}, {"text": "."},
+            ]},
+            {"kind": "heading", "text": "Beta", "level": 1, "anchor": "beta", "page": True},
+            {"kind": "paragraph", "text": "Beta body marker"},
+            {**self.cdf_block(), "figure_id": "beta-cdf", "figure_number": 1},
+        ])
+        pages = [page.extract_text() for page in reader.pages]
+        self.assertEqual(len(pages), 4)
+        self.assertIn("Alpha body marker", pages[2])
+        self.assertIn("Beta body marker", pages[3])
+        self.assertIn("Verified lifecycle CDF caption.", pages[3])
+        outlines = {entry.title: reader.get_destination_page_number(entry) + 1
+                    for entry in reader.outline}
+        self.assertEqual(outlines, {"Alpha": 3, "Beta": 4})
+
+        page_numbers = {page.indirect_reference.idnum: number
+                        for number, page in enumerate(reader.pages, start=1)}
+
+        def link_pages(page):
+            return [page_numbers[annotation.get_object()["/Dest"][0].idnum]
+                    for annotation in page.get("/Annots", [])]
+
+        self.assertEqual(set(link_pages(reader.pages[1])), {3, 4})
+        self.assertEqual(link_pages(reader.pages[2]), [4])
+        for number, page_text in enumerate(pages, start=1):
+            self.assertIn(f"Page {number} of {len(pages)}", page_text)
+
     def test_cover_carries_its_subheader_and_names_the_run_once(self):
         data = layout.render_pdf({"title": "Cover title", "subtitle": "Cover subheader",
                                   "version": "test", "analysis_name": "Fall substitution run",
@@ -109,7 +144,14 @@ class ReportPaginationTests(unittest.TestCase):
         self.assertEqual(len(reader.pages), 1)
         page = reader.pages[0]
         resources = page["/Resources"].get_object()
-        self.assertFalse(resources.get("/XObject"), "Native CDF PDF must not substitute a raster image")
+        pending_resources = [resources]
+        while pending_resources:
+            for reference in pending_resources.pop().get("/XObject", {}).values():
+                xobject = reference.get_object()
+                self.assertNotEqual(xobject.get("/Subtype"), "/Image",
+                                    "Native CDF PDF must not substitute a raster image")
+                if xobject.get("/Resources"):
+                    pending_resources.append(xobject["/Resources"].get_object())
         operations = ContentStream(page.get_contents(), reader).operations
         curve_lengths, current_path_length = [], 0
         used_fonts, active_font = set(), None
