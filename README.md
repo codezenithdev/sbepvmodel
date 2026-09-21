@@ -426,7 +426,7 @@ generation verifies frozen inputs, calibration/Annual lineage, saved arrays, and
 exports. Missing/tampered evidence blocks download without changing job status.
 Editing drafts never rewrites completed results.
 
-Report format v2.5.1 numbers major headings and their subheadings. Contents follow
+Report format v2.6.0 numbers major headings and their subheadings. Contents follow
 the title metadata and exclude the title itself. The Executive Summary covers
 Objectives, Approach, and Results, with $/MWh shown on each LCOE percentile value.
 After Introduction and Objectives, the Analysis section contains Data Collection,
@@ -447,9 +447,8 @@ redrawn from the verified sealed realizations as native vector graphics in PDF
 and PNGs from the same data in Word; the saved chart artifact still passes its integrity
 checks. Report measurements and calibration factors display two decimal places;
 counts remain integers and comparisons use saved precision. Small cost intensities
-use USD/kW and rates use percent to keep the displayed values meaningful. Confirmed
-identical fitted and applied profiles are summarized
-without a duplicate factor table.
+use USD/kW and rates use percent to keep the displayed values meaningful. Section 3.2 shows one table of the applied seasonal factors, including recorded
+substitutions. It distinguishes limited seasonal coverage from absent measurements.
 
 The report title is **Technoeconomic Analysis of Module-Level and Central
 Optimization in Solar PV Systems**, with the subheader **Evaluation of
@@ -460,7 +459,7 @@ page and total page count as `Page X of Y`, including the title page. The
 title page omits the footer's analysis name because the cover already states it.
 
 The Executive Summary's Solectria/SolarEdge LCOE table is repeated beside the
-lifecycle comparison in the main Analysis section. Both PDF and Word show the same
+lifecycle comparison and the closing Summary. Both PDF and Word show the same
 saved P10, P50, and P90 values in USD/MWh, with or without the technical appendix.
 
 The technical appendix uses concise equation tables with short meanings,
@@ -498,31 +497,39 @@ scenario inputs, calculation provenance, or numerical results.
 The footer shows the analysis name and the saved completion timestamp in UTC;
 legacy records without that timestamp show an explicitly labeled export timestamp.
 The title retains the analysis timestamp and labels the generating dashboard
-version separately from report format v2.5.1; there is no separate visible report
+version separately from report format v2.6.0; there is no separate visible report
 date. `PV_DASHBOARD_RELEASE` supplies a release label when configured; otherwise
 `package.json` supplies an explicitly labeled package-declared version.
 `PV_DASHBOARD_BUILD_ID`, then `RENDER_GIT_COMMIT`, supplies the build identifier;
 if neither is available it is shown as not recorded. The generating software
 identity does not establish the dashboard version used for a historical analysis:
 missing historical version metadata remains not recorded. New filenames follow
-`LCOE_Comparison_v2.5.1_{full|summary}_{run_id}.{pdf|docx}`, with a sanitized run ID.
+`LCOE_Comparison_v2.6.0_{full|summary}_{run_id}.{pdf|docx}`, with a sanitized run ID.
 Previously downloaded reports and their filenames are preserved.
 Generation metadata may change file hashes without changing numerical evidence.
 
-Every figure has a numbered caption and a reference in the body text. PDF numbers
-and Word fields come from the same figure sequence, including optional appendix
-figures. PDF links/bookmarks use final page numbers. Word uses native Title/Heading
-styles, multilevel heading numbering, `SEQ Figure` captions, bookmarked `REF`
+Every figure and table has a numbered caption and a reference in the body text.
+PDF numbers and Word fields share separate figure and table sequences, including
+optional Appendix content. PDF links/bookmarks use final page numbers. Word uses native Title/Heading
+styles, multilevel heading numbering, `SEQ Figure` and `SEQ Table` captions, bookmarked `REF`
 references, and TOC/page fields. Before a Word download, an isolated headless
-LibreOffice process updates the contents, figure references and pagination, then
+LibreOffice process updates the contents, figure/table references and pagination, then
 the exporter verifies the native fields and cached results. The contents remain
 editable and can be refreshed after later edits in Word.
 Both share one presentation model, chart data, and values. Dependencies
 are ReportLab 4.4.9 and python-docx 1.2.0; the server does not need Microsoft Word.
 Report text uses dark charcoal, with lighter section headings and selective emphasis
 on the key LCOE comparison. Every figure caption and chart label uses 8-point type
-at the report's displayed chart size in both formats. The closing Summary separates
-key results, interpretation, and cost qualifications, with a compact comparison table.
+at the report's displayed chart size in both formats. The closing Summary shows LCOE P10/P50/P90 without SolarTAC annual-energy results.
+Section 4.2, Assumptions, contains Financial Assumptions and Technical Assumptions
+with bullets drawn from the saved scenario. The Appendix remains optional.
+
+Site descriptions and figures cite Cliff Ho's February 19, 2026 presentation,
+slides 6-9. Packaged source images and their SHA-256 provenance are under
+`src/sbepv/data/report/`. Presentation inverter nameplates, nominal module capacity,
+and the analysis operating limit are distinguished. Data Collection defines
+Bazefield and reconciles distinct excluded intervals against overlapping issue
+counts without inventing missing row-level overlap evidence.
 
 Word exports additionally require LibreOffice Writer and its UNO-compatible Python
 on the **Python backend**. Configure `PV_REPORT_SOFFICE` with the full path to

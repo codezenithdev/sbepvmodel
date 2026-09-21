@@ -147,7 +147,7 @@ class TechnicalAppendixTests(unittest.TestCase):
         self.assertFalse(any("equal the original fitted" in b.get("text", "") for b in blocks))
         self.assertEqual(original, job)
 
-    def test_confirmed_equal_complete_profile_uses_one_paragraph_without_duplicate_table(self):
+    def test_confirmed_equal_complete_profile_still_shows_the_applied_factor_table(self):
         factors = {season: {"solectria": .951234, "solaredge": .783456}
                    for season in ("winter", "spring", "summer", "fall")}
         lineage = {
@@ -157,9 +157,10 @@ class TechnicalAppendixTests(unittest.TestCase):
         }
         job = {"source_snapshot": {"calibration_lineage": lineage}}
         blocks = appendix.applied_calibration_blocks(job)
-        self.assertEqual(["paragraph"], [block["kind"] for block in blocks])
-        self.assertIn("all four seasons", blocks[0]["text"])
-        self.assertIn("no seasonal substitution", blocks[0]["text"])
+        self.assertEqual(1, sum(block['kind']=='table' for block in blocks))
+        self.assertEqual(['0.95', '0.78'], table_row(blocks, 'Fall')[1:3])
+        self.assertFalse(any(block['kind']=='heading' for block in blocks))
+        self.assertTrue(any('no seasonal substitution' in block.get('text','') for block in blocks))
         lineage["resolved_profile"]["seasonal_factors"]["fall"]["solectria"] += .000001
         self.assertTrue(any(block["kind"] == "table" for block in appendix.applied_calibration_blocks(job)))
         lineage["resolved_profile"]["seasonal_factors"] = deepcopy(factors)

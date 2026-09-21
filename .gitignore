@@ -44,3 +44,5 @@ output/playwright/
 
 tmp/
 output/
+
+docs/audits/

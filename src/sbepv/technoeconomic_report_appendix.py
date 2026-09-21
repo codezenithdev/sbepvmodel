@@ -7,10 +7,11 @@ The caller must verify the saved report evidence before using these blocks.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 import math
 
 
-APPENDIX_CONTENT_VERSION = "1.1"
+APPENDIX_CONTENT_VERSION = "1.2"
 
 # Reviewed against model.py/calibration.py on 2026-09-16. The full manifest also
 # commits to pvlib 0.15.2 and PVMismatch 4.1. A changed dependency/manifest must not
@@ -128,31 +129,13 @@ def applied_calibration_blocks(job):
 
     fitted = _mapping(_mapping(lineage.get("origin_profile")).get("seasonal_factors"))
     seasons = ("winter", "spring", "summer", "fall")
-    systems = ("solectria", "solaredge")
-    explicit_no_substitution = substitution_recorded and all(
-        evidence[key] is None
-        for evidence in (application, result_application, profile)
-        for key in ("seasonal_substitution", "seasonal_fallback") if key in evidence
-    )
-    complete_factors = set(factors) == set(seasons) and all(
-        set(_mapping(factors.get(season))) == set(systems)
-        and all(type(factors[season][system]) in (int, float)
-                and math.isfinite(factors[season][system]) for system in systems)
-        for season in seasons
-    )
-    if complete_factors and factors == fitted and explicit_no_substitution:
-        return [{"kind": "paragraph", "style": "small", "text":
-                 "Applied Annual factors equal the fitted factors above at saved precision for all four seasons; "
-                 "the frozen application confirms no seasonal substitution."}]
-
-    blocks = [{"kind": "heading", "text": "Applied Annual calibration factors",
-               "anchor": "applied-annual-calibration", "page": False, "level": 2}]
+    blocks = []
     if factors:
         rows = []
         for season in seasons:
             values = _mapping(factors.get(season))
             source_text = ("Recorded substitute from " + source.title()
-                           if season == target and source else "Frozen resolved profile")
+                           if season == target and source else "Saved applied calibration")
             if not values:
                 source_text = "Not recorded"
             rows.append([season.title(), _factor_value(values.get("solectria")),
@@ -166,10 +149,10 @@ def applied_calibration_blocks(job):
             text = ("The resolved Annual factor profile differs from the original fitted profile. "
                     "Values are dimensionless and displayed to two decimal places; substitutions do not add measured coverage.")
         else:
-            text = ("Applied Annual factors come from the frozen resolved profile; equality with the original fitted factors "
+            text = ("Applied Annual factors come from the saved applied-factor record; equality with the original fitted factors "
                     "is not established. Values are dimensionless and displayed to two decimal places.")
     else:
-        text = ("Applied Annual calibration factors are unavailable in the frozen resolved profile. "
+        text = ("Applied Annual calibration factors are unavailable in the saved applied-factor record. "
                 "The original fitted factors alone do not establish which factors this Annual Simulation used.")
     blocks.append({"kind": "paragraph", "text": text, "style": "small"})
 
@@ -180,8 +163,24 @@ def applied_calibration_blocks(job):
                       "The record marks explicit acceptance as false." if accepted is False else
                       "Explicit acceptance is not recorded.")
         text = "Saved seasonal substitution: " + relation + ". " + acceptance
+        if source == 'spring' and target == 'fall':
+            seasons = _mapping(lineage.get('origin_profile')).get('fit_metadata', {}).get('seasons', [])
+            if not seasons:
+                origin = _mapping(_mapping(lineage.get('origin_validation_job')).get('result'))
+                seasons = _mapping(origin.get('calibration_factors') or _mapping(origin.get('stats')).get('calibration_factors')).get('seasons', [])
+            fall = next((row for row in seasons if row.get('season') == 'fall'), None)
+            try:
+                span = (datetime.fromisoformat(fall['last_timestamp']).date() -
+                        datetime.fromisoformat(fall['first_timestamp']).date()).days + 1
+            except (TypeError, KeyError, ValueError):
+                span = None
+            if fall and fall.get('row_count', 0) and span is not None and 0 < span < 91:
+                text += " Spring calibration factors were used for fall because the available fall measurements did not cover the full season. The fall observations were limited; they were not absent."
+            else:
+                text += " Spring calibration factors were used in place of separately fitted fall factors. This substitution alone does not establish the extent or suitability of fall measurement coverage."
+            text += " This substitution does not add fall measurements or independently validate fall predictions."
     elif substitution_recorded:
-        text = "The frozen application records no seasonal substitution."
+        text = "The saved application record confirms no seasonal substitution."
     else:
         text = "Seasonal substitution status is not recorded."
     blocks.append({"kind": "paragraph", "text": text, "style": "small"})
@@ -230,7 +229,7 @@ def build_technical_appendix(job):
         ["PV model version", _value(contract.get("model_version"))],
         ["Physics version", _value(contract.get("calibration_physics_version"))],
         ["Physics SHA-256", _value(contract.get("calibration_physics_fingerprint"))],
-        ["Physics description", "Matched reviewed identity" if supported else "Unavailable for this frozen identity"],
+        ["Physics description", "Matched reviewed identity" if supported else "Unavailable for this saved identity"],
         ["Tracker backtracking", _value(setting("backtrack"))],
         ["Incidence-angle model", _value(iam)],
         ["Martin-Ruiz coefficient a_r", "Not applicable" if iam == "physical" else _value(setting("iam_a_r"))],
@@ -283,7 +282,7 @@ def build_technical_appendix(job):
         ])
         paragraph("Limits: ideal SolarEdge module extraction; no optimizer efficiency curve or SolarEdge hardware clipping. No rear irradiance; uniform bay conditions.")
     else:
-        paragraph("Detailed PV equations are unavailable for this frozen physics identity; current defaults are not assigned to historical runs.")
+        paragraph("Detailed PV equations are unavailable for this saved physics identity; current defaults are not assigned to historical runs.")
 
     heading("Calibration and time basis", "calibration")
     paragraph("Annual Simulation uses the saved applied factors. Calibration does not provide independent validation; short observation windows limit confidence in annual predictions.")

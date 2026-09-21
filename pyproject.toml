@@ -25,7 +25,7 @@ where = ["src"]
 include = ["sbepv*"]
 
 [tool.setuptools.package-data]
-sbepv = ["data/*.json"]
+sbepv = ["data/*.json", "data/report/*.json", "data/report/*.png"]
 
 # src/run_pipeline.py is intentionally excluded: it is a standalone batch script
 # with no importers, run as `python src/run_pipeline.py`, not part of the API.

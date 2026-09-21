@@ -167,10 +167,11 @@ def validate_refreshed_docx(original, refreshed):
         kinds = Counter(_field_key(field['instruction'])[0] for field in after['part_fields'].get(name, []))
         if kinds['PAGE'] != 1 or kinds['NUMPAGES'] != 1:
             raise DocxRefreshError('Word refresh lost the active footer page fields.')
-    sequence = lambda inventory: [field['result'].strip() for field in inventory['fields']
-                                  if _field_key(field['instruction']) == ('SEQ', 'Figure')]
-    if sequence(before) != sequence(after):
-        raise DocxRefreshError('Word refresh changed the figure caption sequence.')
+    for label in ('Figure', 'Table'):
+        sequence = lambda inventory: [field['result'].strip() for field in inventory['fields']
+                                      if _field_key(field['instruction']) == ('SEQ', label)]
+        if sequence(before) != sequence(after):
+            raise DocxRefreshError(f'Word refresh changed the {label.lower()} caption sequence.')
     if not before['bookmarks'].issubset(after['bookmarks']):
         raise DocxRefreshError('Word refresh did not preserve report bookmarks.')
     if before['headings'] != after['headings'] or not after['numbering']:
@@ -187,13 +188,13 @@ def validate_refreshed_docx(original, refreshed):
         if _field_key(field['instruction'])[0] in {'SEQ', 'REF', 'PAGE', 'NUMPAGES'}:
             if not re.fullmatch(r'\s*\d+\s*', field['result']):
                 raise DocxRefreshError('Word refresh left an unresolved figure or page field.')
-    figure_numbers = {name: field['result'].strip() for field in after['fields']
-                      if _field_key(field['instruction']) == ('SEQ', 'Figure')
+    caption_numbers = {name: field['result'].strip() for field in after['fields']
+                      if _field_key(field['instruction']) in {('SEQ', 'Figure'), ('SEQ', 'Table')}
                       for name in field['bookmarks']}
     for field in after['fields']:
         kind, target = _field_key(field['instruction'])
-        if kind == 'REF' and (target not in figure_numbers or field['result'].strip() != figure_numbers[target]):
-            raise DocxRefreshError('Word figure references do not match their numbered captions.')
+        if kind == 'REF' and (target not in caption_numbers or field['result'].strip() != caption_numbers[target]):
+            raise DocxRefreshError('Word references do not match their numbered captions.')
 
 
 def _stop_owned_process(process):

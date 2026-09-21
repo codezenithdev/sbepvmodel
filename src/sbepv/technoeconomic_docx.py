@@ -12,6 +12,10 @@ def _figure_bookmark(figure_id):
     return 'fig_'+re.sub(r'[^A-Za-z0-9_]', '_', value)[:26]+'_'+hashlib.sha256(value.encode()).hexdigest()[:8]
 
 
+def _table_bookmark(table_id):
+    return 'tbl_' + _figure_bookmark(table_id)[4:]
+
+
 def _footer_timestamp(report):
     value=report.get('analysis_at') or report.get('generated_at')
     label='Completed' if report.get('analysis_at') else 'Exported'
@@ -147,11 +151,15 @@ def render_docx(report):
             for segment in block.get('segments') or [{'text':block['text']}]:
                 if segment.get('figure_ref'):
                     run=field(p,'REF '+_figure_bookmark(segment['figure_ref'])+' \\h',segment['text'])
+                elif segment.get('table_ref'):
+                    run=field(p,'REF '+_table_bookmark(segment['table_ref'])+' \\h',segment['text'])
                 else:
                     run=p.add_run(segment['text'])
                 run.bold=bool(segment.get('bold'))
-            if any(segment.get('figure_ref') for segment in block.get('segments',[])):
+            if any(segment.get('figure_ref') or segment.get('table_ref') for segment in block.get('segments',[])):
                 p.paragraph_format.keep_with_next=True
+            if style=='bullet':
+                p.style=document.styles['List Bullet']
             if style in ('small','meta'):
                 for run in p.runs:run.font.size=Pt(10)
             if style=='lead':p.paragraph_format.keep_with_next=True
@@ -171,7 +179,8 @@ def render_docx(report):
             run=OxmlElement('w:r');value=OxmlElement('w:t');value.text=block['text'];run.append(value);link.append(run);p._p.append(link)
         elif kind=='chart':
             p=document.add_paragraph();p.paragraph_format.keep_with_next=True
-            run=p.add_run();run.add_picture(BytesIO(base64.b64decode(block['image'])),width=Pt(522),height=Pt(block['height']))
+            run=p.add_run();run.add_picture(BytesIO(base64.b64decode(block['image'])),width=Pt(block.get('width',522)),height=Pt(block['height']))
+            p.alignment=WD_ALIGN_PARAGRAPH.CENTER
             p.paragraph_format.space_after=Pt(0)
             for doc_properties in p._p.xpath('.//wp:docPr'):
                 doc_properties.set('descr',block['caption'])
@@ -187,6 +196,14 @@ def render_docx(report):
             p.paragraph_format.widow_control=True
             for run in p.runs:run.font.size=Pt(8)
         elif kind=='table':
+            if block.get('table_id') and block.get('table_number') is not None:
+                p=document.add_paragraph(style='Caption')
+                p.add_run('Table ')
+                identity=bookmark_start(p,_table_bookmark(block['table_id']))
+                field(p,'SEQ Table \\* ARABIC',str(block['table_number']))
+                bookmark_end(p,identity)
+                p.add_run('. '+block['caption'])
+                p.paragraph_format.keep_with_next=True
             emphasis_rows=set(block.get('emphasis_rows',()))
             table=document.add_table(rows=1,cols=len(block['headers']))
             table.autofit=False

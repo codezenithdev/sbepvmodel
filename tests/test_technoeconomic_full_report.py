@@ -182,7 +182,7 @@ class FullReportTests(unittest.TestCase):
         original=deepcopy(job)
         payload,name=pdf.build_pdf(job,generated_at=datetime(2026,9,15,tzinfo=timezone.utc))
         self.assertTrue(payload.startswith(b'%PDF-'))
-        self.assertEqual('LCOE_Comparison_v2.5.1_full_tea_full_report.pdf',name)
+        self.assertEqual('LCOE_Comparison_v2.6.0_full_tea_full_report.pdf',name)
         self.assertIn(b'/Outlines',payload)
         self.assertIn(b'/Annots',payload)
         self.assertEqual(job,original)
@@ -273,8 +273,8 @@ class FullReportTests(unittest.TestCase):
                         for row in table.findall('w:tr', ns)]
                 if rows and rows[0][0] == 'LCOE (USD/MWh)':
                     lcoe_tables.append(rows)
-            self.assertEqual(2, len(lcoe_tables))
-            self.assertEqual(lcoe_tables[0], lcoe_tables[1])
+            self.assertEqual(3, len(lcoe_tables))
+            self.assertTrue(all(table == lcoe_tables[0] for table in lcoe_tables))
             self.assertIn(b'updateFields',archive.read('word/settings.xml'))
             media={archive.read(name) for name in archive.namelist() if name.startswith('word/media/')}
             for block in report['blocks']:
@@ -312,13 +312,14 @@ class FullReportTests(unittest.TestCase):
             tables = [b for b in blocks[lifecycle_start:sensitivity_start]
                       if b['kind'] == 'table' and b['headers'][0] == 'LCOE (USD/MWh)']
             self.assertEqual(1, len(tables))
-            self.assertEqual(headline(document), tables[0])
+            self.assertEqual(headline(document)['rows'], tables[0]['rows'])
+            self.assertNotEqual(headline(document)['table_id'], tables[0]['table_id'])
             for row, metric in zip(tables[0]['rows'], (
                     kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
                     kernel.COMMERCIAL_STANDALONE_FIELD_LCOE)):
                 expected = np.quantile(calculation.realization_table[metric], [.1, .5, .9], method='linear') * 1000
                 self.assertEqual([f'{value:,.2f}' for value in expected], row[1:])
-        self.assertEqual('LCOE_Comparison_v2.5.1_summary_tea_full_report.pdf',pdf.report_filename(concise,'pdf'))
+        self.assertEqual('LCOE_Comparison_v2.6.0_summary_tea_full_report.pdf',pdf.report_filename(concise,'pdf'))
         self.assertEqual(next(b['vector'] for b in full['blocks'] if b.get('vector')),
                          next(b['vector'] for b in concise['blocks'] if b.get('vector')))
         for report in (full,concise):
@@ -329,16 +330,18 @@ class FullReportTests(unittest.TestCase):
             closing_end=next(i for i,b in enumerate(report['blocks'][closing_start+1:],closing_start+1) if b['kind']=='heading' and b['level']==1)
             closing=report['blocks'][closing_start:closing_end]
             closing_table=next(b for b in closing if b['kind']=='table')
-            self.assertIn('USD/MWh',closing_table['rows'][0][0])
-            self.assertIn('commercial systems',closing_table['rows'][0][0])
-            self.assertEqual(['254.50','269.25'],closing_table['rows'][1][1:])
-            self.assertIn('MWh/year',closing_table['rows'][1][0])
-            self.assertIn('SolarTAC site',closing_table['rows'][1][0])
-            self.assertEqual([row[2].removeprefix('$').removesuffix('/MWh') for row in headline(report)['rows']],closing_table['rows'][0][1:])
+            self.assertEqual(headline(report)['headers'],closing_table['headers'])
+            self.assertEqual(headline(report)['rows'],closing_table['rows'])
+            self.assertEqual(2,len(closing_table['rows']))
+            self.assertFalse(any('MWh/year' in str(b) for b in closing))
             closing_text=' '.join(b.get('text','') for b in closing)
-            self.assertIn('SolarEdge is higher by 14.75 MWh (5.80% relative to the lower value)',closing_text)
-            self.assertIn('this TEA does not sample calibration-factor uncertainty',closing_text)
-            self.assertIn('Higher energy alone does not establish lower LCOE',closing_text)
+            self.assertNotIn('Predicted annual medians at SolarTAC',closing_text)
+            self.assertIn('calibration-factor uncertainty is not sampled',closing_text)
+            assumption_heading=next(b for b in closing if b.get('anchor')=='summary-assumptions')
+            self.assertEqual(('4.2','Assumptions'),(assumption_heading['number'],assumption_heading['text']))
+            for anchor in ('financial-assumptions','technical-assumptions'):
+                index=next(i for i,b in enumerate(closing) if b.get('anchor')==anchor)
+                self.assertEqual('bullet',closing[index+1]['style'])
             self.assertIn(job['request']['paired_commercial']['shared_initial_capex']['report_context']['limitations'],closing_text)
             self.assertTrue(any(s.get('bold') for b in closing for s in b.get('segments',[])))
         # The PDF's actual contents notifications exclude the title and optional headings.
@@ -352,7 +355,7 @@ class FullReportTests(unittest.TestCase):
         self.assertIn('1 Executive Summary',notifications)
         self.assertIn('3 Analysis',notifications)
         self.assertNotIn(concise['title'],notifications)
-        self.assertNotIn('Technical Appendix',notifications)
+        self.assertNotIn('Appendix',notifications)
         with ZipFile(BytesIO(docx_report.render_docx(concise))) as archive:
             xml=archive.read('word/document.xml')
             self.assertNotIn(b'appendix-convergence',xml)
@@ -449,15 +452,16 @@ class FullReportTests(unittest.TestCase):
         snapshot['excluded_annual_energy_rows']=[{'row':{'year':1990+i},'reasons':['Missing intervals with a long evidence explanation. '*8]} for i in range(12)]
         calculation.metadata['convergence']={'status':'unavailable','checkpoints':[]}
         report=report_model.build_report(presentation_job,calculation,routine,checks)
-        closing_table=next(block for block in report['blocks'] if block.get('headers',[])[:1]==['Median result and basis'])
-        self.assertEqual(1,len(closing_table['rows']))
+        closing_table=[block for block in report['blocks'] if block.get('headers',[])[:1]==['LCOE (USD/MWh)']][-1]
+        self.assertEqual(2,len(closing_table['rows']))
         text=json.dumps([{k:v for k,v in b.items() if k!='image'} for b in report['blocks']])
         self.assertIn('Annual percentiles are withheld',text)
         self.assertIn('completed-run lifecycle LCOE chart is unavailable',text)
         self.assertIn('Not available',text)
         self.assertNotIn('reasons: []',text)
-        factor_table=next(block for block in report['blocks'] if block.get('headers')==['Season','Observed coverage','Rows','Solectria\nfactor','SolarEdge\nfactor'])
-        self.assertEqual(factor_table['rows'][0][-2:],['0.95','0.78'])
+        factor_table=next(block for block in report['blocks'] if block.get('headers')==['Season','Solectria\nfactor','SolarEdge\nfactor','Factor source'])
+        self.assertEqual(factor_table['rows'][0][1:3],['0.90','0.95'])
+        self.assertEqual(factor_table['rows'][3][1:3],['Not recorded','Not recorded'])
         assumption_rows=next(block['rows'] for block in report['blocks'] if block.get('headers')==['Input','Saved assumption'])
         self.assertEqual('Uniform 4.00 to 10.00 USD/kWdc',next(row[1] for row in assumption_rows if row[0]=='SolarEdge optimizer installation'))
         presented_factors=snapshot['calibration_lineage']['origin_validation_job']['result']['calibration_factors']['seasons'][0]['systems']

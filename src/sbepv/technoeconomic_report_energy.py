@@ -112,7 +112,7 @@ def _frozen(snapshot):
                                      "limit_kw": (job.get("request") or {}).get("curtailment_limit_kw")}
                              for name, job in (("calibration", calibration), ("annual", annual))},
         "limitations": [
-            "Calibration observations cover retained intervals, not a complete measured year.",
+            "Calibration observations cover intervals used for calibration, not a complete measured year.",
             "Seasonal energy differences are descriptive; they do not independently identify physical causes.",
             "The difference of system medians and the median of paired differences are different statistics.",
         ],
@@ -150,10 +150,10 @@ def _verified_measurements(lineage, output_root):
     source = lineage.get("origin_validation_source") or {}
     expected = source.get("sha256")
     if not expected or not source.get("path"):
-        raise ValueError("The frozen reviewed-measurement source and byte hash are unavailable.")
+        raise ValueError("The saved reviewed-measurement source and byte hash are unavailable.")
     path = _confined(source["path"], output_root)
     if _digest(path) != expected:
-        raise ValueError("Reviewed-measurement source bytes differ from the frozen SHA-256.")
+        raise ValueError("Reviewed-measurement source bytes differ from the saved SHA-256.")
     values = {}
     with path.open(encoding="utf-8-sig", newline="") as handle:
         for row in csv.DictReader(handle):
@@ -232,7 +232,7 @@ def _read_workbook(job, *, output_root, applied_factors, measurements=None, fact
                 factor = _number(row[positions[prefix + "_calibration_factor"]])
                 expected_factor = _number((applied_factors.get(season) or {}).get(system))
                 if factor is None or expected_factor is None or not math.isclose(factor, expected_factor, abs_tol=1e-12, rel_tol=1e-12):
-                    raise ValueError(f"Workbook factors differ from the frozen {factor_basis} calibration profile.")
+                    raise ValueError(f"Workbook factors differ from the saved {factor_basis} calibration profile.")
                 powers = {kind: _number(row[positions[prefix + "_" + kind + "_power_w"]])
                           for kind in ("measured", "uncalibrated", "calibrated")}
                 if any(value is None for value in powers.values()):
@@ -266,7 +266,7 @@ def _read_workbook(job, *, output_root, applied_factors, measurements=None, fact
     finally:
         workbook.close()
     if measurements is not None and set(measurements) != seen:
-        raise ValueError("Workbook and reviewed source use different retained measurement intervals.")
+        raise ValueError("Workbook and reviewed source use different measurement intervals used for calibration.")
     if before != _digest(path):
         raise ValueError("Workbook bytes changed while the diagnostic was being read.")
     return {"identity": {"filename": path.name, "sha256": before,
@@ -292,38 +292,38 @@ def _reconstruct(snapshot, frozen, output_root):
     for record in frozen["seasonal_rows"]:
         actual = calibration["seasonal"].get(record["season"])
         if not actual or actual["rows"] != record["row_count"] or record["measured"] is None:
-            raise ValueError("Workbook seasonal retained rows do not match frozen calibration evidence.")
+            raise ValueError("Workbook seasonal rows used for calibration do not match saved calibration evidence.")
         for bound, key in (("first_timestamp", "first_local"), ("last_timestamp", "last_local")):
             if record.get(bound) is not None:
                 expected = datetime.fromisoformat(record[bound]).replace(tzinfo=None).isoformat()
                 if calibration["seasonal_windows"][record["season"]][key] != expected:
-                    raise ValueError("Workbook observation window differs from the frozen calibration evidence.")
+                    raise ValueError("Workbook observation window differs from the saved calibration evidence.")
         for system, _ in SYSTEMS:
             for kind in ("measured", "calibrated"):
                 if abs(actual[system + "_" + kind + "_kwh"] - record["measured"][system + "_kwh"]) > 0.0011:
-                    raise ValueError("Workbook seasonal energies do not match frozen calibration evidence.")
+                    raise ValueError("Workbook seasonal energies do not match saved calibration evidence.")
     annual_job = snapshot["source_annual_job"]
     annual = _read_workbook(annual_job, output_root=output_root, applied_factors=factors)
     recorded_rows = annual_job["result"]["annual_energy_by_year"]
     recorded_years = {int(row["year"]) for row in recorded_rows}
     if recorded_years != set(annual["yearly"]) or len(recorded_years) != len(recorded_rows):
-        raise ValueError("Workbook weather years differ from frozen annual evidence.")
+        raise ValueError("Workbook weather years differ from saved annual evidence.")
     max_error = 0.0
     for row in recorded_rows:
         actual = annual["yearly"][int(row["year"])]
         if actual["rows"] != row.get("row_count"):
-            raise ValueError("Workbook Annual row counts differ from the frozen result.")
+            raise ValueError("Workbook Annual row counts differ from the saved result.")
         for system, prefix in SYSTEMS:
             expected = _number(row.get(prefix + "_predicted_kwh"))
             if expected is None:
-                raise ValueError("Frozen annual energy required for reconciliation is missing.")
+                raise ValueError("Saved annual energy required for reconciliation is missing.")
             error = abs(actual[system + "_calibrated_kwh"] - expected)
             max_error = max(max_error, error)
             if error > ENERGY_TOLERANCE_KWH:
-                raise ValueError("Workbook annual energy differs from the frozen result beyond its rounding precision.")
+                raise ValueError("Workbook annual energy differs from the saved result beyond its rounding precision.")
             physics = _number(row.get(prefix + "_physics_only_kwh"))
             if physics is not None and abs(actual[system + "_uncalibrated_kwh"] - physics) > ENERGY_TOLERANCE_KWH:
-                raise ValueError("Workbook prefit annual energy differs from the frozen result.")
+                raise ValueError("Workbook prefit annual energy differs from the saved result.")
     eligible = {int(row["year"]) for row in snapshot["eligible_paired_energy_rows"]}
     if eligible != recorded_years:
         raise ValueError("Seasonal reconstruction currently requires every saved Annual year to be eligible.")
@@ -365,11 +365,11 @@ def _reconstruct(snapshot, frozen, output_root):
     verified_workbooks = [name for name, workbook in (("calibration", calibration), ("annual", annual))
                           if workbook["identity"]["historical_bytes_verified"]]
     if len(verified_workbooks) == 2:
-        historical_provenance = "Both workbooks also match their frozen historical byte hashes."
+        historical_provenance = "Both workbooks also match their saved historical byte hashes."
     elif verified_workbooks:
         verified_name = verified_workbooks[0]
         missing_name = "annual" if verified_name == "calibration" else "calibration"
-        historical_provenance = (f"The {verified_name} workbook also matches its frozen historical byte hash. "
+        historical_provenance = (f"The {verified_name} workbook also matches its saved historical byte hash. "
                                  f"No historical byte hash was recorded for the {missing_name} workbook; its current hash is not historical integrity proof.")
     else:
         historical_provenance = "Neither workbook has a recorded historical byte hash; their current hashes are not historical integrity proof."
@@ -394,7 +394,7 @@ def _reconstruct(snapshot, frozen, output_root):
                                "matching_measurement_intervals": True, "matching_frozen_factors": True,
                                "matching_saved_operating_caps": True},
             "limitations": [
-                "Current workbook bytes are checksummed and reconciled to frozen yearly totals, factors, caps, and SHA-verified measurements. " + historical_provenance,
+                "Current workbook bytes are checksummed and reconciled to saved yearly totals, factors, caps, and SHA-verified measurements. " + historical_provenance,
                 "Seasonal means add to the mean annual difference, not the difference of system medians.",
                 "The stored prefit powers are already capped, so exact losses from removing the operating caps cannot be recovered from these exports.",
                 fall_coverage + "The sensitivity does not establish that summer factors represent fall conditions or validate extrapolation beyond the observed window.",

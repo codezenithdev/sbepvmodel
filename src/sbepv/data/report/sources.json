@@ -1,0 +1,23 @@
+{
+  "source": "SolarEdge_vs_Solectria_STAC_performance_v2a.pptx",
+  "title": "Performance Evaluation of SolarEdge and Solectria PV Power Conversion Systems",
+  "author": "Cliff Ho",
+  "date": "2026-02-19",
+  "sha256": "0574f45bc525d7d8e4e0ca61dbf61826e490e4391142ee6322078d28eba682e9",
+  "equipment_slides": [
+    6,
+    7,
+    9
+  ],
+  "figure_slide": 8,
+  "assets": {
+    "solartac-aerial.png": {
+      "sha256": "66f81c25f0d69821307e8716b3f6ac391bb118a6f80f3cc6d49322e17c26ad53",
+      "derivation": "Original embedded image8.png, unchanged; slide 8 uses a rotated view."
+    },
+    "solartac-string-layout.png": {
+      "sha256": "566eca672400364037ae43f34e9b8f7071d4a511b51a81ae97d6180fa384e16c",
+      "derivation": "Embedded image7.emf rendered at 1800 pixels wide; crop isolates the string layout below the slope table. North is left, as shown on slide 8."
+    }
+  }
+}

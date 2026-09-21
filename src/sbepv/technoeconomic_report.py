@@ -12,6 +12,7 @@ from io import BytesIO
 import math
 import re
 import textwrap
+from importlib.resources import files
 
 import numpy as np
 from matplotlib.figure import Figure
@@ -21,7 +22,7 @@ from sbepv import technoeconomic_report_diagnostics as diagnostics
 from sbepv import technoeconomic_report_appendix as appendix
 from sbepv.technoeconomic_report_metadata import normalize_analysis_name
 
-REPORT_VERSION = "2.5.1"
+REPORT_VERSION = "2.6.0"
 REPORT_TITLE = "Technoeconomic Analysis of Module-Level and Central Optimization in Solar PV Systems"
 REPORT_SUBTITLE = "Evaluation of SolarEdge and Solectria PV systems at SolarTAC"
 SYSTEMS = (("solectria", "Solectria", "sol"), ("solaredge", "SolarEdge", "se"))
@@ -342,10 +343,31 @@ def quality_issue_label(decision):
     return ': '.join(labels.get(token.lower(),words(token)) for token in tokens) or 'Unspecified issue'
 
 
+def quality_count_explanation(cleaning):
+    """Reconcile saved interval totals without reconstructing missing row masks."""
+    original, excluded, final = (cleaning.get(key) for key in ('original_rows', 'excluded_rows', 'final_rows'))
+    notes = []
+    if all(type(value) is int and value >= 0 for value in (original, excluded, final)):
+        if original - excluded == final:
+            notes.append(f"The saved counts reconcile as {original:,} collected intervals minus {excluded:,} distinct excluded intervals equals {final:,} intervals used for calibration.")
+        else:
+            notes.append("The saved collected, excluded and final interval counts do not reconcile. The report preserves those counts; the source review needs investigation.")
+    exclusions = [item for item in cleaning.get('decisions', []) if item.get('action') == 'exclude']
+    if (type(excluded) is int and exclusions and
+            all(type(item.get('affected_rows')) is int and item['affected_rows'] >= 0 for item in exclusions)):
+        total = sum(item['affected_rows'] for item in exclusions)
+        if total >= excluded:
+            notes.append(f"The exclusion decisions sum to {total:,} issue-row occurrences across {excluded:,} distinct excluded intervals. The difference of {total-excluded:,} counts repeated flags on those intervals; it is not an additional number of intervals removed. The saved summary does not identify every overlap between individual issues.")
+        else:
+            notes.append("The recorded exclusion decisions account for fewer issue-row occurrences than the saved excluded-interval total. Their summary is insufficient to explain all exclusions.")
+    return notes
+
+
 def _number_report_blocks(blocks):
-    """Resolve one shared heading/figure sequence without changing saved evidence."""
+    """Resolve shared headings and caption references without changing evidence."""
     heading_counts = [0, 0, 0]
     figures = {}
+    tables = {}
     for block in blocks:
         if block['kind'] == 'heading':
             level = block.get('level', 1)
@@ -358,12 +380,62 @@ def _number_report_blocks(blocks):
                 raise ValueError('Duplicate report figure identifier: ' + identifier)
             block['figure_number'] = len(figures) + 1
             figures[identifier] = block['figure_number']
+        elif block['kind'] == 'table':
+            identifier = block['table_id']
+            if identifier in tables:
+                raise ValueError('Duplicate report table identifier: ' + identifier)
+            block['table_number'] = len(tables) + 1
+            tables[identifier] = block['table_number']
     for block in blocks:
         if block['kind'] == 'paragraph' and block.get('segments'):
             for segment in block['segments']:
                 if 'figure_ref' in segment:
                     segment['text'] = str(figures[segment['figure_ref']])
+                if 'table_ref' in segment:
+                    segment['text'] = str(tables[segment['table_ref']])
             block['text'] = ''.join(segment['text'] for segment in block['segments'])
+
+
+def _caption_report_tables(blocks):
+    """Give main-text and Appendix tables captions and editable text references."""
+    captions = {
+        'LCOE (USD/MWh)': 'Lifecycle LCOE percentiles (USD/MWh)',
+        'Collected rows': 'Measurement intervals after data-quality review',
+        'Reviewed issue': 'Data-quality issues and recorded review decisions',
+        'SolarTAC energy (MWh)': 'Measured and modeled energy over the calibration intervals',
+        'Installed equipment': 'Installed SolarEdge and Solectria equipment at SolarTAC',
+        'Weather year': 'Annual AC energy predictions at SolarTAC',
+        'Saved cost medians': 'Median capital and operating costs',
+        'Input': 'Financial and technical inputs saved with the analysis',
+        'Saved lifecycle medians': 'Median discounted lifecycle cost and energy',
+        'Component': 'Common CAPEX component allocations',
+        'Record': 'Analysis identifiers and report provenance',
+        'SolarTAC annual energy': 'Annual AC energy percentiles at SolarTAC',
+        'Dollar-year conversion': 'Recorded dollar-year conversion',
+        'Recorded item': 'Saved PV model settings',
+        'Diagnostic source': 'Current diagnostic workbook checksums',
+    }
+    output, section, title, counts = [], 'report', 'Report', {}
+    for block in blocks:
+        if block['kind'] == 'heading':
+            section, title = block['anchor'], block['text']
+        if block['kind'] == 'table':
+            counts[section] = counts.get(section, 0) + 1
+            block['table_id'] = f'{section}-table-{counts[section]}'
+            first_header = block['headers'][0]
+            if first_header == 'Season':
+                caption = ('Seasonal calibration factors used in Annual Simulation' if 'Factor source' in block['headers']
+                           else 'Seasonal measured and modeled energy differences')
+            elif first_header == 'Equation':
+                caption = title + ': equations and units'
+            else:
+                caption = captions.get(first_header, title + ': ' + first_header.lower())
+            block['caption'] = block.get('caption') or caption
+            output.append({'kind': 'paragraph', 'style': 'small', 'text': '', 'segments': [
+                {'text': 'Table '}, {'table_ref': block['table_id'], 'text': ''},
+                {'text': ' presents ' + block['caption'][0].lower() + block['caption'][1:] + '.'}]})
+        output.append(block)
+    blocks[:] = output
 
 
 def build_report(job, calculation, routine, checks, *, generated_at=None, lifecycle_chart=None,
@@ -468,30 +540,51 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
 
     heading("Introduction and Objectives", "introduction", page=True)
     paragraph("The SBE Innovation Center at SolarTAC hosts SolarEdge and Solectria PV systems. SolarEdge optimizes power at the module level; Solectria uses a common inverter operating point for connected strings. These architectures respond differently to uneven module conditions.")
+    paragraph("SolarTAC is in Watkins, Colorado. Cliff Ho's presentation describes two systems on Nevados terrain-following single-axis trackers. Each system has 240 WAAREE BiN-08-580 bifacial TOPCon modules rated at 580 W, giving 139.2 kWdc of nominal module capacity. The model's CEC module parameters use 579.92 W per module; the saved capacity basis governs the energy calculation.")
+    table(["Installed equipment", "SolarEdge", "Solectria"], [
+        ["Module arrangement", "5 strings; 8 bays/string; 6 modules/bay", "10 strings; 4 bays/string; 6 modules/bay"],
+        ["Inverter nameplate", "330 kW", "XGI 1500, 250 kW"],
+        ["Power optimization", "H1300 optimizers; MPPT per module pair", "String inverter; common operating point for connected strings"],
+        ["Modules / nominal DC capacity", "240 / 139.2 kWdc", "240 / 139.2 kWdc"],
+    ], [.30,.35,.35], keep=True)
+    paragraph("Source: Cliff Ho, Performance Evaluation of SolarEdge and Solectria PV Power Conversion Systems, February 19, 2026, slides 6-9. Inverter nameplate ratings describe installed equipment; they are distinct from module DC capacity and the AC operating limit selected for this analysis.", "small")
+    for name, identifier, width, height, caption, description in (
+        ('solartac-aerial.png', 'solartac-location', 340, 340*783/930,
+         'Aerial view of the Innovation Center at SolarTAC, Watkins, Colorado. The east test array is at the lower right in this original image. Source: Ho presentation, slide 8.',
+         'locates the east test array within the SolarTAC site in Watkins, Colorado.'),
+        ('solartac-string-layout.png', 'solartac-layout', 522, 522*530/1300,
+         'East-array string layout. EDGE identifies SolarEdge strings and TRIA identifies Solectria strings. Each bay contains six modules; north is to the left. Source: Ho presentation, slide 8, layout excerpt.',
+         'shows how the SolarEdge and Solectria strings occupy the terrain-following tracker rows.'),
+    ):
+        figure({'image':base64.b64encode(files('sbepv').joinpath('data', 'report', name).read_bytes()).decode(),
+                'width':width, 'height':height, 'caption':caption}, identifier, description)
     paragraph("This study calibrates each system against reviewed site measurements, predicts production across full historical weather years, and compares lifecycle cost per unit of AC energy at equal commercial capacity. It uses the recorded geometry and model assumptions without assuming either technology produces more energy. Calibration coverage and cost assumptions limit how broadly the results apply.")
     heading("Analysis", "analysis-approach")
     paragraph("The study has four steps. We collect power and weather measurements, review data quality and calibrate the PV model, simulate full historical weather years, and calculate lifecycle LCOE from the recorded energy and cost assumptions. Saved records link each step to its source.")
 
     heading("Data Collection", "data-collection", level=2)
-    paragraph("Bazefield supplies the power and weather measurements used for calibration. Data-quality review determines which intervals to retain. Excluded intervals contribute no measured energy.")
+    paragraph("Bazefield is a data historian used to collect, monitor and store measurements from SBE's commercial sites and SolarTAC. For this analysis, it supplies measured AC power for both PV systems and weather measurements for the same time intervals. Reviewers decide which flagged intervals to exclude before calibration. Excluded intervals contribute no measured energy to the calibration comparison.")
     paragraph(f"The measurements cover {measured_window(c_request, calibration['result'])}. "
               f"The recorded interval is {words(c_request.get('interval_value'))} {words(c_request.get('interval_unit')).removesuffix('s') if c_request.get('interval_value') == 1 else words(c_request.get('interval_unit'))}. "
               f"The optional AC operating limit is {capacity(c_request['curtailment_limit_kw'] * 1000, 'ac')+' per system' if c_request.get('curtailment_enabled') and c_request.get('curtailment_limit_kw') is not None else 'disabled' if c_request.get('curtailment_enabled') is False else 'not recorded'}.")
-    table(["Collected rows","Excluded rows","Excluded share","Retained rows"],[[number(cleaning.get(k),0 if k!='excluded_row_pct' else 1)+('%' if k=='excluded_row_pct' and cleaning.get(k) is not None else '') for k in ("original_rows","excluded_rows","excluded_row_pct","final_rows")]],numeric=(0,1,2,3),keep=True)
+    table(["Collected rows","Excluded rows","Excluded share","Rows used for calibration"],[[number(cleaning.get(k),0 if k!='excluded_row_pct' else 1)+('%' if k=='excluded_row_pct' and cleaning.get(k) is not None else '') for k in ("original_rows","excluded_rows","excluded_row_pct","final_rows")]],numeric=(0,1,2,3),keep=True)
     decisions=cleaning.get("decisions") or []
     actions=sorted({words(row.get("action")) for row in decisions})
-    paragraph(f"Quality review: {len(decisions)} recorded issue decisions" + (f" ({', '.join(actions)})" if actions else "") + ". Issue counts can overlap. The counts above describe reviewed rows; unavailable fields are not replaced by estimates.", "small")
+    paragraph(f"Quality review: {len(decisions)} recorded issue decisions" + (f" ({', '.join(actions)})" if actions else "") + ". Each row represents one measurement interval. Excluded rows count distinct intervals removed. Affected rows count intervals flagged for each issue, so one interval can appear under several issues. A decision to keep an interval does not add it to the exclusion count.", "small")
     if decisions:
         decision_rows=[]
         for decision in decisions:
             decision_rows.append([quality_issue_label(decision),
                                   words(decision.get('action')),number(decision.get('affected_rows'),0)])
         table(["Reviewed issue","Decision","Affected rows"],decision_rows,[.58,.22,.2],numeric=(2,))
+    for explanation in quality_count_explanation(cleaning):
+        paragraph(explanation, "small")
+    paragraph("The measurements used for calibration are the intervals remaining after this review, including any flagged intervals that the reviewer explicitly chose to keep. The model uses the weather at those timestamps to predict AC power for each system. Measured and modeled power are integrated over the same valid interval durations and grouped by season. These seasonal energy totals determine the calibration factors in Section 3.2. Gaps contribute no additional hours or energy.")
 
     heading("Modeling and Calibration", "calibration", level=2)
     if appendix.physics_description_supported(job):
         paragraph("The Python PV model uses pvlib to calculate solar position, tracker orientation, irradiance, module temperature and module electrical output. SolarEdge aggregates individual module maximum-power predictions. For Solectria, PVMismatch represents the cell and module current-voltage response, bypass diodes and electrical mismatch; the model combines strings at a common inverter operating point. Recorded conversion efficiencies and operating limits produce AC power.")
-        paragraph("After review of flagged data-quality issues, separate seasonal factors are fitted for each system to reconcile retained measured AC energy with the model. When an operating ceiling is active, fitting accounts for clipping. Annual simulation uses the resolved frozen factors, including any explicitly recorded seasonal substitution, rather than fitting historical weather again.")
+        paragraph("For each system and season, calibration adjusts modeled AC power until its total energy matches the measured energy over the intervals used for calibration. Without a power limit, the factor is measured seasonal energy divided by unadjusted modeled seasonal energy. With an active AC limit, the fitting calculation applies that limit to adjusted power at each interval before summing energy, so clipping is included in the fit. Annual Simulation then applies the saved seasonal factors to historical weather years; those weather years are not used to fit new factors.")
     else:
         paragraph("The saved calibration compares measured energy with the Python model before and after fitting. A reviewed description of the detailed electrical and fitting implementation is unavailable for this historical physics identity; the report retains its saved results without substituting current model details.")
     energy_rows=[]
@@ -504,16 +597,11 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     for label,data,suffix in (("Measured",stats,"_measured_kwh"),("Before fit",stats.get("uncalibrated") or {},"_predicted_kwh"),("After fit",stats,"_predicted_kwh")):
         if all(data.get(prefix+suffix) is not None for _,_,prefix in SYSTEMS):
             energy_series.append({"label":label,"values":[data[prefix+suffix]/1000 for _,_,prefix in SYSTEMS]})
-    chart("bars",{"labels":[label for _,label,_ in SYSTEMS],"series":energy_series,"ylabel":"AC energy (MWh)"},2.1,"Energy covers the retained measured-data intervals at SolarTAC. Agreement after fitting is calibration, not an independent prediction test.",
-          figure_id='calibration-energy', description='compares retained measured energy with model predictions before and after seasonal calibration.')
+    chart("bars",{"labels":[label for _,label,_ in SYSTEMS],"series":energy_series,"ylabel":"AC energy (MWh)"},2.1,"Energy covers the measurement intervals used for calibration at SolarTAC. Agreement after fitting is calibration, not an independent prediction test.",
+          figure_id='calibration-energy', description='compares measured energy over the calibration intervals with model predictions before and after seasonal calibration.')
     seasons=(calibration["result"].get("calibration_factors") or stats.get("calibration_factors") or {}).get("seasons") or []
-    season_rows=[]
-    for season in seasons:
-        season_rows.append([words(season.get("season")).title(),f"{display_date(season.get('first_timestamp'))}\nto {display_date(season.get('last_timestamp'))}",number(season.get("row_count"),0),
-                            *[number((season.get("systems",{}).get(key) or {}).get("factor"),4) for key,_,_ in SYSTEMS]])
-    heading("Fitted calibration factors", "fitted-factors",level=3)
-    table(["Season","Observed coverage","Rows","Solectria\nfactor","SolarEdge\nfactor"],season_rows,[.13,.34,.13,.2,.2],numeric=(2,3,4),keep=len(season_rows)<=4)
-    paragraph("Seasonal date ranges describe observed coverage, not complete seasons. Agreement after fitting demonstrates calibration to these measurements; independent predictive validation requires separate observations.", "small")
+    paragraph("The following seasonal-factor table contains the factors actually used in Annual Simulation. Agreement after fitting demonstrates calibration to the selected measurements; independent predictive validation requires separate observations.", "small")
+    blocks.extend(appendix.applied_calibration_blocks(job))
     for season in seasons:
         try:
             first = datetime.fromisoformat(str(season.get('first_timestamp')).replace('Z','+00:00')).date()
@@ -522,15 +610,12 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         except (ValueError, TypeError):
             continue
         if 0 < span <= 31:
-            paragraph(f"Coverage limitation: {words(season.get('season')).title()} observations span only {span} calendar days ({display_date(season.get('first_timestamp'))} to {display_date(season.get('last_timestamp'))}), with {number(season.get('row_count'),0)} retained rows. Applying this fitted factor to a complete season extrapolates beyond that observed window.","small")
-
-    for block in appendix.applied_calibration_blocks(job):
-        blocks.append({**block, 'level':3} if block['kind']=='heading' else block)
+            paragraph(f"Coverage limitation: {words(season.get('season')).title()} observations span only {span} calendar days ({display_date(season.get('first_timestamp'))} to {display_date(season.get('last_timestamp'))}), with {number(season.get('row_count'),0)} measurement intervals used for calibration. This does not provide full-season measured coverage.","small")
     heading("Annual Simulation", "annual", level=2)
     annual_rows=annual["result"].get("annual_energy_by_year") or []
     eligible=snapshot.get("eligible_paired_energy_rows") or []
     paragraph("The model uses historical MIDC weather from SolarTAC, saved seasonal factors and operating limits to predict annual AC energy. Annual predictions cover full weather years; calibration covers only the measured intervals.")
-    paragraph(f"The frozen source contains {len(eligible)} eligible paired weather years. The table and chart show SolarTAC-scale AC energy; commercial costs and LCOE use the {target_text} scenario.")
+    paragraph(f"The saved source data contains {len(eligible)} eligible paired weather years. The table and chart show SolarTAC-scale AC energy; commercial costs and LCOE use the {target_text} scenario.")
     table(["Weather year","Coverage","Solectria MWh","SolarEdge MWh","Eligible"],[[words(row.get("year")),number(row.get("annual_coverage_pct"),1)+('%' if row.get('annual_coverage_pct') is not None else ''),
           *[number(row[prefix+"_predicted_kwh"]/1000 if row.get(prefix+"_predicted_kwh") is not None else None,1) for _,_,prefix in SYSTEMS],words(row.get("cdf_eligible"))] for row in annual_rows],[.17,.18,.23,.23,.19],numeric=(0,1,2,3),compact=True)
     series=[]
@@ -540,7 +625,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
             series.append({"label":label,"x":[row['year'] for row in available],"values":[row[prefix+'_predicted_kwh']/1000 for row in available]})
     chart("annual",{"series":series,"ylabel":"AC energy (MWh)"},2.05,"Lines connect the recorded weather years for comparison; intervening unselected years have not been simulated.",
           figure_id='annual-energy', description='compares the two systems within each modeled weather year, using the saved seasonal factors and operating limits.')
-    paragraph(energy_comparison("Retained measured intervals",stats.get('sol_measured_kwh'),stats.get('se_measured_kwh')),"small")
+    paragraph(energy_comparison("Measurement intervals used for calibration",stats.get('sol_measured_kwh'),stats.get('se_measured_kwh')),"small")
     if len(eligible)>=5:
         annual_medians = [float(np.quantile([row[prefix+'_predicted_kwh'] for row in eligible],.5,method='linear')) for _,_,prefix in SYSTEMS]
         paragraph(energy_comparison("Predicted annual medians",*annual_medians),"small")
@@ -550,7 +635,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     if energy_diagnostic.get('status') == 'reconciled_current_artifacts':
         reconciliation = energy_diagnostic['reconciliation']
         capacities = frozen_energy.get('capacities') or {}
-        paragraph(f"The same {number(reconciliation['paired_measurement_rows'],0)} retained timestamps contain finite measurements for both systems and match the SHA-verified reviewed source. The review uses one combined exclusion mask. "
+        paragraph(f"The same {number(reconciliation['paired_measurement_rows'],0)} timestamps used for calibration contain finite measurements for both systems and match the SHA-verified reviewed source. The review uses one combined exclusion mask. "
                   f"Installed capacities: Solectria {capacity(capacities.get('solectria'),'dc')}; SolarEdge {capacity(capacities.get('solaredge'),'dc')}. "
                   "Each workbook matches its corresponding saved calibration profile and operating caps.","small")
         profile_validation = energy_diagnostic.get('profile_validation') or {}
@@ -562,7 +647,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         historical_hashes = all(energy_diagnostic['identity'][key].get('historical_bytes_verified') for key in ('annual','calibration'))
         hash_note = ("Both workbook byte hashes match their historical records." if historical_hashes else
                      "Historical byte hashes are unavailable for at least one workbook; current hashes identify this reconstruction.")
-        paragraph("Diagnostic evidence: current calibration and annual workbooks reconcile to the frozen results. " + hash_note +
+        paragraph("Diagnostic evidence: current calibration and annual workbooks reconcile to the saved results. " + hash_note +
                   " Positive differences below mean Solectria produces more energy.","small")
         seasonal = energy_diagnostic['seasonal_rows']
         comparison_rows = [[row['season'].title(),number(row['measured']['difference_kwh']/1000 if row.get('measured') else None,2),
@@ -574,7 +659,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
                                  for key in ('mean_prefit_annual','mean_annual')]])
         table(['Season','Measured gap (MWh)','Mean annual gap before calibration (MWh)','Mean annual gap with applied calibration (MWh)'],
               comparison_rows,[.16,.24,.30,.30],numeric=(1,2,3),keep=True)
-        paragraph("Annual columns average the same eligible full weather years; the measured column covers only retained observations. Applying calibration factors interacts with operating caps, so these columns do not separate independent physical causes. Seasonal means sum to the mean annual gap, not the difference of system medians.","small")
+        paragraph("Annual columns average the same eligible full weather years; the measured column covers only observations used for calibration. Applying calibration factors interacts with operating caps, so these columns do not separate independent physical causes. Seasonal means sum to the mean annual gap, not the difference of system medians.","small")
         sensitivity = energy_diagnostic.get('fall_sensitivity') or {}
         if sensitivity.get('status') == 'available':
             heading("Fall calibration sensitivity (diagnostic only)", "fall-sensitivity", level=3)
@@ -603,10 +688,10 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     else:
         measured_seasons = [row for row in frozen_energy['seasonal_rows'] if row.get('measured')]
         if measured_seasons:
-            table(['Season','Retained measured Solectria − SolarEdge (MWh)'],
+            table(['Season','Measured Solectria − SolarEdge over calibration intervals (MWh)'],
                   [[row['season'].title(),number(row['measured']['difference_kwh']/1000,2)] for row in measured_seasons],[.3,.7],numeric=(1,))
         paragraph("Interval-level seasonal and controlled comparisons are unavailable: " + energy_diagnostic.get('reason','supporting artifacts unavailable') +
-                  " Frozen totals remain valid, but they do not quantify individual factor or cap contributions.","small")
+                  " Saved totals remain valid, but they do not quantify individual factor or cap contributions.","small")
     heading("Annual energy distribution", "annual-distribution", level=3, page='auto')
     interpolation_series = []
     for _, label, prefix in SYSTEMS:
@@ -629,9 +714,14 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     if excluded:
         table(["Excluded weather year","Reason"],[[words((row.get('row') or {}).get('year')),words(row.get('reasons'))] for row in excluded],[.22,.78])
     else:
-        paragraph("No weather years are excluded in the frozen annual source.","small")
+        paragraph("No weather years are excluded in the saved annual source data.","small")
 
     heading("Technoeconomic Analysis", "technoeconomic-analysis", level=2, page='auto')
+    paragraph("The levelized cost of electricity (LCOE) is the discounted cost of building and operating a system divided by its discounted lifetime AC energy. It is calculated separately for each system and each sampled realization:")
+    paragraph("LCOE_j = 1000 × PV_cost,j / PV_energy,j\n"
+              "PV_cost,j = C_j,0 + Σ[t=1 to L] C_j,t / (1 + r)^t\n"
+              "PV_energy,j = Σ[t=1 to L] E_j,1 (1 − g)^(t − 1) / (1 + r)^t", "small")
+    paragraph("Here j identifies the system; C_j,0 is initial investment at year zero; C_j,t is operating and scheduled cost at the end of year t; E_j,1 is first-year AC energy in kWh; L is project life in years; r is the real annual discount rate; and g is annual degradation. Costs use the recorded constant-dollar basis. The factor 1000 converts USD/kWh to USD/MWh. " + ("The Appendix provides the detailed cost, energy and timing equations." if include_technical_appendix else "Year one is undegraded, and future costs and energy are discounted at each year-end."))
     paragraph(f"The {finance.get('project_life_years','recorded')}-year commercial comparison scales each system's annual SolarTAC AC energy by its own applied source capacity to the common {target_text} target. The declared DC capacity provides the cost basis; it does not independently multiply energy.")
     paragraph("Latin Hypercube Sampling draws the uncertain continuous cost, discount-rate and degradation inputs from their recorded distributions. Each realization uses the same selected weather year, discount rate and degradation for both systems; system-specific O&M inputs are sampled independently. Pairing describes the shared inputs, while Latin Hypercube Sampling describes the sampling method.")
     if eligible and request.get('n'):
@@ -740,7 +830,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
                 paragraph(f"Saved criterion: {metric_labels.get(parts[1],words(parts[1]))} {parts[2].upper()} {condition}.","small")
             else:
                 paragraph("Saved criterion: "+words(reason)+".","small")
-    paragraph("Sampling stability does not validate the input assumptions or measured-to-commercial transfer. " + ("P10/P50/P90 stability plots and detailed methods are included in the technical appendix." if include_technical_appendix else "The technical appendix was omitted for this export."),"small")
+    paragraph("Sampling stability does not validate the input assumptions or measured-to-commercial transfer. " + ("P10/P50/P90 stability plots and detailed methods are included in the Appendix." if include_technical_appendix else "The Appendix was omitted for this export."),"small")
 
     heading("Input sensitivity", "sensitivity", level=3)
     paragraph("Larger bars show stronger influence in the saved rank regression. Positive coefficients increase LCOE rank; negative coefficients decrease it. Coefficients are dimensionless associations, not dollar changes or causal effects.","lead")
@@ -760,23 +850,42 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     heading("Key results", "summary-key-results", level=2)
     closing_segments = median_lcoe_comparison_segments(system_results, include_medians=False)
     paragraph(''.join(segment['text'] for segment in closing_segments), 'finding', segments=closing_segments)
-    closing_rows = [[f"Lifecycle LCOE (USD/MWh)\n{target_text} commercial systems",
-                     *[q(system_results.get(key) or {}, scale=1000) for key, _, _ in SYSTEMS]]]
-    if len(eligible)>=5:
-        closing_rows.append(["Predicted annual AC energy (MWh/year)\nSolarTAC site",
-                             *[number(value/1000,1) for value in annual_medians]])
-    table(["Median result and basis", "Solectria", "SolarEdge"], closing_rows, [.56,.22,.22], numeric=(1,2), keep=True)
-    if len(eligible)>=5:
-        paragraph(energy_comparison("Predicted annual medians at SolarTAC",*annual_medians,include_values=False))
-    heading("Interpretation and calibration", "summary-interpretation", level=2)
-    paragraph("Higher energy alone does not establish lower LCOE; the recorded capital, operating and financing assumptions also determine the result.")
-    paragraph("The energy comparison uses the saved seasonal calibration factors. Limited measured coverage can affect transfer to complete seasons, and this TEA does not sample calibration-factor uncertainty.")
+    lcoe_percentile_table()
+    heading("Assumptions", "summary-assumptions", level=2)
+    heading("Financial Assumptions", "financial-assumptions", level=3)
+    technical_inputs = {"Commercial capacity", "Project life / realizations", "Annual degradation"}
+    paragraph(f"Project life: {finance.get('project_life_years', 'Not recorded')} years. Initial investment occurs at year zero; annual and scheduled costs occur at their recorded year-ends.", "bullet")
+    for label, value in inputs:
+        if label not in technical_inputs:
+            paragraph(label + ": " + str(value) + ".", "bullet")
+    paragraph("The analysis includes the saved cost lines. It does not add unrecorded replacement, tax, financing or residual-value cash flows. Cost qualifications remain applicable to the comparison.", "bullet")
+    heading("Technical Assumptions", "technical-assumptions", level=3)
+    paragraph(f"Commercial scale: {target_text}" + (f" with {capacity(shared['dc_capacity_w'], 'dc')} as the cost basis" if shared else "") + ". Energy scales proportionally from each SolarTAC system using the saved capacity basis; the commercial plant is not simulated as a new physical layout.", "bullet")
+    if appendix.physics_description_supported(job):
+        paragraph("PV performance: pvlib calculates solar position, tracker orientation, irradiance and cell temperature using the as-built bay slopes. CEC module calculations supply electrical output. SolarEdge sums ideal module maximum powers; PVMismatch combines the Solectria strings at a common operating point with electrical mismatch and bypass diodes.", "bullet")
+        paragraph("Model limits: uniform conditions within each bay; no rear irradiance contribution despite the bifacial modules; no explicit inter-row shading loss; no optimizer efficiency curve; no SolarEdge inverter hardware clipping. Solectria has a 250 kW hardware cap. The saved efficiency scalars and any selected AC operating limit still apply.", "bullet")
+    else:
+        paragraph("The saved physics identity does not match the reviewed model description. Detailed model assumptions are unavailable for this historical analysis; current model defaults are not assigned to it.", "bullet")
+    annual_request = annual.get('request') or {}
+    annual_stats = (annual.get('result') or {}).get('stats') or {}
+    def annual_setting(key):
+        return annual_stats[key] if key in annual_stats else annual_request.get(key)
+    paragraph("Saved tracker backtracking: " + words(annual_setting('backtrack')) + "; incidence-angle model: " + words(annual_setting('iam_model')) + ".", "bullet")
+    paragraph("Saved inverter / balance-of-system efficiencies: " + "; ".join(
+        label + " " + appendix._percent(annual_setting(key + '_inverter_efficiency')) + "% / " + appendix._percent(annual_setting(key + '_bos_efficiency')) + "%"
+        for key,label,_ in SYSTEMS) + ".", "bullet")
+    enabled, limit = annual_setting('curtailment_enabled'), annual_setting('curtailment_limit_kw')
+    paragraph("Selected AC operating limit: " + (capacity(limit*1000, 'ac') + " per system" if enabled is True and isinstance(limit, (int,float)) else "disabled" if enabled is False else "not recorded") + ".", "bullet")
+    paragraph("Seasonal calibration: Annual Simulation uses the saved applied factors described in Section 3.2, including any recorded spring-to-fall substitution. These factors remain fixed across weather years and realizations. Limited seasonal measurements affect transfer to full seasons; calibration-factor uncertainty is not sampled.", "bullet")
+    paragraph(f"Annual energy distribution: the calibrated model predicts AC power through each historical MIDC weather year, then integrates power to annual energy. The {len(eligible)} eligible paired weather years form an empirical distribution; the analysis does not fit a probability distribution or generate new weather years. Both systems use the same selected year in each realization.", "bullet")
+    paragraph(f"Sampling: {number(request.get('n'),0)} realizations use balanced allocation of the eligible weather years. Latin Hypercube Sampling covers the recorded continuous cost, discount-rate and degradation distributions. The selected weather year's energy is the first-year basis for the entire project life; a new weather year is not drawn for every project year.", "bullet")
+    paragraph("Annual degradation: " + distribution(((request.get('shared_degradation') or {}).get('annual_rate') or {}).get('distribution'),100) + "% per year, shared by both systems. Year one is undegraded, and the sampled rate reduces subsequent years' energy.", "bullet")
     if context.get('limitations'):
         heading("Cost qualifications", "summary-cost-qualifications", level=2)
         paragraph("The comparison retains these cost qualifications: " + words(context['limitations']), 'small')
 
     if include_technical_appendix:
-        heading("Technical Appendix", "technical-appendix", page=True)
+        heading("Appendix", "technical-appendix", page=True)
         blocks.extend(appendix.build_technical_appendix(job))
         heading("LCOE percentile stability", "appendix-convergence", level=2, page='auto')
         paragraph("P10/P50/P90 are recalculated over increasing prefixes of the saved realizations. Final points match the headline table. These are subsets of one experiment, not new simulations.","lead")
@@ -830,5 +939,6 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         table(['Diagnostic source','Current workbook SHA-256'],[
             [label,energy_diagnostic['identity'][key]['sha256']] for key,label in (
                 ('calibration','Calibration workbook'),('annual','Annual workbook'))],mono=(1,))
+    _caption_report_tables(blocks)
     _number_report_blocks(blocks)
     return report

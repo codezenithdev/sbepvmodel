@@ -51,6 +51,9 @@ def paragraph_markup(block):
         if segment.get('figure_ref'):
             target=escape('figure-'+str(segment['figure_ref']),{'"':'&quot;'})
             value=f'<link href="#{target}">{value}</link>'
+        elif segment.get('table_ref'):
+            target=escape('table-'+str(segment['table_ref']),{'"':'&quot;'})
+            value=f'<link href="#{target}">{value}</link>'
         pieces.append(value)
     return ''.join(pieces)
 
@@ -364,10 +367,12 @@ def render_pdf(report):
             heading.report_anchor=block['anchor'];heading.report_level=block['level']
             story.append(heading)
         elif kind=='paragraph':
-            style=styles[block.get('style','body')]
-            if any(segment.get('figure_ref') for segment in block.get('segments',[])):
+            style=styles['body' if block.get('style')=='bullet' else block.get('style','body')]
+            if block.get('style')=='bullet':
+                style=ParagraphStyle('Bullet',parent=style,leftIndent=12,bulletIndent=0)
+            if any(segment.get('figure_ref') or segment.get('table_ref') for segment in block.get('segments',[])):
                 style=ParagraphStyle('FigureReference',parent=style,keepWithNext=True)
-            story.append(Paragraph(paragraph_markup(block),style))
+            story.append(Paragraph(paragraph_markup(block),style,bulletText='\u2022' if block.get('style')=='bullet' else None))
         elif kind=='reference':
             story.append(Paragraph('<link href="'+escape(block['url'],{'"':'&quot;'})+'">'+text(block['text'])+'</link>',styles['small']))
         elif kind=='toc':
@@ -382,7 +387,7 @@ def render_pdf(report):
         elif kind=='chart':
             height=block['height']*CHART_SCALE
             chart=(LifecycleCDF(block['vector'],CONTENT_WIDTH,height-CDF_CAPTION_RECLAIM) if block.get('vector') else
-                   Image(BytesIO(base64.b64decode(block['image'])),width=CONTENT_WIDTH,height=height))
+                   Image(BytesIO(base64.b64decode(block['image'])),width=block.get('width',AUTHORED_WIDTH)*CHART_SCALE,height=height))
             caption=text(block['caption'])
             if block.get('vector'):
                 caption+=' Markers: triangle down P10; circle P50; triangle up P90 (type-7 quantiles).'
@@ -394,6 +399,10 @@ def render_pdf(report):
                 group.insert(0,story.pop())
             story.append(KeepTogether(group))
         elif kind=='table':
+            if block.get('table_id') and block.get('table_number') is not None:
+                anchor=escape('table-'+str(block['table_id']),{'"':'&quot;'})
+                caption=f'<a name="{anchor}"/>Table {block["table_number"]}. '+text(block['caption'])
+                story.append(Paragraph(caption,ParagraphStyle('TableCaption',parent=styles['caption'],keepWithNext=True)))
             numeric_columns=set(block.get('numeric',()))
             emphasis_rows=set(block.get('emphasis_rows',()))
             mono_columns=set(block.get('mono_columns',()))
