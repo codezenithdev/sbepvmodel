@@ -267,6 +267,14 @@ class FullReportTests(unittest.TestCase):
             self.assertNotIn(b'Title,1',xml)
             self.assertIn(b'w:bookmarkStart',xml)
             self.assertIn(b'w:tblHeader',xml)
+            lcoe_tables = []
+            for table in root.findall('.//w:tbl', ns):
+                rows = [[''.join(cell.itertext()) for cell in row.findall('w:tc', ns)]
+                        for row in table.findall('w:tr', ns)]
+                if rows and rows[0][0] == 'LCOE (USD/MWh)':
+                    lcoe_tables.append(rows)
+            self.assertEqual(2, len(lcoe_tables))
+            self.assertEqual(lcoe_tables[0], lcoe_tables[1])
             self.assertIn(b'updateFields',archive.read('word/settings.xml'))
             media={archive.read(name) for name in archive.namelist() if name.startswith('word/media/')}
             for block in report['blocks']:
@@ -277,7 +285,7 @@ class FullReportTests(unittest.TestCase):
                             if '\n' not in str(value):self.assertIn(str(value),''.join(root.itertext()))
 
     def test_appendix_option_keeps_main_results_and_frozen_evidence(self):
-        job,_=completed_fixture()
+        job,calculation=completed_fixture()
         original=deepcopy(job)
         with patch.object(kernel,'run_technoeconomic',side_effect=AssertionError('Report must not rerun calculations')):
             full=pdf.prepare_report(job)
@@ -297,6 +305,19 @@ class FullReportTests(unittest.TestCase):
             self.assertIn(anchor,concise_headings)
         headline=lambda report:next(b for b in report['blocks'] if b['kind']=='table' and b['headers'][0]=='LCOE (USD/MWh)')
         self.assertEqual(headline(full),headline(concise))
+        for document in (full, concise):
+            blocks = document['blocks']
+            lifecycle_start = next(i for i, b in enumerate(blocks) if b.get('anchor') == 'lifecycle-comparison')
+            sensitivity_start = next(i for i, b in enumerate(blocks) if b.get('anchor') == 'sensitivity')
+            tables = [b for b in blocks[lifecycle_start:sensitivity_start]
+                      if b['kind'] == 'table' and b['headers'][0] == 'LCOE (USD/MWh)']
+            self.assertEqual(1, len(tables))
+            self.assertEqual(headline(document), tables[0])
+            for row, metric in zip(tables[0]['rows'], (
+                    kernel.COMMERCIAL_PAIRED_SOLECTRIA_FIELD_LCOE,
+                    kernel.COMMERCIAL_STANDALONE_FIELD_LCOE)):
+                expected = np.quantile(calculation.realization_table[metric], [.1, .5, .9], method='linear') * 1000
+                self.assertEqual([f'{value:,.2f}' for value in expected], row[1:])
         self.assertEqual('LCOE_Comparison_v2.5.1_summary_tea_full_report.pdf',pdf.report_filename(concise,'pdf'))
         self.assertEqual(next(b['vector'] for b in full['blocks'] if b.get('vector')),
                          next(b['vector'] for b in concise['blocks'] if b.get('vector')))

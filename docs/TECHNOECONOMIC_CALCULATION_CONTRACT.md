@@ -2177,7 +2177,7 @@ Optimization in Solar PV Systems" and the subheader is "Evaluation of
 SolarEdge and Solectria PV systems at SolarTAC." The title block carries the
 subheader above the cover rule, and the analysis name, compared capacity and
 timestamps render below it in the muted detail tier. PDF and Word footers
-identify every page using the `current/total` form, including the title page;
+identify every page using the `Page X of Y` form, including the title page;
 the title page omits the footer's analysis name that the cover already states.
 Annual CDF interpolation is for display and does not supply sampled energy values.
 A brief Summary restates saved results and their qualifications before the optional
@@ -2193,6 +2193,12 @@ constants and audit data retain their precision. When all four seasons match at 
 frozen application explicitly records no substitution, one note confirms equality
 instead of repeating the applied-factor table. Missing or differing evidence is
 shown explicitly.
+
+The Executive Summary LCOE percentile table is repeated in the main Analysis
+section's lifecycle comparison. Both occurrences display the same verified saved
+Solectria and SolarEdge P10/P50/P90 values in USD/MWh in PDF and Word, regardless
+of whether the technical appendix is included. This does not recalculate or mutate
+any saved results.
 
 Individual-system LCOE CDFs remain in the main report; the paired-difference CDF
 is omitted from the presentation only. The lifecycle CDF is regenerated from the

@@ -456,8 +456,12 @@ Optimization in Solar PV Systems**, with the subheader **Evaluation of
 SolarEdge and Solectria PV systems at SolarTAC**. The subheader sits with the
 title above the cover rule; the analysis name, compared capacity and timestamps
 follow below it in the muted detail tier. PDF and Word footers show the current
-page and total page count as `current/total`, including the title page. The
+page and total page count as `Page X of Y`, including the title page. The
 title page omits the footer's analysis name because the cover already states it.
+
+The Executive Summary's Solectria/SolarEdge LCOE table is repeated beside the
+lifecycle comparison in the main Analysis section. Both PDF and Word show the same
+saved P10, P50, and P90 values in USD/MWh, with or without the technical appendix.
 
 The technical appendix uses concise equation tables with short meanings,
 units, saved assumptions, and statistical methods. Detailed physics descriptions

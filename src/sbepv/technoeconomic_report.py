@@ -413,6 +413,16 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         raw = (value.get("percentiles") or {}).get(key)
         return number(raw*scale if raw is not None else None, digits)
 
+    def lcoe_percentile_table():
+        rows = []
+        for key,label,_ in SYSTEMS:
+            result = system_results.get(key) or {}
+            # The header already declares USD/MWh; repeating it in every cell only
+            # breaks the numeric alignment readers scan down.
+            rows.append([label,*[q(result,p,1000) if (result.get('percentiles') or {}).get(p) is not None else 'Not available' for p in ("p10","p50","p90")]])
+        table(["LCOE (USD/MWh)","P10","P50 median","P90"],rows,[.37,.21,.21,.21],numeric=(1,2,3),keep=True)
+        paragraph("Lower LCOE means a lower discounted cost per unit of generated AC energy. Cost P10 and P90 bound the middle 80% of the sampled LCOEs. The headline comparison subtracts system medians; it is not the median of paired differences.", "small")
+
     target_w = paired.get("target_capacity_w")
     target_text = capacity(target_w, "ac" if scenario.get("target_rating_basis")=="ac_operating_limit" else "dc")
     system_results = paired.get("systems") or {}
@@ -446,14 +456,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     heading("Results", "summary-results", level=2)
     finding_segments = median_lcoe_comparison_segments(system_results)
     paragraph(''.join(segment['text'] for segment in finding_segments), "finding", segments=finding_segments)
-    rows = []
-    for key,label,_ in SYSTEMS:
-        result = system_results.get(key) or {}
-        # The header already declares USD/MWh; repeating it in every cell only
-        # breaks the numeric alignment readers scan down.
-        rows.append([label,*[q(result,p,1000) if (result.get('percentiles') or {}).get(p) is not None else 'Not available' for p in ("p10","p50","p90")]])
-    table(["LCOE (USD/MWh)","P10","P50 median","P90"],rows,[.37,.21,.21,.21],numeric=(1,2,3),keep=True)
-    paragraph("Lower LCOE means a lower discounted cost per unit of generated AC energy. Cost P10 and P90 bound the middle 80% of the sampled LCOEs. The headline comparison subtracts system medians; it is not the median of paired differences.", "small")
+    lcoe_percentile_table()
     rounding_note = median_rounding_note(system_results)
     if rounding_note:
         paragraph(rounding_note, 'small')
@@ -713,6 +716,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
                'lifecycle-lcoe', f"compares lifecycle LCOE over {finance.get('project_life_years', 'the recorded project life')} years using the verified realizations from this run.")
     else:
         paragraph("The completed-run lifecycle LCOE chart is unavailable.", "small")
+    lcoe_percentile_table()
     summary_rows = []
     for label, suffix, scale in (("Discounted lifecycle cost (USD million)", "LifecycleCost_USD", 1e-6),
                                  ("Discounted lifecycle AC energy (GWh)", "LifecycleEnergy_kWh_AC", 1e-6)):

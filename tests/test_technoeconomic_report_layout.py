@@ -73,8 +73,8 @@ class ReportPaginationTests(unittest.TestCase):
         ])
         self.assertGreaterEqual(len(pages), 2)
         for page_number, page in enumerate(pages, start=1):
-            self.assertIn(f"{page_number}/{len(pages)}", page)
-            self.assertNotIn(f"Page {page_number}", page)
+            self.assertIn(f"Page {page_number} of {len(pages)}", page)
+            self.assertNotIn(f"{page_number}/{len(pages)}", page)
 
     def test_cover_carries_its_subheader_and_names_the_run_once(self):
         data = layout.render_pdf({"title": "Cover title", "subtitle": "Cover subheader",

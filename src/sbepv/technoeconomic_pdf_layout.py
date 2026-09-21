@@ -264,7 +264,7 @@ class PageCountCanvas(pdfcanvas.Canvas):
             self.setFont("ReportSans", 8.5)
             self.setFillColor(MUTED_INK)
             self.drawRightString(PAGE_WIDTH-SIDE_MARGIN, FOOTER_RULE_Y-12,
-                                 f"{page_number}/{total_pages}")
+                                 f"Page {page_number} of {total_pages}")
             pdfcanvas.Canvas.showPage(self)
         pdfcanvas.Canvas.save(self)
 
