@@ -16,6 +16,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import BaseDocTemplate, CondPageBreak, Flowable, Frame, HRFlowable, Image, KeepTogether, PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.platypus.tableofcontents import TableOfContents
 
+from sbepv.technoeconomic_math import equation_markup, equation_plain
+
 
 PAGE_WIDTH, PAGE_HEIGHT = letter
 SIDE_MARGIN = 72
@@ -41,6 +43,8 @@ def text(value):
 
 def paragraph_markup(block):
     """Render shared text emphasis and links to numbered figures."""
+    if block.get('math'):
+        return equation_markup(block['text'])
     if not block.get('segments'):
         return text(block['text'])
     pieces=[]
@@ -174,14 +178,15 @@ def column_widths(block, styles):
     if block.get('widths'):
         return [CONTENT_WIDTH*width for width in block['widths']]
     mono_columns = set(block.get('mono_columns', ()))
+    math_columns = set(block.get('math_columns', ()))
     padding = 12
     demand, floor = [], []
     for index, header in enumerate(headers):
-        monospaced = index in mono_columns
+        monospaced = index in mono_columns or index in math_columns
         body_font = 'ReportMono' if monospaced else 'ReportSans'
         body_size = styles['mono'].fontSize if monospaced else styles['cell'].fontSize
         entries = [(str(header), 'ReportSans-Bold', styles['head'].fontSize)]
-        entries += [(str(row[index]) if index < len(row) else '', body_font, body_size) for row in rows]
+        entries += [((equation_plain(row[index]) if index in math_columns else str(row[index])) if index < len(row) else '', body_font, body_size) for row in rows]
         widest_line = widest_word = 0
         for value, font, size in entries:
             for line in value.split('\n'):
@@ -342,7 +347,9 @@ def render_pdf(report):
     numeric_head=ParagraphStyle('NumericHeaderCell',parent=head,alignment=TA_RIGHT)
     # Equations and hashes are fixed-width content; the authored column alignment
     # in the appendix only holds in a monospaced face.
-    mono=ParagraphStyle('MonoCell',parent=cell,fontName='ReportMono',fontSize=8.6,leading=11.6)
+    # Extra leading keeps stacked subscripts and superscripts in multi-line
+    # equation cells from touching the line above or below.
+    mono=ParagraphStyle('MonoCell',parent=cell,fontName='ReportMono',fontSize=8.6,leading=14)
     mono_head=ParagraphStyle('MonoHeaderCell',parent=head)
     story=[]
     for block in report['blocks']:
@@ -372,6 +379,8 @@ def render_pdf(report):
                 style=ParagraphStyle('Bullet',parent=style,leftIndent=12,bulletIndent=0)
             if any(segment.get('figure_ref') or segment.get('table_ref') for segment in block.get('segments',[])):
                 style=ParagraphStyle('FigureReference',parent=style,keepWithNext=True)
+            if block.get('math'):
+                style=ParagraphStyle('Equation',parent=style,fontName='ReportMono',fontSize=9.2,leading=15.5,spaceBefore=2)
             story.append(Paragraph(paragraph_markup(block),style,bulletText='\u2022' if block.get('style')=='bullet' else None))
         elif kind=='reference':
             story.append(Paragraph('<link href="'+escape(block['url'],{'"':'&quot;'})+'">'+text(block['text'])+'</link>',styles['small']))
@@ -406,14 +415,17 @@ def render_pdf(report):
             numeric_columns=set(block.get('numeric',()))
             emphasis_rows=set(block.get('emphasis_rows',()))
             mono_columns=set(block.get('mono_columns',()))
+            math_columns=set(block.get('math_columns',()))
             def body_style(index,row_index):
                 if row_index in emphasis_rows:
                     return numeric_head if index in numeric_columns else head
-                if index in mono_columns:
+                if index in mono_columns or index in math_columns:
                     return mono
                 return numeric if index in numeric_columns else cell
+            def cell_markup(index,value):
+                return equation_markup(value) if index in math_columns else text(value)
             data=[[Paragraph(text(value),numeric_head if i in numeric_columns else head) for i,value in enumerate(block['headers'])]]
-            data += [[Paragraph(text(value),body_style(i,row_index)) for i,value in enumerate(row)]
+            data += [[Paragraph(cell_markup(i,value),body_style(i,row_index)) for i,value in enumerate(row)]
                      for row_index,row in enumerate(block['rows'])]
             table=ReportTable(data,colWidths=column_widths(block,{'cell':cell,'head':head,'mono':mono}),
                               repeatRows=1,hAlign='LEFT',splitByRow=1,splitInRow=1)

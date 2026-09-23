@@ -5,6 +5,33 @@ import hashlib
 from io import BytesIO
 import re
 
+from sbepv.technoeconomic_math import equation_runs
+
+
+def _add_equation_runs(paragraph, source, *, size=None):
+    """Add monospaced runs to a paragraph, raising/lowering sub/superscripts.
+
+    Newlines inside the equation become explicit line breaks so multi-line
+    equations keep their layout inside a table cell.
+    """
+    from docx.shared import Pt
+    for text, script in equation_runs(source):
+        segments = text.split('\n')
+        for offset, segment in enumerate(segments):
+            if offset:
+                paragraph.add_run().add_break()
+            if not segment:
+                continue
+            run = paragraph.add_run(segment)
+            run.font.name = 'Consolas'
+            if size is not None:
+                run.font.size = Pt(size)
+            if script == 'super':
+                run.font.superscript = True
+            elif script == 'sub':
+                run.font.subscript = True
+    return paragraph
+
 
 def _figure_bookmark(figure_id):
     """Stable Word bookmark names (letter first, no spaces, at most 40 chars)."""
@@ -148,14 +175,17 @@ def render_docx(report):
         elif kind=='paragraph':
             style=block.get('style','body')
             p=document.add_paragraph(style='Subtitle' if style=='subtitle' else 'Normal')
-            for segment in block.get('segments') or [{'text':block['text']}]:
-                if segment.get('figure_ref'):
-                    run=field(p,'REF '+_figure_bookmark(segment['figure_ref'])+' \\h',segment['text'])
-                elif segment.get('table_ref'):
-                    run=field(p,'REF '+_table_bookmark(segment['table_ref'])+' \\h',segment['text'])
-                else:
-                    run=p.add_run(segment['text'])
-                run.bold=bool(segment.get('bold'))
+            if block.get('math'):
+                _add_equation_runs(p,block['text'])
+            else:
+                for segment in block.get('segments') or [{'text':block['text']}]:
+                    if segment.get('figure_ref'):
+                        run=field(p,'REF '+_figure_bookmark(segment['figure_ref'])+' \\h',segment['text'])
+                    elif segment.get('table_ref'):
+                        run=field(p,'REF '+_table_bookmark(segment['table_ref'])+' \\h',segment['text'])
+                    else:
+                        run=p.add_run(segment['text'])
+                    run.bold=bool(segment.get('bold'))
             if any(segment.get('figure_ref') or segment.get('table_ref') for segment in block.get('segments',[])):
                 p.paragraph_format.keep_with_next=True
             if style=='bullet':
@@ -205,6 +235,7 @@ def render_docx(report):
                 p.add_run('. '+block['caption'])
                 p.paragraph_format.keep_with_next=True
             emphasis_rows=set(block.get('emphasis_rows',()))
+            math_columns=set(block.get('math_columns',()))
             table=document.add_table(rows=1,cols=len(block['headers']))
             table.autofit=False
             widths=block.get('widths') or [1/len(block['headers'])]*len(block['headers'])
@@ -215,7 +246,12 @@ def render_docx(report):
                 if all(len(str(value))<700 for value in values):
                     cant_split=OxmlElement('w:cantSplit');row._tr.get_or_add_trPr().append(cant_split)
                 for i,(cell,value) in enumerate(zip(row.cells,values)):
-                    cell.width=Pt(522*widths[i]);cell.text=str(value)
+                    cell.width=Pt(522*widths[i])
+                    if row_index>0 and i in math_columns:
+                        cell.text=''
+                        _add_equation_runs(cell.paragraphs[0],value)
+                    else:
+                        cell.text=str(value)
                     props=cell._tc.get_or_add_tcPr()
                     margins=OxmlElement('w:tcMar')
                     vertical_padding=60 if block.get('compact') else 90
