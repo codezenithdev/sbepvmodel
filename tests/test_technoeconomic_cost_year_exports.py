@@ -93,3 +93,24 @@ class CostYearExportTests(unittest.TestCase):
             self.assertEqual(len(figures), document.count(b'SEQ Figure'))
             self.assertEqual(len(figures), document.count(b'REF fig_'))
             self.assertIn(b'converted from 2026 USD to 2022 USD', document)
+
+    def test_same_year_adjustment_reads_as_no_op_not_a_conversion(self):
+        def transform(payload):
+            base = presets.thursday_assumptions(payload['source_annual_job_id'])
+            base['n'] = payload['n']
+            # Selecting the same 2024 dollar year records a multiplier-1.00
+            # adjustment; the report must not claim a conversion occurred.
+            converted = currency.convert_cost_year(base, 2024)
+            payload.clear()
+            payload.update(converted)
+        job, _ = completed_fixture(transform_payload=transform)
+        report = pdf.prepare_report(job)
+        pdf_bytes, _ = pdf.build_pdf(job, include_technical_appendix=False)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF-'))
+        text = ' '.join(str({key:value for key,value in block.items() if key not in ('image','vector')})
+                        for block in report['blocks'])
+        self.assertIn('No dollar-year conversion was applied', text)
+        self.assertIn('both 2024', text)
+        self.assertIn('This record documents the dollar basis', text)
+        self.assertNotIn('converted from 2024 USD to 2024 USD', text)
+        self.assertNotIn('The conversion changes the dollar basis', text)

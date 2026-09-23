@@ -515,8 +515,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     blocks.append({"kind":"title", "text":report["title"], "subtitle":report["subtitle"]})
     paragraph(report['analysis_name'], 'meta')
     paragraph(f"{target_text} commercial comparison", "meta")
-    paragraph(f"Analysis completed {display_date(job.get('completed_at'),time=True)}\n"
-              f"Generating dashboard version {identity['version']} ({identity['version_source']})", "meta")
+    paragraph(f"Analysis completed {display_date(job.get('completed_at'),time=True)}", "meta")
     blocks.append({"kind":"pagebreak"})
     paragraph("Contents", "toc_title")
     blocks.append({"kind":"toc"})
@@ -728,7 +727,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         quotient, remainder = divmod(request['n'], len(eligible))
         count_text = f"{number(quotient,0)} or {number(quotient+1,0)}" if remainder else number(quotient,0)
         paragraph(f"Weather years are assigned directly with balanced counts: {number(request['n'],0)} realizations divided by {len(eligible)} selected years gives {count_text} uses per year. Both systems retain the energy values from the same year. The selected annual yield supplies first-year energy, and degradation is applied over the project life without selecting a new weather year for each project year.")
-    paragraph("LCOE is discounted lifecycle cost divided by discounted AC energy. Costs include initial investment, annual O&M and only explicitly recorded scheduled costs.")
+    paragraph("The lifecycle cost includes initial investment, annual O&M and only explicitly recorded scheduled costs.")
     costs = metadata.get("summaries",{}).get("paired_commercial_cost_line_summaries") or []
     cost_rows=[]
     for category,label,unit in (("full_initial_capex","Initial investment","USD million"),("full_annual_om","Annual O&M","USD million/year")):
@@ -768,7 +767,10 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         from sbepv import technoeconomic_cost_year
         catalog = technoeconomic_cost_year.get_index_catalog(adjustment['index_snapshot_id'])
         source_year, target_year = adjustment['source_year'], adjustment['target_year']
-        paragraph(f"Cost assumptions were converted from {source_year} USD to {target_year} USD using the U.S. GDP price deflator. Each monetary value and its uncertainty bounds are multiplied by the same index ratio; energy, quantities and real rates are unchanged.", 'small')
+        if source_year == target_year:
+            paragraph(f"No dollar-year conversion was applied: the original and selected dollar years are both {target_year}, so the index ratio is 1.00 and every entered amount is unchanged. The GDP price-deflator record below documents the dollar basis.", 'small')
+        else:
+            paragraph(f"Cost assumptions were converted from {source_year} USD to {target_year} USD using the U.S. GDP price deflator. Each monetary value and its uncertainty bounds are multiplied by the same index ratio; energy, quantities and real rates are unchanged.", 'small')
         table(["Dollar-year conversion", "Saved value"], [
             ["Original dollar year / index", f"{catalog['years'][str(source_year)]['label']} / {number(adjustment['source_index'],3)}"],
             ["Selected dollar year / index", f"{catalog['years'][str(target_year)]['label']} / {number(adjustment['target_index'],3)}"],
@@ -779,7 +781,10 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
             observation = catalog['years'][str(year)]
             if observation['provisional']:
                 paragraph(f"The {year} index is a provisional proxy using {observation['period'].replace('-', ' ')}, the latest quarter in this saved index snapshot. It is not a full-year {year} observation.", 'small')
-        paragraph("The conversion changes the dollar basis; it does not forecast equipment prices or resolve the original cost-source qualifications. Original amounts and the adjustment record are retained with the analysis.", 'small')
+        if source_year == target_year:
+            paragraph("This record documents the dollar basis; it does not forecast equipment prices or resolve the original cost-source qualifications. Original amounts and the adjustment record are retained with the analysis.", 'small')
+        else:
+            paragraph("The conversion changes the dollar basis; it does not forecast equipment prices or resolve the original cost-source qualifications. Original amounts and the adjustment record are retained with the analysis.", 'small')
         blocks.append({'kind':'reference', 'text':'U.S. GDP price deflator: BEA data distributed by FRED',
                        'url':'https://fred.stlouisfed.org/series/GDPDEF'})
     elif assumptions_status == "modified":
