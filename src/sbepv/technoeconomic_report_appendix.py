@@ -207,10 +207,11 @@ def build_technical_appendix(job):
     def paragraph(text):
         blocks.append({"kind": "paragraph", "text": text, "style": "small"})
 
-    def table(headers, rows, widths=None, mono=(), math=()):
+    def table(headers, rows, widths=None, mono=(), math=(), inline_math=()):
         blocks.append({"kind": "table", "headers": headers, "rows": rows,
                        "widths": list(widths) if widths else None, "numeric": [],
                        "mono_columns": list(mono), "math_columns": list(math),
+                       "inline_math_columns": list(inline_math),
                        "keep": False, "compact": True})
 
     def setting(key):
@@ -260,10 +261,10 @@ def build_technical_appendix(job):
                          "Martin-Ruiz: zero outside front incidence; applied once before recalculating CEC power."])
         else:
             rows.append(["IAM selection unavailable", "The saved selection is missing; no default is applied."])
-        table(["Equation", "Meaning and units"], rows, mono=(0,), math=(0,))
+        table(["Equation", "Meaning and units"], rows, mono=(0,), math=(0,), inline_math=(1,))
 
         heading("Electrical power and calibration", "electrical")
-        table(["Equation", "Meaning and units"], mono=(0,), math=(0,), rows=[
+        table(["Equation", "Meaning and units"], mono=(0,), math=(0,), inline_math=(1,), rows=[
             ["I = I_L - I_0 [exp((V + I R_s)/a) - 1]\n    - (V + I R_s)/R_sh",
              "CEC model: I_L = photocurrent; I_0 = saturation current. I[A], V/a[V], R_s/R_sh[ohms]; parameters follow irradiance/temperature."],
             ["P_DC,SE = sum(P_mp,module)",
@@ -317,7 +318,7 @@ def build_technical_appendix(job):
         ["AF = sum(DF_t); CRF = 1/AF",
          "Annualizing both present values preserves LCOE. At r = 0: AF = L; CRF = 1/L."],
     ])
-    table(["Equation", "Meaning and units"], financial_rows, mono=(0,), math=(0,))
+    table(["Equation", "Meaning and units"], financial_rows, mono=(0,), math=(0,), inline_math=(1,))
     if scenario.get("shared_initial_capex"):
         paragraph("Shared CAPEX enters each system once; SolarEdge adds optimizer hardware/installation. Maintenance follows recorded coverage.")
 

@@ -8,11 +8,13 @@ import re
 from sbepv.technoeconomic_math import equation_runs
 
 
-def _add_equation_runs(paragraph, source, *, size=None):
-    """Add monospaced runs to a paragraph, raising/lowering sub/superscripts.
+def _add_equation_runs(paragraph, source, *, size=None, mono=True):
+    """Add runs to a paragraph, raising/lowering sub/superscripts.
 
-    Newlines inside the equation become explicit line breaks so multi-line
-    equations keep their layout inside a table cell.
+    ``mono`` renders displayed equations in a monospaced face; inline variable
+    mentions in prose keep the surrounding body font. Newlines inside the
+    equation become explicit line breaks so multi-line equations keep their
+    layout inside a table cell.
     """
     from docx.shared import Pt
     for text, script in equation_runs(source):
@@ -23,7 +25,8 @@ def _add_equation_runs(paragraph, source, *, size=None):
             if not segment:
                 continue
             run = paragraph.add_run(segment)
-            run.font.name = 'Consolas'
+            if mono:
+                run.font.name = 'Consolas'
             if size is not None:
                 run.font.size = Pt(size)
             if script == 'super':
@@ -177,6 +180,8 @@ def render_docx(report):
             p=document.add_paragraph(style='Subtitle' if style=='subtitle' else 'Normal')
             if block.get('math'):
                 _add_equation_runs(p,block['text'])
+            elif block.get('inline_math'):
+                _add_equation_runs(p,block['text'],mono=False)
             else:
                 for segment in block.get('segments') or [{'text':block['text']}]:
                     if segment.get('figure_ref'):
@@ -236,6 +241,7 @@ def render_docx(report):
                 p.paragraph_format.keep_with_next=True
             emphasis_rows=set(block.get('emphasis_rows',()))
             math_columns=set(block.get('math_columns',()))
+            inline_math_columns=set(block.get('inline_math_columns',()))
             table=document.add_table(rows=1,cols=len(block['headers']))
             table.autofit=False
             widths=block.get('widths') or [1/len(block['headers'])]*len(block['headers'])
@@ -250,6 +256,9 @@ def render_docx(report):
                     if row_index>0 and i in math_columns:
                         cell.text=''
                         _add_equation_runs(cell.paragraphs[0],value)
+                    elif row_index>0 and i in inline_math_columns:
+                        cell.text=''
+                        _add_equation_runs(cell.paragraphs[0],value,mono=False)
                     else:
                         cell.text=str(value)
                     props=cell._tc.get_or_add_tcPr()

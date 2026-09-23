@@ -43,7 +43,7 @@ def text(value):
 
 def paragraph_markup(block):
     """Render shared text emphasis and links to numbered figures."""
-    if block.get('math'):
+    if block.get('math') or block.get('inline_math'):
         return equation_markup(block['text'])
     if not block.get('segments'):
         return text(block['text'])
@@ -179,6 +179,7 @@ def column_widths(block, styles):
         return [CONTENT_WIDTH*width for width in block['widths']]
     mono_columns = set(block.get('mono_columns', ()))
     math_columns = set(block.get('math_columns', ()))
+    typeset_columns = math_columns | set(block.get('inline_math_columns', ()))
     padding = 12
     demand, floor = [], []
     for index, header in enumerate(headers):
@@ -186,7 +187,7 @@ def column_widths(block, styles):
         body_font = 'ReportMono' if monospaced else 'ReportSans'
         body_size = styles['mono'].fontSize if monospaced else styles['cell'].fontSize
         entries = [(str(header), 'ReportSans-Bold', styles['head'].fontSize)]
-        entries += [((equation_plain(row[index]) if index in math_columns else str(row[index])) if index < len(row) else '', body_font, body_size) for row in rows]
+        entries += [((equation_plain(row[index]) if index in typeset_columns else str(row[index])) if index < len(row) else '', body_font, body_size) for row in rows]
         widest_line = widest_word = 0
         for value, font, size in entries:
             for line in value.split('\n'):
@@ -416,6 +417,7 @@ def render_pdf(report):
             emphasis_rows=set(block.get('emphasis_rows',()))
             mono_columns=set(block.get('mono_columns',()))
             math_columns=set(block.get('math_columns',()))
+            typeset_columns=math_columns|set(block.get('inline_math_columns',()))
             def body_style(index,row_index):
                 if row_index in emphasis_rows:
                     return numeric_head if index in numeric_columns else head
@@ -423,7 +425,7 @@ def render_pdf(report):
                     return mono
                 return numeric if index in numeric_columns else cell
             def cell_markup(index,value):
-                return equation_markup(value) if index in math_columns else text(value)
+                return equation_markup(value) if index in typeset_columns else text(value)
             data=[[Paragraph(text(value),numeric_head if i in numeric_columns else head) for i,value in enumerate(block['headers'])]]
             data += [[Paragraph(cell_markup(i,value),body_style(i,row_index)) for i,value in enumerate(row)]
                      for row_index,row in enumerate(block['rows'])]

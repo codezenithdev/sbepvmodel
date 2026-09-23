@@ -74,6 +74,16 @@ class ReportTypesettingTests(unittest.TestCase):
         for block in math_tables:
             self.assertEqual([0], block["math_columns"])
             self.assertEqual("Equation", block["headers"][0])
+            # The adjacent "Meaning and units" prose is typeset inline.
+            self.assertEqual([1], block["inline_math_columns"])
+
+    def test_symbol_definition_prose_is_flagged_for_inline_math(self):
+        inline = [b for b in self.report["blocks"]
+                  if b["kind"] == "paragraph" and b.get("inline_math")]
+        self.assertTrue(inline)
+        self.assertTrue(any("C_j,0 is initial investment" in b["text"] for b in inline))
+        # Inline mentions stay in the body font, so the block is not a display equation.
+        self.assertFalse(any(b.get("math") for b in inline))
 
     def test_both_exports_render_the_typeset_equations(self):
         from sbepv import technoeconomic_pdf as pdf, technoeconomic_docx as word

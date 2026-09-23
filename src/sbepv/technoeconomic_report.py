@@ -460,12 +460,14 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         from sbepv.technoeconomic_report_energy import build_energy_evidence
         energy_evidence = build_energy_evidence(snapshot)
     blocks = []
-    def paragraph(text, style="body", *, segments=None, math=False):
+    def paragraph(text, style="body", *, segments=None, math=False, inline_math=False):
         block = {"kind":"paragraph", "text":text, "style":style}
         if segments is not None:
             block['segments'] = segments
         if math:
             block['math'] = True
+        if inline_math:
+            block['inline_math'] = True
         blocks.append(block)
     def heading(text, anchor, *, page=False, level=1):
         blocks.append({"kind":"heading", "text":text, "anchor":anchor, "page":page, "level":level})
@@ -710,7 +712,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     paragraph("LCOE_j = 1000 × PV_cost,j / PV_energy,j\n"
               "PV_cost,j = C_j,0 + Σ_(t=1)^(L) C_j,t / (1 + r)^t\n"
               "PV_energy,j = Σ_(t=1)^(L) E_j,1 (1 − g)^(t−1) / (1 + r)^t", "small", math=True)
-    paragraph("Here j identifies the system; C_j,0 is initial investment at year zero; C_j,t is operating and scheduled cost at the end of year t; E_j,1 is first-year AC energy in kWh; L is project life in years; r is the real annual discount rate; and g is annual degradation. Costs use the recorded constant-dollar basis. The factor 1000 converts USD/kWh to USD/MWh. " + ("The Appendix provides the detailed cost, energy and timing equations." if include_technical_appendix else "Year one is undegraded, and future costs and energy are discounted at each year-end."))
+    paragraph("Here j identifies the system; C_j,0 is initial investment at year zero; C_j,t is operating and scheduled cost at the end of year t; E_j,1 is first-year AC energy in kWh; L is project life in years; r is the real annual discount rate; and g is annual degradation. Costs use the recorded constant-dollar basis. The factor 1000 converts USD/kWh to USD/MWh. " + ("The Appendix provides the detailed cost, energy and timing equations." if include_technical_appendix else "Year one is undegraded, and future costs and energy are discounted at each year-end."), inline_math=True)
     paragraph(f"The {finance.get('project_life_years','recorded')}-year commercial comparison scales each system's annual SolarTAC AC energy by its own applied source capacity to the common {target_text} target. The declared DC capacity provides the cost basis; it does not independently multiply energy.")
     paragraph("Latin Hypercube Sampling draws the uncertain continuous cost, discount-rate and degradation inputs from their recorded distributions. Each realization uses the same selected weather year, discount rate and degradation for both systems; system-specific O&M inputs are sampled independently. Pairing describes the shared inputs, while Latin Hypercube Sampling describes the sampling method.")
     if eligible and request.get('n'):

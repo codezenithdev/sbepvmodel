@@ -281,13 +281,14 @@ class FullReportTests(unittest.TestCase):
                 if block['kind']=='chart':self.assertIn(base64.b64decode(block['image']),media)
                 elif block['kind']=='table':
                     from sbepv.technoeconomic_math import equation_plain
-                    math_columns=set(block.get('math_columns') or ())
+                    typeset_columns=set(block.get('math_columns') or ())|set(block.get('inline_math_columns') or ())
                     for row in block['rows']:
                         for index,value in enumerate(row):
                             if '\n' in str(value):continue
-                            # Equation cells are typeset into sub/superscript runs,
-                            # so the raise/lower markers are gone from the Word text.
-                            expected=equation_plain(value) if index in math_columns else str(value)
+                            # Equation and inline-variable cells are typeset into
+                            # sub/superscript runs, so the raise/lower markers are
+                            # gone from the Word text.
+                            expected=equation_plain(value) if index in typeset_columns else str(value)
                             self.assertIn(expected,''.join(root.itertext()))
 
     def test_appendix_option_keeps_main_results_and_frozen_evidence(self):
