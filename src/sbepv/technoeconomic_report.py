@@ -460,10 +460,14 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         from sbepv.technoeconomic_report_energy import build_energy_evidence
         energy_evidence = build_energy_evidence(snapshot)
     blocks = []
-    def paragraph(text, style="body", *, segments=None):
+    def paragraph(text, style="body", *, segments=None, math=False, inline_math=False):
         block = {"kind":"paragraph", "text":text, "style":style}
         if segments is not None:
             block['segments'] = segments
+        if math:
+            block['math'] = True
+        if inline_math:
+            block['inline_math'] = True
         blocks.append(block)
     def heading(text, anchor, *, page=False, level=1):
         blocks.append({"kind":"heading", "text":text, "anchor":anchor, "page":page, "level":level})
@@ -515,8 +519,7 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     blocks.append({"kind":"title", "text":report["title"], "subtitle":report["subtitle"]})
     paragraph(report['analysis_name'], 'meta')
     paragraph(f"{target_text} commercial comparison", "meta")
-    paragraph(f"Analysis completed {display_date(job.get('completed_at'),time=True)}\n"
-              f"Generating dashboard version {identity['version']} ({identity['version_source']})", "meta")
+    paragraph(f"Analysis completed {display_date(job.get('completed_at'),time=True)}", "meta")
     blocks.append({"kind":"pagebreak"})
     paragraph("Contents", "toc_title")
     blocks.append({"kind":"toc"})
@@ -587,20 +590,8 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         paragraph("For each system and season, calibration adjusts modeled AC power until its total energy matches the measured energy over the intervals used for calibration. Without a power limit, the factor is measured seasonal energy divided by unadjusted modeled seasonal energy. With an active AC limit, the fitting calculation applies that limit to adjusted power at each interval before summing energy, so clipping is included in the fit. Annual Simulation then applies the saved seasonal factors to historical weather years; those weather years are not used to fit new factors.")
     else:
         paragraph("The saved calibration compares measured energy with the Python model before and after fitting. A reviewed description of the detailed electrical and fitting implementation is unavailable for this historical physics identity; the report retains its saved results without substituting current model details.")
-    energy_rows=[]
-    for _,label,prefix in SYSTEMS:
-        energy_rows.append([label,number(stats.get(prefix+"_measured_kwh",0)/1000 if stats.get(prefix+"_measured_kwh") is not None else None,1),
-                           number((stats.get("uncalibrated") or {}).get(prefix+"_predicted_kwh",0)/1000 if (stats.get("uncalibrated") or {}).get(prefix+"_predicted_kwh") is not None else None,1),
-                           number(stats.get(prefix+"_predicted_kwh",0)/1000 if stats.get(prefix+"_predicted_kwh") is not None else None,1)])
-    table(["SolarTAC energy (MWh)","Measured","Before fit","After fit"],energy_rows,[.37,.21,.21,.21],numeric=(1,2,3),keep=True)
-    energy_series=[]
-    for label,data,suffix in (("Measured",stats,"_measured_kwh"),("Before fit",stats.get("uncalibrated") or {},"_predicted_kwh"),("After fit",stats,"_predicted_kwh")):
-        if all(data.get(prefix+suffix) is not None for _,_,prefix in SYSTEMS):
-            energy_series.append({"label":label,"values":[data[prefix+suffix]/1000 for _,_,prefix in SYSTEMS]})
-    chart("bars",{"labels":[label for _,label,_ in SYSTEMS],"series":energy_series,"ylabel":"AC energy (MWh)"},2.1,"Energy covers the measurement intervals used for calibration at SolarTAC. Agreement after fitting is calibration, not an independent prediction test.",
-          figure_id='calibration-energy', description='compares measured energy over the calibration intervals with model predictions before and after seasonal calibration.')
     seasons=(calibration["result"].get("calibration_factors") or stats.get("calibration_factors") or {}).get("seasons") or []
-    paragraph("The following seasonal-factor table contains the factors actually used in Annual Simulation. Agreement after fitting demonstrates calibration to the selected measurements; independent predictive validation requires separate observations.", "small")
+    paragraph("The seasonal-factor table below contains the factors actually used in Annual Simulation. Fitting reconciles the model to the selected measurements; independent predictive validation requires separate observations.", "small")
     blocks.extend(appendix.applied_calibration_blocks(job))
     for season in seasons:
         try:
@@ -719,16 +710,16 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
     heading("Technoeconomic Analysis", "technoeconomic-analysis", level=2, page='auto')
     paragraph("The levelized cost of electricity (LCOE) is the discounted cost of building and operating a system divided by its discounted lifetime AC energy. It is calculated separately for each system and each sampled realization:")
     paragraph("LCOE_j = 1000 × PV_cost,j / PV_energy,j\n"
-              "PV_cost,j = C_j,0 + Σ[t=1 to L] C_j,t / (1 + r)^t\n"
-              "PV_energy,j = Σ[t=1 to L] E_j,1 (1 − g)^(t − 1) / (1 + r)^t", "small")
-    paragraph("Here j identifies the system; C_j,0 is initial investment at year zero; C_j,t is operating and scheduled cost at the end of year t; E_j,1 is first-year AC energy in kWh; L is project life in years; r is the real annual discount rate; and g is annual degradation. Costs use the recorded constant-dollar basis. The factor 1000 converts USD/kWh to USD/MWh. " + ("The Appendix provides the detailed cost, energy and timing equations." if include_technical_appendix else "Year one is undegraded, and future costs and energy are discounted at each year-end."))
+              "PV_cost,j = C_j,0 + Σ_(t=1)^(L) C_j,t / (1 + r)^t\n"
+              "PV_energy,j = Σ_(t=1)^(L) E_j,1 (1 − g)^(t−1) / (1 + r)^t", "small", math=True)
+    paragraph("Here j identifies the system; C_j,0 is initial investment at year zero; C_j,t is operating and scheduled cost at the end of year t; E_j,1 is first-year AC energy in kWh; L is project life in years; r is the real annual discount rate; and g is annual degradation. Costs use the recorded constant-dollar basis. The factor 1000 converts USD/kWh to USD/MWh. " + ("The Appendix provides the detailed cost, energy and timing equations." if include_technical_appendix else "Year one is undegraded, and future costs and energy are discounted at each year-end."), inline_math=True)
     paragraph(f"The {finance.get('project_life_years','recorded')}-year commercial comparison scales each system's annual SolarTAC AC energy by its own applied source capacity to the common {target_text} target. The declared DC capacity provides the cost basis; it does not independently multiply energy.")
     paragraph("Latin Hypercube Sampling draws the uncertain continuous cost, discount-rate and degradation inputs from their recorded distributions. Each realization uses the same selected weather year, discount rate and degradation for both systems; system-specific O&M inputs are sampled independently. Pairing describes the shared inputs, while Latin Hypercube Sampling describes the sampling method.")
     if eligible and request.get('n'):
         quotient, remainder = divmod(request['n'], len(eligible))
         count_text = f"{number(quotient,0)} or {number(quotient+1,0)}" if remainder else number(quotient,0)
         paragraph(f"Weather years are assigned directly with balanced counts: {number(request['n'],0)} realizations divided by {len(eligible)} selected years gives {count_text} uses per year. Both systems retain the energy values from the same year. The selected annual yield supplies first-year energy, and degradation is applied over the project life without selecting a new weather year for each project year.")
-    paragraph("LCOE is discounted lifecycle cost divided by discounted AC energy. Costs include initial investment, annual O&M and only explicitly recorded scheduled costs.")
+    paragraph("The lifecycle cost includes initial investment, annual O&M and only explicitly recorded scheduled costs.")
     costs = metadata.get("summaries",{}).get("paired_commercial_cost_line_summaries") or []
     cost_rows=[]
     for category,label,unit in (("full_initial_capex","Initial investment","USD million"),("full_annual_om","Annual O&M","USD million/year")):
@@ -768,7 +759,10 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
         from sbepv import technoeconomic_cost_year
         catalog = technoeconomic_cost_year.get_index_catalog(adjustment['index_snapshot_id'])
         source_year, target_year = adjustment['source_year'], adjustment['target_year']
-        paragraph(f"Cost assumptions were converted from {source_year} USD to {target_year} USD using the U.S. GDP price deflator. Each monetary value and its uncertainty bounds are multiplied by the same index ratio; energy, quantities and real rates are unchanged.", 'small')
+        if source_year == target_year:
+            paragraph(f"No dollar-year conversion was applied: the original and selected dollar years are both {target_year}, so the index ratio is 1.00 and every entered amount is unchanged. The GDP price-deflator record below documents the dollar basis.", 'small')
+        else:
+            paragraph(f"Cost assumptions were converted from {source_year} USD to {target_year} USD using the U.S. GDP price deflator. Each monetary value and its uncertainty bounds are multiplied by the same index ratio; energy, quantities and real rates are unchanged.", 'small')
         table(["Dollar-year conversion", "Saved value"], [
             ["Original dollar year / index", f"{catalog['years'][str(source_year)]['label']} / {number(adjustment['source_index'],3)}"],
             ["Selected dollar year / index", f"{catalog['years'][str(target_year)]['label']} / {number(adjustment['target_index'],3)}"],
@@ -779,7 +773,10 @@ def build_report(job, calculation, routine, checks, *, generated_at=None, lifecy
             observation = catalog['years'][str(year)]
             if observation['provisional']:
                 paragraph(f"The {year} index is a provisional proxy using {observation['period'].replace('-', ' ')}, the latest quarter in this saved index snapshot. It is not a full-year {year} observation.", 'small')
-        paragraph("The conversion changes the dollar basis; it does not forecast equipment prices or resolve the original cost-source qualifications. Original amounts and the adjustment record are retained with the analysis.", 'small')
+        if source_year == target_year:
+            paragraph("This record documents the dollar basis; it does not forecast equipment prices or resolve the original cost-source qualifications. Original amounts and the adjustment record are retained with the analysis.", 'small')
+        else:
+            paragraph("The conversion changes the dollar basis; it does not forecast equipment prices or resolve the original cost-source qualifications. Original amounts and the adjustment record are retained with the analysis.", 'small')
         blocks.append({'kind':'reference', 'text':'U.S. GDP price deflator: BEA data distributed by FRED',
                        'url':'https://fred.stlouisfed.org/series/GDPDEF'})
     elif assumptions_status == "modified":
