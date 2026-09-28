@@ -1,6 +1,7 @@
 from io import BytesIO
 from pathlib import Path
 import base64
+import json
 import unittest
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -49,6 +50,55 @@ def fill_toc(root):
             node.text = '1 Executive Summary 2'
 
 
+def toc_with_page_link(root):
+    for paragraph in root.iter(refresh.W + 'p'):
+        style = paragraph.find(refresh.W + 'pPr/' + refresh.W + 'pStyle')
+        if style is not None and style.get(refresh.W + 'val') == 'Heading1':
+            ET.SubElement(paragraph, refresh.W + 'bookmarkStart',
+                          {refresh.W + 'id': '2000', refresh.W + 'name': '__RefHeading_test'})
+            ET.SubElement(paragraph, refresh.W + 'bookmarkEnd', {refresh.W + 'id': '2000'})
+        runs = [run for run in paragraph if run.tag == refresh.W + 'r']
+        if not any('TOC ' in (node.text or '') for node in paragraph.iter(refresh.W + 'instrText')):
+            continue
+        run = runs[0]
+        for child in list(run):
+            if child.tag == refresh.W + 't' or (child.tag == refresh.W + 'fldChar' and child.get(refresh.W + 'fldCharType') == 'end'):
+                run.remove(child)
+        link = ET.SubElement(paragraph, refresh.W + 'hyperlink', {refresh.W + 'anchor': '__RefHeading_test'})
+        for text in ['1 Executive Summary', '2']:
+            ET.SubElement(ET.SubElement(link, refresh.W + 'r'), refresh.W + 't').text = text
+        ET.SubElement(ET.SubElement(paragraph, refresh.W + 'r'), refresh.W + 'fldChar', {refresh.W + 'fldCharType': 'end'})
+
+
+WRITER_NAMESPACES = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+                     'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+                     'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14"')
+# Paragraph shapes LibreOffice Writer saves around report page breaks.
+SEPARATOR = ('<w:p><w:pPr><w:pStyle w:val="Normal"/><w:rPr></w:rPr></w:pPr>'
+             '<w:r><w:rPr></w:rPr></w:r><w:r><w:br w:type="page"/></w:r></w:p>')
+HEADING = ('<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:rPr></w:rPr></w:pPr><w:r><w:br w:type="page"/></w:r>'
+           '<w:bookmarkStart w:id="1" w:name="executive_summary"/><w:r><w:rPr></w:rPr><w:t>Executive Summary</w:t></w:r>'
+           '<w:bookmarkEnd w:id="1"/></w:p>')
+SUBHEADING = ('<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:pageBreakBefore w:val="false"/></w:pPr>'
+              '<w:r><w:br w:type="page"/><w:t>Objectives</w:t></w:r></w:p>')
+TRAILING = '<w:p><w:r><w:t>Saved results remain unchanged.</w:t></w:r><w:r><w:br w:type="page"/></w:r></w:p>'
+CELL = '<w:tbl><w:tr><w:tc><w:p><w:r><w:br w:type="page"/><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+
+
+def writer_docx(body):
+    output = BytesIO()
+    with ZipFile(output, 'w') as archive:
+        archive.writestr('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        archive.writestr('word/document.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                         f'<w:document {WRITER_NAMESPACES}><w:body>{body}<w:sectPr/></w:body></w:document>')
+        archive.writestr('word/styles.xml', f'<w:styles {WRITER_NAMESPACES}/>')
+    return output.getvalue()
+
+
+def page_breaks(paragraph):
+    return [node for node in paragraph.iter(refresh.W + 'br') if node.get(refresh.W + 'type') == 'page']
+
+
 class WordRefreshTests(unittest.TestCase):
     def test_temporary_profile_cleanup_retries_a_transient_windows_lock(self):
         class TemporaryProfile:
@@ -70,29 +120,81 @@ class WordRefreshTests(unittest.TestCase):
 
     def test_cached_contents_pages_must_match_rendered_heading_bookmarks(self):
         raw = document()
-        def toc_with_page_link(root):
-            for paragraph in root.iter(refresh.W + 'p'):
-                style = paragraph.find(refresh.W + 'pPr/' + refresh.W + 'pStyle')
-                if style is not None and style.get(refresh.W + 'val') == 'Heading1':
-                    ET.SubElement(paragraph, refresh.W + 'bookmarkStart',
-                                  {refresh.W + 'id': '2000', refresh.W + 'name': '__RefHeading_test'})
-                    ET.SubElement(paragraph, refresh.W + 'bookmarkEnd', {refresh.W + 'id': '2000'})
-                runs = [run for run in paragraph if run.tag == refresh.W + 'r']
-                if not any('TOC ' in (node.text or '') for node in paragraph.iter(refresh.W + 'instrText')):
-                    continue
-                run = runs[0]
-                for child in list(run):
-                    if child.tag == refresh.W + 't' or (child.tag == refresh.W + 'fldChar' and child.get(refresh.W + 'fldCharType') == 'end'):
-                        run.remove(child)
-                link = ET.SubElement(paragraph, refresh.W + 'hyperlink', {refresh.W + 'anchor': '__RefHeading_test'})
-                for text in ['1 Executive Summary', '2']:
-                    ET.SubElement(ET.SubElement(link, refresh.W + 'r'), refresh.W + 't').text = text
-                ET.SubElement(ET.SubElement(paragraph, refresh.W + 'r'), refresh.W + 'fldChar', {refresh.W + 'fldCharType': 'end'})
         refreshed = edited_xml(raw, toc_with_page_link)
         refresh.validate_refreshed_docx(raw, refreshed)
         refresh.validate_pagination(raw, refreshed, {'bookmark_pages': {'executive_summary': 2}})
         with self.assertRaisesRegex(refresh.DocxRefreshError, 'rendered heading pages'):
             refresh.validate_pagination(raw, refreshed, {'bookmark_pages': {'executive_summary': 3}})
+
+    def test_writer_page_break_at_paragraph_start_becomes_word_page_break_before(self):
+        # Word keeps a numbered paragraph's label before an in-paragraph break, so
+        # Writer's saved form would leave "1" on the contents page.
+        writer = writer_docx(SEPARATOR + HEADING + SUBHEADING + TRAILING + CELL)
+        moved = refresh.move_leading_page_breaks(writer)
+        self.assertEqual(moved, refresh.move_leading_page_breaks(moved))
+        with ZipFile(BytesIO(writer)) as before, ZipFile(BytesIO(moved)) as after:
+            self.assertEqual(before.namelist(), after.namelist())
+            self.assertEqual(['word/document.xml'], [name for name in before.namelist() if before.read(name) != after.read(name)])
+            saved = after.read('word/document.xml')
+        # Word rejects mc:Ignorable prefixes that are no longer declared.
+        self.assertIn(b'xmlns:w14=', saved[:saved.index(b'<w:body>')])
+        self.assertIn(b'mc:Ignorable="w14"', saved[:saved.index(b'<w:body>')])
+        root = ET.fromstring(saved)
+        separator, heading, subheading, trailing = root.find(refresh.W + 'body').findall(refresh.W + 'p')
+        for paragraph, text in ((heading, 'Executive Summary'), (subheading, 'Objectives')):
+            properties = paragraph.find(refresh.W + 'pPr')
+            self.assertEqual([], page_breaks(paragraph))
+            self.assertEqual(text, ''.join(node.text for node in paragraph.iter(refresh.W + 't')))
+            self.assertEqual(refresh.W + 'pageBreakBefore', properties[1].tag)
+            self.assertEqual({}, properties[1].attrib)
+        self.assertEqual('executive_summary', heading.find(refresh.W + 'bookmarkStart').get(refresh.W + 'name'))
+        for paragraph in (separator, trailing, root.find('.//' + refresh.W + 'tc/' + refresh.W + 'p')):
+            self.assertEqual(1, len(page_breaks(paragraph)))
+            self.assertIsNone(paragraph.find(refresh.W + 'pPr/' + refresh.W + 'pageBreakBefore'))
+
+    def test_documents_without_paragraph_start_breaks_are_returned_unchanged(self):
+        for payload in (document(), writer_docx(SEPARATOR + TRAILING + CELL)):
+            self.assertEqual(payload, refresh.move_leading_page_breaks(payload))
+        with self.assertRaisesRegex(refresh.DocxRefreshError, 'valid editable document'):
+            refresh.move_leading_page_breaks(b'not a Word archive')
+
+    def test_refresh_moves_writer_heading_break_before_verifying_the_export(self):
+        raw = document()
+        def writer_heading_break(root):
+            toc_with_page_link(root)
+            for paragraph in root.iter(refresh.W + 'p'):
+                style = paragraph.find(refresh.W + 'pPr/' + refresh.W + 'pStyle')
+                if style is not None and style.get(refresh.W + 'val') == 'Heading1':
+                    run = ET.Element(refresh.W + 'r')
+                    ET.SubElement(run, refresh.W + 'br', {refresh.W + 'type': 'page'})
+                    paragraph.insert(1, run)
+        writer = edited_xml(raw, writer_heading_break)
+
+        class Office:
+            def __init__(self, command, **options):
+                self.pid, self.returncode = 0, 0
+                if Path(command[1]).name == 'technoeconomic_uno_worker.py':
+                    target, pdf, manifest = map(Path, command[4:7])
+                    target.write_bytes(writer)
+                    pdf.write_bytes(b'%PDF-1.7 fixture')
+                    manifest.write_text(json.dumps({'page_count': 1, 'contents_stable': True,
+                                                    'bookmark_pages': {'executive_summary': 2}}))
+
+            def communicate(self, timeout=None):
+                return b'', b''
+
+            def poll(self):
+                return 0
+
+        with patch.object(refresh, 'office_runtime', return_value=('soffice', 'python')), \
+             patch.object(refresh.subprocess, 'Popen', Office):
+            finished = refresh.refresh_docx_fields(raw)
+        with ZipFile(BytesIO(finished)) as archive:
+            root = ET.fromstring(archive.read('word/document.xml'))
+        heading = next(paragraph for paragraph in root.iter(refresh.W + 'p')
+                       if paragraph.find(refresh.W + 'pPr/' + refresh.W + 'pStyle[@' + refresh.W + 'val="Heading1"]') is not None)
+        self.assertEqual([], page_breaks(heading))
+        self.assertEqual({}, heading.find(refresh.W + 'pPr/' + refresh.W + 'pageBreakBefore').attrib)
 
     def test_active_footer_relationships_must_keep_native_page_fields(self):
         raw = document()

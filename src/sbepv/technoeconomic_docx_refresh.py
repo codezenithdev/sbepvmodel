@@ -199,6 +199,81 @@ def validate_refreshed_docx(original, refreshed):
             raise DocxRefreshError('Word references do not match their numbered captions.')
 
 
+def _leading_page_break(paragraph):
+    """Return the run and page break that begin a paragraph, if any."""
+    for child in paragraph:
+        if child.tag in (W + 'pPr', W + 'bookmarkStart', W + 'bookmarkEnd'):
+            continue
+        if child.tag != W + 'r':
+            return None
+        content = [node for node in child if node.tag != W + 'rPr']
+        if not content:
+            continue  # Writer saves empty formatting runs.
+        mark = content[0]
+        return (child, mark) if mark.tag == W + 'br' and mark.get(W + 'type') == 'page' else None
+    return None
+
+
+def _content_after(paragraph, mark):
+    for child in paragraph:
+        if child.tag in (W + 'pPr', W + 'bookmarkStart', W + 'bookmarkEnd'):
+            continue
+        if child.tag != W + 'r' or any(node is not mark and node.tag != W + 'rPr' for node in child):
+            return True
+    return False
+
+
+def move_leading_page_breaks(payload):
+    """Restore Writer's paragraph-start page breaks as Word page-break-before.
+
+    Writer saves "page break before" as a break character inside the paragraph
+    when no earlier paragraph can carry it, as for the first heading after the
+    contents. Word keeps everything before that break, including a heading's
+    number, on the previous page. Break-only paragraphs, breaks after text,
+    table cells and text boxes are left as saved.
+    """
+    from lxml import etree
+    name = 'word/document.xml'
+    try:
+        with ZipFile(BytesIO(payload)) as archive:
+            items = [(item, archive.read(item.filename)) for item in archive.infolist()]
+            document = archive.read(name)
+        parser = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=True)
+        root = etree.fromstring(document, parser)
+    except (BadZipFile, KeyError, etree.XMLSyntaxError) as exc:
+        raise DocxRefreshError('Word export is not a valid editable document.') from exc
+    moved = False
+    for paragraph in list(root.iter(W + 'p')):
+        if any(node.tag in (W + 'tc', W + 'txbxContent') for node in paragraph.iterancestors()):
+            continue
+        leading = _leading_page_break(paragraph)
+        if leading is None or not _content_after(paragraph, leading[1]):
+            continue
+        run, mark = leading
+        run.remove(mark)
+        if all(node.tag == W + 'rPr' for node in run):
+            paragraph.remove(run)
+        properties = paragraph.find(W + 'pPr')
+        if properties is None:
+            properties = etree.SubElement(paragraph, W + 'pPr')
+            paragraph.insert(0, properties)
+        flag = properties.find(W + 'pageBreakBefore')
+        if flag is None:
+            # Schema order: pStyle, keepNext and keepLines precede pageBreakBefore.
+            flag = etree.SubElement(properties, W + 'pageBreakBefore')
+            properties.insert(sum(node.tag in (W + 'pStyle', W + 'keepNext', W + 'keepLines') for node in properties), flag)
+        flag.attrib.pop(W + 'val', None)
+        moved = True
+    if not moved:
+        return payload
+    document = etree.tostring(root.getroottree(), xml_declaration=True, encoding='UTF-8', standalone=True)
+    output = BytesIO()
+    with ZipFile(output, 'w') as target:
+        for item, value in items:
+            target.writestr(item, document if item.filename == name else value)
+    return output.getvalue()
+
+
 def _stop_owned_process(process):
     if process.poll() is not None:
         return
@@ -321,7 +396,7 @@ def refresh_docx_fields(payload, *, qa_pdf_path=None, timeout_seconds=120):
                 raise DocxRefreshError('Word field refresh failed: ' + (detail[-1][:300] if detail else 'LibreOffice UNO worker failed'))
             if not target.is_file() or not pdf.is_file() or not pdf.read_bytes().startswith(b'%PDF-'):
                 raise DocxRefreshError('Word refresh did not produce a verified document and layout.')
-            refreshed = target.read_bytes()
+            refreshed = move_leading_page_breaks(target.read_bytes())
             validate_refreshed_docx(payload, refreshed)
             manifest = json.loads((root / 'layout.json').read_text(encoding='utf-8'))
             if manifest.get('page_count', 0) < 1 or not manifest.get('contents_stable'):

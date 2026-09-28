@@ -600,8 +600,10 @@ optional Appendix content. PDF links/bookmarks use final page numbers. Word uses
 styles, multilevel heading numbering, `SEQ Figure` and `SEQ Table` captions, bookmarked `REF`
 references, and TOC/page fields. Before a Word download, an isolated headless
 LibreOffice process updates the contents, figure/table references and pagination, then
-the exporter verifies the native fields and cached results. The contents remain
-editable and can be refreshed after later edits in Word.
+the exporter verifies the native fields and cached results. A page break that
+LibreOffice saves at the start of a paragraph, such as the first heading after the
+contents, is restored as Word's page-break-before property so the heading number stays
+with its heading. The contents remain editable and can be refreshed after later edits in Word.
 Both share one presentation model, chart data, and values. Dependencies
 are ReportLab 4.4.9 and python-docx 1.2.0; the server does not need Microsoft Word.
 Report text uses dark charcoal, with lighter section headings and selective emphasis
