@@ -451,11 +451,11 @@ table. Failed charts leave tables usable. Technical IDs/versions/hashes remain
 in records/exports. Curves share an axis, with line styles as well as color;
 equal quantile positions are not paired realizations.
 
-Completed TEAs offer **Download PDF report** and the workbook. Dashboard PDF
-downloads always include the technical appendix, including when the browser has
-an older saved preference to omit it. The Word button and appendix checkbox are
-removed. Existing PDF/DOCX API access remains compatible: both export endpoints
-accept `include_technical_appendix=true|false`; requests without the option include it.
+Completed TEAs offer **Download PDF report**, **Download Word report**, and the
+workbook. Both dashboard report downloads always include the technical appendix,
+including when the browser has an older saved preference to omit it. The appendix
+checkbox remains removed. Both PDF/DOCX export endpoints accept
+`include_technical_appendix=true|false`; requests without the option include it.
 The CSV-bundle UI button is removed; sealed CSVs and historical
 API access remain for integrity/compatibility. Read-only, on-demand PDF/DOCX
 generation verifies frozen inputs, calibration/Annual lineage, saved arrays, and

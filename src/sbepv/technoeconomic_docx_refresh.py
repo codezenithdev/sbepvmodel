@@ -4,6 +4,7 @@ This module never changes saved analysis evidence or a user's office profile.
 Only generated temporary documents are opened; output is released after checks.
 """
 from collections import Counter
+from contextlib import contextmanager
 from io import BytesIO
 import json
 import os
@@ -15,6 +16,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile, BadZipFile
 
@@ -224,6 +226,31 @@ def _stop_owned_process(process):
         process.wait(timeout=5)
 
 
+@contextmanager
+def _word_temporary_directory():
+    temporary = tempfile.TemporaryDirectory(prefix='sbepv-word-', ignore_cleanup_errors=True)
+    try:
+        yield temporary.name
+    finally:
+        # On Windows, Writer can briefly keep its isolated profile open after
+        # the UNO worker terminates. Remove report copies before best-effort
+        # profile cleanup so a locked empty registry directory cannot fail an
+        # otherwise verified export or retain report content.
+        root = Path(temporary.name)
+        for name in ('source.docx', 'updated.docx', 'layout.pdf', 'layout.json', 'office.log'):
+            (root / name).unlink(missing_ok=True)
+        for attempt in range(20):
+            try:
+                shutil.rmtree(root)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                if attempt < 19:
+                    time.sleep(.25)
+        temporary.cleanup()
+
+
 def validate_pagination(original, refreshed, manifest):
     """Tie the editable TOC's cached pages to the same rendered heading anchors."""
     before, after = field_inventory(original), field_inventory(refreshed)
@@ -258,7 +285,7 @@ def refresh_docx_fields(payload, *, qa_pdf_path=None, timeout_seconds=120):
     field_inventory(payload)
     soffice, python = office_runtime()
     flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-    with tempfile.TemporaryDirectory(prefix='sbepv-word-') as directory:
+    with _word_temporary_directory() as directory:
         root = Path(directory)
         source, target, pdf = root / 'source.docx', root / 'updated.docx', root / 'layout.pdf'
         source.write_bytes(payload)

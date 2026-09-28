@@ -3235,6 +3235,9 @@
             technoeconomicSetDownload(technoeconomicElements.standalonePdfLink, available && name.valid
                 ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/pdf?include_technical_appendix=true${nameQuery}`
                 : null);
+            technoeconomicSetDownload(technoeconomicElements.standaloneDocxLink, available && name.valid
+                ? `/api/technoeconomic/jobs/${encodeURIComponent(job.job_id)}/exports/docx?include_technical_appendix=true${nameQuery}`
+                : null);
         }
 
         function technoeconomicRenderPairedResult(job, result) {

@@ -2004,13 +2004,13 @@ console.log(JSON.stringify({cleared: true, applyingPreserved: acceptance.checked
         )
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_report_download_is_pdf_with_appendix_and_requires_completed_v5_job(self) -> None:
+    def test_report_downloads_include_pdf_and_word_with_appendix_and_require_completed_v5_job(self) -> None:
         payload = self.run_node(
             r"""
 const assert = require('node:assert/strict');
 const link = () => ({hidden: true, removeAttribute(key) { delete this[key]; }});
 technoeconomicElements = {
-  standalonePdfLink: link(), reportNameOption: {hidden: true},
+  standalonePdfLink: link(), standaloneDocxLink: link(), reportNameOption: {hidden: true},
 };
 const staleKey = 'sbepv.technoeconomic.report-appendix.v1.verified_tea-123';
 globalThis.localStorage = {getItem: key => key === staleKey ? 'false' : null};
@@ -2022,13 +2022,19 @@ technoeconomicRenderReportDownloads(job);
 assert.equal(technoeconomicElements.standalonePdfLink.href,
   '/api/technoeconomic/jobs/verified_tea-123/exports/pdf?include_technical_appendix=true');
 assert.equal(technoeconomicElements.standalonePdfLink.hidden, false);
+assert.equal(technoeconomicElements.standaloneDocxLink.href,
+  '/api/technoeconomic/jobs/verified_tea-123/exports/docx?include_technical_appendix=true');
+assert.equal(technoeconomicElements.standaloneDocxLink.hidden, false);
 assert.equal(technoeconomicElements.reportNameOption.hidden, false);
 technoeconomicRenderReportDownloads(null);
 assert.equal(technoeconomicElements.reportNameOption.hidden, true);
 assert.equal(technoeconomicElements.standalonePdfLink.hidden, true);
+assert.equal(technoeconomicElements.standaloneDocxLink.hidden, true);
 technoeconomicRenderReportDownloads(job);
 assert.equal(technoeconomicElements.standalonePdfLink.href,
   '/api/technoeconomic/jobs/verified_tea-123/exports/pdf?include_technical_appendix=true');
+assert.equal(technoeconomicElements.standaloneDocxLink.href,
+  '/api/technoeconomic/jobs/verified_tea-123/exports/docx?include_technical_appendix=true');
 for (const invalid of [
   {...job, state: 'running'}, {...job, job_id: '../private'},
   {...job, result: {calculation_contract_version: TECHNOECONOMIC_STANDALONE_CONTRACT_VERSION}},
@@ -2036,6 +2042,7 @@ for (const invalid of [
   technoeconomicRenderReportDownloads(invalid);
   assert.equal(technoeconomicElements.reportNameOption.hidden, true);
   assert.equal(technoeconomicElements.standalonePdfLink.href, undefined);
+  assert.equal(technoeconomicElements.standaloneDocxLink.href, undefined);
 }
 console.log(JSON.stringify({passed: true}));
 """
@@ -2043,7 +2050,7 @@ console.log(JSON.stringify({passed: true}));
         self.assertTrue(payload["passed"])
         self.assertNotIn('technoeconomicIncludeTechnicalAppendix', self.markup)
         self.assertNotIn('technoeconomicReportAppendixOption', self.markup)
-        self.assertNotIn('technoeconomicStandaloneDocxLink', self.markup)
+        self.assertIn('id="technoeconomicStandaloneDocxLink"', self.markup)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_assumptions_tabs_preserve_inputs_acceptance_and_support_keyboard_navigation(self) -> None:

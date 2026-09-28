@@ -715,7 +715,7 @@ test('annual CDF interpolation follows selected series and additional complete y
 });
 
 test('TEA v5 interpretation stays below the chart and loaded image charts open in new tabs', async ({page}) => {
-  // This scenario includes two downloads, three viewport screenshots, and
+  // This scenario includes four downloads, three viewport screenshots, and
   // three popup checks; retain its assertions with a bounded interaction budget.
   test.setTimeout(60_000);
   const pageErrors = [];
@@ -725,6 +725,7 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   const plotPath = '/api/technoeconomic/jobs/tea_browser_fixture/artifacts/cdf_plot';
   const plotUrl = `http://dashboard.test${plotPath}`;
   const pdfPath = '/api/technoeconomic/jobs/tea_browser_fixture/exports/pdf';
+  const docxPath = '/api/technoeconomic/jobs/tea_browser_fixture/exports/docx';
   const workbookPath = '/api/technoeconomic/jobs/tea_browser_fixture/exports/xlsx';
   const reportRequests = [];
   const validationUrl = 'http://dashboard.test/outputs/browser-validation.png';
@@ -732,13 +733,15 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   await page.context().route('http://dashboard.test/**', async (route) => {
     const url = route.request().url();
     const parsedUrl = new URL(url);
-    if (parsedUrl.pathname === pdfPath) {
+    if (parsedUrl.pathname === pdfPath || parsedUrl.pathname === docxPath) {
+      const format = parsedUrl.pathname === pdfPath ? 'pdf' : 'docx';
       const name = parsedUrl.searchParams.get('analysis_name');
-      reportRequests.push({format: 'pdf', name,
+      reportRequests.push({format, name,
         appendix: parsedUrl.searchParams.get('include_technical_appendix')});
-      await route.fulfill({status: 200, contentType: 'application/pdf',
-        headers: {'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name + '.pdf')}`},
-        body: Buffer.from('%PDF-1.4\n% synthetic download fixture\n%%EOF\n')});
+      await route.fulfill({status: 200, contentType: format === 'pdf' ? 'application/pdf' :
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        headers: {'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name + '.' + format)}`},
+        body: Buffer.from(format === 'pdf' ? '%PDF-1.4\n% synthetic download fixture\n%%EOF\n' : 'synthetic Word download fixture')});
     } else if (url === plotUrl || url === validationUrl) {
       await route.fulfill({status: 200, contentType: 'image/png', body: Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -767,7 +770,7 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   // Empty placeholders are never advertised as links.
   await expect(page.locator('#technoeconomicStandaloneCdfPlot')).not.toHaveAttribute('data-chart-openable');
   await expect(page.locator('#technoeconomicStandalonePdfLink')).toBeHidden();
-  await expect(page.locator('#technoeconomicStandaloneDocxLink')).toHaveCount(0);
+  await expect(page.locator('#technoeconomicStandaloneDocxLink')).toBeHidden();
   await expect(page.getByRole('checkbox', {name: 'Include technical appendix'})).toHaveCount(0);
   await expect(page.locator('#technoeconomicIncludeTechnicalAppendix')).toHaveCount(0);
   await page.locator('.tea-standalone-cdf-card').screenshot({path: test.info().outputPath('tea-v5-interpretation-below.png')});
@@ -809,6 +812,7 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
   await expect(page.locator('#technoeconomicStandaloneCostPreset'))
     .toContainText('Thursday comparison assumptions (proposed 2024 USD');
   const pdfLink = page.locator('#technoeconomicStandalonePdfLink');
+  const docxLink = page.locator('#technoeconomicStandaloneDocxLink');
   const analysisName = page.getByRole('textbox', {name: 'Analysis name', exact: true});
   await expect(page.locator('#technoeconomicSharedOptimizerCount')).toHaveValue('96000');
   await expect(analysisName).toBeVisible();
@@ -841,6 +845,16 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toBe(name + '.pdf');
     expect(await download.failure()).toBeNull();
+    await expect(docxLink).toBeVisible();
+    const wordUrl = new URL(await docxLink.getAttribute('href'), 'http://dashboard.test');
+    expect(wordUrl.pathname).toBe(docxPath);
+    expect(wordUrl.searchParams.get('analysis_name')).toBe(name);
+    expect(wordUrl.searchParams.get('include_technical_appendix')).toBe('true');
+    const wordDownloadPromise = page.waitForEvent('download');
+    await docxLink.click();
+    const wordDownload = await wordDownloadPromise;
+    expect(wordDownload.suggestedFilename()).toBe(name + '.docx');
+    expect(await wordDownload.failure()).toBeNull();
     await expect(page.locator('#technoeconomicStandaloneAccept')).toBeChecked();
     expect(await page.evaluate(() => ({
       revision: technoeconomicDraftRevision,
@@ -849,15 +863,17 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
       pending: technoeconomicPendingSubmission,
     }))).toEqual(draftBeforeReports);
   }
-  expect(reportRequests).toEqual(reportNames.map(name => ({format: 'pdf', name, appendix: 'true'})));
+  expect(reportRequests).toEqual(reportNames.flatMap(name => [
+    {format: 'pdf', name, appendix: 'true'}, {format: 'docx', name, appendix: 'true'},
+  ]));
   const resultHeader = page.locator('.tea-standalone-result-heading');
   const workbookLink = page.locator('#technoeconomicStandaloneXlsxLink');
   const chartExport = page.locator('#technoeconomicStandaloneCdfLink');
   await expect(workbookLink).toBeVisible();
   await expect(workbookLink).toHaveAttribute('href', workbookPath);
   const checkExportAlignment = async (stacked) => {
-    const [input, pdf, chart, workbook, nameOption, saveStatus] = await Promise.all([
-      analysisName, pdfLink, chartExport, workbookLink,
+    const [input, pdf, word, chart, workbook, nameOption, saveStatus] = await Promise.all([
+      analysisName, pdfLink, docxLink, chartExport, workbookLink,
       page.locator('#technoeconomicReportNameOption'), page.locator('#technoeconomicAnalysisNameSaveStatus'),
     ].map(control => control.boundingBox()));
     expect(Math.abs(chart.y - workbook.y)).toBeLessThanOrEqual(1);
@@ -867,13 +883,16 @@ test('TEA v5 interpretation stays below the chart and loaded image charts open i
     if (stacked) {
       expect(pdf.y).toBeGreaterThanOrEqual(nameOption.y + nameOption.height - 1);
       expect(Math.abs(input.x - pdf.x)).toBeLessThanOrEqual(1);
-      expect(Math.abs(input.width - pdf.width)).toBeLessThanOrEqual(1);
+      expect(pdf.x + pdf.width).toBeLessThanOrEqual(word.x + 1);
+      expect(Math.abs(pdf.y - word.y)).toBeLessThanOrEqual(1);
     } else {
       expect(Math.abs(input.y - pdf.y)).toBeLessThanOrEqual(1);
       expect(Math.abs(input.height - pdf.height)).toBeLessThanOrEqual(1);
       expect(input.x + input.width).toBeLessThanOrEqual(pdf.x);
+      expect(pdf.x + pdf.width).toBeLessThanOrEqual(word.x + 1);
+      expect(Math.abs(pdf.y - word.y)).toBeLessThanOrEqual(1);
     }
-    for (const bounds of [input, pdf, chart, workbook]) {
+    for (const bounds of [input, pdf, word, chart, workbook]) {
       expect(bounds.x).toBeGreaterThanOrEqual(0);
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(page.viewportSize().width);
     }

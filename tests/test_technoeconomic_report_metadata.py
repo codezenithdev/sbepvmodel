@@ -138,7 +138,7 @@ globalThis.localStorage = {
 };
 const link = () => ({hidden: true, removeAttribute(key) { delete this[key]; }});
 technoeconomicElements = {
-  standalonePdfLink: link(), reportNameOption: {},
+  standalonePdfLink: link(), standaloneDocxLink: link(), reportNameOption: {},
   analysisName: {value: '', setCustomValidity(value) { this.error = value; }},
 };
 const job = {job_id: 'tea_one', state: 'done',
@@ -153,6 +153,10 @@ const url = new URL(technoeconomicElements.standalonePdfLink.href, 'https://exam
 assert.equal(url.pathname, '/api/technoeconomic/jobs/tea_one/exports/pdf');
 assert.equal(url.searchParams.get('analysis_name'), 'Spring factors & étude <A>');
 assert.equal(url.searchParams.get('include_technical_appendix'), 'true');
+const wordUrl = new URL(technoeconomicElements.standaloneDocxLink.href, 'https://example.test');
+assert.equal(wordUrl.pathname, '/api/technoeconomic/jobs/tea_one/exports/docx');
+assert.equal(wordUrl.searchParams.get('analysis_name'), 'Spring factors & étude <A>');
+assert.equal(wordUrl.searchParams.get('include_technical_appendix'), 'true');
 assert.equal(technoeconomicElements.analysisName.value, '  Spring factors & étude <A>  ');
 technoeconomicRenderReportDownloads({...job, job_id: 'tea_two'});
 assert.equal(technoeconomicElements.analysisName.value, 'TEA tea_two');
@@ -170,10 +174,12 @@ assert.equal(new URL(technoeconomicElements.standalonePdfLink.href, 'https://exa
 technoeconomicElements.analysisName.value = 'x'.repeat(121);
 technoeconomicRenderReportDownloads(job);
 assert.equal(technoeconomicElements.standalonePdfLink.hidden, true);
+assert.equal(technoeconomicElements.standaloneDocxLink.hidden, true);
 assert.ok(technoeconomicElements.analysisName.error);
 technoeconomicElements.analysisName.value = '\ud800';
 technoeconomicRenderReportDownloads(job);
 assert.equal(technoeconomicElements.standalonePdfLink.hidden, true);
+assert.equal(technoeconomicElements.standaloneDocxLink.hidden, true);
 assert.equal(JSON.stringify(job), original);
 assert.equal([...values.keys()].every((key) => key.startsWith(TECHNOECONOMIC_REPORT_NAME_STORAGE_PREFIX)), true);
 console.log(JSON.stringify({passed: true}));
@@ -197,7 +203,7 @@ globalThis.localStorage = {getItem(key){reads.push(key);return values.get(key)??
 const control=options=>({...options,handlers:{},addEventListener(kind,callback){this.handlers[kind]=callback;}});
 const link=()=>({hidden:true,removeAttribute(key){delete this[key];}});
 technoeconomicElements={
-  standalonePdfLink:link(),reportNameOption:{},analysisNameSaveStatus:{textContent:''},
+  standalonePdfLink:link(),standaloneDocxLink:link(),reportNameOption:{},analysisNameSaveStatus:{textContent:''},
   analysisName:control({value:'',setCustomValidity(value){this.error=value;},reportValidity(){return !this.error;}}),
 };
 const first={job_id:'tea_4313e2de43d8421cbf55e17b49f021de',state:'done',result:{calculation_contract_version:TECHNOECONOMIC_PAIRED_CONTRACT_VERSION}};
@@ -210,12 +216,16 @@ const start=source.indexOf("technoeconomicElements.analysisName?.addEventListene
 const end=source.indexOf("document.getElementById('technoeconomicRestoreApprovedBtn')",start);
 eval(source.slice(start,end));
 const urlFor=(name)=>{
-  const link=technoeconomicElements.standalonePdfLink;
-  assert.equal(link.hidden,false);
-  const url=new URL(link.href,'https://example.test');
-  assert.equal(url.pathname,`/api/technoeconomic/jobs/${technoeconomicJob.job_id}/exports/pdf`);
-  assert.equal(url.searchParams.get('analysis_name'),name);
-  assert.equal(url.searchParams.get('include_technical_appendix'),'true');
+  for (const [format, link] of [
+    ['pdf', technoeconomicElements.standalonePdfLink],
+    ['docx', technoeconomicElements.standaloneDocxLink],
+  ]) {
+    assert.equal(link.hidden,false);
+    const url=new URL(link.href,'https://example.test');
+    assert.equal(url.pathname,`/api/technoeconomic/jobs/${technoeconomicJob.job_id}/exports/${format}`);
+    assert.equal(url.searchParams.get('analysis_name'),name);
+    assert.equal(url.searchParams.get('include_technical_appendix'),'true');
+  }
 };
 technoeconomicJob=first;technoeconomicRenderReportDownloads(first);
 urlFor('TEA '+first.job_id);
@@ -241,6 +251,7 @@ assert.equal(technoeconomicElements.analysisName.value,'Spring calibration appli
 assert.equal(technoeconomicElements.analysisNameSaveStatus.textContent,'Saved in this browser.');
 technoeconomicElements.analysisName.value='invalid\u0000name';technoeconomicElements.analysisName.handlers.input();
 assert.equal(technoeconomicElements.standalonePdfLink.hidden,true);
+assert.equal(technoeconomicElements.standaloneDocxLink.hidden,true);
 assert.equal(technoeconomicElements.analysisNameSaveStatus.textContent,'Enter a valid analysis name to save it and enable downloads.');
 reload();urlFor('Spring calibration applied to fall');
 assert.equal(reads.includes(staleAppendixKey),false);

@@ -254,6 +254,7 @@
             standaloneCdfLink: document.getElementById('technoeconomicStandaloneCdfLink'),
             standaloneXlsxLink: document.getElementById('technoeconomicStandaloneXlsxLink'),
             standalonePdfLink: document.getElementById('technoeconomicStandalonePdfLink'),
+            standaloneDocxLink: document.getElementById('technoeconomicStandaloneDocxLink'),
             reportNameOption: document.getElementById('technoeconomicReportNameOption'),
             analysisName: document.getElementById('technoeconomicAnalysisName'),
             analysisNameSaveStatus: document.getElementById('technoeconomicAnalysisNameSaveStatus'),

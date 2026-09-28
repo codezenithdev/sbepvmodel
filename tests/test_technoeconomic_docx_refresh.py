@@ -50,6 +50,24 @@ def fill_toc(root):
 
 
 class WordRefreshTests(unittest.TestCase):
+    def test_temporary_profile_cleanup_retries_a_transient_windows_lock(self):
+        class TemporaryProfile:
+            name = 'isolated-profile'
+            cleanups = 0
+
+            def cleanup(self):
+                self.cleanups += 1
+
+        profile = TemporaryProfile()
+        with patch.object(refresh.tempfile, 'TemporaryDirectory', return_value=profile), \
+             patch.object(refresh.shutil, 'rmtree', side_effect=[PermissionError('Writer is releasing the profile'), None]) as remove, \
+             patch.object(refresh.time, 'sleep') as sleep:
+            with refresh._word_temporary_directory() as directory:
+                self.assertEqual('isolated-profile', directory)
+        self.assertEqual(2, remove.call_count)
+        self.assertEqual(1, profile.cleanups)
+        sleep.assert_called_once_with(.25)
+
     def test_cached_contents_pages_must_match_rendered_heading_bookmarks(self):
         raw = document()
         def toc_with_page_link(root):

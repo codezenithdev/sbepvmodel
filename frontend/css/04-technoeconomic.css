@@ -2323,7 +2323,12 @@
         }
 
         #technoeconomicStandalonePdfLink {
-            grid-column: 2 / -1;
+            grid-column: 2;
+            grid-row: 2;
+        }
+
+        #technoeconomicStandaloneDocxLink {
+            grid-column: 3;
             grid-row: 2;
         }
 
@@ -3602,7 +3607,12 @@
             }
 
             #technoeconomicStandalonePdfLink {
-                grid-column: 1 / -1;
+                grid-column: 1;
+                grid-row: 3;
+            }
+
+            #technoeconomicStandaloneDocxLink {
+                grid-column: 2;
                 grid-row: 3;
             }
 
