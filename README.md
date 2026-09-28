@@ -13,6 +13,56 @@ This is the consolidated project manual. Development rules remain in
 its versioned addenda. This manual explains those contracts; it does not replace
 them. License and attribution files remain separate wherever supplied.
 
+## Project overview
+
+This repository brings data collection, PV performance modeling, and lifecycle cost analysis into one dashboard. The engineering work connects a scientific calculation pipeline to an API, background jobs, review controls, and downloadable reports.
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat&logo=sqlite&logoColor=white)
+
+### Architecture at a glance
+
+```mermaid
+flowchart TD
+    UI[Dashboard] --> API[FastAPI: authentication and validation]
+    Historian[Bazefield measured data] --> Collection[Data collection and quality review]
+    Collection --> API
+    API --> Jobs[(SQLite jobs, requests, reviews, and baselines)]
+    Jobs --> Worker[Leased background worker]
+    Weather[MIDC SolarTAC weather] --> Worker
+    Worker --> PV[Calibration and annual PV simulation]
+    PV --> Frozen[Frozen completed Annual source]
+    Frozen --> TEA[Isolated TEA v5 calculation]
+    PV --> Reports[Results, provenance, and exports]
+    TEA --> Reports
+    Reports --> UI
+    UI --> Agent[Solar Agent: explanations and proposals]
+    Agent --> Confirm[Validation and required confirmations]
+    Confirm --> API
+```
+
+### A short code tour
+
+| Engineering concern | Start here |
+| --- | --- |
+| Measured data and calibration | [ingest](src/sbepv/ingest/), [calibration.py](src/sbepv/calibration.py) |
+| Request validation and routes | [api/main.py](src/sbepv/api/main.py), [api/schemas.py](src/sbepv/api/schemas.py) |
+| Job recovery and stale-worker protection | [api/job_store.py](src/sbepv/api/job_store.py), [worker/loop.py](src/sbepv/worker/loop.py) |
+| Scientific calculation separated from I/O | [technoeconomic.py](src/sbepv/technoeconomic.py), [calculation contract](docs/TECHNOECONOMIC_CALCULATION_CONTRACT.md) |
+| Assistant proposals and confirmation | [agent](src/sbepv/agent/), [api/proposals.py](src/sbepv/api/proposals.py) |
+| Shared dashboard sources | [frontend](frontend/) |
+
+### Example workflow
+
+Collect an authorized historian interval, review flagged data-quality issues, and compare modeled performance with measured values. A reviewed calibration can inform an annual simulation. A completed, verified Annual source can then support a separate lifecycle cost comparison.
+
+Outputs include charts, tabular exports, and calculation provenance. This is a workflow description, not a sample measurement or a claim about model accuracy. Data access requires the appropriate credentials; the local dashboard can load without running a collection or calculation.
+
+Continue with [local setup](#local-setup), [supported workflows](#supported-workflows), or the detailed manual below.
+
+
 ## Contents
 
 - [Supported workflows](#supported-workflows)
