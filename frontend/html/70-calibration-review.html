@@ -15,6 +15,48 @@
                 <div class="calibration-review-content" id="calibrationReviewContent">
                     <div class="calibration-review-summary" id="calibrationReviewSummary"></div>
                     <div class="calibration-season-list" id="calibrationReviewSeasons" aria-label="Seasons in selected range"></div>
+                    <section class="calibration-weather-replacement" id="calibrationWeatherReplacement" aria-labelledby="calibrationWeatherHeading">
+                        <h4 id="calibrationWeatherHeading">Replace weather values with SolarTAC MIDC</h4>
+                        <p>Optional: replace selected weather values before calibration. Measured power and other weather fields stay unchanged. Preview the replacements, then review any remaining issues below.</p>
+                        <fieldset id="calibrationWeatherOptions">
+                            <legend>Weather fields to replace</legend>
+                            <div class="calibration-weather-fields">
+                                <label><input type="checkbox" id="calibrationWeatherTemperature" value="temp_air"> Ambient temperature (°C)</label>
+                                <label><input type="checkbox" id="calibrationWeatherWind" value="wind_speed"> Wind speed (m/s)</label>
+                            </div>
+                            <label class="calibration-weather-mode" for="calibrationWeatherMode">Replacement scope
+                                <select id="calibrationWeatherMode">
+                                    <option value="flagged">Flagged values only</option>
+                                    <option value="period">Known-bad period</option>
+                                </select>
+                            </label>
+                            <div class="calibration-weather-period" id="calibrationWeatherPeriod" hidden>
+                                <label for="calibrationWeatherFrom">Start (Mountain time)<input type="datetime-local" id="calibrationWeatherFrom" step="60"></label>
+                                <label for="calibrationWeatherTo">End (Mountain time)<input type="datetime-local" id="calibrationWeatherTo" step="60"></label>
+                                <p>Replaces the selected fields throughout this period, including values not automatically flagged. Boundaries must fall within the reviewed timeframe and align with the selected calibration interval.</p>
+                            </div>
+                        </fieldset>
+                        <p class="calibration-weather-source">Source: SolarTAC MIDC station STAC. Source timestamps use fixed MST; period controls and displayed timestamps use Mountain time. Wind speed is measured at 10 m. Missing or invalid MIDC values remain for your review.</p>
+                        <div class="calibration-review-button-row" id="calibrationWeatherActions">
+                            <button class="calibration-secondary-btn" id="calibrationWeatherPreviewBtn" type="button" disabled>Preview MIDC replacements</button>
+                            <button class="calibration-secondary-btn" id="calibrationWeatherDiscardBtn" type="button" hidden>Use original Bazefield data</button>
+                        </div>
+                        <p id="calibrationWeatherStatus" role="status" aria-live="polite">Select a weather field to preview replacements.</p>
+                        <div id="calibrationWeatherEvidence" hidden>
+                            <p id="calibrationWeatherEvidenceNote"></p>
+                            <div class="calibration-row-table-wrap">
+                                <table class="calibration-row-table">
+                                    <caption>Weather replacement evidence</caption>
+                                    <thead><tr><th scope="col">Timestamp (Mountain)</th><th scope="col">Field</th><th scope="col">Original Bazefield</th><th scope="col">MIDC replacement</th><th scope="col">Outcome</th></tr></thead>
+                                    <tbody id="calibrationWeatherRows"></tbody>
+                                </table>
+                            </div>
+                            <div class="calibration-row-actions">
+                                <button class="calibration-row-toggle" id="calibrationWeatherPreviousBtn" type="button" hidden>Previous 50 values</button>
+                                <button class="calibration-row-toggle" id="calibrationWeatherNextBtn" type="button" hidden>Next 50 values</button>
+                            </div>
+                        </div>
+                    </section>
                     <div class="calibration-issue-list" id="calibrationIssueList"></div>
                     <div class="calibration-review-actions" id="calibrationReviewActions">
                         <p id="calibrationReviewActionNote">Recommended decisions are selected by default. Review them before continuing.</p>
@@ -32,7 +74,7 @@
                         <p id="calibrationDecisionGateSummary"></p>
                         <label class="source-decision-acknowledgement" id="sourceDecisionAcknowledgementLabel">
                             <input type="checkbox" id="sourceDecisionAcknowledgement">
-                            <span>I reviewed the flagged rows and confirm the retain/exclude decisions above.</span>
+                            <span>I reviewed the flagged rows, any MIDC weather replacements, and the retain/exclude decisions above.</span>
                         </label>
                         <div class="calibration-review-button-row" id="calibrationDecisionGateActions">
                             <button class="calibration-secondary-btn" id="backToCalibrationDecisionsBtn" type="button">Back to decisions</button>

@@ -1,3 +1,241 @@
+        const calibrationWeatherElements = Object.fromEntries([
+            'Options', 'Temperature', 'Wind', 'Mode', 'Period', 'From', 'To',
+            'Actions', 'PreviewBtn', 'DiscardBtn', 'Status', 'Evidence', 'EvidenceNote',
+            'Rows', 'PreviousBtn', 'NextBtn',
+        ].map((name) => [name, document.getElementById('calibrationWeather' + name)]));
+        let calibrationWeatherAbortController = null;
+        let calibrationWeatherEvidenceOffset = 0;
+        let calibrationWeatherEvidenceTotal = 0;
+
+        function calibrationWeatherSelection() {
+            const fields = [];
+            if (calibrationWeatherElements.Temperature.checked) fields.push('temp_air');
+            if (calibrationWeatherElements.Wind.checked) fields.push('wind_speed');
+            const selection = { fields, mode: calibrationWeatherElements.Mode.value };
+            if (selection.mode === 'period') {
+                const [fromDate = '', fromTime = ''] = calibrationWeatherElements.From.value.split('T');
+                const [toDate = '', toTime = ''] = calibrationWeatherElements.To.value.split('T');
+                Object.assign(selection, { from_date: fromDate, from_time: fromTime, to_date: toDate, to_time: toTime });
+            }
+            return selection;
+        }
+
+        function calibrationWeatherSelectionKey(selection) {
+            return JSON.stringify({
+                fields: [...(selection?.fields || [])].sort(),
+                mode: selection?.mode || 'flagged',
+                ...(selection?.mode === 'period' ? {
+                    from_date: selection.from_date || '', from_time: selection.from_time || '',
+                    to_date: selection.to_date || '', to_time: selection.to_time || '',
+                } : {}),
+            });
+        }
+
+        function calibrationWeatherNeedsPreview() {
+            if (!pendingCalibrationReview || pendingCalibrationReview.applied) return false;
+            const selection = calibrationWeatherSelection();
+            const replacement = pendingCalibrationReview.weather_replacement;
+            if (!replacement) return selection.fields.length > 0;
+            const previewed = pendingCalibrationReview.weather_preview_key || calibrationWeatherSelectionKey({
+                ...replacement.selection, fields: replacement.fields, mode: replacement.mode,
+            });
+            return calibrationWeatherSelectionKey(selection) !== previewed;
+        }
+
+        function calibrationWeatherSummaryText(replacement = pendingCalibrationReview?.weather_replacement) {
+            if (!replacement) return '';
+            if (Number.isInteger(replacement.used_replaced_cells) && Number.isInteger(replacement.excluded_replaced_cells)) {
+                return replacement.used_replaced_cells.toLocaleString() + ' MIDC weather value(s) sent to calibration · ' +
+                    replacement.excluded_replaced_cells.toLocaleString() + ' replacement value(s) excluded by review decisions.';
+            }
+            return Number(replacement.replaced_cells || 0).toLocaleString() + ' weather value(s) replaced with SolarTAC MIDC · ' +
+                Number(replacement.unavailable_cells || 0).toLocaleString() + ' value(s) without a usable replacement.';
+        }
+
+        function updateCalibrationWeatherControls() {
+            if (!pendingCalibrationReview) return;
+            const selection = calibrationWeatherSelection();
+            const busy = !!calibrationWeatherAbortController;
+            const locked = busy || !!pendingCalibrationReview.applied ||
+                calibrationReviewIsExpired(pendingCalibrationReview) || currentRunState?.state === 'applying_review';
+            calibrationWeatherElements.Options.disabled = locked;
+            calibrationWeatherElements.Period.hidden = selection.mode !== 'period';
+            calibrationWeatherElements.Actions.hidden = !!pendingCalibrationReview.applied;
+            calibrationWeatherElements.PreviewBtn.disabled = locked || !selection.fields.length ||
+                (selection.mode === 'period' && (!selection.from_date || !selection.from_time || !selection.to_date || !selection.to_time));
+            calibrationWeatherElements.PreviewBtn.textContent = busy ? 'Loading MIDC evidence...' : 'Preview MIDC replacements';
+            calibrationWeatherElements.DiscardBtn.hidden = !pendingCalibrationReview.weather_replacement && !selection.fields.length;
+            calibrationWeatherElements.DiscardBtn.disabled = locked;
+            calibrationWeatherElements.PreviousBtn.disabled = busy;
+            calibrationWeatherElements.NextBtn.disabled = busy;
+            if (!pendingCalibrationReview.applied) {
+                sourceDecisionAcknowledgement.disabled = busy || currentRunState?.state === 'applying_review';
+                confirmCalibrationReviewBtn.disabled = locked || calibrationWeatherNeedsPreview() || !sourceDecisionAcknowledgement.checked;
+            }
+        }
+
+        function renderCalibrationWeatherEvidence(events, offset = 0, total = 0) {
+            const rows = Array.isArray(events) ? events.slice(0, 50) : [];
+            calibrationWeatherEvidenceOffset = offset;
+            calibrationWeatherEvidenceTotal = Math.max(Number(total) || 0, offset + rows.length);
+            calibrationWeatherElements.Rows.replaceChildren();
+            rows.forEach((event) => {
+                const row = document.createElement('tr');
+                const field = event.field === 'temp_air' ? 'Ambient temperature (°C)' : 'Wind speed (m/s)';
+                const replacement = event.replacement_value;
+                const values = [formatCalibrationReviewTimestamp(event.timestamp), field,
+                    event.original_value == null ? 'Missing' : String(event.original_value),
+                    replacement == null ? 'Unavailable' : String(replacement),
+                    replacement == null ? 'Unchanged — review required' : 'Replaced'];
+                values.forEach((value) => {
+                    const cell = document.createElement('td');
+                    cell.textContent = value;
+                    row.appendChild(cell);
+                });
+                calibrationWeatherElements.Rows.appendChild(row);
+            });
+            calibrationWeatherElements.Evidence.hidden = !pendingCalibrationReview?.weather_replacement;
+            calibrationWeatherElements.EvidenceNote.textContent = rows.length
+                ? 'Showing values ' + (offset + 1).toLocaleString() + '–' + (offset + rows.length).toLocaleString() +
+                    ' of ' + calibrationWeatherEvidenceTotal.toLocaleString() + '. Review remaining issues below before calibration.'
+                : 'No weather values were selected for replacement.';
+            calibrationWeatherElements.PreviousBtn.hidden = offset === 0;
+            calibrationWeatherElements.NextBtn.hidden = offset + rows.length >= calibrationWeatherEvidenceTotal;
+        }
+
+        function renderCalibrationWeatherReplacement() {
+            const replacement = pendingCalibrationReview?.weather_replacement;
+            const config = getCanonicalCurrentConfig('validation');
+            const draft = pendingCalibrationReview?.weather_replacement_ui?.draft || {
+                ...(replacement?.selection || {}), fields: replacement?.fields || [], mode: replacement?.mode || 'flagged',
+            };
+            calibrationWeatherElements.Temperature.checked = (draft.fields || []).includes('temp_air');
+            calibrationWeatherElements.Wind.checked = (draft.fields || []).includes('wind_speed');
+            calibrationWeatherElements.Mode.value = draft.mode || 'flagged';
+            calibrationWeatherElements.From.value = (draft.from_date || config.from_date || '') + 'T' + (draft.from_time || config.from_time || '00:00');
+            calibrationWeatherElements.To.value = (draft.to_date || config.to_date || '') + 'T' + (draft.to_time || config.to_time || '00:00');
+            calibrationWeatherElements.Status.dataset.error = 'false';
+            const warnings = Array.isArray(replacement?.source_warnings) ? replacement.source_warnings.join(' ') : '';
+            calibrationWeatherElements.Status.textContent = replacement
+                ? calibrationWeatherSummaryText(replacement) + (warnings ? ' ' + warnings : '')
+                : 'Select a weather field to preview replacements.';
+            if (calibrationWeatherNeedsPreview()) {
+                calibrationWeatherElements.Status.textContent = 'Selection changed. Preview these replacements or use original Bazefield data before calibration.';
+            }
+            renderCalibrationWeatherEvidence(replacement?.events, 0, replacement?.total_events ?? replacement?.selected_cells);
+            updateCalibrationWeatherControls();
+        }
+
+        function changeCalibrationWeatherSelection() {
+            if (!pendingCalibrationReview || pendingCalibrationReview.applied) return;
+            pendingCalibrationReview.weather_replacement_ui = { draft: calibrationWeatherSelection() };
+            closeCalibrationDecisionGate();
+            calibrationWeatherElements.Status.dataset.error = 'false';
+            calibrationWeatherElements.Status.textContent = calibrationWeatherNeedsPreview()
+                ? 'Selection changed. Preview these replacements or use original Bazefield data before calibration.'
+                : calibrationWeatherSummaryText() || 'Select a weather field to preview replacements.';
+            updateCalibrationWeatherControls();
+            updateCalibrationReviewActionState();
+            saveDashboardState();
+        }
+
+        async function previewCalibrationWeatherReplacement() {
+            if (!pendingCalibrationReview || pendingCalibrationReview.applied || calibrationWeatherAbortController) return;
+            const selection = calibrationWeatherSelection();
+            if (!selection.fields.length || calibrationReviewIsExpired(pendingCalibrationReview)) return;
+            if (selection.mode === 'period' && (!selection.from_date || !selection.to_date ||
+                !selection.from_time || !selection.to_time || calibrationWeatherElements.From.value >= calibrationWeatherElements.To.value)) {
+                calibrationWeatherElements.Status.textContent = 'Choose a valid known-bad period with the end after the start.';
+                calibrationWeatherElements.Status.dataset.error = 'true';
+                return;
+            }
+            const original = pendingCalibrationReview.weather_original_review || {
+                ...pendingCalibrationReview, weather_replacement_ui: undefined,
+            };
+            const originId = pendingCalibrationReview.weather_replacement?.original_review_id || original.review_id;
+            const workflowRevision = calibrationWorkflowRevision;
+            const controller = new AbortController();
+            calibrationWeatherAbortController = controller;
+            const timeout = setTimeout(() => controller.abort(), 120000);
+            closeCalibrationDecisionGate();
+            updateCalibrationWeatherControls();
+            updateCalibrationReviewActionState();
+            calibrationWeatherElements.Status.dataset.error = 'false';
+            calibrationWeatherElements.Status.textContent = 'Retrieving SolarTAC MIDC values and checking interval coverage...';
+            try {
+                const response = await fetch('/api/calibration-reviews/' + encodeURIComponent(originId) + '/weather-preview', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(selection), signal: controller.signal,
+                });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : 'MIDC replacement preview could not be prepared.');
+                if (controller.signal.aborted || workflowRevision !== calibrationWorkflowRevision) return;
+                if (!payload.review_id || !payload.report || !payload.weather_replacement) throw new Error('The MIDC preview response is incomplete. Try again.');
+                calibrationWeatherAbortController = null;
+                renderCalibrationReview({
+                    ...payload, weather_original_review: original,
+                    weather_replacement_ui: { draft: selection },
+                    weather_preview_key: calibrationWeatherSelectionKey(selection),
+                }, { focusPanel: false });
+            } catch (error) {
+                if (workflowRevision !== calibrationWorkflowRevision || !pendingCalibrationReview) return;
+                calibrationWeatherElements.Status.dataset.error = 'true';
+                calibrationWeatherElements.Status.textContent = error?.name === 'AbortError'
+                    ? 'MIDC preview timed out. Your review is unchanged; retry or use original Bazefield data.'
+                    : error.message || 'MIDC preview failed. Your review is unchanged.';
+            } finally {
+                clearTimeout(timeout);
+                if (calibrationWeatherAbortController === controller) calibrationWeatherAbortController = null;
+                updateCalibrationWeatherControls();
+                updateCalibrationReviewActionState();
+            }
+        }
+
+        async function loadCalibrationWeatherEvidence(offset) {
+            if (!pendingCalibrationReview?.weather_replacement || calibrationWeatherAbortController) return;
+            const reviewId = pendingCalibrationReview.review_id;
+            const controller = new AbortController();
+            calibrationWeatherAbortController = controller;
+            const timeout = setTimeout(() => controller.abort(), 30000);
+            updateCalibrationWeatherControls();
+            updateCalibrationReviewActionState();
+            try {
+                const response = await fetch('/api/calibration-reviews/' + encodeURIComponent(reviewId) +
+                    '/weather-preview?offset=' + offset + '&limit=50', { signal: controller.signal });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Weather evidence could not be loaded.');
+                if (controller.signal.aborted || pendingCalibrationReview?.review_id !== reviewId) return;
+                renderCalibrationWeatherEvidence(payload.events, offset, payload.total_events ?? calibrationWeatherEvidenceTotal);
+            } catch (error) {
+                if (pendingCalibrationReview?.review_id !== reviewId) return;
+                calibrationWeatherElements.Status.dataset.error = 'true';
+                calibrationWeatherElements.Status.textContent = error?.name === 'AbortError' ? 'Weather evidence timed out. Try again.' : error.message;
+            } finally {
+                clearTimeout(timeout);
+                if (calibrationWeatherAbortController === controller) calibrationWeatherAbortController = null;
+                updateCalibrationWeatherControls();
+                updateCalibrationReviewActionState();
+            }
+        }
+
+        function discardCalibrationWeatherReplacement() {
+            if (!pendingCalibrationReview || pendingCalibrationReview.applied || calibrationWeatherAbortController) return;
+            const original = pendingCalibrationReview.weather_original_review;
+            if (pendingCalibrationReview.weather_replacement && !original) {
+                showError('The original review is unavailable in this session. Change configuration to start a new review.');
+                return;
+            }
+            renderCalibrationReview({ ...(original || pendingCalibrationReview), weather_replacement_ui: undefined }, { focusPanel: false });
+        }
+
+        ['Temperature', 'Wind', 'Mode', 'From', 'To'].forEach((name) => {
+            calibrationWeatherElements[name].addEventListener('change', changeCalibrationWeatherSelection);
+        });
+        calibrationWeatherElements.PreviewBtn.addEventListener('click', previewCalibrationWeatherReplacement);
+        calibrationWeatherElements.DiscardBtn.addEventListener('click', discardCalibrationWeatherReplacement);
+        calibrationWeatherElements.PreviousBtn.addEventListener('click', () => loadCalibrationWeatherEvidence(Math.max(0, calibrationWeatherEvidenceOffset - 50)));
+        calibrationWeatherElements.NextBtn.addEventListener('click', () => loadCalibrationWeatherEvidence(calibrationWeatherEvidenceOffset + 50));
+
         function reviewStat(label, value) {
             const card = document.createElement('div');
             card.className = 'calibration-review-stat';
@@ -404,13 +642,20 @@
                     select.className = 'calibration-decision-select';
                     select.dataset.issueId = issueId;
                     select.setAttribute('aria-label', 'Decision for ' + issueTitle);
+                    if (issue.requires_explicit_decision) {
+                        const placeholder = document.createElement('option');
+                        placeholder.value = '';
+                        placeholder.textContent = 'Choose how to handle unavailable MIDC values';
+                        placeholder.selected = !actions.includes(savedDecision);
+                        select.appendChild(placeholder);
+                    }
                     actions.forEach((action) => {
                         const option = document.createElement('option');
                         option.value = String(action);
                         option.textContent = action === 'exclude'
                             ? 'Exclude affected rows'
                             : 'Retain affected rows';
-                        option.selected = action === selectedDecision;
+                        option.selected = action === (issue.requires_explicit_decision ? savedDecision : selectedDecision);
                         select.appendChild(option);
                     });
                     pendingCalibrationReview.decisions[issueId] = select.value;
@@ -442,6 +687,7 @@
 
             const expired = calibrationReviewIsExpired(pendingCalibrationReview);
             const applied = !!pendingCalibrationReview.applied;
+            renderCalibrationWeatherReplacement();
             calibrationReviewActions.hidden = applied;
             cancelCalibrationReviewBtn.hidden = applied;
             applyCalibrationReviewBtn.hidden = applied;
@@ -497,6 +743,10 @@
         }
 
         function abortCalibrationReviewRequests() {
+            if (calibrationWeatherAbortController) {
+                calibrationWeatherAbortController.abort();
+                calibrationWeatherAbortController = null;
+            }
             if (calibrationReviewAbortController) {
                 calibrationReviewAbortController.abort();
                 calibrationReviewAbortController = null;
@@ -540,21 +790,31 @@
             if (!pendingCalibrationReview || pendingCalibrationReview.applied) return;
             const summary = pendingCalibrationReview?.report?.summary || {};
             const expired = calibrationReviewIsExpired(pendingCalibrationReview);
-            const blocked = !!summary.blocking || expired;
+            const weatherPending = !!calibrationWeatherAbortController || calibrationWeatherNeedsPreview();
+            const decisionsPending = Array.from(calibrationIssueList.querySelectorAll('.calibration-decision-select')).some((select) => !select.value);
+            const blocked = !!summary.blocking || expired || weatherPending || decisionsPending;
             const expiresText = calibrationReviewExpiryText(pendingCalibrationReview);
             applyCalibrationReviewBtn.disabled = blocked;
             applyCalibrationReviewBtn.textContent = expired
                 ? 'Review expired'
-                : summary.blocking
-                    ? 'Calibration blocked'
-                    : 'Apply decisions & calibrate';
+                : weatherPending
+                    ? 'Preview weather selection first'
+                    : decisionsPending
+                        ? 'Review unresolved weather values'
+                        : summary.blocking
+                            ? 'Calibration blocked'
+                            : 'Apply decisions & calibrate';
             calibrationReviewActionNote.textContent = expired
                 ? 'This private review snapshot expired. Start a new review before calibrating.'
-                : summary.blocking
-                    ? 'A critical source issue prevents calibration. Change the date range or repair the Bazefield export.'
-                    : summary.actionable_issue_count
-                        ? 'Recommended decisions are selected by default. Open the affected rows, change any choice, then continue.'
-                        : 'No retain/exclude choices are needed. Continue to apply any required cleanup and calculate seasonal factors.';
+                : weatherPending
+                    ? 'Finish the MIDC preview or use original Bazefield data before confirming calibration.'
+                    : decisionsPending
+                        ? 'Choose retain or exclude for each issue with unavailable MIDC replacement values.'
+                        : summary.blocking
+                            ? 'A critical source issue prevents calibration. Preview weather replacements if applicable, or change the date range.'
+                            : summary.actionable_issue_count
+                                ? 'Recommended decisions are selected by default. Open the affected rows, change any choice, then continue.'
+                                : 'No retain/exclude choices are needed. Continue to apply any required cleanup and calculate seasonal factors.';
             if (!expired && expiresText) {
                 calibrationReviewActionNote.textContent += ' Review expires ' + expiresText + '.';
             }
@@ -604,6 +864,14 @@
                 cancelCalibrationReview({ focusRunButton: true });
                 return;
             }
+            if (calibrationWeatherAbortController || calibrationWeatherNeedsPreview()) {
+                showError('Preview the selected MIDC replacements or use original Bazefield data before calibrating.');
+                return;
+            }
+            if (Array.from(calibrationIssueList.querySelectorAll('.calibration-decision-select')).some((select) => !select.value)) {
+                showError('Choose retain or exclude for every unresolved weather issue before calibrating.');
+                return;
+            }
             const summary = pendingCalibrationReview?.report?.summary || {};
             if (summary.blocking) {
                 showError('A critical source issue blocks calibration.');
@@ -618,6 +886,7 @@
                 breakdown.retainedIssues.toLocaleString() + ' issue decision(s) retain affected rows · ' +
                 breakdown.excludedIssues.toLocaleString() + ' issue decision(s) exclude affected rows · ' +
                 breakdown.requiredExclusions.toLocaleString() + ' required exclusion(s). ' +
+                (pendingCalibrationReview.weather_replacement ? calibrationWeatherSummaryText() + ' ' : '') +
                 'Confirm before the reviewed snapshot is queued for meteorological-season calibration.';
             sourceDecisionAcknowledgementLabel.hidden = false;
             calibrationDecisionGateActions.hidden = false;
@@ -641,6 +910,8 @@
                 excludedRows.toLocaleString() + ' source row(s) excluded · ' +
                 finalRows.toLocaleString() + ' reviewed row(s) sent to the model · ' +
                 breakdown.retainedIssues.toLocaleString() + ' retained issue decision(s). ' +
+                (quality.weather_replacement || receipt?.weather_replacement
+                    ? calibrationWeatherSummaryText(quality.weather_replacement || receipt.weather_replacement) + ' ' : '') +
                 (receipt?.job_id ? 'Calibration job ' + String(receipt.job_id) + ' is bound to this decision receipt.' : 'This decision receipt is bound to the reviewed calibration run.');
             sourceDecisionAcknowledgementLabel.hidden = true;
             calibrationDecisionGateActions.hidden = true;

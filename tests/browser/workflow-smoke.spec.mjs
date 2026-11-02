@@ -8,6 +8,197 @@ const FRONTEND_ROOT = join(PROJECT_ROOT, 'frontend');
 const COLLECTION_ID = 'collect_0123456789abcdef01234567';
 const SOURCE_ID = 'annual-browser-smoke';
 
+function calibrationWeatherMocks() {
+  const previousFetch = window.fetch;
+  const originalId = 'a'.repeat(32);
+  const childId = 'b'.repeat(32);
+  const events = Array.from({length: 51}, (_, index) => ({
+    timestamp: new Date(Date.UTC(2026, 7, 1, 18, index)).toISOString(),
+    field: 'temp_air', original_value: null, replacement_value: index === 50 ? null : 24 + index / 10,
+  }));
+  window.weatherFixtureOriginal = {
+    review_id: originalId, state: 'blocked', expires_at: new Date(Date.now() + 3600000).toISOString(),
+    report: {source: {row_count: 51}, summary: {blocking: true, issue_count: 1}, seasons: [], issues: [
+      {id: 'missing.temp_air', title: 'Missing ambient temperature', row_count: 51, allowed_actions: []},
+    ]},
+  };
+  window.weatherRequests = [];
+  window.weatherPreviewHold = false;
+  window.weatherPreviewFail = false;
+  window.fetch = (input, init = {}) => {
+    const url = new URL(String(input), location.origin);
+    if (!url.pathname.includes('/calibration-reviews/') && !url.pathname.startsWith('/api/status/weather-test')) return previousFetch(input, init);
+    const method = init.method || 'GET';
+    const body = init.body ? JSON.parse(init.body) : null;
+    window.weatherRequests.push({path: url.pathname, search: url.search, method, body});
+    const json = (value, status = 200) => Promise.resolve(new Response(JSON.stringify(value), {
+      status, headers: {'Content-Type': 'application/json'},
+    }));
+    if (url.pathname.endsWith('/weather-preview') && method === 'POST') {
+      const result = () => window.weatherPreviewFail
+        ? json({detail: 'Synthetic MIDC availability failure'}, 502)
+        : json({
+          ...window.weatherFixtureOriginal, review_id: childId, state: 'review_required',
+          report: {source: {row_count: 51}, summary: {blocking: false, issue_count: 2, actionable_issue_count: 2}, seasons: [], issues: [
+            {id: 'weather.unavailable.temp_air', title: 'MIDC temperature unavailable', row_count: 1,
+              allowed_actions: ['retain', 'exclude'], recommended_action: 'exclude', requires_explicit_decision: true},
+            {id: 'power.suspect', title: 'Suspect measured power on a different row', row_count: 1,
+              allowed_actions: ['retain', 'exclude'], recommended_action: 'exclude'},
+          ]},
+          weather_replacement: {original_review_id: originalId, fields: body.fields, mode: body.mode,
+            selection: body, replaced_cells: 50, unavailable_cells: 1, selected_cells: 51, total_events: 51,
+            events: events.slice(0, 50), source_warnings: []},
+        });
+      if (window.weatherPreviewHold) return new Promise((resolve, reject) => {
+        window.releaseWeatherPreview = () => resolve(result());
+        init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {once: true});
+      });
+      return result();
+    }
+    if (url.pathname.endsWith('/weather-preview')) {
+      const offset = Number(url.searchParams.get('offset') || 0);
+      return json({events: events.slice(offset, offset + 50), total_events: events.length});
+    }
+    if (url.pathname.endsWith('/run')) return json({job_id: 'weather-test-job', state: 'queued', data_quality: {
+      cleaning: {excluded_rows: 2, final_rows: 49},
+      weather_replacement: {replaced_cells: 50, used_replaced_cells: 49, excluded_replaced_cells: 1},
+    }});
+    return json({state: 'running', progress: 25, stage: 'Synthetic calibration running', mode: 'validation'});
+  };
+}
+
+async function openWeatherReview(page) {
+  await page.addInitScript(browserMocks);
+  await page.addInitScript(calibrationWeatherMocks);
+  const html = assembledDashboard();
+  await page.route('**/*', route => {
+    if (new URL(route.request().url()).pathname === '/annual-warning.png') return route.fulfill({
+      status: 200, contentType: 'image/png', body: readFileSync(join(PROJECT_ROOT, 'public', 'annual-warning.png')),
+    });
+    return route.fulfill({
+      status: route.request().url() === 'http://dashboard.test/' ? 200 : 404,
+      contentType: 'text/html', body: route.request().url() === 'http://dashboard.test/' ? html : '',
+    });
+  });
+  await page.goto('http://dashboard.test/');
+  await page.locator('#validationTab').click();
+  await page.evaluate(() => {
+    calibrateModel.checked = true;
+    renderCalibrationReview(window.weatherFixtureOriginal, {focusPanel: false});
+  });
+}
+
+test('MIDC weather preview gates calibration, restores choices, pages evidence and binds the child review', async ({page}, testInfo) => {
+  const errors = [];
+  const consoleIssues = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => {
+    if (['error', 'warning'].includes(message.type())) consoleIssues.push(message.text());
+  });
+  await openWeatherReview(page);
+  await expect(page).toHaveTitle('SB Energy Operations Dashboard');
+  await expect(page.locator('vite-error-overlay, nextjs-portal')).toHaveCount(0);
+  await expect(page.locator('#calibrationWeatherReplacement')).toBeVisible();
+  await expect(page.locator('#calibrationWeatherTemperature')).not.toBeChecked();
+  await expect(page.locator('#calibrationWeatherWind')).not.toBeChecked();
+  await expect(page.locator('#applyCalibrationReviewBtn')).toBeDisabled();
+  await page.locator('#calibrationWeatherTemperature').check();
+  await expect(page.locator('#calibrationWeatherPreviewBtn')).toBeEnabled();
+  await page.evaluate(() => { window.weatherPreviewHold = true; });
+  await page.locator('#calibrationWeatherPreviewBtn').click();
+  await expect(page.locator('#calibrationWeatherTemperature')).toBeDisabled();
+  await expect(page.locator('#calibrationWeatherMode')).toBeDisabled();
+  await expect(page.locator('#applyCalibrationReviewBtn')).toBeDisabled();
+  await page.evaluate(() => applyCalibrationReview());
+  expect(await page.evaluate(() => window.weatherRequests.some(request => request.path.endsWith('/run')))).toBe(false);
+  await page.evaluate(() => window.releaseWeatherPreview());
+  await expect(page.locator('#calibrationWeatherStatus')).toContainText('50 weather value(s) replaced');
+  await expect(page.locator('#calibrationWeatherRows tr')).toHaveCount(50);
+  await expect(page.locator('#applyCalibrationReviewBtn')).toBeDisabled();
+  const decision = page.locator('.calibration-decision-select[data-issue-id="weather.unavailable.temp_air"]');
+  await expect(decision).toHaveValue('');
+  await decision.selectOption('exclude');
+  await expect(page.locator('#applyCalibrationReviewBtn')).toBeEnabled();
+  await page.locator('#calibrationWeatherNextBtn').click();
+  await expect(page.locator('#calibrationWeatherRows tr')).toHaveCount(1);
+  await expect(page.locator('#calibrationWeatherRows')).toContainText('Unchanged — review required');
+  await page.locator('#applyCalibrationReviewBtn').click();
+  await page.locator('#sourceDecisionAcknowledgement').check();
+  await page.locator('#calibrationWeatherWind').check();
+  await expect(page.locator('#sourceDecisionAcknowledgement')).not.toBeChecked();
+  await expect(page.locator('#applyCalibrationReviewBtn')).toBeDisabled();
+  await page.reload();
+  await page.locator('#validationTab').click();
+  await expect(page.locator('#calibrationWeatherWind')).toBeChecked();
+  await expect(page.locator('#applyCalibrationReviewBtn')).toBeDisabled();
+  await page.locator('#calibrationWeatherMode').selectOption('period');
+  await page.locator('#calibrationWeatherFrom').fill('2026-08-01T12:00');
+  await page.locator('#calibrationWeatherTo').fill('2026-08-01T13:00');
+  await page.locator('#calibrationWeatherPreviewBtn').click();
+  await expect(page.locator('#calibrationWeatherStatus')).toContainText('50 weather value(s) replaced');
+  expect(await page.evaluate(() => window.weatherRequests.find(request => request.method === 'POST').path))
+    .toBe(`/api/calibration-reviews/${'a'.repeat(32)}/weather-preview`);
+  expect(await page.evaluate(() => window.weatherRequests.find(request => request.method === 'POST').body)).toEqual({
+    fields: ['temp_air', 'wind_speed'], mode: 'period', from_date: '2026-08-01', from_time: '12:00', to_date: '2026-08-01', to_time: '13:00',
+  });
+  await page.locator('#calibrationWeatherReplacement').evaluate(panel => panel.scrollIntoView({block: 'start', behavior: 'instant'}));
+  await page.screenshot({path: testInfo.outputPath('midc-weather-preview-desktop.png')});
+  await page.locator('#calibrationWeatherNextBtn').click();
+  await expect(page.locator('#calibrationWeatherRows')).toContainText('Unchanged — review required');
+  await page.locator('#calibrationWeatherEvidence').scrollIntoViewIfNeeded();
+  await page.screenshot({path: testInfo.outputPath('midc-weather-unavailable.png')});
+  await page.locator('#calibrationWeatherPreviousBtn').click();
+  await expect(page.locator('#calibrationWeatherRows tr')).toHaveCount(50);
+  await page.setViewportSize({width: 390, height: 844});
+  await page.locator('#calibrationWeatherReplacement').evaluate(panel => panel.scrollIntoView({block: 'start', behavior: 'instant'}));
+  expect(await page.locator('#calibrationWeatherReplacement').evaluate(panel => panel.scrollWidth <= panel.clientWidth)).toBe(true);
+  await page.screenshot({path: testInfo.outputPath('midc-weather-preview-mobile.png')});
+  await page.setViewportSize({width: 1280, height: 900});
+  await decision.selectOption('exclude');
+  await page.locator('#applyCalibrationReviewBtn').click();
+  await expect(page.locator('#confirmCalibrationReviewBtn')).toBeDisabled();
+  await page.locator('#sourceDecisionAcknowledgement').check();
+  await page.locator('#confirmCalibrationReviewBtn').click();
+  await expect(page.locator('#calibrationDecisionGateSummary')).toContainText('49 MIDC weather value(s) sent to calibration');
+  await expect(page.locator('#calibrationDecisionGateSummary')).toContainText('1 replacement value(s) excluded by review decisions');
+  await expect(page.locator('#calibrationWeatherTemperature')).toBeDisabled();
+  await expect(page.locator('#calibrationWeatherMode')).toBeDisabled();
+  expect(await page.evaluate(() => window.weatherRequests.find(request => request.path.endsWith('/run')))).toMatchObject({
+    path: `/api/calibration-reviews/${'b'.repeat(32)}/run`,
+    body: {decisions: {'weather.unavailable.temp_air': 'exclude', 'power.suspect': 'exclude'}},
+  });
+  await page.locator('#calibrationWeatherReplacement').scrollIntoViewIfNeeded();
+  await page.screenshot({path: testInfo.outputPath('midc-weather-desktop.png')});
+  await page.setViewportSize({width: 390, height: 844});
+  await page.locator('#calibrationWeatherReplacement').scrollIntoViewIfNeeded();
+  await expect(page.locator('#calibrationWeatherReplacement')).toBeVisible();
+  expect(await page.locator('#calibrationWeatherReplacement').evaluate(panel => panel.scrollWidth <= panel.clientWidth)).toBe(true);
+  await page.screenshot({path: testInfo.outputPath('midc-weather-mobile.png')});
+  await expect(page.locator('vite-error-overlay, nextjs-portal')).toHaveCount(0);
+  expect(errors).toEqual([]);
+  expect(consoleIssues).toEqual([]);
+});
+
+test('MIDC weather preview failure and discard preserve the original review', async ({page}) => {
+  await openWeatherReview(page);
+  await page.locator('#calibrationWeatherWind').check();
+  await page.evaluate(() => { window.weatherPreviewFail = true; });
+  await page.locator('#calibrationWeatherPreviewBtn').click();
+  await expect(page.locator('#calibrationWeatherStatus')).toContainText('Synthetic MIDC availability failure');
+  expect(await page.evaluate(() => pendingCalibrationReview.review_id)).toBe('a'.repeat(32));
+  await expect(page.locator('#applyCalibrationReviewBtn')).toBeDisabled();
+  await page.evaluate(() => { window.weatherPreviewFail = false; });
+  await page.locator('#calibrationWeatherPreviewBtn').click();
+  await expect(page.locator('#calibrationWeatherEvidence')).toBeVisible();
+  await page.locator('#calibrationWeatherDiscardBtn').click();
+  expect(await page.evaluate(() => pendingCalibrationReview.review_id)).toBe('a'.repeat(32));
+  await expect(page.locator('#calibrationWeatherTemperature')).not.toBeChecked();
+  await expect(page.locator('#calibrationWeatherWind')).not.toBeChecked();
+  await expect(page.locator('#calibrationWeatherEvidence')).not.toBeVisible();
+  await expect(page.locator('#applyCalibrationReviewBtn')).toBeDisabled();
+  expect(await page.evaluate(() => window.weatherRequests.some(request => request.path.endsWith('/run')))).toBe(false);
+});
+
 function annualEnergyFixture(energies) {
   return {
     annual_energy_by_year: energies.map(([year, value]) => ({

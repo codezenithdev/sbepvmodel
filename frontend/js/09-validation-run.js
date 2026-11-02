@@ -153,6 +153,14 @@
                 cancelCalibrationReview({ focusRunButton: true });
                 return;
             }
+            if (calibrationWeatherAbortController || calibrationWeatherNeedsPreview()) {
+                showError('Preview the selected MIDC replacements or use original Bazefield data before calibrating.');
+                return;
+            }
+            if (Array.from(calibrationIssueList.querySelectorAll('.calibration-decision-select')).some((select) => !select.value)) {
+                showError('Choose retain or exclude for every unresolved weather issue before calibrating.');
+                return;
+            }
             if (!sourceDecisionAcknowledgement.checked) {
                 showError('Confirm that you reviewed the flagged rows and decisions before calibrating.');
                 sourceDecisionAcknowledgement.focus();
@@ -185,6 +193,7 @@
                 progress: 22,
                 stage: 'Applying data-quality decisions',
             };
+            updateCalibrationWeatherControls();
             setCalibrationControlsLocked(true);
             cancelCalibrationReviewBtn.disabled = true;
             saveDashboardState();
@@ -253,6 +262,7 @@
                     progress: 20,
                     stage: 'Data-quality decision required',
                 };
+                updateCalibrationWeatherControls();
                 progressWrap.classList.remove('visible');
                 applyCalibrationReviewBtn.disabled = false;
                 applyCalibrationReviewBtn.textContent = 'Apply decisions & calibrate';

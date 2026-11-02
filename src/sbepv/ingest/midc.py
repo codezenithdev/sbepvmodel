@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -138,16 +139,43 @@ def build_api_url(start_date: date, end_date: date) -> str:
     return f"{API_URL}?{query}"
 
 
-def download_api_csv(start_date: date, end_date: date) -> str:
+def download_api_csv(
+    start_date: date, end_date: date, *, timeout_seconds: float | None = None
+) -> str:
     """Download and decode the raw minute-level CSV returned by MIDC."""
     request = Request(
         build_api_url(start_date, end_date),
         headers={"User-Agent": "midc-stac-hourly/1.0"},
     )
+    request_timeout = REQUEST_TIMEOUT_SECONDS if timeout_seconds is None else float(timeout_seconds)
+    if not 0 < request_timeout < float("inf"):
+        raise MidcError("MIDC download timeout must be positive and finite.")
+    deadline = time.monotonic() + request_timeout if timeout_seconds is not None else None
 
     try:
-        with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            payload = response.read()
+        with urlopen(
+            request,
+            timeout=request_timeout,
+        ) as response:
+            if deadline is None:
+                payload = response.read()
+            else:
+                chunks: list[bytes] = []
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise MidcError("MIDC API download time limit exceeded.")
+                    # HTTPResponse.read1 does at most one underlying read. Reduce
+                    # its socket timeout as the total request deadline approaches
+                    # so a slow stream cannot reset the allowance per chunk.
+                    response_socket = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+                    if response_socket is not None:
+                        response_socket.settimeout(remaining)
+                    chunk = response.read1(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                payload = b"".join(chunks)
     except HTTPError as exc:
         raise MidcError(f"MIDC API returned HTTP {exc.code}: {exc.reason}.") from exc
     except URLError as exc:

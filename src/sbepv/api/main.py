@@ -43,6 +43,7 @@ from sbepv import dashboard, model, reporting
 from sbepv import technoeconomic as technoeconomic_kernel
 from sbepv.api import analysis_library, collect_data as collect_data_api
 from sbepv.api import config, job_store, plots, review_store, state
+from sbepv.api import weather_reviews
 from sbepv.api import technoeconomic as technoeconomic_api
 from sbepv.api import baselines as baselines_module
 from sbepv.api import proposals as proposals_module
@@ -153,6 +154,7 @@ from sbepv.api.schemas import (
     AnnualRunRequest,
     AnnualRunSubmission,
     CalibrationDecisionRequest,
+    CalibrationWeatherRequest,
     ChatMessage,
     ChatRequest,
     ProposalEditRequest,
@@ -531,6 +533,23 @@ def create_calibration_review(req: RunRequest) -> JSONResponse:
     )
 
 
+@app.post("/api/calibration-reviews/{review_id}/weather-preview")
+def preview_calibration_weather(
+    review_id: str, req: CalibrationWeatherRequest,
+) -> JSONResponse:
+    """Freeze a weather replacement preview without starting calibration."""
+    return JSONResponse(weather_reviews.prepare_weather_review(review_id, req))
+
+
+@app.get("/api/calibration-reviews/{review_id}/weather-preview")
+def calibration_weather_preview_rows(
+    review_id: str, offset: int = 0, limit: int = 50,
+) -> JSONResponse:
+    with state._ORCHESTRATION_LOCK:
+        record = _load_calibration_review(review_id)
+        return JSONResponse(weather_reviews.public_weather_preview(record, offset=offset, limit=limit))
+
+
 @app.post("/api/calibration-reviews/{review_id}/run")
 def run_reviewed_calibration(
     review_id: str,
@@ -567,7 +586,7 @@ def run_reviewed_calibration(
                     "job_id": job["id"],
                     "review_id": record["review_id"],
                     "state": job["state"],
-                    "data_quality": record.get("quality_context"),
+                    "data_quality": _public_value(record.get("quality_context")),
                 }
             )
         if record.get("state") != "pending":
@@ -672,7 +691,7 @@ def run_reviewed_calibration(
                 "job_id": job["id"],
                 "review_id": review_id,
                 "state": job["state"],
-                "data_quality": quality_context,
+                "data_quality": _public_value(quality_context),
             }
         )
 

@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from sbepv import model
+from sbepv import model, weather_evidence
 from sbepv.api import config, plots, state
 from sbepv.api.artifacts import (
     _job_attempt_prefix,
@@ -52,6 +52,9 @@ def _run_job(
         )
 
     try:
+        replacement = (data_quality_context or {}).get("weather_replacement")
+        if replacement:
+            weather_evidence.load_weather_evidence(replacement)
         from_iso = _iso(req.from_date, req.from_time)
         to_iso = _iso(req.to_date, req.to_time)
         interval_seconds = (

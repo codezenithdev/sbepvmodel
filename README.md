@@ -288,6 +288,43 @@ Review receipts and unbound raw snapshots expire after 24 hours. Reviewed CSVs
 bound to durable model jobs remain scientific evidence for reproducible scenarios
 and must not be removed as expired cache. Review/source artifacts remain private.
 
+### MIDC weather replacement during calibration
+
+The review offers optional **SolarTAC MIDC weather replacement** for ambient
+temperature and wind speed. Select either flagged missing, malformed, or
+out-of-range cells, or a known-bad sensor period within the reviewed window.
+The period option also covers plausible but suspect readings that the existing
+quality checks do not flag. Each sensor defaults to unchecked. Measured power,
+irradiance, timestamps, and unselected weather cells remain unchanged.
+
+**Preview MIDC replacements** creates a separate review snapshot. Inspect the
+original/replacement values, coverage, and unavailable intervals before confirming
+calibration. Every unavailable replacement requires an explicit Retain/Exclude
+decision; retaining acknowledges the original value and existing model fallback.
+New choices require a new preview and confirmation. Reset returns to the original
+review. MIDC substitution can resolve an all-missing temperature blocker only
+when reinspection of the prepared data succeeds; other blockers still apply.
+
+MIDC minute keys use fixed MST, converted to UTC and matched to the repository's
+historian interval-start contract. Each replacement requires complete valid
+minute coverage for that field in `(start, end]`; the final interval is clipped
+to the requested end. Known-bad period boundaries must align with the reviewed
+interval grid. Temperature is in degrees C; wind is in m/s at 10 m, with no
+undocumented height conversion. Only completed fixed-MST source days are used.
+The upstream providers' timestamp-label conventions and sensor comparability
+should be confirmed for engineering use; the implementation preserves the
+existing repository convention and records it in provenance.
+
+The original historian CSV, downloaded MIDC responses, substitution ledger, and
+source hashes are frozen privately with the preview. `POST
+/api/calibration-reviews/{review_id}/weather-preview` prepares it; `GET` at the
+same URL pages the evidence. Confirmation uses the returned child review's
+existing `/run` endpoint and never refetches MIDC. Job-bound weather evidence
+survives review expiry, is checked again by the worker, and follows baseline
+provenance. Excel exports include `weather_replacements` and `weather_source`
+sheets, including whether each proposed substitution was used after exclusions.
+Annual MIDC aggregation and calibration equations are unchanged.
+
 ### Seasonal factors and physical limits
 
 Local `America/Denver` seasons are Winter December–February, Spring March–May,

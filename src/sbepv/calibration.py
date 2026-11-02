@@ -760,13 +760,16 @@ def inspect_historian_csv(
             if column == "temp_air":
                 missing_description = (
                     "Retained rows may use bounded temperature interpolation for "
-                    "model continuity, but they are excluded from calibration-factor "
-                    "fitting. Exclusion remains the safest recommendation."
+                    "model continuity. Every retained modeled row contributes to "
+                    "calibration. Review MIDC replacement coverage or exclude "
+                    "these timestamps when the original weather is unusable."
                 )
             elif model_fallback:
                 missing_description = (
                     "The model has a documented fallback for this field, but "
-                    "retained values do not contribute directly to factor fitting."
+                    "every retained modeled row contributes to calibration. "
+                    "Review the source and any available weather replacement "
+                    "before retaining these timestamps."
                 )
             else:
                 missing_description = (

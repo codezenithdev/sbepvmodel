@@ -42,6 +42,7 @@ import matplotlib.pyplot as plt
 import pvlib as pvl
 import pvmismatch as pvm
 from pvmismatch.contrib import gen_coeffs
+from sbepv import weather_evidence
 
 from sbepv.calibration import (
     _bounded_interval_hours,
@@ -3184,6 +3185,29 @@ def write_excel(
             pd.DataFrame(quality_rows).to_excel(
                 writer, sheet_name="data_quality_review", index=False
             )
+            replacement = data_quality_context.get("weather_replacement")
+            if replacement:
+                evidence = weather_evidence.load_weather_evidence(replacement)
+                included_timestamps = set(pd.to_datetime(df["timestamp_utc"], utc=True))
+                replacement_rows = []
+                for event in evidence["audit"]["events"]:
+                    row = dict(event)
+                    row["used_in_run"] = (
+                        event["status"] == "replaced"
+                        and pd.Timestamp(event["timestamp_utc"]) in included_timestamps
+                    )
+                    # Original malformed sensor values are untrusted text, not formulas.
+                    original_value = row.get("original_value")
+                    if isinstance(original_value, str) and original_value.startswith(("=", "+", "-", "@")):
+                        row["original_value"] = "'" + original_value
+                    replacement_rows.append(row)
+                pd.DataFrame(replacement_rows).to_excel(
+                    writer, sheet_name="weather_replacements", index=False
+                )
+                pd.DataFrame([
+                    {"parameter": key, "value": json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else value}
+                    for key, value in replacement.items() if key != "evidence_path"
+                ]).to_excel(writer, sheet_name="weather_source", index=False)
         if isinstance(historian_preflight, Mapping):
             pd.DataFrame(
                 _historian_preflight_rows(historian_preflight),
@@ -3511,6 +3535,13 @@ def run_model(
                     "Data-quality review retained: "
                     + ", ".join(str(value) for value in retained_issues)
                 )
+    replacement = (data_quality_context or {}).get("weather_replacement")
+    if replacement:
+        data_quality_warnings.append(
+            f"Calibration weather includes {replacement.get('used_replaced_cells', replacement['replaced_cells'])} "
+            "reviewed SolarTAC MIDC substitutions (wind measured at 10 m). "
+            "These are substituted observations; see the weather replacement audit."
+        )
     data_quality_warnings = list(dict.fromkeys(data_quality_warnings))
     # Seasonal factors correct the physics estimate but cannot create an
     # operating point above the installed inverter's continuous AC nameplate.

@@ -89,6 +89,15 @@ class CalibrationDecisionRequest(StrictRequest):
     )
 
 
+class CalibrationWeatherRequest(StrictRequest):
+    fields: list[Literal["temp_air", "wind_speed"]] = Field(min_length=1, max_length=2)
+    mode: Literal["flagged", "period"] = "flagged"
+    from_date: str | None = None
+    from_time: str | None = None
+    to_date: str | None = None
+    to_time: str | None = None
+
+
 class AnnualRunRequest(StrictRequest):
     # Legacy callers may still submit one inclusive fixed-MST date range.  The
     # dashboard's multi-year workflow submits ``years`` instead; validation
@@ -1319,6 +1328,7 @@ __all__ = [
     "AnnualRunSubmission",
     "BoundedNormalDistributionRequest",
     "CalibrationDecisionRequest",
+    "CalibrationWeatherRequest",
     "ChatMessage",
     "ChatRequest",
     "COMMERCIAL_TRANSFER_MECHANISMS",

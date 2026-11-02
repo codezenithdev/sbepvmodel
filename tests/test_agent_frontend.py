@@ -96,7 +96,7 @@ class AgentFrontendContractTests(unittest.TestCase):
             'path[0] === "calibration-reviews"',
             route_source,
         )
-        self.assertIn('["run", "rows"].includes(path[2])', route_source)
+        self.assertIn('["run", "rows", "weather-preview"].includes(path[2])', route_source)
         self.assertIn("isSafeId(path[1])", route_source)
         self.assertIn("/api/calibration-reviews", self.html)
         self.assertIn("+ '/rows?' + query.toString()", self.html)

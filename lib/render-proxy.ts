@@ -70,7 +70,7 @@ export function isAllowedApiPath(path: string[]): boolean {
       ["thursday-2026-09-17-v1", "user-cost-basis-2026-v1"].includes(path[2])) ||
       (path[0] === "jobs" && isSafeId(path[1]) &&
       ["cancel", "delete", "promote", "retry"].includes(path[2])) ||
-      (path[0] === "calibration-reviews" && isSafeId(path[1]) && ["run", "rows"].includes(path[2])) ||
+      (path[0] === "calibration-reviews" && isSafeId(path[1]) && ["run", "rows", "weather-preview"].includes(path[2])) ||
       (path[0] === "data-collections" && isCollectionId(path[1]) && ["download", "download-xlsx", "cancel"].includes(path[2])) ||
       (path[0] === "technoeconomic" && path[1] === "jobs" && isSafeId(path[2]));
   }

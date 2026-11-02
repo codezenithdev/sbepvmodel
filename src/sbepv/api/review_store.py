@@ -22,7 +22,7 @@ from fastapi import HTTPException
 from sbepv.api import config
 from sbepv.api.job_store import _get_job_record
 from sbepv.calibration import public_quality_report
-from sbepv import reporting
+from sbepv import reporting, weather_evidence
 from sbepv.reporting import SourceFingerprintMismatch
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ _CALIBRATION_REVIEW_SUFFIXES = (
     ".json.tmp",
     ".raw.csv",
     ".reviewed.csv",
+    ".weather.json",
 )
 
 
@@ -63,7 +64,7 @@ def _delete_calibration_review_artifacts(
         config.CALIBRATION_REVIEW_DIR.glob(f"{review_id}.*.reviewed.csv")
     )
     for candidate in candidates:
-        if preserve_reviewed and candidate.name.endswith(".reviewed.csv"):
+        if preserve_reviewed and candidate.name.endswith((".reviewed.csv", ".weather.json")):
             continue
         try:
             resolved = candidate.resolve()
@@ -172,7 +173,7 @@ def _cleanup_expired_calibration_reviews(
     # Reviewed CSVs can remain the immutable source for a queued/completed job
     # and its same-input scenarios. Orphans are removed only after confirming
     # that the deterministic review job no longer references them.
-    for pattern in ("*.json.tmp", "*.raw.csv", "*.reviewed.csv"):
+    for pattern in ("*.json.tmp", "*.raw.csv", "*.reviewed.csv", "*.weather.json"):
         try:
             orphan_candidates = list(review_root.glob(pattern))
         except OSError:
@@ -188,7 +189,7 @@ def _cleanup_expired_calibration_reviews(
             except (HTTPException, OSError):
                 continue
             if not record_path.is_file() and modified <= stale_before:
-                if path.name.endswith(".reviewed.csv") and (
+                if path.name.endswith((".reviewed.csv", ".weather.json")) and (
                     _reviewed_source_is_job_bound(
                         {"review_id": review_id},
                         review_id=review_id,
@@ -283,6 +284,17 @@ def _load_calibration_review(review_id: str) -> dict[str, Any]:
             status_code=409,
             detail="The reviewed Bazefield source changed; start a new review.",
         ) from exc
+    metadata = record.get("weather_replacement")
+    if metadata:
+        try:
+            expected_path = _calibration_review_path(review_id, ".weather.json").resolve()
+            if Path(str(metadata["evidence_path"])).resolve() != expected_path:
+                raise ValueError("Invalid weather evidence path.")
+            evidence = weather_evidence.load_weather_evidence(metadata)
+            if evidence["prepared_source_sha256"] != record["source_hash"]:
+                raise ValueError("Weather evidence is not bound to this source.")
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="The frozen MIDC replacement evidence is unavailable or changed; prepare a new review.") from exc
     return record
 
 
@@ -293,7 +305,7 @@ def _quality_context(
     reviewed_source_hash: str,
     submitted_decisions: dict[str, str],
 ) -> dict[str, Any]:
-    return {
+    context = {
         "review_id": record["review_id"],
         "source_sha256": record["source_hash"],
         "reviewed_source_sha256": reviewed_source_hash,
@@ -302,6 +314,25 @@ def _quality_context(
         "report": public_quality_report(record["report"]),
         "cleaning": cleaning,
     }
+    metadata = record.get("weather_replacement")
+    if metadata:
+        evidence = weather_evidence.load_weather_evidence(metadata)
+        excluded_issues = set(cleaning.get("excluded_issue_ids", []))
+        excluded_rows = {position for issue in record["report"]["issues"] if issue["id"] in excluded_issues for position in issue.get("_row_positions", [])}
+        used_events = [event for event in evidence["audit"]["events"] if event["status"] == "replaced" and event["row_position"] not in excluded_rows]
+        from zoneinfo import ZoneInfo
+        from sbepv.calibration import season_name
+        seasons: dict[str, int] = {}
+        for event in used_events:
+            season = season_name(datetime.fromisoformat(event["timestamp_utc"]).astimezone(ZoneInfo("America/Denver")))
+            seasons[season] = seasons.get(season, 0) + 1
+        context["weather_replacement"] = {
+            **metadata,
+            "used_replaced_cells": len(used_events),
+            "excluded_replaced_cells": metadata["replaced_cells"] - len(used_events),
+            "replacement_cells_by_season": seasons,
+        }
+    return context
 
 
 def _calibration_review_state(report: dict[str, Any]) -> str:

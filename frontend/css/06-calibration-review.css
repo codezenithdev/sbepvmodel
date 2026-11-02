@@ -24,6 +24,77 @@
             gap: 16px;
         }
 
+        .calibration-weather-replacement {
+            display: grid;
+            gap: 12px;
+            padding: 16px;
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            background: var(--surface);
+            min-width: 0;
+        }
+
+        .calibration-weather-replacement p {
+            color: var(--muted-strong);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .calibration-weather-replacement > * {
+            min-width: 0;
+        }
+
+        .calibration-weather-replacement fieldset {
+            display: grid;
+            gap: 12px;
+            padding: 0;
+            border: 0;
+            min-width: 0;
+        }
+
+        .calibration-weather-replacement legend {
+            margin-bottom: 8px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .calibration-weather-fields,
+        .calibration-weather-period {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px 24px;
+        }
+
+        .calibration-weather-fields label {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .calibration-weather-mode,
+        .calibration-weather-period label {
+            display: grid;
+            gap: 6px;
+            max-width: 100%;
+            font-size: 12px;
+        }
+
+        .calibration-weather-replacement select,
+        .calibration-weather-replacement input[type="datetime-local"] {
+            max-width: 100%;
+            padding: 8px;
+            border: 1px solid var(--border-strong);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text);
+        }
+
+        .calibration-weather-mode { max-width: 300px; }
+        .calibration-weather-period p { flex-basis: 100%; }
+        .calibration-weather-replacement #calibrationWeatherStatus[data-error="true"] { color: #9b1c1c; }
+        .calibration-weather-replacement caption { padding: 8px; text-align: left; font-weight: 700; }
+
         .calibration-review-heading,
         .calibration-factor-heading,
         .calibration-review-actions {
